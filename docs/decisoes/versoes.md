@@ -79,3 +79,46 @@ em disco ou a velocidade de instalação passarem a importar.
 No início de **A2**, antes de instalar `@supabase/supabase-js`,
 `@supabase/ssr` e a CLI do Supabase — conforme a emenda 4, essas
 dependências não entram antes da fase que as usa.
+
+## Dependências de A2 — verificação de 07/09/2026
+
+| Pacote | Escolhido | Última estável | Motivo |
+|---|---|---|---|
+| @supabase/supabase-js | 2.115.0 | 2.115.0 | `latest`; peer de `@supabase/ssr` (`^2.114.0`) satisfeito |
+| @supabase/ssr | 0.12.6 | 0.12.6 | pacote oficial atual para SSR — sucessor do `@supabase/auth-helpers-nextjs`, descontinuado (`npm view` retorna "Package no longer supported") |
+| zod | 4.5.4 | 4.5.4 | `latest`, não beta/canary |
+| supabase (CLI) | 2.116.0 | 2.116.0 | devDependency, para `supabase init`/`start`/`db`/`gen types` |
+| @playwright/test | 1.63.0 | 1.63.0 | exigido pelo e2e de autenticação da A2; `engines.node >= 20`, satisfeito pelo Node 24 |
+
+`@supabase/auth-helpers-nextjs` não foi instalado — descontinuado, substituído
+por `@supabase/ssr`, que é a abordagem oficial atual para Next.js com App
+Router (cliente de navegador + cliente de servidor lendo/escrevendo cookies
+via `@supabase/ssr`'s `createBrowserClient`/`createServerClient`).
+
+Nenhum componente shadcn foi instalado ainda — depende de `npx shadcn init`
+rodar sobre as telas reais desta fase, o que só acontece depois que o
+bloqueio da seção "Bloqueio" abaixo for resolvido.
+
+## Bloqueio: A2 parada na preparação (07/09/2026)
+
+Ao chegar à seção 0 do prompt da A2 ("Preparação e bloqueios"), dois
+requisitos que o próprio prompt lista como condição de parada estão
+ausentes nesta máquina:
+
+1. **Docker não está instalado.** `docker` não existe no PATH (nem no Git
+   Bash, nem no PowerShell), e `C:\Program Files\Docker\Docker Desktop.exe`
+   não existe. `supabase start` (que sobe Postgres, Auth, Storage e o resto
+   localmente) depende de Docker — sem ele não há como aplicar migration,
+   rodar teste pgTAP, nem obter uma URL/chave anônima reais para a
+   aplicação autenticar contra algo.
+2. **Nenhum projeto Supabase de desenvolvimento está vinculado.**
+   `supabase projects list` retorna `LegacyPlatformAuthRequiredError` — a
+   CLI não tem `SUPABASE_ACCESS_TOKEN` nem sessão de `supabase login`. Não
+   existem `NEXT_PUBLIC_SUPABASE_URL`/`NEXT_PUBLIC_SUPABASE_ANON_KEY` em
+   lugar nenhum desta máquina.
+
+Por instrução explícita do prompt da A2 ("não contorne testes de banco nem
+use produção"), a implementação de schema, RLS, autenticação e telas não
+prosseguiu além da preparação seca (branch, dependências, scaffold do
+`supabase/`, `.env.example`). Ver `A2-HANDOFF.md` para o que falta
+exatamente do usuário para destravar.
