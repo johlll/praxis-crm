@@ -76,6 +76,23 @@ jobs:
           echo "Conferindo .env.local (valores mascarados):"
           sed -E 's/=(.{6}).*/=\1.../' .env.local
 
+      - name: Diagnóstico — login direto contra o GoTrue local (isola de bug no Next.js)
+        run: |
+          eval "$(supabase status -o env)"
+          HTTP_CODE=$(curl -s -o /tmp/gotrue-response.json -w "%{http_code}" \
+            -X POST "$API_URL/auth/v1/token?grant_type=password" \
+            -H "apikey: $ANON_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"email":"owner-a.seed@praxis.test","password":"praxis-seed-nao-e-senha-real"}')
+          echo "HTTP $HTTP_CODE"
+          node -e "
+            const body = require('fs').readFileSync('/tmp/gotrue-response.json', 'utf8');
+            const j = JSON.parse(body);
+            console.log('chaves da resposta:', Object.keys(j));
+            console.log('error_code:', j.error_code ?? j.code ?? '(nenhum)');
+            console.log('msg:', j.msg ?? j.error_description ?? j.message ?? '(nenhum)');
+          "
+
       - name: Build
         run: npm run build
 
