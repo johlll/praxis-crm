@@ -66,6 +66,23 @@ Todo índice composto começa por `workspace_id` (ou, em `memberships`, tem o
 espelho `(user_id, workspace_id)` para o caminho inverso que
 `auth_workspace_ids()` percorre a cada request).
 
+**Atenção — a policy de SELECT de `memberships` é por workspace, não por
+dono da linha.** Um membro autenticado enxerga a linha de `membership` de
+**todos os colegas** dos workspaces em que está (é o que a tela de equipe
+precisa: `listTeamMembers()` depende disso, sem `where` extra). Isso
+significa que qualquer consulta que precise só da **própria** membership do
+usuário — "qual é o meu papel aqui", "sou membro deste workspace", "quais
+são os MEUS workspaces" — tem que filtrar `user_id = auth.uid()`
+explicitamente na aplicação; a RLS sozinha não faz esse recorte. Três
+funções (`getActiveWorkspaceId`, `switchActiveWorkspace` em
+`src/server/auth/workspace.ts`, `listMyWorkspaces` em
+`src/modules/workspace/queries.ts`) assumiam erroneamente que a RLS já
+restringia à própria membership e usavam `.maybeSingle()` sem esse filtro —
+assim que um workspace tinha 2+ membros, a consulta batia mais de uma linha
+e `.maybeSingle()` falhava, reportando "não é membro" mesmo para quem era
+dono de verdade. Corrigido filtrando por `user_id` nas três; ver
+`A2-HANDOFF.md` §3 para o histórico completo.
+
 ## Autenticação (`@supabase/ssr`)
 
 - `src/lib/supabase/browser.ts` — cliente do navegador (`createBrowserClient`)

@@ -3,14 +3,23 @@
 **Projeto:** Praxis CRM Jurídico
 **Fase:** A2
 **Branch:** `feat/a2-auth-workspace`
+**PR:** https://github.com/johlll/praxis-crm/pull/1 (aberto, **não mesclado**)
+**Preview:** https://praxis-crm-git-feat-a2-auth-workspace-johllls-projects.vercel.app
 **Data:** 07/09/2026
-**Status:** implementada por completo — schema, RLS, funções, autenticação,
-telas, testes (unitários + pgTAP + e2e) e CI. **Não mesclada em `main`.**
-CI real (Docker + Postgres) rodou 4 vezes neste PR e pegou 4 bugs reais
-(seção 3, itens 8–11) — corrigidos e empurrados; a etapa de banco (pgTAP)
-está verde na última correção enviada, aguardando o run confirmar antes de
-prosseguir para build/e2e. Uma peça continua dependendo de credencial que
-só o usuário tem — ver seção 5.
+**Status:** implementada por completo e **CI totalmente verde** — typecheck,
+lint, 87 testes unitários, migrations do zero, tipos gerados batendo com o
+commitado, 62 asserções pgTAP, isolamento entre workspaces, build e os
+**8 testes e2e passando pela primeira vez**, todos no mesmo run
+(`34160097967`). Uma peça continua dependendo de credencial que só o
+usuário tem — ver seção 5.
+
+O caminho até aqui não foi direto: depois da primeira vez que o pgTAP
+ficou verde (seção 3, itens 8–11), o e2e revelou mais **9 bugs reais**
+distintos, um de cada vez, ao longo de **13 rodadas de CI** — cada rodada
+isolando exatamente uma causa (nunca uma correção "no escuro"). Lista
+completa nos itens 12–20 da seção 3. Nenhum desses bugs era visível por
+leitura de código; todos só apareceram rodando de verdade contra Postgres
+e GoTrue reais no runner do GitHub.
 
 ---
 
@@ -85,17 +94,24 @@ real (substituiu "Rocha & Antunes"); Topbar com usuário real (substituiu
   rodaram de verdade no CI (não só localmente, que não tem Docker) e
   pegaram **4 bugs reais** antes deste PR ficar verde — ver seção 3.
 - **8 testes e2e** (Playwright, `tests/e2e/auth-workspace.spec.ts`) — a
-  jornada completa das 7 etapas pedidas. Sintaticamente válidos
-  (`npx playwright test --list` lista os 8 corretamente), mas também nunca
-  executados aqui — precisam do Supabase local que só o CI sobe.
+  jornada completa das 7 etapas pedidas: login, senha errada, onboarding
+  sem membership, convite, aceite pelo segundo usuário, troca de
+  workspace, cookie adulterado, logout. **Passando de verdade no CI**
+  (run `34160097967`) — nunca executados nesta máquina, que não tem
+  Docker. `retries: 0` (mesmo no CI, ver seção 3 item 17).
 
 ### 2.8 CI
 
-`.github/workflows/ci.yml` reescrito: `npm ci` → typecheck → lint → testes
-unitários → `supabase start` → `supabase db reset --local` (migrations do
-zero) → gera tipos e compara com o commitado → pgTAP → build (com as
-credenciais do Supabase local) → Playwright → `supabase stop`. Não depende
-do projeto hospedado nem de produção.
+`.github/workflows/ci.yml`: `npm ci` → typecheck → lint → testes unitários
+→ `supabase start` → `supabase db reset --local` (migrations do zero) →
+gera tipos e compara com o commitado → pgTAP → teste de isolamento →
+escreve `.env.local` de verdade com as credenciais do Supabase local (ver
+item 15 da seção 7 sobre por que é um arquivo, não variável de ambiente
+herdada) → build → instala navegadores do Playwright → e2e → para o
+Supabase local. Não depende do projeto hospedado nem de produção. Webserver
+do Playwright roda com `stdout`/`stderr` em `"pipe"` — qualquer log do
+Next.js (inclusive erro de Server Action) aparece no próprio job do CI,
+sem precisar baixar artefato separado.
 
 ---
 
@@ -210,6 +226,97 @@ passou por 4 runs até ficar verde no pgTAP; cada um pegou algo real:
       padrão do chamador) sem depender de eu adivinhar o formato exato
       de serialização interna do Postgres.
 
+**Itens 12–20 — a maratona do e2e, 13 rodadas de CI até os 8 testes
+passarem juntos.** Depois do pgTAP ficar verde, o e2e começou a rodar de
+verdade pela primeira vez e, como `test.describe.serial` para no primeiro
+teste que falha, cada rodada só revelava o **próximo** bug na fila — nunca
+todos de uma vez:
+
+12. **Seed sem `auth.identities` — mas não era esse o problema de
+    verdade.** O login por senha voltava `HTTP 500` com
+    `"Database error querying schema"` (mensagem genérica do GoTrue, que
+    não expõe o erro interno por segurança). Hipótese razoável mas errada:
+    faltava a linha de identidade do provider "email" — adicionei uma por
+    usuário. Não resolveu (mesmo erro, idêntico, no run seguinte) — a causa
+    real era outra (item 13). A linha de `auth.identities` ficou (é
+    tecnicamente correta e inofensiva), mas não foi ela que consertou nada.
+13. **Causa real do item 12: colunas de token `NULL` em `auth.users`.**
+    Só descoberta puxando o log do próprio container `auth` no CI (a
+    resposta HTTP não mostra isso) — erro exato:
+    `sql: Scan error on column index 8, name "email_change": converting
+    NULL to string is unsupported`. O INSERT do seed preenchia
+    `confirmation_token`/`recovery_token` com `''` mas deixava
+    `email_change`, `email_change_token_new`,
+    `email_change_token_current`, `phone_change`, `phone_change_token` e
+    `reauthentication_token` sem valor (logo `NULL`) — o driver Go do
+    GoTrue não aceita `NULL` nesses campos ao montar o usuário para login.
+    Corrigido preenchendo todos com `''`.
+14. **`signInAction` nunca ativava nenhum workspace.** Com o login
+    funcionando de verdade, quem já tinha membership (a dona do seed) caía
+    em `/onboarding` só por falta de cookie de workspace ativo — mesmo
+    sendo dona de um workspace de verdade. Corrigido: se não há workspace
+    ativo após o login, ativa o primeiro da lista de memberships reais do
+    próprio usuário (nunca um id vindo do cliente).
+15. **`getActiveWorkspaceId`, `switchActiveWorkspace` e
+    `listMyWorkspaces` sem filtro por `user_id` — bug de produção real,
+    não só de teste.** A policy de SELECT de `memberships` é por
+    workspace (qualquer membro vê os colegas — necessário para a tela de
+    equipe), não por dono da linha. As três funções assumiam,
+    incorretamente, que a RLS já restringia à membership do próprio
+    usuário, e usavam `.maybeSingle()` sem esse filtro — assim que um
+    workspace tem 2+ membros (o caso normal, não uma peculiaridade do
+    seed), a consulta bate mais de uma linha e `.maybeSingle()` falha,
+    reportando "não é membro" mesmo para quem é dono de verdade. Isso
+    teria quebrado em produção assim que qualquer escritório tivesse mais
+    de uma pessoa. Corrigidas as três, filtrando também por `user_id`
+    (obtido via `supabase.auth.getUser()`, nunca do cliente). Detalhe
+    arquitetural em `docs/arquitetura.md`.
+16. **Regex quebrada no helper de teste `switchWorkspace()`.**
+    `new RegExp(workspaceName)` — mas nomes de workspace têm parênteses
+    literais (`"Escritório Um (seed)"`), que em regex viram grupo de
+    captura, não texto. O padrão nunca batia com o texto real do
+    menuitem. Corrigido para usar a string direta (substring), como o
+    resto do arquivo já fazia.
+17. **Retry do Playwright mascarando a causa real de uma falha.** O teste
+    "usuário sem membership" cria um workspace de verdade no banco — com
+    `retries: 1`, uma retentativa após falha reexecutava o login sobre um
+    usuário que a tentativa anterior **já tinha dado** um workspace,
+    trocando o sintoma real por um completamente diferente e enganoso
+    ("já não vai mais pro onboarding"). `test.describe.serial` com efeito
+    colateral real no banco e sem reset entre tentativas é incompatível
+    com retry — mudado para `retries: 0` permanentemente (não só durante a
+    depuração): é melhor ver a falha real uma vez do que uma falha
+    mascarada duas vezes.
+18. **Faltava `revalidatePath` na troca de workspace.** Quem troca de
+    workspace normalmente já está em `/visao-geral`; `redirect()` para o
+    mesmo caminho, sozinho, não força o `(app)/layout.tsx` a reler o
+    cookie recém-gravado. Adicionado `revalidatePath("/", "layout")` antes
+    do redirect — padrão documentado do Next.js para mutation + redirect à
+    mesma rota.
+19. **`z.string().uuid()` do Zod rejeitando os ids fictícios do seed.**
+    O validador exige os bits de versão/variante do RFC 4122 — mas os ids
+    do seed (`10000000-0000-0000-0000-000000000001`, escolhidos de
+    propósito para serem legíveis) não têm esses bits, e eram rejeitados
+    como "Invalid UUID" antes mesmo de a troca de workspace ser tentada de
+    verdade (o log de debug mostrou o parse falhando silenciosamente).
+    Criado `src/lib/uuid.ts` com um schema mais solto (só o formato
+    hex-com-traços, sem exigir versão/variante) e trocados os 4 call sites
+    que usavam `.uuid()` estrito — um uuid real de `gen_random_uuid()`
+    continua batendo normalmente, não há perda de validação de verdade.
+20. **Logout via `<form>` dentro de `DropdownMenuItem` — corrida com o
+    Radix.** O item "Sair" era um `<form action={signOutAction}>` dentro
+    de um `DropdownMenuItem asChild`. O Radix fecha (desmonta) o menu ao
+    selecionar o item — inclusive o próprio form — correndo contra a
+    submissão nativa, que às vezes nem chegava a completar antes do form
+    sumir do DOM: o clique "funcionava" na interface (o menu fechava) mas
+    o logout nunca era efetivado de verdade. Corrigido com `SignOutItem`
+    (Client Component novo), que chama `signOutAction()` direto por
+    `onSelect` dentro de `startTransition` — mesmo padrão já usado (e já
+    validado) na troca de workspace do sidebar. Efeito colateral bom: o
+    elemento passou a ter o papel ARIA correto (`menuitem`, o mesmo dos
+    itens de workspace) em vez de `button` — só existia como `button`
+    porque o `<form><button>` antigo forçava isso.
+
 ---
 
 ## 4. Dependências instaladas (só as da lista autorizada + o que elas exigem)
@@ -253,18 +360,18 @@ Com qualquer um dos dois, o restante das seções 1–3 do prompt (dry-run,
 aplicar migration no projeto de dev, gerar tipos `--linked`) é rápido —
 todo o trabalho de escrever e validar estruturalmente já está feito.
 
-### `src/server/types/database.ts` é provisório
+### `src/server/types/database.ts` já é o arquivo real gerado
 
-Escrito à mão (comentário no topo do arquivo explica isso), porque gerar
-de verdade exige `--linked` (credencial acima) ou `--local` (Docker, que
-esta máquina não tem). O CI regenera via `--local` e compara
-(`npm run db:types:check`) — é bem possível que a primeira rodada do CI
-acuse divergência de formatação entre o que escrevi à mão e o que o
-gerador real produz (ordem de propriedade, forma exata do tipo `Json`
-etc.), mesmo sendo semanticamente equivalente. Se isso acontecer, é o
-comportamento **correto e esperado** do check — não um defeito do CI. Basta
-rodar `npm run db:types:local` (com `supabase start` já de pé) e commitar o
-resultado real.
+Começou escrito à mão (não havia Docker nesta máquina para gerar de
+verdade) e, como esperado, o `db:types:check` do CI acusou divergência no
+primeiro run. Em vez de adivinhar o diff, o `check-db-types.sh` passou a
+imprimir o arquivo completo no log quando diverge; extraí o conteúdo real
+de lá e substituí o stub inteiro — confirmado **byte a byte igual**
+(`diff`) ao que `supabase gen types typescript --local` gera. `db:types:check`
+está verde desde então. Ainda depende do `--linked` contra `praxis-crm-dev`
+(seção acima) só para o dia em que o schema do projeto hospedado divergir
+do que as migrations locais descrevem — não deveria acontecer se as
+migrations forem sempre a fonte de verdade aplicada nos dois lugares.
 
 ---
 
@@ -294,16 +401,24 @@ As credenciais placeholder usadas nessa verificação nunca foram commitadas
 removidas logo em seguida; `git status`/`git diff` confirmam que
 `.env.local` não está no stage.
 
-**No CI (Docker real, Postgres real) — a validação que importa:** o PR
-levou **4 runs** até ficar verde no pgTAP, e cada run anterior pegou algo
-real (lista completa na seção 3, itens 8–11): um `NOT NULL` que o seed
-disparava, o `database.ts` provisório de fato divergindo do gerador real
-(como o design do `db:types:check` previa), um embed que ficou ambíguo com
-o tipo real, e dois bugs nos próprios testes pgTAP (suposição errada sobre
-`using(false)` lançar exceção; tentativa de persistir estado que uma
-exceção sempre desfazia). Isso é o processo funcionando como desenhado —
-o ponto de ter o CI validando de verdade era justamente não confiar só na
-minha leitura do SQL.
+**No CI (Docker real, Postgres real, GoTrue real) — a validação que
+importa:** o PR levou 4 runs até ficar verde no pgTAP (itens 8–11 da seção
+3) e mais 13 até os 8 testes e2e passarem juntos pela primeira vez (itens
+12–20). Cada run anterior pegou exatamente um bug real — um `NOT NULL` que
+o seed disparava, o `database.ts` provisório de fato divergindo do gerador
+real, um embed ambíguo, dois bugs nos próprios testes pgTAP, colunas
+`NULL` em `auth.users` que o GoTrue rejeitava, workspace não ativado no
+login, três consultas de `memberships` sem filtro por `user_id` (bug de
+produção real, não só de teste), uma regex quebrada no teste, retry
+mascarando falha real, `revalidatePath` faltando, validação de UUID
+estrita demais para os ids do seed, e uma corrida entre `<form>` e o
+fechamento do menu do Radix no logout. **Resultado final, no mesmo run**
+(`34160097967`): typecheck, lint, 87 testes unitários, migrations do zero,
+tipos batendo, 62 asserções pgTAP, isolamento entre workspaces, build e
+**8/8 testes e2e** — tudo verde ao mesmo tempo. Isso é o processo
+funcionando como desenhado: o ponto de ter o CI validando de verdade era
+justamente não confiar só na minha leitura do SQL/TypeScript, e cada um
+desses 20 bugs só apareceu rodando contra serviços reais.
 
 ---
 
@@ -338,6 +453,14 @@ minha leitura do SQL.
    **nenhuma tela usa ela nesta fase** — não fazia parte do escopo pedido
    para a A2, ficou só a policy (documentada em `docs/arquitetura.md`) para
    quando a tela de configurações do workspace existir.
+4. **`playwright.config.ts` usa `retries: 0` mesmo no CI, de propósito
+   permanente** (item 17 da seção 3) — `test.describe.serial` com efeito
+   colateral real no banco (workspace criado, convite criado) não é seguro
+   sob retry: uma retentativa reexecuta sobre estado que a tentativa
+   anterior já alterou, trocando a falha real por um sintoma diferente e
+   enganoso. Se o e2e ficar instável por motivo genuinamente externo (rede,
+   timing do runner), a correção certa é investigar a instabilidade, não
+   religar retry.
 
 ---
 
