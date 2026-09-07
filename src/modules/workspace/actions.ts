@@ -6,9 +6,10 @@ import { z } from "zod";
 
 import { requireUser } from "@/server/authz/permissions";
 import { switchActiveWorkspace } from "@/server/auth/workspace";
+import { uuidSchema } from "@/lib/uuid";
 
 const switchWorkspaceSchema = z.object({
-  workspaceId: z.string().uuid(),
+  workspaceId: uuidSchema,
 });
 
 /**
@@ -25,15 +26,11 @@ export async function switchWorkspaceAction(formData: FormData): Promise<void> {
     workspaceId: formData.get("workspaceId"),
   });
 
-  console.error("[DEBUG switchWorkspaceAction] formData workspaceId:", formData.get("workspaceId"));
-  console.error("[DEBUG switchWorkspaceAction] parsed:", JSON.stringify(parsed.success ? parsed.data : parsed.error.issues));
-
   if (!parsed.success) {
     redirect("/visao-geral");
   }
 
-  const switchResult = await switchActiveWorkspace(parsed.data.workspaceId);
-  console.error("[DEBUG switchWorkspaceAction] switchResult:", JSON.stringify(switchResult));
+  await switchActiveWorkspace(parsed.data.workspaceId);
   // Quem troca de workspace normalmente já está em /visao-geral (ou outra
   // página do app): redirect() para o MESMO caminho, sozinho, nem sempre
   // força o layout a reler o cookie que acabou de mudar — revalidatePath

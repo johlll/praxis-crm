@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { ROLES } from "@/lib/roles";
+import { uuidSchema } from "@/lib/uuid";
 
 export const createInvitationSchema = z.object({
   email: z.string().trim().toLowerCase().email("Informe um e-mail válido."),
@@ -8,15 +9,15 @@ export const createInvitationSchema = z.object({
 });
 
 export const invitationIdSchema = z.object({
-  invitationId: z.string().uuid(),
+  invitationId: uuidSchema,
 });
 
 export const membershipIdSchema = z.object({
-  membershipId: z.string().uuid(),
+  membershipId: uuidSchema,
 });
 
 export const updateMembershipRoleSchema = z.object({
-  membershipId: z.string().uuid(),
+  membershipId: uuidSchema,
   role: z.enum(ROLES),
 });
 
