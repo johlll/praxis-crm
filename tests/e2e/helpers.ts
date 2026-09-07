@@ -6,7 +6,10 @@ export async function login(page: Page, email: string): Promise<void> {
   await page.goto("/entrar");
   await page.getByLabel("E-mail").fill(email);
   await page.getByLabel("Senha").fill(SEED_PASSWORD);
-  await page.getByRole("button", { name: "Entrar", exact: true }).click();
+  // Scoped ao <form>: a aba "Entrar" (troca de modo) e o botão de submit
+  // têm o mesmo texto exato, então um getByRole solto na página inteira é
+  // ambíguo — só o formulário tem exatamente um botão "Entrar".
+  await page.locator("form").getByRole("button", { name: "Entrar", exact: true }).click();
   await expect(page).not.toHaveURL(/\/entrar/);
 }
 

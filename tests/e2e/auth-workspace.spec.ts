@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { SEED_USERS } from "./fixtures";
+import { SEED_PASSWORD, SEED_USERS } from "./fixtures";
 import { login, logout, switchWorkspace } from "./helpers";
 
 /**
@@ -25,7 +25,7 @@ test.describe.serial("autenticação e workspace", () => {
     await page.goto("/entrar");
     await page.getByLabel("E-mail").fill(SEED_USERS.ana.email);
     await page.getByLabel("Senha").fill("senha-errada-de-proposito");
-    await page.getByRole("button", { name: "Entrar", exact: true }).click();
+    await page.locator("form").getByRole("button", { name: "Entrar", exact: true }).click();
     await expect(page.getByText("E-mail ou senha incorretos.")).toBeVisible();
     await expect(page).toHaveURL(/\/entrar/);
   });
@@ -70,8 +70,8 @@ test.describe.serial("autenticação e workspace", () => {
     await expect(page.getByText(SEED_USERS.ana.workspaceName)).toBeVisible();
     await page.getByRole("link", { name: "Entrar para aceitar" }).click();
 
-    await page.getByLabel("Senha").fill("praxis-seed-nao-e-senha-real");
-    await page.getByRole("button", { name: "Entrar", exact: true }).click();
+    await page.getByLabel("Senha").fill(SEED_PASSWORD);
+    await page.locator("form").getByRole("button", { name: "Entrar", exact: true }).click();
 
     await expect(page).toHaveURL(/\/convite\//);
     await page.getByRole("button", { name: "Aceitar convite" }).click();
