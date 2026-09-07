@@ -99,10 +99,19 @@ export async function signInAction(
   // O id vem da própria consulta de membership do usuário, nunca do
   // cliente; switchActiveWorkspace revalida contra o banco de novo antes
   // de gravar.
-  if (!(await getActiveWorkspaceId())) {
-    const [firstWorkspace] = await listMyWorkspaces();
+  const beforeId = await getActiveWorkspaceId();
+  console.error("[DEBUG signInAction] activeWorkspaceId antes:", beforeId);
+  if (!beforeId) {
+    const workspaces = await listMyWorkspaces();
+    console.error("[DEBUG signInAction] listMyWorkspaces:", JSON.stringify(workspaces));
+    const [firstWorkspace] = workspaces;
     if (firstWorkspace) {
-      await switchActiveWorkspace(firstWorkspace.id);
+      const result = await switchActiveWorkspace(firstWorkspace.id);
+      console.error("[DEBUG signInAction] switchActiveWorkspace result:", JSON.stringify(result));
+      console.error(
+        "[DEBUG signInAction] activeWorkspaceId depois:",
+        await getActiveWorkspaceId(),
+      );
     }
   }
 
