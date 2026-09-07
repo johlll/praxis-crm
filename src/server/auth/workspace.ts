@@ -69,10 +69,20 @@ export async function getActiveWorkspaceId(): Promise<string | null> {
   if (!workspaceId) return null;
 
   const supabase = await createServerSupabaseClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  // A RLS de memberships é por workspace (qualquer membro vê os
+  // colegas), não por dono da linha — sem o filtro por user_id aqui,
+  // workspace com mais de um membro devolve mais de uma linha e
+  // .maybeSingle() falha, mesmo a membership do próprio usuário existindo.
   const { data } = await supabase
     .from("memberships")
     .select("workspace_id")
     .eq("workspace_id", workspaceId)
+    .eq("user_id", user.id)
     .eq("status", "active")
     .maybeSingle();
 
@@ -93,10 +103,21 @@ export async function switchActiveWorkspace(
   workspaceId: string,
 ): Promise<SwitchWorkspaceResult> {
   const supabase = await createServerSupabaseClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return { ok: false, error: "not_a_member" };
+  }
+
+  // Mesmo motivo do getActiveWorkspaceId: sem o filtro por user_id, um
+  // workspace com mais de um membro devolve mais de uma linha e
+  // .maybeSingle() falha — mesmo a membership do próprio usuário existindo.
   const { data } = await supabase
     .from("memberships")
     .select("workspace_id")
     .eq("workspace_id", workspaceId)
+    .eq("user_id", user.id)
     .eq("status", "active")
     .maybeSingle();
 
