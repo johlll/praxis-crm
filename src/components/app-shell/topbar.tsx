@@ -1,7 +1,6 @@
-import { Bell, LogOut, Plus } from "lucide-react";
+import { Bell, Plus } from "lucide-react";
 
 import { ROLE_LABEL, type Role } from "@/lib/roles";
-import { signOutAction } from "@/modules/auth/actions";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { GlobalSearch } from "./global-search";
+import { SignOutItem } from "./sign-out-item";
 
 type TopbarProps = {
   title: string;
@@ -89,14 +89,7 @@ export function Topbar({ title, subtitle, user }: TopbarProps) {
               <a href="/configuracoes/equipe">Equipe</a>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem asChild variant="danger">
-              <form action={signOutAction} className="contents">
-                <button type="submit" className="flex w-full items-center gap-2">
-                  <LogOut size={14} aria-hidden />
-                  Sair
-                </button>
-              </form>
-            </DropdownMenuItem>
+            <SignOutItem />
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
