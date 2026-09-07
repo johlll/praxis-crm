@@ -31,7 +31,10 @@ export async function listTeamMembers(
   const supabase = await createServerSupabaseClient();
   const { data } = await supabase
     .from("memberships")
-    .select("id, user_id, role, user:users(full_name, email)")
+    // users!memberships_user_id_fkey: memberships tem duas FKs para users
+    // (user_id e invited_by) — sem o hint, o PostgREST não sabe qual das
+    // duas usar para o embed.
+    .select("id, user_id, role, user:users!memberships_user_id_fkey(full_name, email)")
     .eq("workspace_id", workspaceId)
     .order("created_at", { ascending: true });
 
