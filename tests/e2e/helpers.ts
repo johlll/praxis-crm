@@ -33,7 +33,9 @@ export async function login(page: Page, email: string): Promise<void> {
 
 export async function logout(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Menu do usuário" }).click();
-  await page.getByRole("button", { name: "Sair" }).click();
+  // "menuitem", não "button": é um item de menu do Radix (mesmo papel
+  // ARIA dos itens de "Trocar de workspace"), não um <button> solto.
+  await page.getByRole("menuitem", { name: "Sair" }).click();
   await expect(page).toHaveURL(/\/entrar/);
 }
 
