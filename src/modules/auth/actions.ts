@@ -4,7 +4,8 @@ import type { Route } from "next";
 import { redirect } from "next/navigation";
 
 import { createServerSupabaseClient } from "@/server/supabase/server";
-import { clearActiveWorkspaceCookie } from "@/server/auth/workspace";
+import { clearActiveWorkspaceCookie, getActiveWorkspaceId, switchActiveWorkspace } from "@/server/auth/workspace";
+import { listMyWorkspaces } from "@/modules/workspace/queries";
 import { getRequestOrigin } from "@/server/request-origin";
 import { toUserMessage } from "@/lib/errors";
 import { signInSchema, signUpSchema } from "./schema";
@@ -90,6 +91,19 @@ export async function signInAction(
       ok: false,
       error: "E-mail ou senha incorretos.",
     };
+  }
+
+  // Sem isso, quem já é membro de um workspace (ex.: convidado antes,
+  // relogando num navegador novo) cai no /onboarding só por falta do
+  // cookie de workspace ativo — mesmo já tendo membership de verdade.
+  // O id vem da própria consulta de membership do usuário, nunca do
+  // cliente; switchActiveWorkspace revalida contra o banco de novo antes
+  // de gravar.
+  if (!(await getActiveWorkspaceId())) {
+    const [firstWorkspace] = await listMyWorkspaces();
+    if (firstWorkspace) {
+      await switchActiveWorkspace(firstWorkspace.id);
+    }
   }
 
   redirect(sanitizeNextPath(formData.get("next")));
