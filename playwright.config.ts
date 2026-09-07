@@ -13,7 +13,12 @@ export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0,
+  // 0 mesmo no CI: os testes são "describe.serial" com efeito colateral
+  // real no banco (convite criado, workspace criado) e sem reset entre
+  // tentativas — uma retentativa reexecuta o teste sobre estado que a
+  // primeira tentativa já alterou (ex.: workspace já existente), mascarando
+  // a causa real da falha atrás de um sintoma diferente na retentativa.
+  retries: 0,
   workers: 1,
   reporter: process.env.CI
     ? [["github"], ["html", { open: "never", outputFolder: "playwright-report" }]]

@@ -39,5 +39,9 @@ export async function logout(page: Page): Promise<void> {
 
 export async function switchWorkspace(page: Page, workspaceName: string): Promise<void> {
   await page.getByRole("button", { name: "Trocar de workspace" }).click();
-  await page.getByRole("menuitem", { name: new RegExp(workspaceName) }).click();
+  // Nome direto (substring), não RegExp: nomes de workspace têm
+  // parênteses literais (ex.: "Escritório Um (seed)") — um RegExp
+  // construído a partir da string trataria "(seed)" como grupo de
+  // captura, não texto literal, e nunca bateria com o nome real.
+  await page.getByRole("menuitem", { name: workspaceName }).click();
 }
