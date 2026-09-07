@@ -55,19 +55,26 @@ jobs:
 
       - name: Exportar credenciais do Supabase local para o build/e2e
         run: |
-          # api.url mapeia certo com --override-name (confirmado rodando).
-          # A chave pública não: o `--help` da CLI só documenta o exemplo
-          # de api.url, e "api.anon_key" não existe de verdade — o nome
-          # que a própria CLI emite por padrão é PUBLISHABLE_KEY (visto no
-          # log de um run anterior). Em vez de adivinhar de novo o nome
-          # certo do lado esquerdo do override, captura-se o padrão e
-          # reexporta sob o nome que o Next.js espera.
-          supabase status -o env --override-name api.url=NEXT_PUBLIC_SUPABASE_URL >> "$GITHUB_ENV"
-          eval "$(supabase status -o env)"
-          echo "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=$PUBLISHABLE_KEY" >> "$GITHUB_ENV"
-          # Segredo só para este job efêmero (Postgres local descartado ao
-          # fim do workflow) — nunca o do projeto hospedado de verdade.
-          echo "WORKSPACE_ACTIVE_COOKIE_SECRET=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+          # Escreve .env.local de verdade em vez de só exportar em
+          # $GITHUB_ENV: o webServer que o Playwright sobe (npm run start,
+          # dentro de mais uma camada de subprocesso) voltou a reclamar de
+          # NEXT_PUBLIC_SUPABASE_URL ausente mesmo com a variável presente
+          # no ambiente do próprio step — Next.js lê .env.local direto do
+          # checkout tanto em build quanto em start, sem depender de
+          # quantas camadas de processo filho o valor precisou atravessar.
+          RAW="$(supabase status -o env)"
+          echo "Nomes de variável que 'supabase status -o env' emite:"
+          echo "$RAW" | cut -d= -f1
+          eval "$RAW"
+          {
+            echo "NEXT_PUBLIC_SUPABASE_URL=${API_URL:?API_URL vazio — nome da variável mudou, ver lista acima}"
+            echo "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=${PUBLISHABLE_KEY:?PUBLISHABLE_KEY vazio — nome da variável mudou, ver lista acima}"
+            # Segredo só para este job efêmero (Postgres local descartado
+            # ao fim do workflow) — nunca o do projeto hospedado de verdade.
+            echo "WORKSPACE_ACTIVE_COOKIE_SECRET=$(openssl rand -base64 32)"
+          } > .env.local
+          echo "Conferindo .env.local (valores mascarados):"
+          sed -E 's/=(.{6}).*/=\1.../' .env.local
 
       - name: Build
         run: npm run build

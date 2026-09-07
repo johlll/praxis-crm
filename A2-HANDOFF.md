@@ -309,19 +309,27 @@ minha leitura do SQL.
 
 ## 7. Riscos e decisões pendentes
 
-1. ~~`--override-name api.anon_key=...`~~ — **confirmado errado e
-   corrigido.** `api.anon_key` não existe de verdade; o nome que a CLI usa
-   por padrão é `PUBLISHABLE_KEY` (visto direto no log de um run: a etapa
-   de Build tinha `NEXT_PUBLIC_SUPABASE_URL` certo — aquele override
-   funcionou — mas só `PUBLISHABLE_KEY`, não
-   `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`). Isso derrubou o e2e: o
-   `next start` do Playwright serve a primeira request, `src/proxy.ts`
-   chama `getEnv()` a cada request, e sem a chave a validação Zod falha —
-   por isso o build (que não executa rota nenhuma de verdade, só marca
-   as dinâmicas) passava e o e2e não. Corrigido capturando o nome padrão
-   via `eval "$(supabase status -o env)"` e reexportando sob o nome que o
-   Next.js espera, em vez de adivinhar o lado esquerdo do override de
-   novo.
+1. ~~Credenciais do Supabase local não chegavam no `next start` do
+   e2e~~ — **duas rodadas de correção, a segunda mudando de estratégia.**
+   Primeiro: `--override-name api.anon_key=...` não existe de verdade — o
+   nome real é `PUBLISHABLE_KEY` (confirmado no log: o Build tinha
+   `NEXT_PUBLIC_SUPABASE_URL` certo, mas só `PUBLISHABLE_KEY`, não
+   `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`). Corrigido capturando o nome
+   padrão via `eval` e reexportando com `$GITHUB_ENV`. Isso resolveu a
+   chave, mas o run seguinte voltou a reclamar — desta vez de
+   `NEXT_PUBLIC_SUPABASE_URL`, que **estava confirmadamente presente** no
+   ambiente do próprio step (visto no log). O webServer que o Playwright
+   sobe roda `next start` dentro de mais uma camada de subprocesso
+   (`playwright test` → `npm run start` → `next start`), e alguma dessas
+   camadas não repassava a variável de forma confiável. Troquei de
+   estratégia: em vez de depender de `$GITHUB_ENV`/herança de ambiente
+   entre processos, o step agora escreve um `.env.local` de verdade no
+   checkout — Next.js lê esse arquivo direto tanto em build quanto em
+   start, sem depender de quantos processos filhos o valor atravessou.
+   Também troquei os nomes de variável "adivinhados" por uma falha
+   explícita (`${API_URL:?...}`) caso a CLI mude de novo, em vez de
+   escrever um `.env.local` com valor vazio e falhar de forma confusa só
+   60 segundos depois.
 2. **Nenhuma tela de "reset de senha"** — não estava no escopo pedido
    (login por e-mail/senha, cadastro, confirmação de e-mail); ficaria natural
    como extensão pequena de `/entrar`, mas eu não implementei sem que fosse
