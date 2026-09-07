@@ -6,7 +6,7 @@
 -- monta a partir do JWT — é a mesma checagem que vale em produção.
 
 begin;
-select plan(24);
+select plan(26);
 
 -- Atalhos para os UUIDs fixos do seed.
 \set ana        '20000000-0000-0000-0000-000000000001'
@@ -144,18 +144,28 @@ select throws_ok(
   'Ana não consegue se autoconceder — nem conceder a outra pessoa — membership por INSERT direto'
 );
 
-select throws_ok(
+-- Diferente do INSERT (que tem uma linha nova para o Postgres rejeitar e
+-- por isso lança 42501), a policy `using (false)` de UPDATE/DELETE não
+-- lança erro — ela só faz o WHERE não enxergar nenhuma linha, então o
+-- comando "funciona" e afeta zero linhas. A garantia de segurança é a
+-- mesma (o papel de Carla não muda), só a forma de verificar é diferente.
+select lives_ok(
   format($i$ update public.memberships set role = 'owner' where workspace_id = %L and user_id = %L $i$, :'ws_um', :'carla'),
-  '42501',
-  null,
-  'UPDATE direto de role em memberships é negado — só update_membership_role()'
+  'UPDATE direto de role em memberships "funciona" mas não afeta linha nenhuma'
+);
+select is(
+  (select role from public.memberships where workspace_id = :'ws_um'::uuid and user_id = :'carla'::uuid)::text,
+  'lawyer',
+  'O papel de Carla continua lawyer — o UPDATE direto acima não mudou nada de verdade'
 );
 
-select throws_ok(
+select lives_ok(
   format($i$ delete from public.memberships where workspace_id = %L and user_id = %L $i$, :'ws_um', :'carla'),
-  '42501',
-  null,
-  'DELETE direto em memberships é negado — só remove_membership()'
+  'DELETE direto em memberships "funciona" mas não afeta linha nenhuma'
+);
+select ok(
+  exists(select 1 from public.memberships where workspace_id = :'ws_um'::uuid and user_id = :'carla'::uuid),
+  'A membership de Carla continua existindo — o DELETE direto acima não apagou nada de verdade'
 );
 
 -- -----------------------------------------------------------------

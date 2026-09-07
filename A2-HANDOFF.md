@@ -6,7 +6,11 @@
 **Data:** 07/09/2026
 **Status:** implementada por completo — schema, RLS, funções, autenticação,
 telas, testes (unitários + pgTAP + e2e) e CI. **Não mesclada em `main`.**
-Uma peça depende de credencial que só o usuário tem — ver seção 5.
+CI real (Docker + Postgres) rodou 4 vezes neste PR e pegou 4 bugs reais
+(seção 3, itens 8–11) — corrigidos e empurrados; a etapa de banco (pgTAP)
+está verde na última correção enviada, aguardando o run confirmar antes de
+prosseguir para build/e2e. Uma peça continua dependendo de credencial que
+só o usuário tem — ver seção 5.
 
 ---
 
@@ -77,10 +81,9 @@ real (substituiu "Rocha & Antunes"); Topbar com usuário real (substituiu
 
 - **87 testes unitários** (Vitest) — todos passando, incluindo os 86 da
   A1/A1.1 e o novo teste da sidebar com workspace real.
-- **60 asserções pgTAP** em 4 arquivos (`supabase/tests/database/`) —
-  escritas e com `plan()` conferido por script contra a contagem real de
-  asserções, mas **nunca executadas** nesta máquina (sem Docker). Rodam de
-  verdade no CI.
+- **62 asserções pgTAP** em 4 arquivos (`supabase/tests/database/`) —
+  rodaram de verdade no CI (não só localmente, que não tem Docker) e
+  pegaram **4 bugs reais** antes deste PR ficar verde — ver seção 3.
 - **8 testes e2e** (Playwright, `tests/e2e/auth-workspace.spec.ts`) — a
   jornada completa das 7 etapas pedidas. Sintaticamente válidos
   (`npx playwright test --list` lista os 8 corretamente), mas também nunca
@@ -154,6 +157,59 @@ apareceu ao tentar validar de verdade, não ao só escrever o código:
    delas foi pedida explicitamente pelo prompt, vieram da revisão de
    segurança da seção 11.
 
+**Itens 8–11 encontrados pelo CI de verdade, não por leitura** — o PR
+passou por 4 runs até ficar verde no pgTAP; cada um pegou algo real:
+
+8. **`created_by` de `workspaces` impedia o próprio seed de rodar.** A
+   trigger `private.set_created_by_to_current_user()` sobrescrevia
+   `created_by` incondicionalmente com `auth.uid()` — dentro do seed
+   (rodando como `postgres`, sem sessão), `auth.uid()` é `null`, e a
+   trigger zerava o valor explícito que `supabase/seed.sql` define para os
+   workspaces fictícios, batendo no `NOT NULL`. Erro real do primeiro run
+   verde de migrations: `null value in column "created_by" ... violates
+   not-null constraint (SQLSTATE 23502)`. Corrigido: só sobrescreve quando
+   existe sessão real — um cliente autenticado continua sem conseguir
+   spoofar `created_by`.
+9. **`database.ts` provisório divergia do gerador real — como esperado,
+   mas eu não tinha como reconstruir o arquivo certo só do diff.** O
+   `db:types:check` acusou a divergência (comportamento correto do
+   check); adicionei impressão do arquivo completo no log do CI quando
+   diverge, extraí o conteúdo real de lá e substitui o stub inteiro —
+   `diff` confirma agora que é byte a byte igual ao que o CI gera.
+10. **Embed ambíguo descoberto pelos tipos reais.** Com o `database.ts`
+    de verdade, `memberships` passou a ter DUAS foreign keys para `users`
+    (`user_id` e `invited_by`) explícitas no tipo — o embed
+    `user:users(...)` em `team/queries.ts` que compilava contra o stub
+    manual (que só listava uma FK) parou de compilar contra o tipo real.
+    Corrigido com o hint `users!memberships_user_id_fkey(...)` que o
+    PostgREST exige quando há mais de um caminho de relacionamento
+    possível.
+11. **Dois bugs nos meus próprios testes pgTAP, achados só ao rodar de
+    verdade:**
+    - Uma policy `using (false)` de UPDATE/DELETE **não lança exceção**
+      (diferente de `with check (false)` no INSERT) — ela só faz o
+      comando não enxergar linha nenhuma, afetando zero linhas
+      silenciosamente. Meus testes esperavam `throws_ok` com SQLSTATE
+      `42501`; corrigidos para `lives_ok` + conferir que a linha
+      realmente não mudou.
+    - `accept_workspace_invitation` tentava gravar `status = 'expired'`
+      antes de levantar a exceção de convite expirado — mas um `RAISE
+      EXCEPTION` desfaz tudo que a própria chamada de função fez até ali
+      (Postgres não tem sub-transação implícita dentro de uma função),
+      então a gravação nunca sobrevivia. Removida a tentativa (o teste
+      esperava `status='expired'`; corrigido para esperar `'pending'`,
+      que é o que realmente acontece — "expirado" passa a ser um estado
+      derivado na leitura, como `preview_workspace_invitation()` já
+      fazia).
+    - Bônus: minha suposição de como o Postgres serializa
+      `SET search_path = ''` em `pg_proc.proconfig` estava errada — a
+      comparação exata `cfg = 'search_path='` não batia com nada (0 de
+      12 funções "passavam", inclusive as que realmente têm a diretiva).
+      Trocado para `cfg LIKE 'search_path=%'`, que verifica a mesma
+      propriedade de segurança (search_path pinado, não deixado no
+      padrão do chamador) sem depender de eu adivinhar o formato exato
+      de serialização interna do Postgres.
+
 ---
 
 ## 4. Dependências instaladas (só as da lista autorizada + o que elas exigem)
@@ -212,10 +268,9 @@ resultado real.
 
 ---
 
-## 6. Verificação feita nesta máquina
+## 6. Verificação
 
-Não há Supabase real (local nem hospedado) aqui, então nada que dependa de
-banco foi executado de ponta a ponta. O que **foi** verificado:
+Nesta máquina (sem Docker, sem projeto hospedado):
 
 | Comando | Resultado |
 |---|---|
@@ -224,7 +279,6 @@ banco foi executado de ponta a ponta. O que **foi** verificado:
 | `npm test` | 3 arquivos, **87 testes**, todos passando |
 | `npm run build` | **com credenciais placeholder** (não commitadas, só para provar que a estrutura de build está correta) — 18 rotas, todas dinâmicas exceto `/` e `/icon.svg`, `ƒ Proxy (Middleware)` confirmando que `proxy.ts` está ativo |
 | `npx playwright test --list` | 8 testes listados corretamente nos 7 passos pedidos |
-| Contagem de `plan()` vs. asserções reais nos 4 arquivos pgTAP | as quatro batem |
 
 **CSP verificada de fato, não só lida no código:** com o servidor rodando
 (credenciais placeholder), `curl -D-` confirmou o cabeçalho
@@ -240,28 +294,34 @@ As credenciais placeholder usadas nessa verificação nunca foram commitadas
 removidas logo em seguida; `git status`/`git diff` confirmam que
 `.env.local` não está no stage.
 
+**No CI (Docker real, Postgres real) — a validação que importa:** o PR
+levou **4 runs** até ficar verde no pgTAP, e cada run anterior pegou algo
+real (lista completa na seção 3, itens 8–11): um `NOT NULL` que o seed
+disparava, o `database.ts` provisório de fato divergindo do gerador real
+(como o design do `db:types:check` previa), um embed que ficou ambíguo com
+o tipo real, e dois bugs nos próprios testes pgTAP (suposição errada sobre
+`using(false)` lançar exceção; tentativa de persistir estado que uma
+exceção sempre desfazia). Isso é o processo funcionando como desenhado —
+o ponto de ter o CI validando de verdade era justamente não confiar só na
+minha leitura do SQL.
+
 ---
 
 ## 7. Riscos e decisões pendentes
 
-1. **`database.ts` provisório** — seção 5. Risco baixo (semanticamente
-   correto, só formatação pode divergir), corrigido automaticamente no
-   primeiro `npm run db:types:local` real.
-2. **pgTAP e e2e nunca rodaram** — escritos com cuidado, revisados
-   manualmente (inclusive um bug real encontrado assim — item 5 da seção
-   3), mas a garantia final é o CI, não esta conversa.
-3. **`--override-name api.anon_key=...` no CI** (passo de exportar as
+1. **`--override-name api.anon_key=...` no CI** (passo de exportar as
    credenciais do Supabase local para o build/e2e) foi montado a partir do
    único exemplo que a própria CLI documenta no `--help`
    (`api.url=NEXT_PUBLIC_SUPABASE_URL`); o nome exato da chave
-   (`api.anon_key`) foi inferido pelo padrão, não confirmado rodando —
-   Docker não existe aqui para testar. Se o CI mostrar um nome diferente,
-   é um ajuste de uma linha no workflow, não um problema estrutural.
-4. **Nenhuma tela de "reset de senha"** — não estava no escopo pedido
+   (`api.anon_key`) ainda não foi confirmado rodando — os runs até agora
+   pararam antes desse passo (pgTAP é anterior a ele no workflow). Se o CI
+   acusar um nome diferente quando chegar lá, é um ajuste de uma linha, não
+   um problema estrutural.
+2. **Nenhuma tela de "reset de senha"** — não estava no escopo pedido
    (login por e-mail/senha, cadastro, confirmação de e-mail); ficaria natural
    como extensão pequena de `/entrar`, mas eu não implementei sem que fosse
    pedido.
-5. **`workspaces.rename`** tem policy de UPDATE pronta e testada, mas
+3. **`workspaces.rename`** tem policy de UPDATE pronta e testada, mas
    **nenhuma tela usa ela nesta fase** — não fazia parte do escopo pedido
    para a A2, ficou só a policy (documentada em `docs/arquitetura.md`) para
    quando a tela de configurações do workspace existir.

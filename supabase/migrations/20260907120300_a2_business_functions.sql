@@ -269,8 +269,14 @@ begin
     raise exception 'invitation_not_pending';
   end if;
 
+  -- Não grava status='expired' aqui: um UPDATE seguido de RAISE EXCEPTION
+  -- na mesma chamada é desfeito junto com a exceção (Postgres não tem
+  -- sub-transação implícita dentro de uma função) — a linha continuaria
+  -- 'pending' de qualquer forma. "Expirado" é derivado na leitura
+  -- (expires_at < now() com status ainda pending), como já faz
+  -- preview_workspace_invitation(); persistir de verdade, se um dia for
+  -- preciso, é trabalho de um cron futuro, não desta função.
   if v_invitation.expires_at < now() then
-    update public.workspace_invitations set status = 'expired' where id = v_invitation.id;
     raise exception 'invitation_expired';
   end if;
 

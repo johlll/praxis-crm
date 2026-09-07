@@ -38,11 +38,17 @@ select throws_ok(
   'Aceitar convite expirado falha com invitation_expired'
 );
 
+-- O UPDATE que a função tentava fazer antes de levantar a exceção seria
+-- desfeito junto com ela (Postgres não tem sub-transação implícita dentro
+-- de uma função) — por isso a função nem tenta mais, e o status
+-- corretamente CONTINUA 'pending' aqui. "Expirado" é derivado na leitura
+-- (ver preview_workspace_invitation), nunca persistido por uma tentativa
+-- de aceite que falhou.
 set local role postgres;
 select is(
   (select status from public.workspace_invitations where token_hash = encode(extensions.digest('token-teste-expirado', 'sha256'), 'hex'))::text,
-  'expired',
-  'A tentativa de aceite marca o convite expirado como status=expired (não fica pendente para sempre)'
+  'pending',
+  'O convite expirado continua com status=pending — quem persiste isso é um cron futuro, não o accept que falhou'
 );
 
 -- -----------------------------------------------------------------

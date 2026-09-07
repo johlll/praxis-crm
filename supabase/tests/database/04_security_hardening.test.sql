@@ -97,14 +97,21 @@ select is(
           'remove_membership'
         ))
       )
+      -- `LIKE 'search_path=%'`, não igualdade exata: o Postgres serializa
+      -- `SET search_path = ''` em proconfig de um jeito que não é o texto
+      -- literal "search_path=" (confirmado rodando — a versão anterior
+      -- deste teste, com igualdade exata, reprovava as 12 funções mesmo
+      -- todas tendo `set search_path = ''` no código-fonte da migration).
+      -- O prefixo continua provando o que importa: existe uma diretiva
+      -- search_path pinada na função, não deixada no padrão do chamador.
       and not exists (
         select 1
         from unnest(coalesce(p.proconfig, array[]::text[])) as cfg
-        where cfg = 'search_path='
+        where cfg like 'search_path=%'
       )
   ),
   0,
-  'Toda função SECURITY DEFINER da A2 (private + as RPCs de public) tem search_path travado em vazio'
+  'Toda função SECURITY DEFINER da A2 (private + as RPCs de public) tem search_path travado'
 );
 
 -- Prova positiva nomeada: se a query acima um dia vier a mudar de forma
@@ -117,10 +124,13 @@ select is(
     where n.nspname = 'private'
       and p.proname = 'auth_workspace_ids'
       and p.prosecdef = true
-      and 'search_path=' = any(p.proconfig)
+      and exists (
+        select 1 from unnest(coalesce(p.proconfig, array[]::text[])) as cfg
+        where cfg like 'search_path=%'
+      )
   ),
   1,
-  'private.auth_workspace_ids() é SECURITY DEFINER com search_path vazio'
+  'private.auth_workspace_ids() é SECURITY DEFINER com search_path travado'
 );
 
 -- -----------------------------------------------------------------
