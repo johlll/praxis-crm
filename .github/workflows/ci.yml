@@ -8,6 +8,11 @@ on:
 jobs:
   verificar:
     runs-on: ubuntu-latest
+    # O CI nunca depende do projeto Supabase de produção nem do
+    # praxis-crm-dev hospedado: sobe um Postgres local do zero, via Docker
+    # (o runner do GitHub já tem), aplica as migrations desta branch nele e
+    # roda os testes de banco ali — é este job, não a máquina de
+    # desenvolvimento, quem valida migrations e RLS de verdade.
     steps:
       - uses: actions/checkout@v5
 
@@ -17,7 +22,8 @@ jobs:
           cache: npm
 
       # `npm ci` instala exatamente o que está no lockfile.
-      - run: npm ci
+      - name: Instalar dependências
+        run: npm ci
 
       - name: Typecheck
         run: npm run typecheck
@@ -25,8 +31,47 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Testes
+      - name: Testes unitários
         run: npm test
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.116.0
+
+      - name: Subir Supabase local
+        run: supabase start
+
+      - name: Aplicar migrations do zero (local)
+        run: supabase db reset --local
+
+      - name: Gerar tipos e comparar com o que está commitado
+        run: npm run db:types:check
+
+      - name: Testes de banco — RLS, convites, último owner, hardening (pgTAP)
+        run: npm run test:db
+
+      - name: Testes de isolamento entre workspaces
+        run: npm run test:isolation
+
+      - name: Exportar credenciais do Supabase local para o build/e2e
+        run: |
+          supabase status -o env \
+            --override-name api.url=NEXT_PUBLIC_SUPABASE_URL \
+            --override-name api.anon_key=NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY \
+            >> "$GITHUB_ENV"
+          # Segredo só para este job efêmero (Postgres local descartado ao
+          # fim do workflow) — nunca o do projeto hospedado de verdade.
+          echo "WORKSPACE_ACTIVE_COOKIE_SECRET=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
 
       - name: Build
         run: npm run build
+
+      - name: Instalar navegadores do Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Testes e2e (login, workspace, convite, troca, logout)
+        run: npm run test:e2e
+
+      - name: Parar Supabase local
+        if: always()
+        run: supabase stop

@@ -1,15 +1,19 @@
 "use client";
 
+import { useTransition } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   BarChart3,
   Briefcase,
   CalendarDays,
+  Check,
   CheckSquare,
+  ChevronsUpDown,
   FileText,
   LayoutGrid,
   MessageCircle,
+  Plus,
   Settings,
   Users,
   Zap,
@@ -17,6 +21,17 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { initialsOf } from "@/lib/initials";
+import { ROLE_LABEL, type Role } from "@/lib/roles";
+import { switchWorkspaceAction } from "@/modules/workspace/actions";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   primaryNav,
   secondaryNav,
@@ -57,10 +72,33 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   );
 }
 
-export function Sidebar() {
+export type SidebarWorkspace = {
+  id: string;
+  name: string;
+  slug: string;
+  role: Role;
+};
+
+type SidebarProps = {
+  activeWorkspace: SidebarWorkspace;
+  workspaces: SidebarWorkspace[];
+};
+
+export function Sidebar({ activeWorkspace, workspaces }: SidebarProps) {
   const pathname = usePathname();
+  const [isPending, startTransition] = useTransition();
+
   const isActive = (href: string) =>
     pathname === href || pathname.startsWith(`${href}/`);
+
+  function handleSwitch(workspaceId: string) {
+    if (workspaceId === activeWorkspace.id) return;
+    const formData = new FormData();
+    formData.set("workspaceId", workspaceId);
+    startTransition(() => {
+      void switchWorkspaceAction(formData);
+    });
+  }
 
   return (
     <aside className="flex w-sidebar shrink-0 flex-col bg-sidebar px-3 pt-4 pb-3 text-sidebar-text-strong">
@@ -88,26 +126,55 @@ export function Sidebar() {
       </nav>
 
       <div className="mt-auto flex flex-col gap-3">
-        {/*
-          O bloco "Metas do mês" do protótipo depende de dados reais
-          (consultas realizadas no período). Entra em A10, com o dashboard.
-        */}
-        <div className="flex items-center gap-2.5 rounded-md bg-white/6 px-2.5 py-2.5">
-          <div
-            className="flex size-8 items-center justify-center rounded-md bg-sidebar-active/20 text-meta font-bold text-sidebar-badge-text"
-            aria-hidden
-          >
-            RA
-          </div>
-          <div className="flex min-w-0 flex-col">
-            <span className="truncate text-small font-semibold text-white">
-              Rocha &amp; Antunes
-            </span>
-            <span className="truncate text-meta text-sidebar-muted">
-              Advogados Associados
-            </span>
-          </div>
-        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              disabled={isPending}
+              aria-label="Trocar de workspace"
+              className="flex items-center gap-2.5 rounded-md bg-white/6 px-2.5 py-2.5 text-left transition-colors hover:bg-white/10 disabled:opacity-60"
+            >
+              <div
+                className="flex size-8 shrink-0 items-center justify-center rounded-md bg-sidebar-active/20 text-meta font-bold text-sidebar-badge-text"
+                aria-hidden
+              >
+                {initialsOf(activeWorkspace.name)}
+              </div>
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-small font-semibold text-white">
+                  {activeWorkspace.name}
+                </span>
+                <span className="truncate text-meta text-sidebar-muted">
+                  {ROLE_LABEL[activeWorkspace.role]}
+                </span>
+              </div>
+              <ChevronsUpDown
+                size={14}
+                className="shrink-0 text-sidebar-muted"
+                aria-hidden
+              />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" side="top" className="w-[248px]">
+            <DropdownMenuLabel>Seus workspaces</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {workspaces.map((ws) => (
+              <DropdownMenuItem key={ws.id} onSelect={() => handleSwitch(ws.id)}>
+                <span className="flex-1 truncate">{ws.name}</span>
+                {ws.id === activeWorkspace.id ? (
+                  <Check size={14} className="text-primary" aria-hidden />
+                ) : null}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem asChild>
+              <Link href="/onboarding">
+                <Plus size={14} aria-hidden />
+                Criar novo workspace
+              </Link>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </aside>
   );

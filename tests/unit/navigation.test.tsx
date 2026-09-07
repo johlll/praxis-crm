@@ -1,16 +1,27 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { Sidebar } from "@/components/app-shell/sidebar";
+import { Sidebar, type SidebarWorkspace } from "@/components/app-shell/sidebar";
 import { primaryNav, secondaryNav } from "@/components/app-shell/navigation";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/pipeline",
 }));
 
+vi.mock("@/modules/workspace/actions", () => ({
+  switchWorkspaceAction: vi.fn(),
+}));
+
+const activeWorkspace: SidebarWorkspace = {
+  id: "10000000-0000-0000-0000-000000000001",
+  name: "Escritório Um (seed)",
+  slug: "escritorio-um-seed",
+  role: "owner",
+};
+
 describe("Sidebar", () => {
   it("exibe todos os itens de navegação do protótipo", () => {
-    render(<Sidebar />);
+    render(<Sidebar activeWorkspace={activeWorkspace} workspaces={[activeWorkspace]} />);
 
     for (const item of [...primaryNav, ...secondaryNav]) {
       expect(screen.getByRole("link", { name: item.label })).toHaveAttribute(
@@ -21,7 +32,7 @@ describe("Sidebar", () => {
   });
 
   it("marca apenas a rota atual com aria-current", () => {
-    render(<Sidebar />);
+    render(<Sidebar activeWorkspace={activeWorkspace} workspaces={[activeWorkspace]} />);
 
     expect(screen.getByRole("link", { name: "Pipeline" })).toHaveAttribute(
       "aria-current",
@@ -30,5 +41,11 @@ describe("Sidebar", () => {
     expect(screen.getByRole("link", { name: "Leads" })).not.toHaveAttribute(
       "aria-current",
     );
+  });
+
+  it("mostra o workspace ativo no rodapé", () => {
+    render(<Sidebar activeWorkspace={activeWorkspace} workspaces={[activeWorkspace]} />);
+
+    expect(screen.getByText("Escritório Um (seed)")).toBeInTheDocument();
   });
 });
