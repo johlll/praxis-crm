@@ -1,0 +1,19 @@
+node_modules/
+.next/
+out/
+build/
+coverage/
+
+# Segredos — nunca commitar (checklist §14)
+.env
+.env.*
+!.env.example
+
+# Capturas de conferência visual
+*.png
+.playwright-cli/
+
+.DS_Store
+*.tsbuildinfo
+next-env.d.ts
+.vercel
