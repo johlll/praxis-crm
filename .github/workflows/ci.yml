@@ -55,10 +55,16 @@ jobs:
 
       - name: Exportar credenciais do Supabase local para o build/e2e
         run: |
-          supabase status -o env \
-            --override-name api.url=NEXT_PUBLIC_SUPABASE_URL \
-            --override-name api.anon_key=NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY \
-            >> "$GITHUB_ENV"
+          # api.url mapeia certo com --override-name (confirmado rodando).
+          # A chave pública não: o `--help` da CLI só documenta o exemplo
+          # de api.url, e "api.anon_key" não existe de verdade — o nome
+          # que a própria CLI emite por padrão é PUBLISHABLE_KEY (visto no
+          # log de um run anterior). Em vez de adivinhar de novo o nome
+          # certo do lado esquerdo do override, captura-se o padrão e
+          # reexporta sob o nome que o Next.js espera.
+          supabase status -o env --override-name api.url=NEXT_PUBLIC_SUPABASE_URL >> "$GITHUB_ENV"
+          eval "$(supabase status -o env)"
+          echo "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=$PUBLISHABLE_KEY" >> "$GITHUB_ENV"
           # Segredo só para este job efêmero (Postgres local descartado ao
           # fim do workflow) — nunca o do projeto hospedado de verdade.
           echo "WORKSPACE_ACTIVE_COOKIE_SECRET=$(openssl rand -base64 32)" >> "$GITHUB_ENV"

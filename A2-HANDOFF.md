@@ -309,14 +309,19 @@ minha leitura do SQL.
 
 ## 7. Riscos e decisões pendentes
 
-1. **`--override-name api.anon_key=...` no CI** (passo de exportar as
-   credenciais do Supabase local para o build/e2e) foi montado a partir do
-   único exemplo que a própria CLI documenta no `--help`
-   (`api.url=NEXT_PUBLIC_SUPABASE_URL`); o nome exato da chave
-   (`api.anon_key`) ainda não foi confirmado rodando — os runs até agora
-   pararam antes desse passo (pgTAP é anterior a ele no workflow). Se o CI
-   acusar um nome diferente quando chegar lá, é um ajuste de uma linha, não
-   um problema estrutural.
+1. ~~`--override-name api.anon_key=...`~~ — **confirmado errado e
+   corrigido.** `api.anon_key` não existe de verdade; o nome que a CLI usa
+   por padrão é `PUBLISHABLE_KEY` (visto direto no log de um run: a etapa
+   de Build tinha `NEXT_PUBLIC_SUPABASE_URL` certo — aquele override
+   funcionou — mas só `PUBLISHABLE_KEY`, não
+   `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`). Isso derrubou o e2e: o
+   `next start` do Playwright serve a primeira request, `src/proxy.ts`
+   chama `getEnv()` a cada request, e sem a chave a validação Zod falha —
+   por isso o build (que não executa rota nenhuma de verdade, só marca
+   as dinâmicas) passava e o e2e não. Corrigido capturando o nome padrão
+   via `eval "$(supabase status -o env)"` e reexportando sob o nome que o
+   Next.js espera, em vez de adivinhar o lado esquerdo do override de
+   novo.
 2. **Nenhuma tela de "reset de senha"** — não estava no escopo pedido
    (login por e-mail/senha, cadastro, confirmação de e-mail); ficaria natural
    como extensão pequena de `/entrar`, mas eu não implementei sem que fosse
