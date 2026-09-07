@@ -17,7 +17,14 @@ if ! diff -q "$COMMITTED" "$FRESH" > /dev/null; then
   echo "Rode 'npm run db:types:local' (com o Supabase local rodando) e commit o resultado." >&2
   echo >&2
   echo "Diferença:" >&2
-  diff "$COMMITTED" "$FRESH" || true
+  diff "$COMMITTED" "$FRESH" >&2 || true
+  echo >&2
+  # Conteúdo completo do arquivo esperado — útil quando quem está lendo o
+  # log não tem Docker para rodar o gerador (é o caso do ambiente de
+  # desenvolvimento atual, ver A2-HANDOFF.md).
+  echo "===== INICIO DO ARQUIVO GERADO =====" >&2
+  cat "$FRESH" >&2
+  echo "===== FIM DO ARQUIVO GERADO =====" >&2
   exit 1
 fi
 
