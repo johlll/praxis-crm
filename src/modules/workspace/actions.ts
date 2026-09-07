@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { requireUser } from "@/server/authz/permissions";
@@ -29,5 +30,11 @@ export async function switchWorkspaceAction(formData: FormData): Promise<void> {
   }
 
   await switchActiveWorkspace(parsed.data.workspaceId);
+  // Quem troca de workspace normalmente já está em /visao-geral (ou outra
+  // página do app): redirect() para o MESMO caminho, sozinho, nem sempre
+  // força o layout a reler o cookie que acabou de mudar — revalidatePath
+  // invalida o cache do layout inteiro antes do redirect confirmar a
+  // navegação.
+  revalidatePath("/", "layout");
   redirect("/visao-geral");
 }
