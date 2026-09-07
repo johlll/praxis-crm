@@ -10,6 +10,22 @@ export async function login(page: Page, email: string): Promise<void> {
   // têm o mesmo texto exato, então um getByRole solto na página inteira é
   // ambíguo — só o formulário tem exatamente um botão "Entrar".
   await page.locator("form").getByRole("button", { name: "Entrar", exact: true }).click();
+
+  // Se ficou em /entrar, o motivo quase sempre é a Alert de erro da própria
+  // action — inclui o texto dela na falha em vez de só "esperava sair de
+  // /entrar", que não diz o porquê.
+  if (/\/entrar/.test(page.url())) {
+    const alertText = await page
+      .getByRole("alert")
+      .first()
+      .textContent({ timeout: 2000 })
+      .catch(() => null);
+    expect(
+      page.url(),
+      `login para ${email} não saiu de /entrar — alerta na tela: ${alertText ?? "(nenhum)"}`,
+    ).not.toMatch(/\/entrar/);
+  }
+
   await expect(page).not.toHaveURL(/\/entrar/);
 }
 

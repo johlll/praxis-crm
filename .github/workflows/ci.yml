@@ -85,6 +85,14 @@ jobs:
       - name: Testes e2e (login, workspace, convite, troca, logout)
         run: npm run test:e2e
 
+      - name: Publicar relatório do Playwright (só se algo falhar)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
       - name: Parar Supabase local
         if: always()
         run: supabase stop
