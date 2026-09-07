@@ -70,6 +70,59 @@ insert into auth.users (
   );
 
 -- ---------------------------------------------------------------------
+-- auth.identities — sem esta linha por usuário, o login por senha falha
+-- no GoTrue com "Database error querying schema": a consulta de login
+-- espera uma identidade do provider 'email' vinculada ao usuário, não
+-- só a linha em auth.users. `provider_id` é o próprio id do usuário,
+-- convenção do GoTrue para o provider 'email'.
+-- ---------------------------------------------------------------------
+
+insert into auth.identities (
+  provider_id, user_id, identity_data, provider,
+  last_sign_in_at, created_at, updated_at
+) values
+  (
+    '20000000-0000-0000-0000-000000000001',
+    '20000000-0000-0000-0000-000000000001',
+    jsonb_build_object(
+      'sub', '20000000-0000-0000-0000-000000000001',
+      'email', 'owner-a.seed@praxis.test',
+      'email_verified', true
+    ),
+    'email', now(), now(), now()
+  ),
+  (
+    '20000000-0000-0000-0000-000000000002',
+    '20000000-0000-0000-0000-000000000002',
+    jsonb_build_object(
+      'sub', '20000000-0000-0000-0000-000000000002',
+      'email', 'owner-b.seed@praxis.test',
+      'email_verified', true
+    ),
+    'email', now(), now(), now()
+  ),
+  (
+    '20000000-0000-0000-0000-000000000003',
+    '20000000-0000-0000-0000-000000000003',
+    jsonb_build_object(
+      'sub', '20000000-0000-0000-0000-000000000003',
+      'email', 'compartilhado.seed@praxis.test',
+      'email_verified', true
+    ),
+    'email', now(), now(), now()
+  ),
+  (
+    '20000000-0000-0000-0000-000000000004',
+    '20000000-0000-0000-0000-000000000004',
+    jsonb_build_object(
+      'sub', '20000000-0000-0000-0000-000000000004',
+      'email', 'sem-membership.seed@praxis.test',
+      'email_verified', true
+    ),
+    'email', now(), now(), now()
+  );
+
+-- ---------------------------------------------------------------------
 -- workspaces — inseridos diretamente (não via RPC): o seed roda como
 -- `postgres`, que tem bypass de RLS; created_by seria sobrescrito pela
 -- trigger de qualquer forma.
