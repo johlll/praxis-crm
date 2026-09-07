@@ -11,22 +11,24 @@ export async function login(page: Page, email: string): Promise<void> {
   // ambíguo — só o formulário tem exatamente um botão "Entrar".
   await page.locator("form").getByRole("button", { name: "Entrar", exact: true }).click();
 
-  // Se ficou em /entrar, o motivo quase sempre é a Alert de erro da própria
-  // action — inclui o texto dela na falha em vez de só "esperava sair de
-  // /entrar", que não diz o porquê.
-  if (/\/entrar/.test(page.url())) {
+  // A action é assíncrona (useActionState) — dá tempo real de sobra
+  // (auto-retry do expect) antes de decidir que travou. Só se travar de
+  // verdade é que vale a pena olhar se apareceu uma Alert de erro; checar
+  // page.url() de forma síncrona logo após o clique (como a primeira
+  // versão deste helper fazia) sempre pega a URL antiga, antes do
+  // redirect acontecer — não é sinal de falha nenhuma.
+  try {
+    await expect(page).not.toHaveURL(/\/entrar/, { timeout: 8000 });
+  } catch (error) {
     const alertText = await page
       .getByRole("alert")
       .first()
-      .textContent({ timeout: 2000 })
+      .textContent({ timeout: 1000 })
       .catch(() => null);
-    expect(
-      page.url(),
-      `login para ${email} não saiu de /entrar — alerta na tela: ${alertText ?? "(nenhum)"}`,
-    ).not.toMatch(/\/entrar/);
+    throw new Error(
+      `login para ${email} não saiu de /entrar — alerta na tela: ${alertText ?? "(nenhum)"}\n${String(error)}`,
+    );
   }
-
-  await expect(page).not.toHaveURL(/\/entrar/);
 }
 
 export async function logout(page: Page): Promise<void> {
