@@ -92,6 +92,11 @@ jobs:
             console.log('error_code:', j.error_code ?? j.code ?? '(nenhum)');
             console.log('msg:', j.msg ?? j.error_description ?? j.message ?? '(nenhum)');
           "
+          echo "--- containers docker ---"
+          docker ps --format '{{.Names}}'
+          echo "--- log do container auth (últimas 100 linhas) ---"
+          AUTH_CONTAINER="$(docker ps --format '{{.Names}}' | grep auth)"
+          docker logs "$AUTH_CONTAINER" --tail 100
 
       - name: Build
         run: npm run build
