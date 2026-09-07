@@ -20,6 +20,8 @@
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password,
   email_confirmed_at, confirmation_token, recovery_token,
+  email_change, email_change_token_new, email_change_token_current,
+  phone_change, phone_change_token, reauthentication_token,
   raw_app_meta_data, raw_user_meta_data,
   is_super_admin, is_sso_user, is_anonymous,
   created_at, updated_at
@@ -31,6 +33,7 @@ insert into auth.users (
     'owner-a.seed@praxis.test',
     extensions.crypt('praxis-seed-nao-e-senha-real', extensions.gen_salt('bf')),
     now(), '', '',
+    '', '', '', '', '', '',
     '{"provider":"email","providers":["email"]}',
     '{"full_name":"Ana Owner (seed)"}',
     false, false, false, now(), now()
@@ -42,6 +45,7 @@ insert into auth.users (
     'owner-b.seed@praxis.test',
     extensions.crypt('praxis-seed-nao-e-senha-real', extensions.gen_salt('bf')),
     now(), '', '',
+    '', '', '', '', '', '',
     '{"provider":"email","providers":["email"]}',
     '{"full_name":"Bruno Owner (seed)"}',
     false, false, false, now(), now()
@@ -53,6 +57,7 @@ insert into auth.users (
     'compartilhado.seed@praxis.test',
     extensions.crypt('praxis-seed-nao-e-senha-real', extensions.gen_salt('bf')),
     now(), '', '',
+    '', '', '', '', '', '',
     '{"provider":"email","providers":["email"]}',
     '{"full_name":"Carla Compartilhada (seed)"}',
     false, false, false, now(), now()
@@ -64,6 +69,7 @@ insert into auth.users (
     'sem-membership.seed@praxis.test',
     extensions.crypt('praxis-seed-nao-e-senha-real', extensions.gen_salt('bf')),
     now(), '', '',
+    '', '', '', '', '', '',
     '{"provider":"email","providers":["email"]}',
     '{"full_name":"Daniel Sem Workspace (seed)"}',
     false, false, false, now(), now()
