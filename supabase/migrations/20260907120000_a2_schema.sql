@@ -71,15 +71,21 @@ end;
 $body$;
 
 -- Usada por "before insert" em toda tabela cujo dono é quem a criou.
--- Sempre sobrescreve o que vier do cliente — created_by nunca é confiável
--- vindo do navegador.
+-- Sobrescreve o que vier do cliente sempre que existir uma sessão real
+-- (auth.uid() não nulo) — created_by nunca é confiável vindo do
+-- navegador. Fora de uma request autenticada (auth.uid() nulo: migrations,
+-- seed, qualquer coisa rodando como `postgres` direto), não mexe no valor
+-- — é assim que supabase/seed.sql consegue definir created_by explícito
+-- para os workspaces fictícios sem violar o NOT NULL da coluna.
 create function private.set_created_by_to_current_user()
 returns trigger
 language plpgsql
 set search_path = ''
 as $body$
 begin
-  new.created_by = auth.uid();
+  if auth.uid() is not null then
+    new.created_by = auth.uid();
+  end if;
   return new;
 end;
 $body$;
