@@ -141,11 +141,14 @@ select is(
 );
 
 -- Membership de Bruno (sales) só no workspace Um, para testar a exigência
--- de motivo.
+-- de motivo. INSERT direto em memberships é negado para authenticated
+-- (só RPC escreve — A2) — volta ao papel padrão só para este fixture.
 \set bruno '20000000-0000-0000-0000-000000000002'
+reset role;
 insert into public.memberships (workspace_id, user_id, role, status)
 values (:'ws_um'::uuid, :'bruno'::uuid, 'sales', 'active')
 on conflict (workspace_id, user_id) do update set role = 'sales', status = 'active';
+set local role authenticated;
 
 select set_config('request.jwt.claims', json_build_object('sub', :'bruno', 'role', 'authenticated')::text, true);
 
@@ -163,9 +166,11 @@ select lives_ok(
 
 -- Viewer nunca revela, com ou sem motivo.
 \set daniel '20000000-0000-0000-0000-000000000004'
+reset role;
 insert into public.memberships (workspace_id, user_id, role, status)
 values (:'ws_um'::uuid, :'daniel'::uuid, 'viewer', 'active')
 on conflict (workspace_id, user_id) do update set role = 'viewer', status = 'active';
+set local role authenticated;
 
 select set_config('request.jwt.claims', json_build_object('sub', :'daniel', 'role', 'authenticated')::text, true);
 
