@@ -296,8 +296,22 @@ longo de A2 e A3):
 
 ### 5.1 e2e — resultado no CI
 
-*(preencher depois de rodar — ver seção 3 acima para o que o arquivo
-cobre; ainda não confirmado neste commit)*
+**Verde.** `tests/e2e/contacts.spec.ts` rodou com sucesso junto do já
+existente `auth-workspace.spec.ts` — **16 testes passando** (8 da A2 + 8
+novos da A3), contra o Supabase local do CI, seed fictício, sem tocar
+`praxis-crm-dev` nem produção. Levou 3 rodadas até ficar verde (nenhuma
+delas revelou bug de produto — todas foram erro meu no teste em si, não
+no comportamento validado):
+
+1. `db:types:check` — `get_contact_merge_history()` editado à mão tinha
+   `undone_at: string | null`; o gerador via `--local` infere `string`
+   (sem `| null`) pra essa coluna nessa função — mesma classe de diferença
+   cosmética entre `--linked`/`--local` já documentada na A2. Corrigido
+   substituindo pelo trecho exato extraído do log do CI.
+2. `plan(19)` em `08_a3_merge.test.sql` — a seção 9 (histórico de
+   mesclagem) tem 4 asserções, não 3; contagem errada minha, não um bug.
+   Corrigido para `plan(20)`, conferido contando as asserções no arquivo
+   por comando (`grep -c`), não de novo de cabeça.
 
 ### 5.2 Validação manual ao vivo — resolvida e concluída
 
