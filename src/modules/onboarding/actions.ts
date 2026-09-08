@@ -41,6 +41,8 @@ export async function createWorkspaceAction(
     p_slug: parsed.data.slug,
   });
 
+  console.error("[DEBUG createWorkspaceAction] rpc data:", JSON.stringify(data), "error:", JSON.stringify(error));
+
   if (error || !data) {
     if (error?.code === "23505") {
       return { ok: false, error: "Esse identificador já está em uso. Tente outro." };
@@ -48,6 +50,7 @@ export async function createWorkspaceAction(
     return { ok: false, error: toUserMessage(error) };
   }
 
-  await switchActiveWorkspace(data.id);
+  const switchResult = await switchActiveWorkspace(data.id);
+  console.error("[DEBUG createWorkspaceAction] switchResult:", JSON.stringify(switchResult));
   redirect("/visao-geral");
 }
