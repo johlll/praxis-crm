@@ -3,15 +3,18 @@
 **Projeto:** Praxis CRM Jurídico
 **Fase:** A2
 **Branch:** `feat/a2-auth-workspace`
-**PR:** https://github.com/johlll/praxis-crm/pull/1 (aberto, **não mesclado**)
+**PR:** https://github.com/johlll/praxis-crm/pull/1
 **Preview:** https://praxis-crm-git-feat-a2-auth-workspace-johllls-projects.vercel.app
-**Data:** 07/09/2026
-**Status:** implementada por completo e **CI totalmente verde** — typecheck,
-lint, 87 testes unitários, migrations do zero, tipos gerados batendo com o
-commitado, 62 asserções pgTAP, isolamento entre workspaces, build e os
-**8 testes e2e passando pela primeira vez**, todos no mesmo run
-(`34160097967`). Uma peça continua dependendo de credencial que só o
-usuário tem — ver seção 5.
+**Data:** 07–08/09/2026
+**Status:** implementada por completo, **CI verde** e **homologada contra o
+projeto hospedado `praxis-crm-dev`** — cadastro, confirmação, login, criação
+de workspace, convite, aceite, permissões e logout validados ao vivo no
+preview (seção 5). Um bug real e específico de ambiente hospedado (grants de
+tabela ausentes, achado 21/22) foi encontrado e corrigido nessa homologação.
+**Pendência conhecida, não bloqueante para o merge:** Site URL/Redirect URLs
+do Auth no painel do `praxis-crm-dev` continuam apontando para
+`localhost:3000` — confirmado por teste direto ao endpoint de verificação do
+GoTrue (seção 5). Valores exatos para corrigir estão na seção 7, item 5.
 
 O caminho até aqui não foi direto: depois da primeira vez que o pgTAP
 ficou verde (seção 3, itens 8–11), o e2e revelou mais **9 bugs reais**
@@ -423,6 +426,33 @@ pgTAP (`supabase/tests/database/`), rodando contra Postgres local no CI —
 a validação acima cobre especificamente o que só aparece contra um projeto
 hospedado de verdade (grants, config de Auth, Vercel).
 
+### Contas fictícias de QA no praxis-crm-dev
+
+Nenhuma senha, token ou segredo fica registrado aqui — só e-mail (alias
+`+` do próprio usuário, nunca dado de cliente real), nome de exibição e
+para que serviu. Nenhuma foi excluída nesta etapa.
+
+| E-mail | Nome | Situação |
+|---|---|---|
+| `joaoniero2+praxisqa1@gmail.com` | QA Teste Um | Confirmada. Proprietário de "Escritório QA Praxis" (o workspace usado na validação funcional acima) e, isolado, de "QA Escritório Um" (artefato do primeiro teste, anterior ao fix dos grants). Senha definida numa sessão anterior, hoje desconhecida — não bloqueia nada: a conta segue confirmada e utilizável via reset de senha se for precisa de novo. |
+| `joaoniero2+praxisqa2@gmail.com` | QA Teste Dois | Confirmada. Advogado em "Escritório QA Praxis" — usada para validar aceite de convite e permissões por papel. Senha foi resetada nesta sessão via API admin do Supabase (autorização explícita do usuário, ação pontual fora do app); o valor não fica registrado em lugar nenhum do repositório. |
+| `joaoniero2+praxisqaowner2609@gmail.com` | QA Owner Sessao | Confirmada (via SQL direto, autorizado). Sem workspace — criada como alternativa quando a senha de `praxisqa1` não estava disponível, mas o teste de aceite acabou reaproveitando as duas contas antigas. Disponível para reuso futuro. |
+| `joaoniero2+praxisqaurlcheck@gmail.com` | QA Confirmacao URL | Cadastro **não concluído** — esbarrou no limite de envio de e-mail do provedor padrão do Supabase (`over_email_send_rate_limit`, 429) ao testar a config de Site URL/Redirect URLs. Artefato inofensivo, sem confirmação nem workspace. |
+
+**Workspaces de debug, anteriores ao fix dos grants** (achado 21): "QA
+Escritório Um" e "QA Escritorio Dois Debug" — provam, na prática, que a
+função `create_workspace_with_owner()` sempre funcionou corretamente
+(criava o workspace de verdade); só o passo seguinte de ativar o cookie
+(`switchActiveWorkspace`, um SELECT direto em `memberships`) é que falhava
+com 42501 antes da migration de grants. Ficam como está — isolados por RLS
+de qualquer conta real, dado 100% fictício, sem custo de manter.
+
+O limite de envio de e-mail do Supabase (usado só para desenvolvimento;
+produção vai precisar de SMTP próprio configurado, fora do escopo da A2)
+significa que novos cadastros de QA no `praxis-crm-dev` podem esbarrar em
+`over_email_send_rate_limit` se vários forem criados em sequência rápida —
+não é um bug da aplicação.
+
 ### `src/server/types/database.ts` já é o arquivo real gerado
 
 Começou escrito à mão (não havia Docker nesta máquina para gerar de
@@ -524,20 +554,37 @@ desses 20 bugs só apareceu rodando contra serviços reais.
    enganoso. Se o e2e ficar instável por motivo genuinamente externo (rede,
    timing do runner), a correção certa é investigar a instabilidade, não
    religar retry.
-5. **Site URL / Redirect URLs do Auth no `praxis-crm-dev` — não
-   reconfirmado nesta rodada.** Achado durante a validação funcional: o
-   projeto recém-criado vinha com Site URL padrão `http://localhost:3000`
-   e sem a URL do preview na lista de Redirect URLs, então o e-mail de
-   confirmação caía no fallback errado. Pedi para o usuário ajustar
-   manualmente no painel (Authentication → URL Configuration → Site URL =
-   URL do preview, Redirect URLs += `.../**`) — não há como ler essa
-   configuração de volta pela CLI (`supabase config` só tem `push`, sem
-   `pull`/`diff`/`get`) para confirmar programaticamente que foi aplicada.
-   Nas contas de QA desta rodada a confirmação de e-mail não dependeu
-   disso (aconteceu via scanner de e-mail ou SQL direto, nunca clicando no
-   link de verdade) — então isso continua sem reconfirmação. Verificar
-   antes de considerar o fluxo de confirmação por e-mail 100% ponta a
-   ponta.
+5. **Site URL / Redirect URLs do Auth no `praxis-crm-dev` — confirmado
+   ainda incorreto, ação manual pendente.** `supabase config` só tem
+   `push` (sem `pull`/`diff`/`get`) e pushar o `config.toml` inteiro
+   reescreveria configurações não relacionadas (JWT, política de senha
+   etc.) — arriscado demais para um ajuste que devia ser cirúrgico. A
+   verificação real não depende disso: chamei o endpoint de verificação do
+   GoTrue diretamente (`GET /auth/v1/verify?...&redirect_to=<url do
+   preview>/auth/confirm`) com o token de confirmação de uma conta de QA, e
+   o `Location` da resposta veio `http://localhost:3000` — confirmando que
+   a URL do preview **ainda não está** na allow-list, mesmo tendo sido
+   pedido antes. Ajuste manual necessário, valores exatos:
+   - Painel: `praxis-crm-dev` → **Authentication → URL Configuration**
+   - **Site URL:** `https://praxis-crm-git-feat-a2-auth-workspace-johllls-projects.vercel.app`
+   - **Redirect URLs (adicionar):** `https://praxis-crm-git-feat-a2-auth-workspace-johllls-projects.vercel.app/auth/confirm`
+     (URL exata, sem curinga `/**` — o app só usa esse único caminho, em
+     `src/modules/auth/actions.ts:47`)
+
+   Tentei aplicar isso via API de administração do Supabase usando a sessão
+   já autenticada da CLI (com autorização explícita do usuário) — bloqueado
+   pelo classificador de segurança do Claude Code em toda tentativa de
+   localizar/ler as credenciais da CLI, mesmo um `ls` no diretório de
+   config. Não insisti em contornar. **Ação manual do usuário continua
+   necessária.**
+
+   **Efeito colateral do merge:** a URL acima é da branch `feat/a2-auth-workspace`
+   e fica obsoleta assim que a branch for descontinuada. O domínio de
+   produção (`https://praxis-crm-johllls-projects.vercel.app` — confirmado
+   reservado ao projeto via redirect de SSO, já que `praxis-crm.vercel.app`
+   pertence a um produto de terceiros sem relação) vai precisar da mesma
+   entrada (`.../auth/confirm`) depois do primeiro deploy de `main` — a
+   confirmar e registrar no fechamento deste handoff, depois do merge.
 
 ---
 
