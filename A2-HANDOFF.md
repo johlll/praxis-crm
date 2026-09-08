@@ -2,19 +2,35 @@
 
 **Projeto:** Praxis CRM Jurídico
 **Fase:** A2
-**Branch:** `feat/a2-auth-workspace`
-**PR:** https://github.com/johlll/praxis-crm/pull/1
-**Preview:** https://praxis-crm-git-feat-a2-auth-workspace-johllls-projects.vercel.app
+**Branch (mesclada):** `feat/a2-auth-workspace`
+**PR:** https://github.com/johlll/praxis-crm/pull/1 — **MESCLADO** em `main`
+(commit `45a80e2`, 2026-09-08 03:29 UTC)
+**Preview de desenvolvimento:** https://praxis-crm-git-feat-a2-auth-workspace-johllls-projects.vercel.app
+**Produção:** https://praxis-crm-johllls-projects.vercel.app (também
+`praxis-crm-git-main-johllls-projects.vercel.app` e
+`praxis-crm-eight.vercel.app` — mesmo deploy, aliases diferentes; o domínio
+`praxis-crm.vercel.app` "puro" pertence a um produto de terceiros sem
+relação, por colisão de nome no `*.vercel.app`)
 **Data:** 07–08/09/2026
-**Status:** implementada por completo, **CI verde** e **homologada contra o
-projeto hospedado `praxis-crm-dev`** — cadastro, confirmação, login, criação
-de workspace, convite, aceite, permissões e logout validados ao vivo no
-preview (seção 5). Um bug real e específico de ambiente hospedado (grants de
-tabela ausentes, achado 21/22) foi encontrado e corrigido nessa homologação.
-**Pendência conhecida, não bloqueante para o merge:** Site URL/Redirect URLs
-do Auth no painel do `praxis-crm-dev` continuam apontando para
-`localhost:3000` — confirmado por teste direto ao endpoint de verificação do
-GoTrue (seção 5). Valores exatos para corrigir estão na seção 7, item 5.
+**Status: fase encerrada.** Implementada por completo, **CI verde em todos
+os commits** (incluindo o de `main` pós-merge, run
+`34183682680`), **homologada contra o projeto hospedado `praxis-crm-dev`**
+— cadastro, confirmação, login, criação de workspace, convite, aceite,
+permissões e logout validados ao vivo no preview (seção 5) — e **deploy de
+produção confirmado** (`vercel ls`/`inspect`: `Ready`, servindo atrás do
+mesmo SSO/Deployment Protection dos previews, nenhuma configuração alterada
+para chegar lá). Um bug real e específico de ambiente hospedado (grants de
+tabela ausentes, achado 21/22) foi encontrado e corrigido antes do merge.
+
+**Pendência conhecida, não bloqueante, para resolver antes de anunciar a A2
+"pronta para uso real":** Site URL/Redirect URLs do Auth no painel do
+`praxis-crm-dev` continuam apontando para `localhost:3000` — confirmado por
+teste direto ao endpoint de verificação do GoTrue (seção 5), ação manual do
+usuário necessária (valores exatos na seção 7, item 5). Como o domínio de
+produção só existe a partir deste merge, a correção deve mirar
+`https://praxis-crm-johllls-projects.vercel.app/auth/confirm`, não mais a
+URL da branch de feature (que fica obsoleta quando `feat/a2-auth-workspace`
+for apagada).
 
 O caminho até aqui não foi direto: depois da primeira vez que o pgTAP
 ficou verde (seção 3, itens 8–11), o e2e revelou mais **9 bugs reais**
@@ -560,31 +576,29 @@ desses 20 bugs só apareceu rodando contra serviços reais.
    reescreveria configurações não relacionadas (JWT, política de senha
    etc.) — arriscado demais para um ajuste que devia ser cirúrgico. A
    verificação real não depende disso: chamei o endpoint de verificação do
-   GoTrue diretamente (`GET /auth/v1/verify?...&redirect_to=<url do
-   preview>/auth/confirm`) com o token de confirmação de uma conta de QA, e
-   o `Location` da resposta veio `http://localhost:3000` — confirmando que
-   a URL do preview **ainda não está** na allow-list, mesmo tendo sido
-   pedido antes. Ajuste manual necessário, valores exatos:
+   GoTrue diretamente (`GET /auth/v1/verify?...&redirect_to=<url>/auth/confirm`)
+   com o token de confirmação de uma conta de QA, e o `Location` da resposta
+   veio `http://localhost:3000` — confirmando que a URL do preview **ainda
+   não estava** na allow-list, mesmo tendo sido pedido antes. Ajuste manual
+   necessário, valores exatos — **já atualizados para o domínio de
+   produção**, confirmado depois do merge (`vercel inspect`):
    - Painel: `praxis-crm-dev` → **Authentication → URL Configuration**
-   - **Site URL:** `https://praxis-crm-git-feat-a2-auth-workspace-johllls-projects.vercel.app`
-   - **Redirect URLs (adicionar):** `https://praxis-crm-git-feat-a2-auth-workspace-johllls-projects.vercel.app/auth/confirm`
+   - **Site URL:** `https://praxis-crm-johllls-projects.vercel.app`
+   - **Redirect URLs (adicionar):** `https://praxis-crm-johllls-projects.vercel.app/auth/confirm`
      (URL exata, sem curinga `/**` — o app só usa esse único caminho, em
      `src/modules/auth/actions.ts:47`)
+   - Se `feat/a2-auth-workspace` continuar recebendo preview deploys por
+     mais algum tempo, adicionar também
+     `https://praxis-crm-git-feat-a2-auth-workspace-johllls-projects.vercel.app/auth/confirm`
+     — opcional, remover quando a branch for descontinuada.
 
    Tentei aplicar isso via API de administração do Supabase usando a sessão
    já autenticada da CLI (com autorização explícita do usuário) — bloqueado
    pelo classificador de segurança do Claude Code em toda tentativa de
    localizar/ler as credenciais da CLI, mesmo um `ls` no diretório de
    config. Não insisti em contornar. **Ação manual do usuário continua
-   necessária.**
-
-   **Efeito colateral do merge:** a URL acima é da branch `feat/a2-auth-workspace`
-   e fica obsoleta assim que a branch for descontinuada. O domínio de
-   produção (`https://praxis-crm-johllls-projects.vercel.app` — confirmado
-   reservado ao projeto via redirect de SSO, já que `praxis-crm.vercel.app`
-   pertence a um produto de terceiros sem relação) vai precisar da mesma
-   entrada (`.../auth/confirm`) depois do primeiro deploy de `main` — a
-   confirmar e registrar no fechamento deste handoff, depois do merge.
+   necessária** — sem ela, cadastros reais na produção continuam recebendo
+   e-mail de confirmação que aponta para `localhost:3000`.
 
 ---
 
