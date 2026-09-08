@@ -392,25 +392,36 @@ descartá-lo, não por suposição. Detalhe completo em
 
 ---
 
-## 5. O que ainda depende de credencial
+## 5. Homologação contra o projeto hospedado (praxis-crm-dev)
 
-As seções 2 e 3 do prompt original da A2 pedem, além de escrever o código:
-login na CLI, vincular **só** `praxis-crm-dev`, `db push --dry-run`,
-revisão, aplicar no projeto de dev, `gen types --linked`, e rodar os testes
-de autenticação/isolamento **contra o projeto de desenvolvimento**. Nada
-disso foi feito nesta máquina — precisa de um destes dois, que só o
-usuário pode fornecer:
+Feita depois do CI ficar verde: `supabase login` + `supabase link
+--project-ref rgoeppjwnltcbeqipovh` (o usuário rodou os dois no próprio
+terminal, sem colar token nenhum aqui), `db push --dry-run` revisado antes
+de cada aplicação, e as 7 migrations aplicadas — as 4 originais da A2 mais
+as 3 corretivas do achado 21/22 (grants). `gen types --linked` confirmado
+byte a byte igual ao `--local` (só metadado de versão do PostgREST muda).
+Variáveis do preview na Vercel conferidas presentes (`NEXT_PUBLIC_SUPABASE_URL`,
+`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `WORKSPACE_ACTIVE_COOKIE_SECRET`).
 
-- Um **token de acesso pessoal do Supabase**
-  (https://supabase.com/dashboard/account/tokens), para eu rodar
-  `supabase login --token <token>` e `supabase link --project-ref <ref>`
-  sozinho, ou
-- O usuário rodar `supabase login` + `supabase link --project-ref <ref>`
-  localmente e me passar a URL/Publishable Key do `praxis-crm-dev`.
+**Validação funcional ao vivo no preview** (`playwright-cli`, contas
+fictícias `+praxisqa*`), depois do fix dos grants:
 
-Com qualquer um dos dois, o restante das seções 1–3 do prompt (dry-run,
-aplicar migration no projeto de dev, gerar tipos `--linked`) é rápido —
-todo o trabalho de escrever e validar estruturalmente já está feito.
+| Fluxo | Resultado |
+|---|---|
+| Cadastro | OK — cria `auth.users` + espelho em `public.users` via trigger |
+| Confirmação de e-mail | OK — em dois casos um scanner de e-mail já tinha consumido o link antes de eu tentar; num terceiro caso confirmei via SQL direto (autorização explícita do usuário, restrita a contas de QA no banco de dev) |
+| Login | OK, inclusive ativando o primeiro workspace automaticamente quando não havia cookie ainda |
+| Criação de workspace | **Falhava antes do achado 21** (42501 em `memberships`) — confirmado corrigido: redireciona para `/visao-geral` com o cookie de workspace ativo gravado |
+| Convite | OK — gera link, mostra na lista de "Convites pendentes" com papel e validade |
+| Prévia do convite (sem sessão) | OK — `preview_workspace_invitation` mostra convidador/workspace/papel antes do login |
+| Aceite com outro usuário | OK — ativa a membership e já redireciona para `/visao-geral` no papel correto |
+| Permissões (advogado vs. proprietário) | OK — advogado vê a equipe mas sem botão "Convidar", papéis aparecem como texto (não como controle), sem seção de convites pendentes |
+| Logout | OK, para os dois papéis — cookie de sessão e de workspace ativo removidos |
+
+Isolamento entre workspaces e RLS por operação continuam cobertos pelo
+pgTAP (`supabase/tests/database/`), rodando contra Postgres local no CI —
+a validação acima cobre especificamente o que só aparece contra um projeto
+hospedado de verdade (grants, config de Auth, Vercel).
 
 ### `src/server/types/database.ts` já é o arquivo real gerado
 
@@ -513,6 +524,20 @@ desses 20 bugs só apareceu rodando contra serviços reais.
    enganoso. Se o e2e ficar instável por motivo genuinamente externo (rede,
    timing do runner), a correção certa é investigar a instabilidade, não
    religar retry.
+5. **Site URL / Redirect URLs do Auth no `praxis-crm-dev` — não
+   reconfirmado nesta rodada.** Achado durante a validação funcional: o
+   projeto recém-criado vinha com Site URL padrão `http://localhost:3000`
+   e sem a URL do preview na lista de Redirect URLs, então o e-mail de
+   confirmação caía no fallback errado. Pedi para o usuário ajustar
+   manualmente no painel (Authentication → URL Configuration → Site URL =
+   URL do preview, Redirect URLs += `.../**`) — não há como ler essa
+   configuração de volta pela CLI (`supabase config` só tem `push`, sem
+   `pull`/`diff`/`get`) para confirmar programaticamente que foi aplicada.
+   Nas contas de QA desta rodada a confirmação de e-mail não dependeu
+   disso (aconteceu via scanner de e-mail ou SQL direto, nunca clicando no
+   link de verdade) — então isso continua sem reconfirmação. Verificar
+   antes de considerar o fluxo de confirmação por e-mail 100% ponta a
+   ponta.
 
 ---
 
