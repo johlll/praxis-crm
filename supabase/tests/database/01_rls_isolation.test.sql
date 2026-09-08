@@ -19,18 +19,24 @@ select plan(26);
 -- -----------------------------------------------------------------
 -- 1) Sem sessão (role anon / sem claims): nada é visível.
 -- -----------------------------------------------------------------
--- Nenhuma policy desta migration é `to anon` — com FORCE ROW LEVEL
--- SECURITY, o papel anon já cai no default-deny sem precisar limpar
--- request.jwt.claims (que nem chegou a ser setado nesta transação).
+-- anon não recebe GRANT nenhum nestas tabelas (migration
+-- 20260908040000_a2_normalize_table_privileges.sql) — todo acesso sem
+-- sessão passa por função SECURITY DEFINER. Por isso o SELECT nem chega a
+-- avaliar a policy de RLS: para antes, em 42501, no nível de privilégio
+-- SQL — mais restritivo do que "RLS filtra e devolve zero linhas".
 set local role anon;
 
-select is(
-  (select count(*) from public.workspaces)::int, 0,
-  'anon não enxerga nenhum workspace'
+select throws_ok(
+  $i$ select count(*) from public.workspaces $i$,
+  '42501',
+  null,
+  'anon não tem GRANT nenhum em workspaces — nem chega a avaliar RLS'
 );
-select is(
-  (select count(*) from public.memberships)::int, 0,
-  'anon não enxerga nenhuma membership'
+select throws_ok(
+  $i$ select count(*) from public.memberships $i$,
+  '42501',
+  null,
+  'anon não tem GRANT nenhum em memberships — nem chega a avaliar RLS'
 );
 
 -- -----------------------------------------------------------------
