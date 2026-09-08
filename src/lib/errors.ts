@@ -21,13 +21,33 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   cannot_remove_last_owner:
     "Não é possível remover o único proprietário do workspace.",
   membership_not_found: "Membro não encontrado.",
+  // A3 — contatos, identidade e deduplicação.
+  contact_not_found: "Contato não encontrado.",
+  phone_not_found: "Telefone não encontrado.",
+  email_not_found: "E-mail não encontrado.",
+  cannot_merge_contact_with_itself: "Não é possível mesclar um contato com ele mesmo.",
+  cross_workspace_merge_denied: "Não é possível mesclar contatos de workspaces diferentes.",
+  contact_already_merged: "Um dos contatos já foi mesclado anteriormente.",
+  no_sensitive_data: "Este contato não tem CPF/CNPJ cadastrado.",
+  reason_required: "Informe o motivo da consulta para revelar este dado.",
+  candidate_not_found: "Sugestão de duplicidade não encontrada.",
+  candidate_not_pending: "Esta sugestão já foi decidida.",
+  merge_not_found: "Mesclagem não encontrada.",
+  merge_already_undone: "Esta mesclagem já foi desfeita.",
 };
 
 const GENERIC_MESSAGE = "Não foi possível concluir a operação. Tente novamente.";
 
+/** unmerge_contact() levanta "undo_conflict: <lista dinâmica>" — nunca
+ * cabe num match exato do mapa acima. Mensagem fixa, sem repetir o detalhe
+ * técnico (nomes de tabela/id) para quem usa a tela. */
+const UNDO_CONFLICT_MESSAGE =
+  "Não é possível desfazer automaticamente: algo foi alterado depois da mesclagem. Resolva manualmente.";
+
 export function toUserMessage(error: unknown): string {
   if (error && typeof error === "object" && "message" in error) {
     const raw = String((error as { message?: unknown }).message ?? "");
+    if (raw.startsWith("undo_conflict")) return UNDO_CONFLICT_MESSAGE;
     const mapped = KNOWN_ERROR_MESSAGES[raw];
     if (mapped) return mapped;
   }

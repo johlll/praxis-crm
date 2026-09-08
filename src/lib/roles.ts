@@ -43,7 +43,15 @@ export type Permission =
   | "membership.manage"
   | "invitation.view"
   | "invitation.manage"
-  | "audit_log.view";
+  | "audit_log.view"
+  // A3 — contatos, identidade e deduplicação. Matriz do plano: "Editar
+  // contatos" (todos menos visualizador), "Revelar CPF/CNPJ" (todos menos
+  // visualizador — atendimento precisa de motivo, checado no servidor/RPC,
+  // não aqui), "Mesclar/desfazer contatos" (só owner/admin/manager).
+  | "contact.view"
+  | "contact.edit"
+  | "contact.reveal_sensitive"
+  | "contact.merge";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -53,6 +61,10 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "invitation.view": new Set<Role>(["owner", "admin"]),
   "invitation.manage": new Set<Role>(["owner", "admin"]),
   "audit_log.view": new Set<Role>(["owner", "admin"]),
+  "contact.view": new Set(ROLES),
+  "contact.edit": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
+  "contact.reveal_sensitive": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
+  "contact.merge": new Set<Role>(["owner", "admin", "manager"]),
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {
