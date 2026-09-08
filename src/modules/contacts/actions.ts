@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { createServerSupabaseClient } from "@/server/supabase/server";
-import { requirePermission } from "@/server/authz/permissions";
+import { requirePermission, AuthzError, type Permission } from "@/server/authz/permissions";
 import { encryptCpfCnpj, decryptCpfCnpj } from "@/server/crypto/contact-sensitive";
 import { toUserMessage } from "@/lib/errors";
 import {
@@ -30,6 +30,43 @@ export type ContactActionState = {
   contactId?: string;
 };
 
+const PERMISSION_DENIED_MESSAGE = "Você não tem permissão para fazer isso.";
+
+/**
+ * requirePermission() lança AuthzError de propósito — é o certo para
+ * Server Components (interrompe o render, deixa o layout decidir o que
+ * fazer). Dentro de uma Server Action isso vira uma exceção não tratada
+ * que quebra a página inteira com o erro genérico do Next.js, nunca a
+ * mensagem sanitizada que o resto da ação usa (achado tentando mesclar
+ * como um papel sem permissão, não por leitura de código). Toda action
+ * com estado tipado (useActionState) passa por aqui em vez de chamar
+ * requirePermission() direto.
+ */
+async function requirePermissionSafe(
+  permission: Permission,
+): Promise<{ ctx: Awaited<ReturnType<typeof requirePermission>> } | { deniedMessage: string }> {
+  try {
+    return { ctx: await requirePermission(permission) };
+  } catch (error) {
+    if (error instanceof AuthzError) return { deniedMessage: PERMISSION_DENIED_MESSAGE };
+    throw error;
+  }
+}
+
+/** Mesma ideia de requirePermissionSafe(), para as actions void (formulários
+ * sem canal de erro próprio) — nunca deixa a exceção escapar sem tratar;
+ * aqui não há como mostrar mensagem, então só encerra silenciosamente,
+ * igual ao que essas actions já fazem quando a validação Zod falha. */
+async function requirePermissionVoid(permission: Permission): Promise<boolean> {
+  try {
+    await requirePermission(permission);
+    return true;
+  } catch (error) {
+    if (error instanceof AuthzError) return false;
+    throw error;
+  }
+}
+
 /**
  * Cria o contato. CPF/CNPJ, quando informado, é cifrado AQUI (Node) antes
  * de qualquer coisa tocar o banco — a função RPC só recebe ciphertext e
@@ -39,7 +76,9 @@ export async function createContactAction(
   _prevState: ContactActionState,
   formData: FormData,
 ): Promise<ContactActionState> {
-  const ctx = await requirePermission("contact.edit");
+  const guard = await requirePermissionSafe("contact.edit");
+  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  const ctx = guard.ctx;
 
   const rawPhones = formData.getAll("phone").filter((v): v is string => typeof v === "string" && v.trim() !== "");
   const rawEmails = formData.getAll("email").filter((v): v is string => typeof v === "string" && v.trim() !== "");
@@ -106,7 +145,8 @@ export async function updateContactBasicFieldsAction(
   _prevState: ContactActionState,
   formData: FormData,
 ): Promise<ContactActionState> {
-  await requirePermission("contact.edit");
+  const guard = await requirePermissionSafe("contact.edit");
+  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
 
   const parsed = updateContactBasicFieldsSchema.safeParse({
     contactId: formData.get("contactId"),
@@ -138,7 +178,7 @@ export async function updateContactBasicFieldsAction(
 }
 
 export async function addPhoneAction(formData: FormData): Promise<void> {
-  await requirePermission("contact.edit");
+  if (!(await requirePermissionVoid("contact.edit"))) return;
   const parsed = addPhoneSchema.safeParse({
     contactId: formData.get("contactId"),
     value: formData.get("value"),
@@ -157,7 +197,7 @@ export async function addPhoneAction(formData: FormData): Promise<void> {
 }
 
 export async function updatePhoneAction(formData: FormData): Promise<void> {
-  await requirePermission("contact.edit");
+  if (!(await requirePermissionVoid("contact.edit"))) return;
   const parsed = updatePhoneSchema.safeParse({
     phoneId: formData.get("phoneId"),
     value: formData.get("value"),
@@ -175,7 +215,7 @@ export async function updatePhoneAction(formData: FormData): Promise<void> {
 }
 
 export async function removePhoneAction(formData: FormData): Promise<void> {
-  await requirePermission("contact.edit");
+  if (!(await requirePermissionVoid("contact.edit"))) return;
   const parsed = removePhoneSchema.safeParse({ phoneId: formData.get("phoneId") });
   if (!parsed.success) return;
 
@@ -187,7 +227,7 @@ export async function removePhoneAction(formData: FormData): Promise<void> {
 }
 
 export async function addEmailAction(formData: FormData): Promise<void> {
-  await requirePermission("contact.edit");
+  if (!(await requirePermissionVoid("contact.edit"))) return;
   const parsed = addEmailSchema.safeParse({
     contactId: formData.get("contactId"),
     value: formData.get("value"),
@@ -206,7 +246,7 @@ export async function addEmailAction(formData: FormData): Promise<void> {
 }
 
 export async function updateEmailAction(formData: FormData): Promise<void> {
-  await requirePermission("contact.edit");
+  if (!(await requirePermissionVoid("contact.edit"))) return;
   const parsed = updateEmailSchema.safeParse({
     emailId: formData.get("emailId"),
     value: formData.get("value"),
@@ -224,7 +264,7 @@ export async function updateEmailAction(formData: FormData): Promise<void> {
 }
 
 export async function removeEmailAction(formData: FormData): Promise<void> {
-  await requirePermission("contact.edit");
+  if (!(await requirePermissionVoid("contact.edit"))) return;
   const parsed = removeEmailSchema.safeParse({ emailId: formData.get("emailId") });
   if (!parsed.success) return;
 
@@ -239,7 +279,9 @@ export async function setCpfCnpjAction(
   _prevState: ContactActionState,
   formData: FormData,
 ): Promise<ContactActionState> {
-  const ctx = await requirePermission("contact.edit");
+  const guard = await requirePermissionSafe("contact.edit");
+  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  const ctx = guard.ctx;
 
   const parsed = setCpfCnpjSchema.safeParse({
     contactId: formData.get("contactId"),
@@ -268,7 +310,7 @@ export async function setCpfCnpjAction(
 }
 
 export async function clearCpfCnpjAction(formData: FormData): Promise<void> {
-  await requirePermission("contact.edit");
+  if (!(await requirePermissionVoid("contact.edit"))) return;
   const parsed = clearCpfCnpjSchema.safeParse({ contactId: formData.get("contactId") });
   if (!parsed.success) return;
 
@@ -292,7 +334,8 @@ export type RevealState = {
  * própria função RPC, antes de qualquer decifra acontecer aqui.
  */
 export async function revealContactCpfCnpjAction(formData: FormData): Promise<RevealState> {
-  await requirePermission("contact.reveal_sensitive");
+  const guard = await requirePermissionSafe("contact.reveal_sensitive");
+  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
 
   const parsed = revealCpfCnpjSchema.safeParse({
     contactId: formData.get("contactId"),
@@ -319,7 +362,7 @@ export async function revealContactCpfCnpjAction(formData: FormData): Promise<Re
 }
 
 export async function dismissDuplicateCandidateAction(formData: FormData): Promise<void> {
-  await requirePermission("contact.merge");
+  if (!(await requirePermissionVoid("contact.merge"))) return;
   const parsed = dismissDuplicateCandidateSchema.safeParse({ candidateId: formData.get("candidateId") });
   if (!parsed.success) return;
 
@@ -338,7 +381,8 @@ export async function mergeContactsAction(
   _prevState: MergeState,
   formData: FormData,
 ): Promise<MergeState> {
-  await requirePermission("contact.merge");
+  const guard = await requirePermissionSafe("contact.merge");
+  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
 
   const fieldResolutions: Record<string, "a" | "b"> = {};
   for (const field of ["name", "city", "uf", "preferred_channel"] as const) {
@@ -373,8 +417,12 @@ export async function mergeContactsAction(
   redirect(`/contatos/${parsed.data.keptContactId}`);
 }
 
-export async function unmergeContactAction(formData: FormData): Promise<MergeState> {
-  await requirePermission("contact.merge");
+export async function unmergeContactAction(
+  _prevState: MergeState,
+  formData: FormData,
+): Promise<MergeState> {
+  const guard = await requirePermissionSafe("contact.merge");
+  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
   const parsed = unmergeContactSchema.safeParse({ mergeId: formData.get("mergeId") });
   if (!parsed.success) {
     return { ok: false, error: "Dados inválidos." };
@@ -388,5 +436,7 @@ export async function unmergeContactAction(formData: FormData): Promise<MergeSta
   }
 
   revalidatePath("/contatos");
+  const contactId = formData.get("contactId");
+  if (typeof contactId === "string") revalidatePath(`/contatos/${contactId}`);
   return { ok: true };
 }

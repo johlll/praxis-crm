@@ -73,6 +73,18 @@ insert into auth.users (
     '{"provider":"email","providers":["email"]}',
     '{"full_name":"Daniel Sem Workspace (seed)"}',
     false, false, false, now(), now()
+  ),
+  (
+    '00000000-0000-0000-0000-000000000000',
+    '20000000-0000-0000-0000-000000000005',
+    'authenticated', 'authenticated',
+    'viewer.seed@praxis.test',
+    extensions.crypt('praxis-seed-nao-e-senha-real', extensions.gen_salt('bf')),
+    now(), '', '',
+    '', '', '', '', '', '',
+    '{"provider":"email","providers":["email"]}',
+    '{"full_name":"Elisa Viewer (seed)"}',
+    false, false, false, now(), now()
   );
 
 -- ---------------------------------------------------------------------
@@ -126,6 +138,16 @@ insert into auth.identities (
       'email_verified', true
     ),
     'email', now(), now(), now()
+  ),
+  (
+    '20000000-0000-0000-0000-000000000005',
+    '20000000-0000-0000-0000-000000000005',
+    jsonb_build_object(
+      'sub', '20000000-0000-0000-0000-000000000005',
+      'email', 'viewer.seed@praxis.test',
+      'email_verified', true
+    ),
+    'email', now(), now(), now()
   );
 
 -- ---------------------------------------------------------------------
@@ -153,15 +175,19 @@ insert into public.workspaces (id, name, slug, created_by) values
 --   Ana   -> owner  no Escritório Um
 --   Bruno -> owner  no Escritório Dois
 --   Carla -> lawyer no Escritório Um, sales no Escritório Dois (o "membro
---            de ambos" pedido pela seção 9)
+--            de ambos" pedido pela seção 9; sales também serve pro e2e da
+--            A3 provar que atendimento precisa de motivo pra revelar CPF)
 --   Daniel -> nenhuma (o "usuário sem membership")
+--   Elisa  -> viewer no Escritório Um (e2e da A3: viewer nunca revela CPF,
+--             nenhum dos outros 4 usuários tinha esse papel disponível)
 -- ---------------------------------------------------------------------
 
 insert into public.memberships (workspace_id, user_id, role, status) values
   ('10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', 'owner', 'active'),
   ('10000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000002', 'owner', 'active'),
   ('10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000003', 'lawyer', 'active'),
-  ('10000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000003', 'sales', 'active');
+  ('10000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000003', 'sales', 'active'),
+  ('10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000005', 'viewer', 'active');
 
 -- ---------------------------------------------------------------------
 -- workspace_invitations — os quatro estados pedidos pela seção 9.

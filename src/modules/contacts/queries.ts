@@ -207,6 +207,32 @@ export async function getDuplicateCandidateDetail(
   };
 }
 
+export type ContactMergeHistoryItem = {
+  mergeId: string;
+  mergedContactId: string;
+  mergedContactName: string;
+  mergedAt: string;
+  undoneAt: string | null;
+};
+
+/**
+ * Histórico mínimo de mesclagens em que este contato foi o vencedor — só o
+ * suficiente pra UI mostrar "mesclado com X em Y" e oferecer desfazer. Nunca
+ * o snapshot bruto (fica só dentro de contact_merges/unmerge_contact()).
+ */
+export async function listContactMergeHistory(contactId: string): Promise<ContactMergeHistoryItem[]> {
+  const supabase = await createServerSupabaseClient();
+  const { data } = await supabase.rpc("get_contact_merge_history", { p_contact_id: contactId });
+
+  return (data ?? []).map((row) => ({
+    mergeId: row.merge_id,
+    mergedContactId: row.merged_contact_id,
+    mergedContactName: row.merged_contact_name,
+    mergedAt: row.merged_at,
+    undoneAt: row.undone_at,
+  }));
+}
+
 /**
  * Fila de revisão — só pendentes, ordenada por priority (que é só ordem de
  * fila, nunca probabilidade de identidade — ver docs/decisoes/a3-duplicidades.md).

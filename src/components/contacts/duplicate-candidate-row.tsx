@@ -13,7 +13,10 @@ const TIER_BADGE_CLASS: Record<string, string> = {
 
 export function DuplicateCandidateRow({ candidate }: { candidate: DuplicateCandidateItem }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface p-3">
+    <div
+      data-testid="duplicate-candidate-row"
+      className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface p-3"
+    >
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-center gap-2">
           <span

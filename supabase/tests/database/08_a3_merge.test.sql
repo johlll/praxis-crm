@@ -2,7 +2,7 @@
 -- silenciosamente quando algo foi editado depois da mesclagem.
 
 begin;
-select plan(14);
+select plan(19);
 
 insert into public.workspaces (id, name, slug, created_by)
 values
@@ -181,6 +181,95 @@ select is(
   (select count(*)::int from public.audit_logs where action = 'contact.merged' and workspace_id = :'ws'::uuid),
   2,
   'As duas mesclagens (original + repetida) foram auditadas'
+);
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+
+-- -----------------------------------------------------------------
+-- 8) Regressão: desfazer sem NENHUMA edição posterior tem que funcionar
+--    mesmo quando o telefone movido foi criado bem ANTES da mesclagem
+--    (o caso real — contato criado numa requisição, mesclado só depois,
+--    noutra). `now()` é fixo durante toda a transação deste arquivo de
+--    teste inteiro, então sem backdatar manualmente aqui, "antes" e
+--    "depois" da mesclagem sempre teriam o mesmo timestamp e o bug
+--    (previous_updated_at capturado ANTES do UPDATE de reparentar, que o
+--    próprio gatilho de updated_at já invalida) passaria despercebido —
+--    achado só testando ao vivo contra requisições de verdade, não aqui.
+-- -----------------------------------------------------------------
+select (create_contact(:'ws'::uuid, 'pf', 'Sofia Kept', null, null, null,
+  jsonb_build_array(jsonb_build_object('value_normalized', '+5531999990010', 'is_primary', true)),
+  '[]'::jsonb
+)).id as kept2_id \gset
+
+select (create_contact(:'ws'::uuid, 'pf', 'Sofia Merged', null, null, null,
+  jsonb_build_array(jsonb_build_object('value_normalized', '+5531999990011', 'is_primary', true)),
+  '[]'::jsonb
+)).id as merged2_id \gset
+
+select (select id from public.contact_phones where contact_id = (:'merged2_id')::uuid) as merged2_phone_id \gset
+
+reset role;
+alter table public.contact_phones disable trigger contact_phones_set_updated_at;
+update public.contact_phones
+  set created_at = created_at - interval '1 hour', updated_at = updated_at - interval '1 hour'
+  where id = (:'merged2_phone_id')::uuid;
+alter table public.contact_phones enable trigger contact_phones_set_updated_at;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+
+select merge_contacts((:'kept2_id')::uuid, (:'merged2_id')::uuid) as _ignore2 \gset
+
+reset role;
+select (select id from public.contact_merges where merged_contact_id = (:'merged2_id')::uuid) as merge2_id \gset
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+
+select lives_ok(
+  format($i$ select unmerge_contact(%L::uuid) $i$, :'merge2_id'),
+  'Desfazer funciona mesmo quando o telefone movido é bem mais antigo que a mesclagem'
+);
+select is(
+  (select contact_id from public.contact_phones where id = (:'merged2_phone_id')::uuid),
+  (:'merged2_id')::uuid,
+  'O telefone antigo voltou para o contato original depois do desfazer'
+);
+
+-- -----------------------------------------------------------------
+-- 9) get_contact_merge_history() — entrada mínima pra UI de histórico.
+--    Visível a qualquer membro do workspace (contact.view é amplo — quem
+--    decide se o botão de desfazer aparece é a UI, checando contact.merge
+--    separadamente), mas nunca a quem não é membro nenhum.
+-- -----------------------------------------------------------------
+select is(
+  (select count(*)::int from get_contact_merge_history((:'kept2_id')::uuid)),
+  1,
+  'Histórico mostra a mesclagem de Sofia (owner vê)'
+);
+select is(
+  (select undone_at from get_contact_merge_history((:'kept2_id')::uuid) limit 1) is not null,
+  true,
+  'Histórico reflete o desfazer (undone_at preenchido)'
+);
+
+-- Carla é lawyer em `ws` — só não pode mesclar/desfazer, mas ver o
+-- histórico (leitura) é permitido a todo membro, igual à listagem de
+-- contatos em si.
+select set_config('request.jwt.claims', json_build_object('sub', :'carla', 'role', 'authenticated')::text, true);
+select is(
+  (select count(*)::int from get_contact_merge_history((:'kept2_id')::uuid)),
+  1,
+  'Lawyer também vê o histórico (é leitura, não a ação de desfazer)'
+);
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+
+-- Daniel (seed) não tem membership em `ws` nem `ws_outro` — isolamento:
+-- resposta vazia, nunca um erro nem uma linha de outro workspace.
+\set daniel '20000000-0000-0000-0000-000000000004'
+select set_config('request.jwt.claims', json_build_object('sub', :'daniel', 'role', 'authenticated')::text, true);
+select is(
+  (select count(*)::int from get_contact_merge_history((:'kept2_id')::uuid)),
+  0,
+  'Quem não é membro do workspace não vê nada no histórico de mesclagem'
 );
 
 select * from finish();

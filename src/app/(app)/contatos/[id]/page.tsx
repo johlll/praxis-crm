@@ -3,11 +3,13 @@ import { notFound } from "next/navigation";
 
 import { Topbar } from "@/components/app-shell/topbar";
 import { getShellContext } from "@/modules/shell/queries";
-import { getContactDetail } from "@/modules/contacts/queries";
+import { getContactDetail, listContactMergeHistory } from "@/modules/contacts/queries";
+import { roleHasPermission } from "@/lib/roles";
 import { ContactBasicFieldsForm } from "@/components/contacts/contact-basic-fields-form";
 import { ContactPhonesList } from "@/components/contacts/contact-phones-list";
 import { ContactEmailsList } from "@/components/contacts/contact-emails-list";
 import { ContactSensitiveSection } from "@/components/contacts/contact-sensitive-section";
+import { ContactMergeHistory } from "@/components/contacts/contact-merge-history";
 
 export async function generateMetadata({
   params,
@@ -29,6 +31,9 @@ export default async function ContatoDetalhePage({
   const contact = await getContactDetail(id);
 
   if (!contact) notFound();
+
+  const mergeHistory = await listContactMergeHistory(id);
+  const canUndoMerge = roleHasPermission(user.role, "contact.merge");
 
   return (
     <>
@@ -54,6 +59,13 @@ export default async function ContatoDetalhePage({
             <h2 className="mb-3 text-body font-semibold text-text">CPF/CNPJ</h2>
             <ContactSensitiveSection contactId={contact.id} hasSensitive={contact.hasSensitive} />
           </section>
+
+          {mergeHistory.length > 0 ? (
+            <section className="rounded-lg border border-border bg-surface p-4">
+              <h2 className="mb-3 text-body font-semibold text-text">Mesclagens</h2>
+              <ContactMergeHistory contactId={contact.id} canUndo={canUndoMerge} history={mergeHistory} />
+            </section>
+          ) : null}
         </div>
       </main>
     </>

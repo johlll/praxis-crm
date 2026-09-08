@@ -890,6 +890,16 @@ export type Database = {
         Args: { p_candidate_id: string }
         Returns: undefined
       }
+      get_contact_merge_history: {
+        Args: { p_contact_id: string }
+        Returns: {
+          merge_id: string
+          merged_at: string
+          merged_contact_id: string
+          merged_contact_name: string
+          undone_at: string | null
+        }[]
+      }
       merge_contacts: {
         Args: {
           p_candidate_id?: string
