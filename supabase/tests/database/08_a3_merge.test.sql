@@ -2,7 +2,7 @@
 -- silenciosamente quando algo foi editado depois da mesclagem.
 
 begin;
-select plan(19);
+select plan(20);
 
 insert into public.workspaces (id, name, slug, created_by)
 values
