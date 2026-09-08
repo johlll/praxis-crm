@@ -150,14 +150,16 @@ select throws_ok(
   'Ana não consegue se autoconceder — nem conceder a outra pessoa — membership por INSERT direto'
 );
 
--- Diferente do INSERT (que tem uma linha nova para o Postgres rejeitar e
--- por isso lança 42501), a policy `using (false)` de UPDATE/DELETE não
--- lança erro — ela só faz o WHERE não enxergar nenhuma linha, então o
--- comando "funciona" e afeta zero linhas. A garantia de segurança é a
--- mesma (o papel de Carla não muda), só a forma de verificar é diferente.
-select lives_ok(
+-- authenticated não tem GRANT de UPDATE/DELETE em memberships (só SELECT
+-- — migration 20260908040000_a2_normalize_table_privileges.sql): a
+-- tentativa nem chega a avaliar a policy `using (false)`, para antes, em
+-- 42501, no nível de privilégio SQL. Dupla garantia (grant + policy), não
+-- só uma das duas.
+select throws_ok(
   format($i$ update public.memberships set role = 'owner' where workspace_id = %L and user_id = %L $i$, :'ws_um', :'carla'),
-  'UPDATE direto de role em memberships "funciona" mas não afeta linha nenhuma'
+  '42501',
+  null,
+  'UPDATE direto de role em memberships é negado — sem GRANT de UPDATE'
 );
 select is(
   (select role from public.memberships where workspace_id = :'ws_um'::uuid and user_id = :'carla'::uuid)::text,
@@ -165,9 +167,11 @@ select is(
   'O papel de Carla continua lawyer — o UPDATE direto acima não mudou nada de verdade'
 );
 
-select lives_ok(
+select throws_ok(
   format($i$ delete from public.memberships where workspace_id = %L and user_id = %L $i$, :'ws_um', :'carla'),
-  'DELETE direto em memberships "funciona" mas não afeta linha nenhuma'
+  '42501',
+  null,
+  'DELETE direto em memberships é negado — sem GRANT de DELETE'
 );
 select ok(
   exists(select 1 from public.memberships where workspace_id = :'ws_um'::uuid and user_id = :'carla'::uuid),
@@ -175,13 +179,17 @@ select ok(
 );
 
 -- -----------------------------------------------------------------
--- 8) audit_logs: só owner/admin do workspace enxergam, e nunca por INSERT
---    direto do cliente (as funções RPC escrevem sozinhas).
+-- 8) audit_logs: nenhum acesso direto de tabela para authenticated (só
+--    SELECT existe como policy de RLS, para quando uma tela de auditoria
+--    vier a precisar — sem GRANT nenhum hoje, nem SELECT chega lá). Nunca
+--    por INSERT direto do cliente (as funções RPC escrevem sozinhas).
 -- -----------------------------------------------------------------
 select set_config('request.jwt.claims', json_build_object('sub', :'carla', 'role', 'authenticated')::text, true);
-select is(
-  (select count(*) from public.audit_logs where workspace_id = :'ws_um'::uuid)::int, 0,
-  'Carla (lawyer, não admin/owner) não enxerga audit_logs do Escritório Um mesmo sendo membro'
+select throws_ok(
+  format($i$ select count(*) from public.audit_logs where workspace_id = %L $i$, :'ws_um'),
+  '42501',
+  null,
+  'Carla não tem GRANT nenhum em audit_logs — nem chega a avaliar RLS'
 );
 
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
