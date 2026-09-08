@@ -897,7 +897,7 @@ export type Database = {
           merged_at: string
           merged_contact_id: string
           merged_contact_name: string
-          undone_at: string | null
+          undone_at: string
         }[]
       }
       merge_contacts: {
