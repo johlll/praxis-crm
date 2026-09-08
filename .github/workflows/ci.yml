@@ -8,6 +8,11 @@ on:
 jobs:
   verificar:
     runs-on: ubuntu-latest
+    # O CI nunca depende do projeto Supabase de produção nem do
+    # praxis-crm-dev hospedado: sobe um Postgres local do zero, via Docker
+    # (o runner do GitHub já tem), aplica as migrations desta branch nele e
+    # roda os testes de banco ali — é este job, não a máquina de
+    # desenvolvimento, quem valida migrations e RLS de verdade.
     steps:
       - uses: actions/checkout@v5
 
@@ -17,7 +22,8 @@ jobs:
           cache: npm
 
       # `npm ci` instala exatamente o que está no lockfile.
-      - run: npm ci
+      - name: Instalar dependências
+        run: npm ci
 
       - name: Typecheck
         run: npm run typecheck
@@ -25,8 +31,68 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Testes
+      - name: Testes unitários
         run: npm test
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.116.0
+
+      - name: Subir Supabase local
+        run: supabase start
+
+      - name: Aplicar migrations do zero (local)
+        run: supabase db reset --local
+
+      - name: Gerar tipos e comparar com o que está commitado
+        run: npm run db:types:check
+
+      - name: Testes de banco — RLS, convites, último owner, hardening (pgTAP)
+        run: npm run test:db
+
+      - name: Testes de isolamento entre workspaces
+        run: npm run test:isolation
+
+      - name: Exportar credenciais do Supabase local para o build/e2e
+        run: |
+          # Escreve .env.local de verdade em vez de só exportar em
+          # $GITHUB_ENV: o webServer que o Playwright sobe (npm run start,
+          # dentro de mais uma camada de subprocesso) voltou a reclamar de
+          # NEXT_PUBLIC_SUPABASE_URL ausente mesmo com a variável presente
+          # no ambiente do próprio step — Next.js lê .env.local direto do
+          # checkout tanto em build quanto em start, sem depender de
+          # quantas camadas de processo filho o valor precisou atravessar.
+          RAW="$(supabase status -o env)"
+          echo "Nomes de variável que 'supabase status -o env' emite:"
+          echo "$RAW" | cut -d= -f1
+          eval "$RAW"
+          {
+            echo "NEXT_PUBLIC_SUPABASE_URL=${API_URL:?API_URL vazio — nome da variável mudou, ver lista acima}"
+            echo "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=${PUBLISHABLE_KEY:?PUBLISHABLE_KEY vazio — nome da variável mudou, ver lista acima}"
+            # Segredo só para este job efêmero (Postgres local descartado
+            # ao fim do workflow) — nunca o do projeto hospedado de verdade.
+            echo "WORKSPACE_ACTIVE_COOKIE_SECRET=$(openssl rand -base64 32)"
+          } > .env.local
+          echo "Conferindo .env.local (valores mascarados):"
+          sed -E 's/=(.{6}).*/=\1.../' .env.local
 
       - name: Build
         run: npm run build
+
+      - name: Instalar navegadores do Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Testes e2e (login, workspace, convite, troca, logout)
+        run: npm run test:e2e
+
+      - name: Publicar relatório do Playwright (só se algo falhar)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+      - name: Parar Supabase local
+        if: always()
+        run: supabase stop

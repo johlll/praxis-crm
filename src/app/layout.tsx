@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { IBM_Plex_Mono, Instrument_Serif, Public_Sans } from "next/font/google";
 
 import "./globals.css";
@@ -30,9 +31,15 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  // Lido (não usado diretamente aqui) para o Next aplicar automaticamente
+  // este nonce nos próprios scripts que ele injeta — é o que faz a CSP com
+  // 'strict-dynamic' do proxy.ts (src/proxy.ts) funcionar sem 'unsafe-inline'
+  // em script-src.
+  await headers();
+
   return (
     <html
       lang="pt-BR"

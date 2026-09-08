@@ -1,20 +1,32 @@
 import { Bell, Plus } from "lucide-react";
 
+import { ROLE_LABEL, type Role } from "@/lib/roles";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { GlobalSearch } from "./global-search";
+import { SignOutItem } from "./sign-out-item";
 
 type TopbarProps = {
   title: string;
   subtitle?: string;
+  user: {
+    fullName: string;
+    initials: string;
+    role: Role;
+  };
 };
 
 /**
  * Cabeçalho das telas internas — medidas conferidas nos protótipos
- * (header 60px, título 16.5px/700, busca central de 420×34).
- *
- * O usuário exibido à direita passa a vir da sessão em A2; aqui ainda é o do
- * protótipo, para conferência visual.
+ * (header 60px, título 16.5px/700, busca central de 420×34). O usuário à
+ * direita vem da sessão real (ver `(app)/layout.tsx`), não mais fixo.
  */
-export function Topbar({ title, subtitle }: TopbarProps) {
+export function Topbar({ title, subtitle, user }: TopbarProps) {
   return (
     <header className="flex h-[60px] shrink-0 items-center gap-[18px] border-b border-border bg-surface px-5">
       <div className="flex min-w-0 flex-col">
@@ -49,20 +61,37 @@ export function Topbar({ title, subtitle }: TopbarProps) {
 
         <div className="mx-[3px] h-[22px] w-px bg-border" aria-hidden />
 
-        <div className="flex items-center gap-2">
-          <div
-            className="flex size-8 items-center justify-center rounded-md bg-primary-tint text-[11px] font-bold text-primary"
-            aria-hidden
-          >
-            CR
-          </div>
-          <div className="flex flex-col leading-[1.2]">
-            <span className="text-[11.5px] font-semibold text-text">
-              Camila Rezende
-            </span>
-            <span className="text-[10px] text-text-muted">Advogada sênior</span>
-          </div>
-        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="Menu do usuário"
+              className="flex items-center gap-2 rounded-md px-1.5 py-1 transition-colors hover:bg-app"
+            >
+              <div
+                className="flex size-8 items-center justify-center rounded-md bg-primary-tint text-[11px] font-bold text-primary"
+                aria-hidden
+              >
+                {user.initials}
+              </div>
+              <div className="flex flex-col text-left leading-[1.2]">
+                <span className="text-[11.5px] font-semibold text-text">
+                  {user.fullName}
+                </span>
+                <span className="text-[10px] text-text-muted">
+                  {ROLE_LABEL[user.role]}
+                </span>
+              </div>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-[200px]">
+            <DropdownMenuItem asChild>
+              <a href="/configuracoes/equipe">Equipe</a>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <SignOutItem />
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </header>
   );

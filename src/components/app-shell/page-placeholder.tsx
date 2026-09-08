@@ -1,5 +1,6 @@
 import { Topbar } from "./topbar";
 import { EmptyState } from "@/components/feedback/empty-state";
+import { getShellContext } from "@/modules/shell/queries";
 
 type PagePlaceholderProps = {
   title: string;
@@ -14,15 +15,17 @@ type PagePlaceholderProps = {
  * inventar dados: nenhuma métrica fictícia aparece como se fosse real.
  * Cada página substitui este componente pela tela verdadeira na sua fase.
  */
-export function PagePlaceholder({
+export async function PagePlaceholder({
   title,
   subtitle,
   phase,
   description,
 }: PagePlaceholderProps) {
+  const { user } = await getShellContext();
+
   return (
     <>
-      <Topbar title={title} {...(subtitle ? { subtitle } : {})} />
+      <Topbar title={title} {...(subtitle ? { subtitle } : {})} user={user} />
       <main className="flex-1 overflow-y-auto p-5">
         <EmptyState
           title={`${title} — em construção (fase ${phase})`}

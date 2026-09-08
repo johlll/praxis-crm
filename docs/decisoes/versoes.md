@@ -79,3 +79,67 @@ em disco ou a velocidade de instalação passarem a importar.
 No início de **A2**, antes de instalar `@supabase/supabase-js`,
 `@supabase/ssr` e a CLI do Supabase — conforme a emenda 4, essas
 dependências não entram antes da fase que as usa.
+
+## Dependências de A2 — verificação de 07/09/2026
+
+| Pacote | Escolhido | Última estável | Motivo |
+|---|---|---|---|
+| @supabase/supabase-js | 2.115.0 | 2.115.0 | `latest`; peer de `@supabase/ssr` (`^2.114.0`) satisfeito |
+| @supabase/ssr | 0.12.6 | 0.12.6 | pacote oficial atual para SSR — sucessor do `@supabase/auth-helpers-nextjs`, descontinuado (`npm view` retorna "Package no longer supported") |
+| zod | 4.5.4 | 4.5.4 | `latest`, não beta/canary |
+| supabase (CLI) | 2.116.0 | 2.116.0 | devDependency, para `supabase init`/`start`/`db`/`gen types` |
+| @playwright/test | 1.63.0 | 1.63.0 | exigido pelo e2e de autenticação da A2; `engines.node >= 20`, satisfeito pelo Node 24 |
+
+`@supabase/auth-helpers-nextjs` não foi instalado — descontinuado, substituído
+por `@supabase/ssr`, que é a abordagem oficial atual para Next.js com App
+Router (cliente de navegador + cliente de servidor lendo/escrevendo cookies
+via `@supabase/ssr`'s `createBrowserClient`/`createServerClient`).
+
+Nenhum componente shadcn foi instalado ainda — depende de `npx shadcn init`
+rodar sobre as telas reais desta fase, o que só acontece depois que o
+bloqueio da seção "Bloqueio" abaixo for resolvido.
+
+## Decisão de infraestrutura revista: hospedado para dev, Docker só no CI (07/09/2026)
+
+A primeira tentativa da A2 parou na preparação por falta de Docker local e
+de projeto Supabase vinculado (registro histórico abaixo). O usuário then
+decidiu explicitamente: Docker local deixa de ser requisito; o
+desenvolvimento usa o projeto Supabase hospedado `praxis-crm-dev`
+(exclusivo de desenvolvimento, nunca produção), e a reprodução completa do
+banco (migrations do zero + pgTAP) passa a acontecer só no CI, no runner do
+GitHub — que tem Docker.
+
+Isso não elimina o bloqueio de credencial, só muda ONDE ele se resolve: em
+vez de precisar de Docker nesta máquina, a implementação segue inteira
+(schema, RLS, funções, telas, testes, CI) e só a CONEXÃO com o projeto
+hospedado real (`supabase login`/`link`, aplicar migration nele, gerar
+tipos `--linked`) fica pendente de uma credencial que só o usuário pode
+fornecer (token de acesso pessoal do Supabase). Ver `A2-HANDOFF.md`,
+seção "O que ainda depende de credencial", para o estado exato.
+
+## Decisão: `middleware.ts` → `proxy.ts` (07/09/2026)
+
+O `next build` (Next.js 16.3.4) já acusa `middleware.ts` como convenção
+descontinuada: *"The 'middleware' file convention is deprecated. Please use
+'proxy' instead."* Confirmado no próprio código-fonte instalado do Next
+(`PROXY_FILENAME = 'proxy'` em `node_modules/next/dist/lib/constants.js`) —
+mesmo mecanismo, mesma exportação `config.matcher`, só o nome do arquivo e
+da função exportada mudam (`middleware` → `proxy`). Migrado para
+`src/proxy.ts` em vez de manter uma convenção já descontinuada na versão
+que o projeto usa.
+
+## Bloqueio original, histórico (07/09/2026, superado pela decisão acima)
+
+Ao chegar à seção 0 do prompt da A2 ("Preparação e bloqueios"), dois
+requisitos que o próprio prompt lista como condição de parada estavam
+ausentes nesta máquina:
+
+1. **Docker não está instalado.** `docker` não existe no PATH (nem no Git
+   Bash, nem no PowerShell), e `C:\Program Files\Docker\Docker Desktop.exe`
+   não existe.
+2. **Nenhum projeto Supabase de desenvolvimento estava vinculado.**
+   `supabase projects list` retorna `LegacyPlatformAuthRequiredError` — a
+   CLI não tem `SUPABASE_ACCESS_TOKEN` nem sessão de `supabase login`.
+
+Mantido aqui só como registro de por que a primeira tentativa parou —
+superado pela decisão de infraestrutura acima.
