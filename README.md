@@ -41,17 +41,18 @@ npm run test:isolation  # só o arquivo de isolamento entre workspaces
 npm run test:e2e        # Playwright — jornada completa de autenticação
 ```
 
-## Estado atual — fase A2 concluída (não mesclada em `main`)
+## Estado atual — fase A2 concluída e mesclada em `main`
 
 Autenticação (`@supabase/ssr`), isolamento por workspace via RLS, papéis e
 matriz de permissões, workspace ativo com cookie assinado, convites de
 equipe com token de uso único, e as telas correspondentes (`/entrar`,
 `/onboarding`, `/convite/[token]`, `/configuracoes/equipe`) — shell da A1.1
 preservado, agora com dados reais da sessão em vez dos nomes fixos do
-protótipo.
+protótipo. Homologada contra o projeto hospedado `praxis-crm-dev` e em
+produção em `https://praxis-crm-johllls-projects.vercel.app`.
 
-Detalhes completos, inclusive o que ainda depende de uma credencial do
-Supabase hospedado que só o usuário tem: `A2-HANDOFF.md`.
+Detalhes completos, inclusive a pendência conhecida de configuração do
+Supabase Auth (Site URL/Redirect URLs): `A2-HANDOFF.md`.
 Arquitetura: `docs/arquitetura.md`. Segurança: `docs/seguranca.md`.
 
 **Ainda não implementado** (fases seguintes): leads, contatos, pipeline,
