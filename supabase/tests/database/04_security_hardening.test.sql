@@ -4,7 +4,7 @@
 -- travado, e toda tabela criada nesta fase tem RLS ligada E forçada.
 
 begin;
-select plan(15);
+select plan(25);
 
 -- -----------------------------------------------------------------
 -- 1) RLS habilitada e FORÇADA nas 5 tabelas da A2 — sem exceção.
@@ -157,6 +157,75 @@ select is(
   (select count(*)::int from pg_tables where schemaname = 'private'),
   0,
   'schema private não tem tabela nenhuma — só funções auxiliares, por design'
+);
+
+-- -----------------------------------------------------------------
+-- 5) GRANT de tabela — exatamente o que os fluxos implementados usam,
+--    nem mais nem menos. Descoberto durante a homologação contra o
+--    projeto hospedado (praxis-crm-dev): RLS e GRANT são camadas
+--    independentes — sem o GRANT de base, o PostgREST nem chega a avaliar
+--    a policy (42501 "permission denied", não o comportamento da RLS).
+--
+--    Por que este teste não pode confiar no baseline do Postgres local: o
+--    stack que `supabase start` sobe já vem, por padrão, com privilégios
+--    de tabela mais abertos para `authenticated`/`anon` do que um projeto
+--    novo hospedado com "Automatically expose new tables" desligado — foi
+--    exatamente essa diferença que deixou o CI verde enquanto o banco
+--    hospedado de verdade barrava toda escrita de workspace com 42501.
+--    table_privs_are() checa o conjunto EXATO de privilégios (nem a mais,
+--    nem a menos) — se o baseline local concedesse algo além do que as
+--    migrations desta fase concedem explicitamente, o teste falha aqui,
+--    em vez de só no primeiro teste manual contra um projeto hospedado.
+-- -----------------------------------------------------------------
+
+select table_privs_are(
+  'public', 'workspaces', 'authenticated', array['SELECT'],
+  'workspaces: authenticated tem exatamente SELECT (embed em listMyWorkspaces)'
+);
+select table_privs_are(
+  'public', 'workspaces', 'anon', array[]::text[],
+  'workspaces: anon não tem privilégio nenhum'
+);
+
+select table_privs_are(
+  'public', 'users', 'authenticated', array['SELECT'],
+  'users: authenticated tem exatamente SELECT (perfil exibido em shell/team)'
+);
+select table_privs_are(
+  'public', 'users', 'anon', array[]::text[],
+  'users: anon não tem privilégio nenhum'
+);
+
+select table_privs_are(
+  'public', 'memberships', 'authenticated', array['SELECT'],
+  'memberships: authenticated tem exatamente SELECT (resolução de papel/membership ativa)'
+);
+select table_privs_are(
+  'public', 'memberships', 'anon', array[]::text[],
+  'memberships: anon não tem privilégio nenhum'
+);
+
+select table_privs_are(
+  'public', 'workspace_invitations', 'authenticated', array['SELECT'],
+  'workspace_invitations: authenticated tem exatamente SELECT (lista de convites pendentes)'
+);
+select table_privs_are(
+  'public', 'workspace_invitations', 'anon', array[]::text[],
+  'workspace_invitations: anon não tem privilégio nenhum'
+);
+
+-- audit_logs: nenhum privilégio de tabela para nenhum dos dois papéis —
+-- toda leitura/escrita passa pelas funções SECURITY DEFINER (grant de
+-- EXECUTE nelas, não de tabela). Sem isso, authenticated não tem como
+-- fabricar, alterar, apagar OU ler um registro de auditoria por fora
+-- dessas funções.
+select table_privs_are(
+  'public', 'audit_logs', 'authenticated', array[]::text[],
+  'audit_logs: authenticated não tem privilégio nenhum de tabela'
+);
+select table_privs_are(
+  'public', 'audit_logs', 'anon', array[]::text[],
+  'audit_logs: anon não tem privilégio nenhum de tabela'
 );
 
 select * from finish();

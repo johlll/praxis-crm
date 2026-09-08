@@ -1,0 +1,53 @@
+-- Grants de base para o PostgREST alcançar as tabelas de negócio.
+--
+-- RLS e GRANT são duas camadas independentes: o GRANT é pré-requisito
+-- para o PostgREST sequer tentar a operação — sem ele, a policy de RLS
+-- nunca chega a ser avaliada, e a resposta é "permission denied" (42501)
+-- em vez do comportamento pretendido pela policy. Um projeto Supabase
+-- hospedado com a opção "Automatically expose new tables" desligada na
+-- criação (a escolha correta de segurança, "controlar acesso
+-- manualmente") não concede esses grants sozinho — diferente do stack
+-- local que `supabase start` sobe, que já vem com o baseline pronto,
+-- mascarando a ausência disso até o primeiro teste contra um projeto
+-- hospedado de verdade.
+--
+-- O grant concedido aqui é o mínimo que os fluxos já implementados na A2
+-- usam via acesso direto à tabela (`.from(...)` no client, sessão do
+-- usuário) — nunca "CRUD por conveniência". Toda escrita de negócio desta
+-- fase (criar workspace, convidar, aceitar convite, mudar papel, remover
+-- membro) passa por função SECURITY DEFINER (migration
+-- 20260907120300_a2_business_functions.sql), que roda com o privilégio de
+-- quem definiu a função — não do chamador — e por isso nunca precisou de
+-- GRANT nenhum em `authenticated` para inserir/atualizar/apagar. As
+-- policies de RLS (migration 20260907120200_a2_rls.sql) já negam
+-- INSERT/UPDATE/DELETE direto do cliente nessas tabelas com
+-- `with check (false)`/`using (false)` explícito — o grant abaixo só abre
+-- a porta para o SELECT que cada tela realmente faz:
+--   * workspaces        — embed em listMyWorkspaces() (modules/workspace/queries.ts)
+--   * users             — perfil exibido em shell/queries.ts e no embed de team/queries.ts
+--   * memberships       — resolução de papel/membership ativa (authz/permissions.ts,
+--                         server/auth/workspace.ts, modules/workspace e team/queries.ts)
+--   * workspace_invitations — lista de convites pendentes (modules/team/queries.ts)
+--
+-- `audit_logs` fica de fora de propósito: nenhuma tela desta fase lê a
+-- trilha diretamente (a página de auditoria é de fase futura), e a escrita
+-- é sempre feita pelas funções SECURITY DEFINER acima. Sem grant nenhum,
+-- `authenticated` não tem como fabricar, alterar, apagar OU sequer ler um
+-- registro de auditoria por fora dessas funções — mais restritivo do que
+-- a própria policy de SELECT (que já existe, restrita a owner/admin,
+-- pronta para quando uma tela de auditoria vier a precisar dela; nesse dia
+-- o grant certo é uma nova migration, não uma edição desta).
+--
+-- `anon` não recebe grant nenhum nestas tabelas: todo acesso sem sessão
+-- passa por funções SECURITY DEFINER (preview_workspace_invitation).
+--
+-- Se um fluxo futuro precisar de INSERT/UPDATE direto do cliente (ex.:
+-- editar o próprio perfil, já coberto por uma policy de UPDATE em `users`
+-- mas sem grant e sem tela nesta fase), o grant correspondente entra numa
+-- migration nova, no momento em que a tela for implementada — nunca
+-- antecipado.
+
+grant select on public.workspaces to authenticated;
+grant select on public.users to authenticated;
+grant select on public.memberships to authenticated;
+grant select on public.workspace_invitations to authenticated;

@@ -42,12 +42,14 @@ Esta versão do handoff é a implementação completa sob essa decisão.
 
 ### 2.1 Banco de dados
 
-4 migrations em `supabase/migrations/` (detalhe em `docs/arquitetura.md`):
+6 migrations em `supabase/migrations/` (detalhe em `docs/arquitetura.md`):
 schema `private` (funções auxiliares de RLS, nunca exposto pela Data API),
 5 tabelas (`workspaces`, `users`, `memberships`, `workspace_invitations`,
 `audit_logs`) com RLS habilitada **e forçada**, policy explícita e separada
-por operação (SELECT/INSERT/UPDATE/DELETE) em cada uma, e 7 funções de
-negócio `SECURITY DEFINER` expostas via RPC.
+por operação (SELECT/INSERT/UPDATE/DELETE) em cada uma, 7 funções de
+negócio `SECURITY DEFINER` expostas via RPC, e os GRANTs de tabela mínimos
+que os fluxos implementados usam por acesso direto — só SELECT em 4 das 5
+tabelas, nada em `audit_logs` (achado 21 e 22 abaixo).
 
 `supabase/seed.sql`: 2 workspaces, 4 usuários fictícios (`@praxis.test`,
 senha `praxis-seed-nao-e-senha-real`), 4 convites cobrindo os 4 estados
@@ -316,6 +318,45 @@ todos de uma vez:
     elemento passou a ter o papel ARIA correto (`menuitem`, o mesmo dos
     itens de workspace) em vez de `button` — só existia como `button`
     porque o `<form><button>` antigo forçava isso.
+21. **`permission denied for table memberships` (42501) no primeiro teste
+    contra o projeto hospedado — RLS e GRANT são camadas independentes.**
+    O CI nunca pegou isso porque o Postgres local que `supabase start` sobe
+    já vem com um baseline de privilégios mais aberto; um projeto Supabase
+    hospedado criado com "Automatically expose new tables" desligada (a
+    escolha certa de segurança) não concede GRANT nenhum de tabela sozinho
+    — sem ele, o PostgREST nem chega a avaliar a policy de RLS, e a
+    resposta é "permission denied" em vez do comportamento pretendido.
+    Diagnosticado com logging temporário em `createWorkspaceAction` e
+    `switchActiveWorkspace`, removido depois de confirmado o fluxo real
+    (Vercel function logs). Corrigido com
+    `20260908020000_a2_table_grants.sql`, concedendo só o que os fluxos já
+    implementados usam via acesso direto à tabela — nunca CRUD por
+    conveniência: **SELECT** em `workspaces`, `users`, `memberships` e
+    `workspace_invitations` (o que cada tela realmente lê fora de RPC), e
+    **nada** em `audit_logs` (toda leitura/escrita da trilha passa pelas
+    funções `SECURITY DEFINER`, nunca por acesso direto do cliente).
+22. **`TRUNCATE`/`REFERENCES`/`TRIGGER`/`MAINTAIN` concedidos por padrão a
+    `anon`/`authenticated` em toda tabela nova — achado ao auditar o
+    resultado da correção anterior.** A plataforma Supabase mantém um
+    `ALTER DEFAULT PRIVILEGES` para o papel `postgres` (quem roda as
+    migrations) que concede esses quatro privilégios automaticamente a
+    `anon` e `authenticated` em toda tabela criada em `public`, sem relação
+    com o toggle "Automatically expose new tables" (que só cobre
+    SELECT/INSERT/UPDATE/DELETE) — confirmado consultando `pg_default_acl`.
+    O mais grave é `TRUNCATE`: ignora RLS por completo (esvazia a tabela
+    inteira, de todos os workspaces, sem passar por nenhuma policy). A Data
+    API do PostgREST não expõe essas operações via REST hoje, mas a
+    política deste projeto é privilégio mínimo por definição da migration,
+    não "seguro na prática atual". Corrigido com
+    `20260908030000_a2_revoke_default_table_privileges.sql`: revoga os
+    quatro privilégios nas 5 tabelas já criadas e altera o
+    `DEFAULT PRIVILEGES` do papel `postgres` em `public`, para que toda
+    tabela de fase futura já nasça sem eles. Adicionadas 10 asserções
+    pgTAP (`table_privs_are`) em `04_security_hardening.test.sql` que
+    checam o conjunto **exato** de privilégios de `authenticated`/`anon`
+    em cada uma das 5 tabelas — não só "pelo menos SELECT existe", porque
+    isso teria passado no baseline mais aberto do Postgres local sem
+    detectar a lacuna original.
 
 ---
 

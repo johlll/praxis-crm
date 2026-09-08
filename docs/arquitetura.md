@@ -32,6 +32,8 @@ Migrations em `supabase/migrations/`, aplicadas em ordem:
 | `20260907120100_a2_private_functions.sql` | `private.auth_workspace_ids()`, `private.has_workspace_role()`, `private.shares_active_workspace_with()`, trigger de sincronização `auth.users` → `public.users` |
 | `20260907120200_a2_rls.sql` | RLS habilitada e forçada nas 5 tabelas, policies explícitas por operação, trigger `private.protect_users_email()` |
 | `20260907120300_a2_business_functions.sql` | as 7 funções RPC de negócio (criar workspace, convidar, cancelar, prévia, aceitar, mudar papel, remover) |
+| `20260908020000_a2_table_grants.sql` | GRANT de tabela mínimo por fluxo implementado: SELECT em `workspaces`/`users`/`memberships`/`workspace_invitations`, nada em `audit_logs` |
+| `20260908030000_a2_revoke_default_table_privileges.sql` | revoga REFERENCES/TRIGGER/TRUNCATE/MAINTAIN concedidos por padrão a `anon`/`authenticated` (default privilege da plataforma para o papel `postgres`) nas 5 tabelas e para toda tabela futura |
 
 ### Por que RLS nega INSERT/UPDATE/DELETE direto em quase tudo
 
@@ -43,6 +45,42 @@ segura se centralizada em um lugar só. As duas exceções deliberadas, com
 policy própria e testada: `workspaces.UPDATE` (renomear, só owner/admin) e
 `users.UPDATE` (perfil próprio, com e-mail protegido por trigger via
 `pg_trigger_depth()`).
+
+### GRANT de tabela: a camada que vem antes da RLS
+
+RLS e GRANT são independentes: o PostgREST só chega a avaliar a policy de
+RLS depois de confirmar que o papel (`authenticated`/`anon`) tem o
+privilégio de tabela correspondente (SELECT/INSERT/UPDATE/DELETE) via SQL
+`GRANT` — sem ele, a resposta é `42501 permission denied`, não o
+comportamento que a policy pretendia. Um projeto Supabase hospedado criado
+com "Automatically expose new tables" desligada (a escolha certa de
+segurança: "controlar acesso manualmente") não concede esses grants
+sozinho; o Postgres local que `supabase start` sobe já vem com um baseline
+mais aberto, o que mascarou essa lacuna durante toda a fase de CI —
+descoberta só no primeiro teste funcional contra o projeto hospedado de
+verdade (`A2-HANDOFF.md`, achado 21).
+
+`20260908020000_a2_table_grants.sql` concede só o que os fluxos
+implementados usam por acesso direto à tabela (nunca CRUD por
+conveniência): **SELECT** em `workspaces`, `users`, `memberships` e
+`workspace_invitations`. `audit_logs` não recebe grant nenhum — toda
+leitura e escrita da trilha passa pelas funções `SECURITY DEFINER`
+(próxima seção), que rodam com o privilégio de quem as definiu, não do
+chamador, e por isso nunca precisaram de GRANT em `authenticated`. Isso é
+mais restritivo que a própria policy de SELECT de `audit_logs` (que já
+existe, para quando uma tela de auditoria for implementada) — o dia em que
+essa tela existir, o grant correspondente entra numa migration nova.
+
+A plataforma também concede, por padrão, `REFERENCES`/`TRIGGER`/
+`TRUNCATE`/`MAINTAIN` a `anon`/`authenticated` em toda tabela nova (um
+`ALTER DEFAULT PRIVILEGES` para o papel `postgres`, independente do toggle
+de exposição). `TRUNCATE` é o mais grave: ignora RLS por completo.
+`20260908030000_a2_revoke_default_table_privileges.sql` revoga os quatro
+nas 5 tabelas e altera o `DEFAULT PRIVILEGES` para que toda tabela futura
+já nasça sem eles. `supabase/tests/database/04_security_hardening.test.sql`
+verifica, via `table_privs_are()` do pgTAP, o conjunto **exato** de
+privilégios de cada papel em cada tabela — não só "SELECT existe", porque
+isso passaria mesmo com o baseline mais aberto do Postgres local.
 
 ### `private` vs `public`: duas categorias de `SECURITY DEFINER`
 

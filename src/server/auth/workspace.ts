@@ -105,16 +105,7 @@ export async function switchActiveWorkspace(
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
-    error: userError,
   } = await supabase.auth.getUser();
-  console.error(
-    "[DEBUG switchActiveWorkspace] workspaceId:",
-    workspaceId,
-    "user:",
-    user?.id,
-    "userError:",
-    JSON.stringify(userError),
-  );
   if (!user) {
     return { ok: false, error: "not_a_member" };
   }
@@ -122,20 +113,13 @@ export async function switchActiveWorkspace(
   // Mesmo motivo do getActiveWorkspaceId: sem o filtro por user_id, um
   // workspace com mais de um membro devolve mais de uma linha e
   // .maybeSingle() falha — mesmo a membership do próprio usuário existindo.
-  const { data, error: membershipError } = await supabase
+  const { data } = await supabase
     .from("memberships")
     .select("workspace_id")
     .eq("workspace_id", workspaceId)
     .eq("user_id", user.id)
     .eq("status", "active")
     .maybeSingle();
-
-  console.error(
-    "[DEBUG switchActiveWorkspace] membership data:",
-    JSON.stringify(data),
-    "membershipError:",
-    JSON.stringify(membershipError),
-  );
 
   if (!data) {
     return { ok: false, error: "not_a_member" };
