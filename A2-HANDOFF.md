@@ -356,7 +356,18 @@ todos de uma vez:
     checam o conjunto **exato** de privilégios de `authenticated`/`anon`
     em cada uma das 5 tabelas — não só "pelo menos SELECT existe", porque
     isso teria passado no baseline mais aberto do Postgres local sem
-    detectar a lacuna original.
+    detectar a lacuna original. E de fato pegou: a primeira rodada no CI
+    (com as duas migrations acima já aplicadas) reprovou 10 dos 25 testes
+    — o Postgres local tinha, por padrão, INSERT/UPDATE/DELETE completos
+    para `authenticated` e até SELECT/INSERT/UPDATE/DELETE para `anon` em
+    toda tabela nova, um baseline mais aberto ainda do que os quatro
+    privilégios revogados no achado acima, e diferente do que o projeto
+    hospedado concede por padrão — nenhum dos dois ambientes documentava
+    esse baseline em lugar nenhum. Em vez de continuar caçando privilégio
+    por privilégio, `20260908040000_a2_normalize_table_privileges.sql`
+    reseta tudo com `revoke all` nas 5 tabelas e declara de novo, do zero,
+    só o SELECT necessário — self-contained, sem depender de nenhum
+    default de nenhuma plataforma daqui em diante.
 
 ---
 

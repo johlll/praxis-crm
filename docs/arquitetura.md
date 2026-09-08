@@ -34,6 +34,7 @@ Migrations em `supabase/migrations/`, aplicadas em ordem:
 | `20260907120300_a2_business_functions.sql` | as 7 funções RPC de negócio (criar workspace, convidar, cancelar, prévia, aceitar, mudar papel, remover) |
 | `20260908020000_a2_table_grants.sql` | GRANT de tabela mínimo por fluxo implementado: SELECT em `workspaces`/`users`/`memberships`/`workspace_invitations`, nada em `audit_logs` |
 | `20260908030000_a2_revoke_default_table_privileges.sql` | revoga REFERENCES/TRIGGER/TRUNCATE/MAINTAIN concedidos por padrão a `anon`/`authenticated` (default privilege da plataforma para o papel `postgres`) nas 5 tabelas e para toda tabela futura |
+| `20260908040000_a2_normalize_table_privileges.sql` | `revoke all` + regrant só do SELECT necessário nas 5 tabelas — fecha o baseline ainda mais aberto do Postgres local (INSERT/UPDATE/DELETE para `authenticated`, SELECT/INSERT/UPDATE/DELETE para `anon`) que a suíte pgTAP nova só expôs ao rodar no CI |
 
 ### Por que RLS nega INSERT/UPDATE/DELETE direto em quase tudo
 
