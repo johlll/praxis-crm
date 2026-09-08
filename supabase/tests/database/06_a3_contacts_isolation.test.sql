@@ -116,18 +116,26 @@ select ok(
 
 -- -----------------------------------------------------------------
 -- 5) Revelação: auditada, e Ana (owner) não precisa de motivo.
+--    sensitive_data_access não tem GRANT para authenticated (sem tela
+--    nesta fase) — as leituras de verificação do teste (não a chamada da
+--    RPC em si, que precisa mesmo rodar como authenticated para provar
+--    que o EXECUTE concedido funciona) voltam ao papel padrão.
 -- -----------------------------------------------------------------
+reset role;
 select is(
   (select count(*)::int from public.sensitive_data_access where contact_id = (:'contact_um')::uuid),
   0,
   'Nenhuma revelação registrada ainda'
 );
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 
 select lives_ok(
   format($i$ select reveal_contact_cpf_cnpj(%L::uuid) $i$, :'contact_um'),
   'Ana (owner) revela CPF sem precisar de motivo'
 );
 
+reset role;
 select is(
   (select count(*)::int from public.sensitive_data_access where contact_id = (:'contact_um')::uuid),
   1,
@@ -139,6 +147,8 @@ select is(
   null,
   'A auditoria de revelação nunca guarda o CPF — só motivo (aqui nem motivo, pois owner não precisa)'
 );
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 
 -- Membership de Bruno (sales) só no workspace Um, para testar a exigência
 -- de motivo. INSERT direto em memberships é negado para authenticated
