@@ -11,6 +11,8 @@ import { listTeamMembers } from "@/modules/team/queries";
 import { LeadBasicFieldsForm } from "@/components/leads/lead-basic-fields-form";
 import { AssignLeadForm } from "@/components/leads/assign-lead-form";
 import { LeadStatusToggle } from "@/components/leads/lead-status-toggle";
+import { listOpportunities } from "@/modules/opportunities/queries";
+import { LeadOpportunitiesSection } from "@/components/pipeline/create-opportunity-form";
 
 export async function generateMetadata({
   params,
@@ -36,7 +38,11 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
   if (!lead) notFound();
 
   const canEdit = roleHasPermission(user.role, "lead.edit");
-  const members = await listTeamMembers(workspaceId, user.id);
+  const canEditOpportunities = roleHasPermission(user.role, "opportunity.edit");
+  const [members, { items: opportunities }] = await Promise.all([
+    listTeamMembers(workspaceId, user.id),
+    listOpportunities(workspaceId, { leadId: id }),
+  ]);
 
   return (
     <>
@@ -65,6 +71,8 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
               <LeadStatusToggle lead={lead} />
             </section>
           ) : null}
+
+          <LeadOpportunitiesSection leadId={lead.id} opportunities={opportunities} canEdit={canEditOpportunities} />
         </div>
       </main>
     </>

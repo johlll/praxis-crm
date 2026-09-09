@@ -143,3 +143,13 @@ ausentes nesta máquina:
 
 Mantido aqui só como registro de por que a primeira tentativa parou —
 superado pela decisão de infraestrutura acima.
+
+## Dependências de A5 — verificação de 10/09/2026
+
+| Pacote | Escolhido | Última estável | Motivo |
+|---|---|---|---|
+| @dnd-kit/core | 6.3.1 | 6.3.1 | `latest`, não beta/canary; sem aviso de depreciação (`npm view deprecated` vazio); único pacote da família instalado — `@dnd-kit/sortable` não foi necessário (mover cards entre colunas discretas usa `useDraggable`/`useDroppable` direto, sem reordenar lista) |
+
+Nenhuma outra dependência nova nesta fase — kanban, dialogs e tabela
+reaproveitam Radix (`@/components/ui/dialog`) e os demais componentes de
+UI já instalados nas fases anteriores.
