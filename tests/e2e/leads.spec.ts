@@ -269,14 +269,19 @@ test.describe.serial("leads — A4", () => {
 
     await page.goto(keptContactUrl);
     await page.getByRole("button", { name: "Desfazer mesclagem" }).click();
+    // unmergeContactAction() não faz redirect — só revalidatePath(). O
+    // primeiro reparo (esperar o botão "Desfazer mesclagem" sumir) não
+    // bastou: o trace de rede do CI mostrou a navegação seguinte
+    // acontecendo 42ms depois do clique, ABORTANDO a própria requisição
+    // POST em voo (status -1) — o "sinal" que eu achava que provava a
+    // mutação concluída não provava nada. Espera a RESPOSTA de rede da
+    // Server Action de verdade, registrada ANTES do clique que a dispara,
+    // pra não ter corrida com a resposta chegando rápido demais.
+    const undoResponse = page.waitForResponse(
+      (response) => response.url() === keptContactUrl && response.request().method() === "POST",
+    );
     await page.getByRole("button", { name: "Confirmar desfazer" }).click();
-    // unmergeContactAction() não faz redirect — só revalidatePath(). Sem
-    // esperar a mutação terminar de verdade, navegar embora corre à
-    // frente do desfazer ainda em voo (achado pelo CI: a leitura seguinte
-    // por mergeLeadUrl chegava antes do reparentamento acontecer). O
-    // botão "Desfazer mesclagem" some quando o histórico revalida com
-    // undoneAt preenchido — sinal observável de que a mutação terminou.
-    await expect(page.getByRole("button", { name: "Desfazer mesclagem" })).not.toBeVisible();
+    await undoResponse;
 
     // Restaura ao contato ORIGINAL — de novo, confirmado pelo ID.
     await page.goto(mergeLeadUrl);
