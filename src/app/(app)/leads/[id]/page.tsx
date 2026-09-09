@@ -11,7 +11,6 @@ import { listTeamMembers } from "@/modules/team/queries";
 import { LeadBasicFieldsForm } from "@/components/leads/lead-basic-fields-form";
 import { AssignLeadForm } from "@/components/leads/assign-lead-form";
 import { LeadStatusToggle } from "@/components/leads/lead-status-toggle";
-import { LeadValueSection } from "@/components/leads/lead-value-section";
 
 export async function generateMetadata({
   params,
@@ -37,7 +36,6 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
   if (!lead) notFound();
 
   const canEdit = roleHasPermission(user.role, "lead.edit");
-  const canViewValue = roleHasPermission(user.role, "lead.view_value");
   const members = await listTeamMembers(workspaceId, user.id);
 
   return (
@@ -58,13 +56,6 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
             <section className="rounded-lg border border-border bg-surface p-4">
               <h2 className="mb-3 text-body font-semibold text-text">Responsável</h2>
               <AssignLeadForm lead={lead} members={members} />
-            </section>
-          ) : null}
-
-          {canViewValue ? (
-            <section className="rounded-lg border border-border bg-surface p-4">
-              <h2 className="mb-3 text-body font-semibold text-text">Valor estimado de honorários</h2>
-              <LeadValueSection lead={lead} />
             </section>
           ) : null}
 

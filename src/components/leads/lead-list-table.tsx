@@ -19,23 +19,6 @@ const STATUS_LABEL: Record<LeadListItem["status"], string> = {
   arquivado: "Arquivado",
 };
 
-function formatCents(cents: number): string {
-  return (cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-}
-
-/** Mostra o que a resposta realmente trouxe — nunca assume um campo que
- * não veio (a ausência da chave É a regra de segurança, não um detalhe de
- * exibição a contornar). */
-function ValueCell({ item }: { item: LeadListItem }) {
-  if (item.estimatedValueCents != null) {
-    return <span className="tabular-nums">{formatCents(item.estimatedValueCents)}</span>;
-  }
-  if (item.estimatedValueBand != null) {
-    return <span className="text-text-secondary">{item.estimatedValueBand}</span>;
-  }
-  return <span className="text-text-tertiary">—</span>;
-}
-
 export function LeadListTable({ items }: { items: LeadListItem[] }) {
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-surface">
@@ -47,7 +30,6 @@ export function LeadListTable({ items }: { items: LeadListItem[] }) {
             <th className="px-4 py-2.5 font-medium">Prioridade</th>
             <th className="px-4 py-2.5 font-medium">Status</th>
             <th className="px-4 py-2.5 font-medium">Responsável</th>
-            <th className="px-4 py-2.5 font-medium">Valor estimado</th>
           </tr>
         </thead>
         <tbody>
@@ -72,9 +54,6 @@ export function LeadListTable({ items }: { items: LeadListItem[] }) {
               </td>
               <td className="px-4 py-2.5 text-text-secondary">{STATUS_LABEL[item.status]}</td>
               <td className="px-4 py-2.5 text-text-secondary">{item.assignedToName ?? "Sem responsável"}</td>
-              <td className="px-4 py-2.5">
-                <ValueCell item={item} />
-              </td>
             </tr>
           ))}
         </tbody>

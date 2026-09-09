@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import { uuidSchema } from "@/lib/uuid";
-import { parseMoneyBRToCents } from "@/lib/money";
 
 export const LEAD_PRIORITIES = ["baixa", "media", "alta"] as const;
 export const LEAD_STATUSES = ["ativo", "arquivado"] as const;
@@ -23,14 +22,11 @@ const tagsInputSchema = z
   .refine((tags) => tags.length <= 15, "No máximo 15 etiquetas.")
   .refine((tags) => tags.every((tag) => tag.length <= 40), "Cada etiqueta pode ter até 40 caracteres.");
 
-const moneyInputSchema = z.string().transform((value, ctx) => {
-  const result = parseMoneyBRToCents(value);
-  if (result === undefined) {
-    ctx.addIssue({ code: "custom", message: "Valor inválido. Use um número, ex.: 5.500,00." });
-    return z.NEVER;
-  }
-  return result;
-});
+// Versão esperada obrigatória e não-vazia nos três formulários de edição —
+// o banco (achado 2 da revisão) recusa p_expected_updated_at nulo com
+// 'expected_version_required': o valor sempre vem de um hidden field
+// preenchido com lead.updatedAt, nunca omitido "pra simplificar".
+const expectedUpdatedAtSchema = z.string().trim().min(1, "Recarregue a página e tente de novo.");
 
 export const createLeadSchema = z.object({
   workspaceId: uuidSchema,
@@ -40,7 +36,6 @@ export const createLeadSchema = z.object({
   tags: tagsInputSchema,
   priority: z.enum(LEAD_PRIORITIES).default("media"),
   assignedTo: uuidSchema.optional().or(z.literal("")),
-  estimatedValue: moneyInputSchema.optional(),
 });
 
 export const updateLeadBasicFieldsSchema = z.object({
@@ -49,25 +44,19 @@ export const updateLeadBasicFieldsSchema = z.object({
   summary: summarySchema,
   tags: tagsInputSchema,
   priority: z.enum(LEAD_PRIORITIES).default("media"),
-  expectedUpdatedAt: z.string().optional().or(z.literal("")),
+  expectedUpdatedAt: expectedUpdatedAtSchema,
 });
 
 export const assignLeadSchema = z.object({
   leadId: uuidSchema,
   assignedTo: uuidSchema.optional().or(z.literal("")),
-  expectedUpdatedAt: z.string().optional().or(z.literal("")),
+  expectedUpdatedAt: expectedUpdatedAtSchema,
 });
 
 export const setLeadStatusSchema = z.object({
   leadId: uuidSchema,
   status: z.enum(LEAD_STATUSES),
-  expectedUpdatedAt: z.string().optional().or(z.literal("")),
-});
-
-export const setLeadValueSchema = z.object({
-  leadId: uuidSchema,
-  estimatedValue: moneyInputSchema.optional(),
-  expectedUpdatedAt: z.string().optional().or(z.literal("")),
+  expectedUpdatedAt: expectedUpdatedAtSchema,
 });
 
 export const listLeadsFiltersSchema = z.object({

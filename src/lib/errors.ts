@@ -38,6 +38,7 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   lead_not_found: "Lead não encontrado.",
   assignee_not_a_member: "Essa pessoa não é membro ativo deste workspace.",
   invalid_value: "Valor inválido.",
+  expected_version_required: "Não foi possível confirmar a versão do lead. Recarregue a página e tente de novo.",
 };
 
 /** update_lead_basic_fields()/assign_lead()/set_lead_status()/set_lead_value()

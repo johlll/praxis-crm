@@ -6,13 +6,7 @@ import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/server/supabase/server";
 import { requirePermission, AuthzError, type Permission } from "@/server/authz/permissions";
 import { toUserMessage } from "@/lib/errors";
-import {
-  assignLeadSchema,
-  createLeadSchema,
-  setLeadStatusSchema,
-  setLeadValueSchema,
-  updateLeadBasicFieldsSchema,
-} from "./schema";
+import { assignLeadSchema, createLeadSchema, setLeadStatusSchema, updateLeadBasicFieldsSchema } from "./schema";
 
 export type LeadActionState = {
   ok: boolean;
@@ -56,7 +50,6 @@ export async function createLeadAction(
     tags: formData.get("tags") ?? "",
     priority: formData.get("priority") || undefined,
     assignedTo: formData.get("assignedTo") ?? "",
-    estimatedValue: formData.get("estimatedValue") ?? "",
   });
 
   if (!parsed.success) {
@@ -72,7 +65,6 @@ export async function createLeadAction(
     p_tags: parsed.data.tags,
     p_priority: parsed.data.priority,
     ...(parsed.data.assignedTo ? { p_assigned_to: parsed.data.assignedTo } : {}),
-    ...(parsed.data.estimatedValue != null ? { p_estimated_value_cents: parsed.data.estimatedValue } : {}),
   });
 
   if (error || !data) {
@@ -110,7 +102,7 @@ export async function updateLeadBasicFieldsAction(
     ...(parsed.data.summary ? { p_summary: parsed.data.summary } : {}),
     p_tags: parsed.data.tags,
     p_priority: parsed.data.priority,
-    ...(parsed.data.expectedUpdatedAt ? { p_expected_updated_at: parsed.data.expectedUpdatedAt } : {}),
+    p_expected_updated_at: parsed.data.expectedUpdatedAt,
   });
 
   if (error) {
@@ -142,7 +134,7 @@ export async function assignLeadAction(
   const { error } = await supabase.rpc("assign_lead", {
     p_lead_id: parsed.data.leadId,
     ...(parsed.data.assignedTo ? { p_assigned_to: parsed.data.assignedTo } : {}),
-    ...(parsed.data.expectedUpdatedAt ? { p_expected_updated_at: parsed.data.expectedUpdatedAt } : {}),
+    p_expected_updated_at: parsed.data.expectedUpdatedAt,
   });
 
   if (error) {
@@ -175,7 +167,7 @@ export async function setLeadStatusAction(
   const { error } = await supabase.rpc("set_lead_status", {
     p_lead_id: parsed.data.leadId,
     p_status: parsed.data.status,
-    ...(parsed.data.expectedUpdatedAt ? { p_expected_updated_at: parsed.data.expectedUpdatedAt } : {}),
+    p_expected_updated_at: parsed.data.expectedUpdatedAt,
   });
 
   if (error) {
@@ -184,39 +176,5 @@ export async function setLeadStatusAction(
 
   revalidatePath(`/leads/${parsed.data.leadId}`);
   revalidatePath("/leads");
-  return { ok: true, leadId: parsed.data.leadId };
-}
-
-export async function setLeadValueAction(
-  _prevState: LeadActionState,
-  formData: FormData,
-): Promise<LeadActionState> {
-  // "lead.view_value" de propósito, não "lead.edit": quem não pode ver o
-  // valor (viewer) também não deveria conseguir setá-lo por fora da tela.
-  const guard = await requirePermissionSafe("lead.view_value");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
-
-  const parsed = setLeadValueSchema.safeParse({
-    leadId: formData.get("leadId"),
-    estimatedValue: formData.get("estimatedValue") ?? "",
-    expectedUpdatedAt: formData.get("expectedUpdatedAt") ?? "",
-  });
-
-  if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? "Valor inválido." };
-  }
-
-  const supabase = await createServerSupabaseClient();
-  const { error } = await supabase.rpc("set_lead_value", {
-    p_lead_id: parsed.data.leadId,
-    ...(parsed.data.estimatedValue != null ? { p_estimated_value_cents: parsed.data.estimatedValue } : {}),
-    ...(parsed.data.expectedUpdatedAt ? { p_expected_updated_at: parsed.data.expectedUpdatedAt } : {}),
-  });
-
-  if (error) {
-    return { ok: false, error: toUserMessage(error) };
-  }
-
-  revalidatePath(`/leads/${parsed.data.leadId}`);
   return { ok: true, leadId: parsed.data.leadId };
 }

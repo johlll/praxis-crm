@@ -4,12 +4,6 @@ import type { Database } from "@/server/types/database";
 export type LeadPriority = Database["public"]["Enums"]["lead_priority"];
 export type LeadStatus = Database["public"]["Enums"]["lead_status"];
 
-/**
- * `estimatedValueCents`/`estimatedValueBand` são mutuamente exclusivos e
- * OPCIONAIS de propósito — refletem exatamente o jsonb que a função do
- * banco devolve (private.lead_value_projection): a CHAVE some por completo
- * pra quem não pode ver o valor, nunca vira `null` presente.
- */
 export type LeadListItem = {
   id: string;
   contactId: string;
@@ -23,11 +17,6 @@ export type LeadListItem = {
   assignedToName: string | null;
   createdAt: string;
   updatedAt: string;
-  /** updated_at de lead_values (linha separada) — é este que volta como
-   * `expectedUpdatedAt` em set_lead_value(), nunca o `updatedAt` acima. */
-  valueUpdatedAt: string | null;
-  estimatedValueCents?: number;
-  estimatedValueBand?: string;
 };
 
 type LeadJson = {
@@ -43,13 +32,10 @@ type LeadJson = {
   assigned_to_name: string | null;
   created_at: string;
   updated_at: string;
-  value_updated_at: string | null;
-  estimated_value_cents?: number;
-  estimated_value_band?: string;
 };
 
 function mapLead(row: LeadJson): LeadListItem {
-  const item: LeadListItem = {
+  return {
     id: row.id,
     contactId: row.contact_id,
     contactName: row.contact_name,
@@ -62,14 +48,7 @@ function mapLead(row: LeadJson): LeadListItem {
     assignedToName: row.assigned_to_name,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    valueUpdatedAt: row.value_updated_at,
   };
-  // Espalhamento condicional: `exactOptionalPropertyTypes` não aceita a
-  // chave presente com valor `undefined` — só ausência de chave conta como
-  // "não informado" (mesmo padrão já usado em contacts/actions.ts).
-  if ("estimated_value_cents" in row) item.estimatedValueCents = row.estimated_value_cents;
-  if ("estimated_value_band" in row) item.estimatedValueBand = row.estimated_value_band;
-  return item;
 }
 
 export type ListLeadsFilters = {

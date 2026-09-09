@@ -23,12 +23,10 @@ const PRIORITY_LABEL: Record<(typeof LEAD_PRIORITIES)[number], string> = {
 export function CreateLeadForm({
   contacts,
   members,
-  canSetValue,
   defaultContactId,
 }: {
   contacts: ContactOption[];
   members: TeamMember[];
-  canSetValue: boolean;
   defaultContactId?: string | undefined;
 }) {
   const [state, formAction, pending] = useActionState(createLeadAction, INITIAL_STATE);
@@ -120,13 +118,6 @@ export function CreateLeadForm({
           </select>
         </FormField>
       </div>
-
-      {canSetValue ? (
-        <FormField>
-          <FormLabel htmlFor="estimatedValue">Valor estimado de honorários (opcional)</FormLabel>
-          <Input id="estimatedValue" name="estimatedValue" placeholder="5.500,00" inputMode="decimal" />
-        </FormField>
-      ) : null}
 
       {state.error ? (
         <Alert variant="danger">
