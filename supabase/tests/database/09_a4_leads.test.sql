@@ -19,7 +19,13 @@
 --      Supabase local). O que dá pra provar aqui é o contrato: versão
 --      omitida é recusada, versão desatualizada é recusada, versão
 --      correta é aceita — a mecânica que faz a corrida real (seção 2 do
---      teste e2e) resolver para exatamente um vencedor;
+--      teste e2e) resolver para exatamente um vencedor. A versão
+--      "desatualizada" da seção 3 é construída por deslocamento
+--      (`- interval`), não reaproveitando um updated_at real capturado
+--      antes: o trigger de updated_at usa `now()`, fixo durante toda a
+--      transação do pgTAP, então qualquer valor real capturado aqui
+--      dentro sempre bate com o atual — reaproveitá-lo passaria por
+--      engano (achado no primeiro CI desta revisão);
 --   3) honorários saiu do contrato ativo de leads — get_lead()/
 --      list_leads() nunca mais projetam nenhuma chave de valor, para
 --      nenhum papel, e set_lead_value() teve o EXECUTE revogado de
@@ -131,16 +137,24 @@ select is(
   'Edição com a versão correta é aceita e persistida'
 );
 
+-- `now()` (o trigger de updated_at usa `now()`, não `clock_timestamp()`)
+-- é fixo durante TODA a transação do pgTAP — lead_um_v0 e o updated_at
+-- atual da linha são o MESMO valor aqui dentro, nunca dois instantes
+-- reais diferentes (isso só existe entre transações de verdade, cenário
+-- coberto pelo teste e2e de concorrência real). Por isso a versão
+-- "desatualizada" testada aqui é construída por deslocamento
+-- (`- interval`), não reaproveitando lead_um_v0 — reaproveitá-lo
+-- passaria por engano (bateria com o valor atual, que é o mesmo).
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 select throws_ok(
   format(
     $i$ select update_lead_basic_fields(%L::uuid, 'Trabalhista', 'Edição concorrente perdedora', '{}', 'media', %L::timestamptz) $i$,
-    :'lead_um', :'lead_um_v0'
+    :'lead_um', ((:'lead_um_v1')::timestamptz - interval '1 hour')
   ),
   'P0001',
   'lead_conflict',
-  'Reusar a versão JÁ SUBSTITUÍDA (lead_um_v0, não a atual lead_um_v1) é recusado — a checagem é contra o valor atual, não o que o chamador acha que é'
+  'Versão que não bate com o updated_at atual é recusada, não sobrescreve'
 );
 
 reset role;

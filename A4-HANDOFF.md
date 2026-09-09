@@ -103,11 +103,30 @@ reproduzidos e corrigidos.
 - `supabase/tests/database/09_a4_leads.test.sql`: 8 asserções novas
   cobrindo o achado 1 (advogado bloqueado em editar/atribuir/arquivar
   fora do alcance, com dado preservado; permitido dentro do alcance) e 2
-  asserções novas para o achado 2 (versão omitida é recusada; reusar uma
-  versão já substituída — não um `now() - interval` artificial — é
-  recusado). A seção antiga de projeção de valor (5 asserções) foi
-  removida e substituída por uma única asserção de regressão: nenhum
-  papel, nem o proprietário, recebe qualquer chave de valor.
+  asserções novas para o achado 2 (versão omitida é recusada; versão que
+  não bate com o `updated_at` atual é recusada). A seção antiga de
+  projeção de valor (5 asserções) foi removida e substituída por uma
+  única asserção de regressão: nenhum papel, nem o proprietário, recebe
+  qualquer chave de valor.
+
+  **Ajuste feito depois do primeiro CI desta rodada, registrado por
+  transparência:** a primeira versão deste arquivo tentou provar a
+  versão "desatualizada" reaproveitando o `updated_at` real capturado
+  ANTES da edição bem-sucedida (em vez do deslocamento artificial
+  `now() - interval` que o arquivo já usava antes da revisão) — o CI
+  pegou: dentro de uma única transação pgTAP, o trigger `set_updated_at()`
+  usa `now()` (hora de início da TRANSAÇÃO, fixa do começo ao fim), então
+  o valor capturado antes e o `updated_at` real depois de qualquer UPDATE
+  são sempre o MESMO valor — reaproveitá-lo nunca gera conflito de
+  verdade, só bate com o atual por coincidência de design do pgTAP, não
+  por a versão realmente ter ficado desatualizada. Isso explica por que a
+  versão original do arquivo (antes desta revisão) já usava
+  `now() - interval '1 hour'`: não era um detalhe arbitrário, era a única
+  forma de garantir um valor que não bate com o atual dentro de uma
+  transação onde `now()` nunca avança. Corrigido revertendo para esse
+  mesmo padrão. A prova de concorrência com timestamps DE VERDADE
+  diferentes é o teste e2e (seção 0.3) — que roda fora de uma transação
+  pgTAP, com o tempo real avançando entre as duas chamadas.
 
 ### 0.3 Limitação conhecida, registrada de propósito
 
@@ -332,8 +351,9 @@ honorários devia estar em `leads`.
 Criação/edição com persistência; vínculo obrigatório com contato do
 mesmo workspace (FK composta barra no banco); **versão esperada
 obrigatória** (omitir é recusado com `expected_version_required`);
-**concorrência atômica** (reusar uma versão JÁ SUBSTITUÍDA — não um
-`now() - interval` artificial — é recusada; a versão correta É aceita);
+**concorrência atômica** (versão que não bate com o `updated_at` atual é
+recusada — construída por deslocamento, já que `now()` é fixo durante
+toda a transação do pgTAP, ver seção 0.2; a versão correta É aceita);
 permissão por papel (viewer não cria/edita); **nenhuma chave de valor**,
 para nenhum papel, nem o proprietário (honorários não é campo de leads);
 acesso direto às tabelas `leads`/`lead_values` negado (`42501`, sem GRANT
