@@ -37,10 +37,11 @@ test.describe.serial("leads — A4", () => {
     await expect(page.getByLabel("Área jurídica")).toHaveValue("Trabalhista");
   });
 
-  test("2. edição básica persiste", async ({ page }) => {
+  test("2. edição básica persiste, inclusive em saves consecutivos e com resposta lenta", async ({ page }) => {
     await login(page, SEED_USERS.ana.email);
     await page.goto(leadUrl);
 
+    // --- salvamento simples ---
     await page.getByLabel("Resumo").fill("Rescisão indireta — audiência marcada");
     await page.getByRole("button", { name: "Salvar" }).click();
 
@@ -52,6 +53,58 @@ test.describe.serial("leads — A4", () => {
     // de bug que não existe na aplicação.
     await expect(page.getByText("Dados salvos.")).toBeVisible();
     await expect(page.getByLabel("Resumo")).toHaveValue("Rescisão indireta — audiência marcada");
+
+    // --- saves consecutivos: um segundo save logo depois do primeiro,
+    // sem concatenar o texto anterior em nenhum dos dois. Isto é
+    // exatamente o que quebrou em CI antes desta correção — o corpo real
+    // do POST enviado ao servidor (inspecionado no trace da execução que
+    // falhou) já continha "textoNovotextoAntigo" concatenado ANTES do
+    // clique em Salvar capturar o FormData, porque o campo era um
+    // <textarea> não controlado com `key={lead.updatedAt}`: a
+    // remontagem por key não fecha a janela de corrida entre a
+    // hidratação/reconciliação do React 19 e uma edição rápida do
+    // usuário (ou do teste). O fix trocou para um campo controlado que
+    // nunca ressincroniza a partir da prop do servidor — ver o
+    // comentário em lead-basic-fields-form.tsx.
+    await page.getByLabel("Resumo").fill("Rescisão indireta — audiência remarcada");
+    await page.getByRole("button", { name: "Salvar" }).click();
+    await expect(page.getByText("Dados salvos.")).toBeVisible();
+    await expect(page.getByLabel("Resumo")).toHaveValue("Rescisão indireta — audiência remarcada");
+
+    // --- resposta lenta: uma edição em andamento não pode ser perdida
+    // nem sobrescrita quando a resposta de um save ANTERIOR finalmente
+    // chega. Atrasa a resposta do POST da Server Action, clica Salvar,
+    // e ENQUANTO essa resposta ainda não voltou, edita o campo de novo
+    // (sem clicar Salvar ainda) — o campo controlado não reage a `lead`
+    // mudando, então a chegada tardia da primeira resposta não deve
+    // tocar no que o usuário está digitando agora.
+    await page.route(leadUrl, async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await route.continue();
+    });
+
+    await page.getByLabel("Resumo").fill("Primeiro texto — resposta atrasada");
+    await page.getByRole("button", { name: "Salvar" }).click();
+    // Não espera a resposta: edita de novo enquanto o primeiro save
+    // ainda está em voo (atrasado pela rota acima).
+    await page.getByLabel("Resumo").fill("Segundo texto — editado durante a espera");
+
+    // Tempo de sobra para a primeira resposta atrasada (1.5s) chegar e
+    // o Server Component pai revalidar com o `lead` novo.
+    await page.waitForTimeout(2500);
+    await expect(page.getByLabel("Resumo")).toHaveValue("Segundo texto — editado durante a espera");
+
+    await page.unroute(leadUrl);
+
+    // Confirma que esse texto (o que o usuário via na tela) é de fato o
+    // que fica salvo — sem concatenação com o primeiro texto atrasado.
+    await page.getByRole("button", { name: "Salvar" }).click();
+    await expect(page.getByText("Dados salvos.")).toBeVisible();
+    await expect(page.getByLabel("Resumo")).toHaveValue("Segundo texto — editado durante a espera");
   });
 
   test("3. busca e filtro no servidor encontram o lead certo", async ({ page }) => {

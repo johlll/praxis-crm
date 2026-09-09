@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +21,37 @@ const PRIORITY_LABEL: Record<(typeof LEAD_PRIORITIES)[number], string> = {
 export function LeadBasicFieldsForm({ lead, readOnly }: { lead: LeadListItem; readOnly: boolean }) {
   const [state, formAction, pending] = useActionState(updateLeadBasicFieldsAction, INITIAL_STATE);
 
+  // Campos CONTROLADOS, inicializados só na montagem deste componente
+  // (uma instância por lead — navegar para outro lead monta um
+  // LeadBasicFieldsForm novo, com o `lead` novo já no useState inicial;
+  // este componente nunca ressincroniza esses estados a partir da prop
+  // `lead` depois de montado.
+  //
+  // A versão anterior usava campos NÃO controlados (defaultValue) com
+  // `key={lead.updatedAt}` para forçar remontagem quando o dado mudava.
+  // Achado real no CI (trace da execução que falhou, corpo do POST
+  // inspecionado diretamente): o texto que o usuário digitava podia ficar
+  // concatenado com o texto anterior — e isso acontecia ANTES do clique
+  // em "Salvar" capturar o FormData, ou seja, o valor CORROMPIDO era o
+  // que ia pro banco, não um artefato de exibição pós-save. A causa é a
+  // janela entre a hidratação/reconciliação do React 19 num campo não
+  // controlado e o momento em que o teste (ou um usuário rápido) já
+  // tinha editado o campo — remontar por key não fecha essa janela
+  // porque ela ocorre ANTES da key mudar.
+  //
+  // Controlado, o React é sempre a única autoridade sobre o valor do
+  // campo — não há reconciliação de DOM não controlado para corromper.
+  // E por nunca reagir a `lead` mudando, uma edição em andamento nunca é
+  // sobrescrita por uma resposta de um save anterior ainda em voo
+  // (saves consecutivos, resposta lenta): o único efeito de um save
+  // bem-sucedido é o hidden `expectedUpdatedAt` abaixo, que sempre lê a
+  // prop mais recente — ele não é editável pelo usuário, então não há
+  // "edição em andamento" dele para perder.
+  const [legalArea, setLegalArea] = useState(lead.legalArea);
+  const [summary, setSummary] = useState(lead.summary ?? "");
+  const [tags, setTags] = useState(lead.tags.join(", "));
+  const [priority, setPriority] = useState(lead.priority);
+
   return (
     <form action={formAction} className="flex flex-col gap-4">
       <input type="hidden" name="leadId" value={lead.id} />
@@ -29,10 +60,10 @@ export function LeadBasicFieldsForm({ lead, readOnly }: { lead: LeadListItem; re
       <FormField>
         <FormLabel htmlFor="legalArea">Área jurídica</FormLabel>
         <Input
-          key={lead.updatedAt}
           id="legalArea"
           name="legalArea"
-          defaultValue={lead.legalArea}
+          value={legalArea}
+          onChange={(event) => setLegalArea(event.target.value)}
           required
           disabled={readOnly}
         />
@@ -41,19 +72,11 @@ export function LeadBasicFieldsForm({ lead, readOnly }: { lead: LeadListItem; re
       <FormField>
         <FormLabel htmlFor="summary">Resumo</FormLabel>
         <textarea
-          // key força remontagem limpa quando o dado muda (logo após um
-          // save bem-sucedido) — achado no CI: React 19 reseta campos não
-          // controlados depois que uma Server Action de <form action>
-          // termina; reconciliar o MESMO nó com um defaultValue novo
-          // (em vez de remontar) duplicava o texto (novo + antigo
-          // concatenados) nesse reset. Só o campo é remontado, não o
-          // formulário inteiro — o estado de useActionState (a mensagem
-          // "Dados salvos.") não é afetado.
-          key={lead.updatedAt}
           id="summary"
           name="summary"
           rows={3}
-          defaultValue={lead.summary ?? ""}
+          value={summary}
+          onChange={(event) => setSummary(event.target.value)}
           disabled={readOnly}
           className="rounded-input border border-border-input bg-surface px-3 py-2 text-body text-text disabled:opacity-60"
         />
@@ -62,10 +85,10 @@ export function LeadBasicFieldsForm({ lead, readOnly }: { lead: LeadListItem; re
       <FormField>
         <FormLabel htmlFor="tags">Etiquetas</FormLabel>
         <Input
-          key={lead.updatedAt}
           id="tags"
           name="tags"
-          defaultValue={lead.tags.join(", ")}
+          value={tags}
+          onChange={(event) => setTags(event.target.value)}
           disabled={readOnly}
         />
       </FormField>
@@ -73,16 +96,16 @@ export function LeadBasicFieldsForm({ lead, readOnly }: { lead: LeadListItem; re
       <FormField>
         <FormLabel htmlFor="priority">Prioridade</FormLabel>
         <select
-          key={lead.updatedAt}
           id="priority"
           name="priority"
-          defaultValue={lead.priority}
+          value={priority}
+          onChange={(event) => setPriority(event.target.value as (typeof LEAD_PRIORITIES)[number])}
           disabled={readOnly}
           className="h-9 rounded-input border border-border-input bg-surface px-3 text-body text-text disabled:opacity-60"
         >
-          {LEAD_PRIORITIES.map((priority) => (
-            <option key={priority} value={priority}>
-              {PRIORITY_LABEL[priority]}
+          {LEAD_PRIORITIES.map((p) => (
+            <option key={p} value={p}>
+              {PRIORITY_LABEL[p]}
             </option>
           ))}
         </select>
