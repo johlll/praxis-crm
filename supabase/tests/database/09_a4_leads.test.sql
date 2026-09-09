@@ -116,7 +116,13 @@ set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 select lives_ok(
   format(
-    $i$ select update_lead_basic_fields(%L::uuid, 'Trabalhista', 'Edição correta', '{}', 'media', %L::timestamptz) $i$,
+    -- Prioridade preservada como 'alta' de propósito: esta asserção testa
+    -- a mecânica de concorrência, não uma mudança de prioridade — o
+    -- filtro por prioridade da seção 8 depende de lead_um continuar
+    -- 'alta' (achado no CI: a versão anterior usava 'media' aqui e
+    -- quebrava esse filtro mais adiante, sem relação nenhuma com o que
+    -- a asserção realmente queria provar).
+    $i$ select update_lead_basic_fields(%L::uuid, 'Trabalhista', 'Edição correta', '{}', 'alta', %L::timestamptz) $i$,
     :'lead_um', :'lead_um_updated_at'
   ),
   'Edição com updated_at correto é aceita'
