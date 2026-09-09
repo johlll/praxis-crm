@@ -467,17 +467,56 @@ migration, confirmando a única linha residual de `lead_values` preservada
 e a assinatura nova de `create_lead` (7 parâmetros) e o `EXECUTE`
 revogado de `set_lead_value`.
 
-**Não feito nesta rodada, honestamente registrado:** um novo smoke-test
-autenticado ao vivo (local ou no preview) — Docker não está disponível
-nesta máquina (`supabase status` não conecta ao daemon) e as credenciais
-das contas QA hospedadas usadas na primeira validação não estavam em mãos
-nesta sessão para reautenticar manualmente. A prova funcional desta
-rodada é o CI (seção 4.3) — que reproduz o banco completo do zero e roda
-os 24 e2e reais (8 de leads, incluindo os fluxos que a primeira
-validação manual cobriu: criar, editar, arquivar, filtrar,
-mesclar/desfazer, mais os quatro reforçados pela revisão) — não um
-smoke-test manual adicional. CI já está verde; um smoke-test ao vivo no
-preview, antes do merge, fica disponível a pedido.
+**Não feito nesta rodada** (registrado então, resolvido na 5.5 abaixo):
+um novo smoke-test autenticado ao vivo — as credenciais da conta QA
+hospedada não estavam em mãos nesta sessão. A prova funcional daquela
+rodada foi só o CI (seção 4.3).
+
+### 5.5 Smoke-test ao vivo pré-merge — preview do commit `4bf2ffe`
+
+Feito com o PR já aprovado pela revisão e o CI verde, antes do merge,
+pedido explicitamente como confirmação final. Preview acessado via
+Vercel Deployment Protection Bypass (token gerado pelo dono do produto
+nas configurações do projeto, usado só nesta sessão); conta QA
+`joaoniero2+praxisqaa3@gmail.com` (papel Proprietário, workspace
+"Escritorio QA Praxis A3"), senha já existente recuperada pelo próprio
+usuário. `playwright-cli` contra o preview real — não contra `next dev`
+local.
+
+| Fluxo | Resultado |
+|---|---|
+| Criar lead sem campo de honorários | OK — formulário de criação e de edição não têm nenhum campo de valor |
+| Editar lead (resumo) | OK — persistiu depois de reload real da página |
+| Atribuir responsável (ação separada, não só no create) | OK — persistiu depois de reload |
+| Arquivar lead | OK — botão vira "Reabrir lead", persistiu depois de reload |
+| Reabrir lead | OK — botão volta a "Arquivar lead", persistiu depois de reload |
+| Escopo do advogado — ver | OK — conta nova (`QA A4 Advogado`, convite aceito ao vivo pelo link copiável, sem usar e-mail) viu só os leads sem responsável; o lead atribuído à Proprietária não apareceu na listagem |
+| Escopo do advogado — acesso direto por URL a lead de outro responsável | OK — **404**, nunca 403, confirmando "não encontrado" também na camada de página, não só na RPC |
+| Escopo do advogado — editar lead sem responsável | OK — o advogado salvou uma edição real, persistida depois de reload |
+| Mesclar contatos com vencedor explícito | OK — dois contatos fictícios com mesmo CPF, candidato "forte" identificado corretamente; mesclagem escolhendo como vencedor o contato que **não** tinha o lead (teste mais rigoroso que o mínimo pedido); o lead passou a apontar para o vencedor (confirmado pelo título da página e pelo link "Ver contato") |
+| Desfazer a mesclagem | OK — o lead voltou a apontar para o contato original (confirmado pelo ID) |
+
+**Achado real, não bloqueante:** ao abrir a página do contato logo após
+mesclar, o console acusou um erro de hidratação do React (#418) — texto
+renderizado no servidor diferente do primeiro render no cliente. Causa
+provável: `ContactMergeHistory` formata a data da mesclagem com
+`new Date(iso).toLocaleString("pt-BR", ...)` diretamente no componente
+(`src/components/contacts/contact-merge-history.tsx:21-23`), e esse
+cálculo depende do fuso horário do processo — o servidor da Vercel roda
+em UTC, o navegador do usuário não. React se recupera sozinho
+recalculando no cliente (a funcionalidade não quebrou, confirmado pelo
+resto do fluxo funcionando normalmente), mas é uma inconsistência visual
+real. **Não é da A4** — `merge_contacts`/`unmerge_contact` e esse
+componente são da A3, só reutilizados aqui; registrado para correção
+futura, fora do escopo desta fase.
+
+**Dados fictícios deixados no ambiente de demonstração** (não removidos,
+por não ser produção real e por instrução de não apagar dados sem
+necessidade): leads `b9c3fa62…` e `de09457e…`; contatos
+`d36e5ea8…`/`fd7012fd…` (candidato de duplicidade já resolvido, restam
+como contatos normais) e o lead `6f088e60…` ligado a eles; membro novo
+`QA A4 Advogado` (papel Advogado) no workspace "Escritorio QA Praxis
+A3".
 
 ---
 
