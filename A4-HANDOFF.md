@@ -3,19 +3,23 @@
 **Projeto:** Praxis CRM Jurídico
 **Fase:** A4
 **Branch:** `feat/a4-leads`
-**PR:** https://github.com/johlll/praxis-crm/pull/4 — **aberto, CI verde no commit `17ea284`, aguardando aprovação para merge**
-**Preview:** https://praxis-crm-git-feat-a4-leads-johllls-projects.vercel.app
+**PR:** https://github.com/johlll/praxis-crm/pull/4 — **MERGED em
+`main`** (commit de merge `03022a9`, commit final da branch `112d1c8`)
+**Preview (histórico, branch já mergeada):** https://praxis-crm-git-feat-a4-leads-johllls-projects.vercel.app
 **Data:** 09/09/2026
 
-**Status:** implementada e revisada. A primeira entrega (commit
-`1c6e753`, CI verde) teve **três problemas reais** identificados em
-revisão antes do merge — todos corrigidos na mesma branch, migration
-aditiva nova (`20260909100500_a4_review_hardening.sql`), sem apagar
-dado nem reescrever migration já aplicada. Detalhe completo na seção 0.
-**CI verde no commit final `17ea284` (pgTAP: 180 asserções em 9
-arquivos; isolamento: 26; e2e: 24 testes). PR `MERGEABLE`/`CLEAN`.
-Aguardando aprovação explícita para merge — nenhum merge foi feito, A5
-não foi iniciada.**
+**Status:** implementada, revisada e **mergeada em `main`** com
+autorização explícita, depois de CI verde e validação funcional (preview
++ `main`). A primeira entrega (commit `1c6e753`, CI verde) teve **três
+problemas reais** identificados em revisão antes do merge — todos
+corrigidos na mesma branch, migration aditiva nova
+(`20260909100500_a4_review_hardening.sql`), sem apagar dado nem
+reescrever migration já aplicada (seção 0). Depois da revisão, um
+smoke-test ao vivo no preview (seção 5.5) e um achado adicional do
+próprio CI — duplicação real de texto ao editar um lead, investigada
+pelo trace da execução e corrigida com campos controlados (seção 5.6).
+**CI verde no commit final `112d1c8` (pgTAP PASS; isolamento: 26; e2e:
+24/24). PR mergeado via merge commit, mesmo padrão dos PRs #1–#3.**
 
 **Pendências herdadas, não resolvidas por esta fase:** Site URL/Redirect
 URLs do Supabase Auth (A2/A3) e o ambiente real de clientes (ainda não
@@ -585,6 +589,27 @@ reset reverteria para o valor original — mas é o mesmo padrão
 estrutural. Fora do escopo desta correção (não falhou, não foi pedido);
 vale revisão futura se o mesmo sintoma aparecer ali.
 
+### 5.7 Merge e validação em `main` (produção)
+
+Commit final da branch: `112d1c8` (CI verde de novo, mesma suíte
+completa — pgTAP PASS, isolamento 26, e2e 24/24). PR `MERGEABLE`/
+`CLEAN`, mergeado com merge commit `03022a9` (mesmo padrão dos PRs
+#1–#3: "Merge pull request #4 from johlll/feat/a4-leads", não squash).
+
+Deploy de `main` na Vercel confirmado `success` para o SHA `03022a9`.
+Validação ao vivo em produção
+(`https://praxis-crm-eight.vercel.app`, mesma conta QA
+`joaoniero2+praxisqaa3@gmail.com`, mesmo banco `praxis-crm-dev` que o
+preview — ainda não existe ambiente de produção separado, ver
+A3-HANDOFF.md seção 7):
+
+| Fluxo | Resultado |
+|---|---|
+| Login | OK — chegou em `/visao-geral` |
+| Listagem de leads | OK — 7 leads, incluindo os criados nos smoke-tests anteriores |
+| Criar lead | OK — vinculado a um contato existente, sem campo de honorários |
+| Editar lead, dois saves consecutivos e imediatos | OK — confirmado com `page.reload()` real (não estado do cliente): o valor final foi exatamente o do segundo save, **sem a duplicação que motivou a correção da seção 5.6** — a mesma verificação que expôs o bug agora prova que ele não existe mais, em produção de verdade |
+
 ---
 
 ## 6. Ambiente
@@ -600,14 +625,18 @@ funcionando de verdade (não só presente) revelando um CPF real.
 
 ## 7. Confirmações explícitas
 
-- **Nenhuma fase além da A4 foi iniciada.**
+- **Nenhuma fase além da A4 foi iniciada** — A5 não implementada, só
+  proposta de escopo entregue separadamente para aprovação.
 - **Nenhum arquivo de referência visual foi alterado.**
-- **Sem merge em `main`.** PR #4 aberto, correções da revisão aplicadas
-  nesta branch, CI verde no commit `17ea284`, aguardando aprovação
-  explícita.
+- **PR #4 mergeado em `main`** (merge commit `03022a9`, commit final
+  `112d1c8`) com autorização explícita, condicionada a CI verde e
+  validação funcional — ambas as condições cumpridas antes do merge
+  (seções 5.5–5.7). Deploy de produção confirmado e validado ao vivo.
 - **`praxis-crm-dev`:** só migrations aditivas aplicadas (dry-run
   conferido antes de cada uma, incluindo a da revisão). Nenhum dado
   apagado — a linha residual de `lead_values` da validação manual
-  anterior segue lá, sem uso pelo contrato ativo (seção 0.1).
+  anterior segue lá, sem uso pelo contrato ativo (seção 0.1). Dados
+  fictícios dos smoke-tests (seções 5.5 e 5.7) também deixados intactos
+  no mesmo espírito.
 - **Nenhum dado sensível novo:** `leads` não guarda CPF, só referencia o
   contato (que já tem sua própria proteção da A3).
