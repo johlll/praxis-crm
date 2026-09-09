@@ -53,6 +53,13 @@ export async function switchWorkspace(page: Page, workspaceName: string): Promis
   // frente do cookie novo ainda não confirmado, lendo o workspace
   // ANTERIOR (achado testando a A4: dependia de listagem escopada ao
   // workspace ativo, que os testes anteriores nunca precisaram fazer
-  // logo após trocar).
+  // logo após trocar). Espera pela URL E pelo texto do seletor de
+  // workspace na sidebar refletir o nome novo — o sinal observável que
+  // realmente importa, não um proxy indireto (a URL sozinha já se provou
+  // insuficiente).
   await expect(page).toHaveURL(/\/visao-geral/, { timeout: 8000 });
+  await expect(page.getByRole("button", { name: "Trocar de workspace" })).toContainText(
+    workspaceName,
+    { timeout: 8000 },
+  );
 }
