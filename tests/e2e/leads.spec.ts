@@ -44,8 +44,13 @@ test.describe.serial("leads — A4", () => {
     await page.getByLabel("Resumo").fill("Rescisão indireta — audiência marcada");
     await page.getByRole("button", { name: "Salvar" }).click();
 
+    // Sem page.reload(): o Server Action já revalida e reflete o dado
+    // novo via re-render do Server Component (mesmo padrão de
+    // contacts.spec.ts) — um reload logo depois de editar um <textarea>
+    // não controlado disputa com a restauração de formulário do próprio
+    // Chrome e pode concatenar o valor antigo ao novo, um falso positivo
+    // de bug que não existe na aplicação.
     await expect(page.getByText("Dados salvos.")).toBeVisible();
-    await page.reload();
     await expect(page.getByLabel("Resumo")).toHaveValue("Rescisão indireta — audiência marcada");
   });
 

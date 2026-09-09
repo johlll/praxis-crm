@@ -192,12 +192,15 @@ com o token de bypass do SSO):
 | Revelar CPF de um contato existente | OK — confirma que a variável `CONTACTS_ACTIVE_KEY_VERSION`/`CONTACTS_KEY_VERSIONS` **genérica** de Preview (sem branch específico, herdada da A3) funciona de verdade neste branch novo, não só por estar presente |
 | Listagem de leads | OK — mostra os leads criados no teste local (mesmo banco), incluindo o valor formatado |
 
-**Não testado ao vivo:** o papel `sales` numa conta QA real (não existe
-conta com esse papel no workspace de QA da A3; criar uma exigiria
-redefinir senha via SQL direto, uma ação que passa pelo classificador de
-permissão e precisa de autorização explícita seguinte). Coberto com
-segurança pelo pgTAP (asserções 12–14 de `09_a4_leads.test.sql`) e pelo
-e2e (teste 7, usando Carla — `sales` no Escritório Dois do seed).
+**Papel `sales` testado ao vivo no preview** (conta QA
+`joaoniero2+praxisqaa3sales@gmail.com`, senha redefinida com autorização
+explícita, mesma técnica já usada para a conta owner): abriu o mesmo
+lead de R$ 5.500,00 e viu "Valor atual: R$ 5.000–10.000" — nunca o valor
+exato. Conferido também via `page.evaluate` que nem "550000" nem
+"5.500,00" aparecem em lugar nenhum do HTML da página para esse papel
+(a única ocorrência de "5.500,00" no HTML é o texto de exemplo estático
+do campo de input, igual para qualquer lead — não é o dado real
+ecoado).
 
 ---
 
