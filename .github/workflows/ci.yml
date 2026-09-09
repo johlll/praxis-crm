@@ -72,6 +72,14 @@ jobs:
             # Segredo só para este job efêmero (Postgres local descartado
             # ao fim do workflow) — nunca o do projeto hospedado de verdade.
             echo "WORKSPACE_ACTIVE_COOKIE_SECRET=$(openssl rand -base64 32)"
+            # CONTACTS_*: chave de teste FIXA (não gerada por openssl como a
+            # de cima) — precisa ser a MESMA que cifrou os CPFs de
+            # supabase/seed.sql (o local que `supabase db reset` acabou de
+            # aplicar), senão o app não decifraria os dados do seed.
+            # Documentada como chave de teste em docs/decisoes/a3-criptografia.md
+            # — nunca usada em nenhum ambiente real.
+            echo "CONTACTS_ACTIVE_KEY_VERSION=1"
+            echo 'CONTACTS_KEY_VERSIONS={"1":{"cipher":"EJn8xOi/LndtKMmLXhYJcdpHsV6uOlYLeyxVMDH+Gpo=","hmac":"DpvUCkbNyVHMdcdTwxa865Ho2zlg4tccndsxuVAhv2U="}}'
           } > .env.local
           echo "Conferindo .env.local (valores mascarados):"
           sed -E 's/=(.{6}).*/=\1.../' .env.local

@@ -22,15 +22,22 @@ mesmo SSO/Deployment Protection dos previews, nenhuma configuração alterada
 para chegar lá). Um bug real e específico de ambiente hospedado (grants de
 tabela ausentes, achado 21/22) foi encontrado e corrigido antes do merge.
 
-**Pendência conhecida, não bloqueante, para resolver antes de anunciar a A2
-"pronta para uso real":** Site URL/Redirect URLs do Auth no painel do
-`praxis-crm-dev` continuam apontando para `localhost:3000` — confirmado por
-teste direto ao endpoint de verificação do GoTrue (seção 5), ação manual do
-usuário necessária (valores exatos na seção 7, item 5). Como o domínio de
-produção só existe a partir deste merge, a correção deve mirar
-`https://praxis-crm-johllls-projects.vercel.app/auth/confirm`, não mais a
-URL da branch de feature (que fica obsoleta quando `feat/a2-auth-workspace`
-for apagada).
+**Pendência conhecida — NÃO resolvida, e o CI não cobre isso.** Site
+URL/Redirect URLs do Auth no painel do `praxis-crm-dev` continuam
+apontando para `localhost:3000` — confirmado por teste direto ao endpoint
+de verificação do GoTrue (seção 5), não por suposição. O CI ficar verde
+**não é evidência de que isso esteja corrigido**: os testes automatizados
+rodam contra um Postgres/GoTrue locais no runner do GitHub, que nunca
+tocam a configuração de Auth do projeto hospedado — essa configuração só
+existe no painel do `praxis-crm-dev` e só é validável testando contra ele
+de verdade, como fiz na seção 5. Ação manual do usuário necessária
+(valores exatos na seção 7, item 5) — enquanto não for aplicada, cadastros
+reais recebem e-mail de confirmação que aponta para `localhost:3000`. Como
+o domínio de produção só existe a partir deste merge, a correção deve
+mirar `https://praxis-crm-johllls-projects.vercel.app/auth/confirm`, não
+mais a URL da branch de feature (que fica obsoleta quando
+`feat/a2-auth-workspace` for apagada). Este ajuste **não bloqueia o início
+da A3** — só afeta a confirmação de e-mail de cadastros reais em produção.
 
 O caminho até aqui não foi direto: depois da primeira vez que o pgTAP
 ficou verde (seção 3, itens 8–11), o e2e revelou mais **9 bugs reais**

@@ -10,6 +10,7 @@ import {
   Check,
   CheckSquare,
   ChevronsUpDown,
+  Contact as ContactIcon,
   FileText,
   LayoutGrid,
   MessageCircle,
@@ -42,6 +43,7 @@ import {
 const icons: Record<NavIconName, LucideIcon> = {
   "layout-grid": LayoutGrid,
   users: Users,
+  contact: ContactIcon,
   "bar-chart": BarChart3,
   "check-square": CheckSquare,
   calendar: CalendarDays,
