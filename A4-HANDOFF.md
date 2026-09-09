@@ -3,7 +3,7 @@
 **Projeto:** Praxis CRM Jurídico
 **Fase:** A4
 **Branch:** `feat/a4-leads`
-**PR:** https://github.com/johlll/praxis-crm/pull/4 — **aberto, revisão pós-commit `1c6e753` aplicada, aguardando novo CI e aprovação**
+**PR:** https://github.com/johlll/praxis-crm/pull/4 — **aberto, CI verde no commit `17ea284`, aguardando aprovação para merge**
 **Preview:** https://praxis-crm-git-feat-a4-leads-johllls-projects.vercel.app
 **Data:** 09/09/2026
 
@@ -12,8 +12,10 @@
 revisão antes do merge — todos corrigidos na mesma branch, migration
 aditiva nova (`20260909100500_a4_review_hardening.sql`), sem apagar
 dado nem reescrever migration já aplicada. Detalhe completo na seção 0.
-**Aguardando o CI da correção rodar e aprovação explícita para merge —
-nenhum merge foi feito, A5 não foi iniciada.**
+**CI verde no commit final `17ea284` (pgTAP: 180 asserções em 9
+arquivos; isolamento: 26; e2e: 24 testes). PR `MERGEABLE`/`CLEAN`.
+Aguardando aprovação explícita para merge — nenhum merge foi feito, A5
+não foi iniciada.**
 
 **Pendências herdadas, não resolvidas por esta fase:** Site URL/Redirect
 URLs do Supabase Auth (A2/A3) e o ambiente real de clientes (ainda não
@@ -342,7 +344,58 @@ honorários devia estar em `leads`.
 
 ### 4.3 CI da revisão (migration `20260909100500` + testes reforçados)
 
-*(preenchido depois de rodar — placeholder até o CI deste commit terminar)*
+**Verde no commit `17ea284`**, depois de 4 rodadas — a mesma disciplina
+da primeira entrega: nenhuma delas revelou bug na regra de negócio em
+si (alcance do advogado, retração de honorários); todas foram erro meu
+em como eu testava isso. pgTAP: **180 asserções em 9 arquivos** (40 em
+`09_a4_leads.test.sql`, 6 a mais que antes da revisão). Isolamento entre
+workspaces: 26. e2e: **24 testes**, todos passando.
+
+O que cada rodada corrigiu, nesta ordem:
+
+1. **`database.ts` desatualizado** — mesma diferença cosmética
+   `--linked`/`--local` de sempre (bloco `__InternalSupabase` e sintaxe
+   dos tipos utilitários). Sem mudança de schema real.
+2. **pgTAP: teste de concorrência com premissa errada.** A primeira
+   versão do teste "versão desatualizada é recusada" reaproveitava um
+   `updated_at` REAL capturado antes de uma edição bem-sucedida — mas
+   dentro de uma transação pgTAP (`begin`/`rollback`), o trigger de
+   `updated_at` usa `now()`, que é FIXO do início ao fim da transação:
+   o valor capturado nunca fica de fato desatualizado ali dentro (ele
+   sempre bate com o "atual", porque os dois são literalmente o mesmo
+   `now()`). O UPDATE que devia ser recusado teve sucesso de verdade —
+   achado real do teste, não da regra de negócio. Corrigido revertendo
+   para o mesmo padrão de deslocamento por `interval` que o arquivo já
+   usava antes da revisão (explica por que aquele padrão existia: não
+   era estilo, era a única forma de garantir um valor que não bate com
+   o atual dado esse comportamento do `now()`). Documentado no
+   cabeçalho do arquivo de teste para quem ler depois.
+3. **e2e: mesclagem/desfazer sem esperar a mutação terminar (1ª
+   tentativa).** `unmergeContactAction()` não faz `redirect()` (só
+   `revalidatePath`), diferente de `mergeContactsAction()` — o teste
+   navegava pra `mergeLeadUrl` logo depois de clicar "Confirmar
+   desfazer", sem esperar a mutação terminar. Primeira tentativa de
+   correção (esperar o botão "Desfazer mesclagem" sumir da tela) **não
+   bastou** — ver rodada 4.
+4. **e2e: a mesma falha, mesmo depois do primeiro reparo — investigada
+   com o trace de rede do CI, não só tentativa e erro.** Baixei o
+   `playwright-report` do run e inspecionei o HAR dentro do trace: a
+   navegação pra `mergeLeadUrl` disparava só **42 milissegundos** depois
+   do clique em "Confirmar desfazer", e a própria requisição POST da
+   Server Action aparecia com `status: -1` — **abortada** pela
+   navegação, nunca chegou a receber resposta. O sinal que eu usava
+   (botão sumir) não provava nada sobre a mutação ter terminado; só
+   coincidia por outro motivo, ainda não totalmente explicado, mas
+   irrelevante depois da correção de verdade: trocado por
+   `page.waitForResponse()` esperando a resposta de rede real da própria
+   Server Action, registrado ANTES do clique que a dispara.
+
+Essa quarta rodada é a que vale registrar como método: em vez de tentar
+mais uma hipótese às cegas, baixar e inspecionar o trace do Playwright
+(`gh run download <id> -n playwright-report`, depois abrir o `.zip` do
+trace) mostrou a causa exata em poucos minutos — a mesma disciplina já
+usada na primeira entrega da A4 (consulta direta ao banco hospedado para
+descartar hipóteses, em vez de só reler o código).
 
 ## 5. Validação funcional — três camadas
 
@@ -420,10 +473,11 @@ nesta máquina (`supabase status` não conecta ao daemon) e as credenciais
 das contas QA hospedadas usadas na primeira validação não estavam em mãos
 nesta sessão para reautenticar manualmente. A prova funcional desta
 rodada é o CI (seção 4.3) — que reproduz o banco completo do zero e roda
-os 8 e2e reais, incluindo os fluxos que a primeira validação manual
-cobriu (criar, editar, arquivar, filtrar, mesclar/desfazer) — não um
-smoke-test manual adicional. Se preferir, faço um smoke-test ao vivo
-depois do CI verde, antes do merge — é rápido e sem custo.
+os 24 e2e reais (8 de leads, incluindo os fluxos que a primeira
+validação manual cobriu: criar, editar, arquivar, filtrar,
+mesclar/desfazer, mais os quatro reforçados pela revisão) — não um
+smoke-test manual adicional. CI já está verde; um smoke-test ao vivo no
+preview, antes do merge, fica disponível a pedido.
 
 ---
 
@@ -443,7 +497,8 @@ funcionando de verdade (não só presente) revelando um CPF real.
 - **Nenhuma fase além da A4 foi iniciada.**
 - **Nenhum arquivo de referência visual foi alterado.**
 - **Sem merge em `main`.** PR #4 aberto, correções da revisão aplicadas
-  nesta branch, aguardando o CI da migration nova e aprovação explícita.
+  nesta branch, CI verde no commit `17ea284`, aguardando aprovação
+  explícita.
 - **`praxis-crm-dev`:** só migrations aditivas aplicadas (dry-run
   conferido antes de cada uma, incluindo a da revisão). Nenhum dado
   apagado — a linha residual de `lead_values` da validação manual
