@@ -190,6 +190,50 @@ insert into public.memberships (workspace_id, user_id, role, status) values
   ('10000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000005', 'viewer', 'active');
 
 -- ---------------------------------------------------------------------
+-- pipelines (A5) — os workspaces do seed são inseridos diretamente
+-- acima, não via create_workspace_with_owner(), então o pipeline
+-- padrão (que essa função cria) e o backfill da migration da A5 (que
+-- só alcança workspaces que já existiam ANTES da migration rodar)
+-- nunca chegam até eles. Replica aqui a mesma estrutura: um pipeline
+-- "Comercial" com as 8 etapas do protótipo aprovado, por workspace.
+-- ---------------------------------------------------------------------
+
+insert into public.pipelines (id, workspace_id, name, is_default, created_by) values
+  ('50000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'Comercial', true, '20000000-0000-0000-0000-000000000001'),
+  ('50000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'Comercial', true, '20000000-0000-0000-0000-000000000002');
+
+insert into public.pipeline_stages (workspace_id, pipeline_id, name, position)
+select w.workspace_id, w.pipeline_id, s.name, s.position
+from (values
+  ('10000000-0000-0000-0000-000000000001'::uuid, '50000000-0000-0000-0000-000000000001'::uuid),
+  ('10000000-0000-0000-0000-000000000002'::uuid, '50000000-0000-0000-0000-000000000002'::uuid)
+) as w(workspace_id, pipeline_id)
+cross join (values
+  ('Fazer primeiro contato', 0),
+  ('Qualificar oportunidade', 1),
+  ('Verificar aderência e conflito', 2),
+  ('Agendar consulta', 3),
+  ('Realizar consulta', 4),
+  ('Enviar proposta', 5),
+  ('Negociar honorários', 6),
+  ('Aguardar assinatura', 7)
+) as s(name, position);
+
+insert into public.lost_reasons (workspace_id, label, position)
+select w.workspace_id, r.label, r.position
+from (values
+  ('10000000-0000-0000-0000-000000000001'::uuid),
+  ('10000000-0000-0000-0000-000000000002'::uuid)
+) as w(workspace_id)
+cross join (values
+  ('Honorários acima do orçamento', 0),
+  ('Escolheu outro escritório', 1),
+  ('Sem viabilidade jurídica', 2),
+  ('Cliente desistiu', 3),
+  ('Sem retorno do cliente', 4)
+) as r(label, position);
+
+-- ---------------------------------------------------------------------
 -- workspace_invitations — os quatro estados pedidos pela seção 9.
 -- token_hash fictício (hash de um token que não corresponde a nada real;
 -- os testes de aceite geram e usam token próprio via
