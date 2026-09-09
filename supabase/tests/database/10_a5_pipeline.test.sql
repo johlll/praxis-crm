@@ -147,7 +147,7 @@ select throws_ok(
 
 reset role;
 select assigned_to from public.leads where id = (:'lead_ana')::uuid \gset lead_ana_
-select is(:'lead_ana_assigned_to', :'ana', 'Dado preservado: tentativa fora do alcance não alterou o responsável do lead');
+select is((:'lead_ana_assigned_to')::uuid, (:'ana')::uuid, 'Dado preservado: tentativa fora do alcance não alterou o responsável do lead');
 
 -- ===================================================================
 -- 4) Requisitos de avanço — bloqueio no servidor, pular colunas não
@@ -170,7 +170,7 @@ select throws_ok(
 
 reset role;
 select lock_version from public.opportunities where id = (:'opp_ana')::uuid \gset opp_ana_
-select is(:'opp_ana_lock_version', '0', 'lock_version não mudou na tentativa recusada — nenhum efeito parcial');
+select is((:'opp_ana_lock_version')::bigint, 0::bigint, 'lock_version não mudou na tentativa recusada — nenhum efeito parcial');
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
@@ -188,7 +188,7 @@ select lives_ok(
 
 reset role;
 select stage_id from public.opportunities where id = (:'opp_ana')::uuid \gset opp_ana_
-select is(:'opp_ana_stage_id', :'stage_um_3', 'Oportunidade está de fato na etapa 4 após o avanço');
+select is((:'opp_ana_stage_id')::uuid, (:'stage_um_3')::uuid, 'Oportunidade está de fato na etapa 4 após o avanço');
 select is(
   (select count(*)::int from public.stage_transitions where opportunity_id = (:'opp_ana')::uuid),
   1, 'Exatamente uma transição registrada no histórico (append-only) para este movimento'
@@ -240,7 +240,7 @@ select lives_ok(
 reset role;
 select lock_version from public.opportunities where id = (:'opp_ana')::uuid \gset opp_ana_novo_
 select is(
-  :'opp_ana_novo_lock_version', ((:'opp_ana_lock_version')::bigint + 1)::text,
+  (:'opp_ana_novo_lock_version')::bigint, (:'opp_ana_lock_version')::bigint + 1,
   'lock_version incrementado exatamente em 1 pelo movimento aceito'
 );
 
@@ -256,7 +256,7 @@ select win_opportunity(:'opp_sem_resp'::uuid, (:'opp_sem_resp_lock_version')::bi
 reset role;
 select (:'win_result'::jsonb ->> 'client_id') as client_id_1 \gset
 select status from public.opportunities where id = (:'opp_sem_resp')::uuid \gset opp_sem_resp_
-select is(:'opp_sem_resp_status', 'won', 'Oportunidade fica com status won');
+select is((:'opp_sem_resp_status')::text, 'won'::text, 'Oportunidade fica com status won');
 select is(
   (select status::text from public.clients where id = (:'client_id_1')::uuid),
   'ativo', 'Cliente criado com status ativo ao ganhar'
@@ -294,7 +294,7 @@ select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role',
 select win_opportunity(:'opp_ana_dois'::uuid, 0, 200000, 'contingency') as win_result_2 \gset
 reset role;
 select (:'win_result_2'::jsonb ->> 'client_id') as client_id_2 \gset
-select is(:'client_id_2', :'client_id_1', 'Segunda oportunidade do mesmo contato reaproveita o cliente ativo já existente, não duplica');
+select is((:'client_id_2')::uuid, (:'client_id_1')::uuid, 'Segunda oportunidade do mesmo contato reaproveita o cliente ativo já existente, não duplica');
 select is(
   (select count(*)::int from public.clients where workspace_id = :'ws_um'::uuid and contact_id = (:'contact_sem_resp')::uuid),
   1, 'Continua existindo exatamente um cliente ativo para este contato'
@@ -319,7 +319,7 @@ select lives_ok(
 );
 reset role;
 select status from public.opportunities where id = (:'opp_merge')::uuid \gset opp_merge_
-select is(:'opp_merge_status', 'lost', 'Oportunidade fica com status lost');
+select is((:'opp_merge_status')::text, 'lost'::text, 'Oportunidade fica com status lost');
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
@@ -387,7 +387,7 @@ set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 select create_opportunity(:'lead_merge'::uuid, null, null) as opp_para_merge \gset
 select (get_opportunity(:'opp_para_merge'::uuid) ->> 'contact_name') as nome_antes_merge \gset
-select is(:'nome_antes_merge', 'Contato A5 Merge Perdedor', 'Antes da mesclagem, a oportunidade mostra o nome do contato original');
+select is((:'nome_antes_merge')::text, 'Contato A5 Merge Perdedor'::text, 'Antes da mesclagem, a oportunidade mostra o nome do contato original');
 
 select (merge_contacts((:'contact_merge_vencedor')::uuid, (:'contact_merge_perdedor')::uuid)).id as merge_kept \gset
 reset role;
@@ -399,14 +399,14 @@ select id from public.contact_merges
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 select (get_opportunity(:'opp_para_merge'::uuid) ->> 'contact_name') as nome_depois_merge \gset
-select is(:'nome_depois_merge', 'Contato A5 Merge Vencedor', 'Depois da mesclagem, a oportunidade (via lead) segue o contato vencedor — sem tocar a oportunidade diretamente');
+select is((:'nome_depois_merge')::text, 'Contato A5 Merge Vencedor'::text, 'Depois da mesclagem, a oportunidade (via lead) segue o contato vencedor — sem tocar a oportunidade diretamente');
 
 select lives_ok(
   format($i$ select unmerge_contact(%L::uuid) $i$, :'merge_id'),
   'Desfazer a mesclagem funciona'
 );
 select (get_opportunity(:'opp_para_merge'::uuid) ->> 'contact_name') as nome_apos_undo \gset
-select is(:'nome_apos_undo', 'Contato A5 Merge Perdedor', 'Depois do desfazer, a oportunidade volta a mostrar o contato original');
+select is((:'nome_apos_undo')::text, 'Contato A5 Merge Perdedor'::text, 'Depois do desfazer, a oportunidade volta a mostrar o contato original');
 
 -- ===================================================================
 -- 9) RLS forçada e grants exatos
