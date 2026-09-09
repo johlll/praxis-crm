@@ -131,6 +131,11 @@ test.describe.serial("leads — A4", () => {
     await page.getByLabel("Nome").fill("Lead Merge Dois");
     await page.getByLabel("Telefone").fill("11955500011");
     await page.getByRole("button", { name: "Criar contato" }).click();
+    // Espera o redirect terminar ANTES de ler page.url() — lido cedo
+    // demais, ainda mostraria /contatos/novo (achado pelo CI: o
+    // contactId virava a string "novo", pré-selecionando o contato
+    // errado no formulário de lead seguinte).
+    await expect(page).toHaveURL(/\/contatos\/[0-9a-f-]{36}$/);
     const contactDoisUrl = page.url();
     const contactDoisId = contactDoisUrl.split("/").pop()!;
 
@@ -145,6 +150,8 @@ test.describe.serial("leads — A4", () => {
     const row = page.getByTestId("duplicate-candidate-row").filter({ hasText: "Lead Merge" });
     await row.getByRole("link", { name: "Comparar" }).click();
     await page.getByRole("button", { name: /^Mesclar, mantendo Lead Merge (Um|Dois)$/ }).click();
+    // Mesmo cuidado: mergeContactsAction() também faz redirect().
+    await expect(page).toHaveURL(/\/contatos\/[0-9a-f-]{36}$/);
     const keptContactUrl = page.url();
 
     // Depois de mesclar, o lead passa a mostrar o nome do contato mantido
