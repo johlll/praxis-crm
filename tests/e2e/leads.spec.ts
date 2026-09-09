@@ -270,6 +270,13 @@ test.describe.serial("leads — A4", () => {
     await page.goto(keptContactUrl);
     await page.getByRole("button", { name: "Desfazer mesclagem" }).click();
     await page.getByRole("button", { name: "Confirmar desfazer" }).click();
+    // unmergeContactAction() não faz redirect — só revalidatePath(). Sem
+    // esperar a mutação terminar de verdade, navegar embora corre à
+    // frente do desfazer ainda em voo (achado pelo CI: a leitura seguinte
+    // por mergeLeadUrl chegava antes do reparentamento acontecer). O
+    // botão "Desfazer mesclagem" some quando o histórico revalida com
+    // undoneAt preenchido — sinal observável de que a mutação terminou.
+    await expect(page.getByRole("button", { name: "Desfazer mesclagem" })).not.toBeVisible();
 
     // Restaura ao contato ORIGINAL — de novo, confirmado pelo ID.
     await page.goto(mergeLeadUrl);
