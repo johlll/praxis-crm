@@ -7,8 +7,9 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/feedback/empty-state";
 import { getShellContext } from "@/modules/shell/queries";
 import { requireWorkspace } from "@/server/authz/permissions";
-import { listLeads, type LeadStatus, type LeadPriority } from "@/modules/leads/queries";
+import { listLeads } from "@/modules/leads/queries";
 import { listTeamMembers } from "@/modules/team/queries";
+import { listLeadsFiltersSchema } from "@/modules/leads/schema";
 import { LeadFilterBar } from "@/components/leads/lead-filter-bar";
 import { LeadListTable } from "@/components/leads/lead-list-table";
 import { LeadsPagination } from "@/components/leads/leads-pagination";
@@ -29,20 +30,37 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   const { user } = await getShellContext();
   const workspaceId = await requireWorkspace();
   const params = await searchParams;
-  const page = Number(params.page) > 0 ? Number(params.page) : 1;
+
+  // Filtros vêm de query string editável à mão — nunca confiados sem
+  // validação, mesmo sendo "só" leitura: um enum/uuid inválido aqui não
+  // pode virar erro cru repassado ao RPC. Entrada fora do formato
+  // esperado é tratada como "sem filtro" (fallback seguro), não como
+  // falha da página.
+  const parsedFilters = listLeadsFiltersSchema.safeParse({
+    search: params.q ?? "",
+    status: params.status ?? "",
+    priority: params.priority ?? "",
+    assignedTo: params.assignedTo ?? "",
+    legalArea: "",
+    page: params.page ?? "1",
+  });
+  const filters = parsedFilters.success
+    ? parsedFilters.data
+    : { search: "", status: "" as const, priority: "" as const, assignedTo: "", legalArea: "", sort: "created_at_desc" as const, page: 1 };
+  const page = filters.page;
 
   const [{ items, total, pageSize }, members] = await Promise.all([
     listLeads(workspaceId, {
-      search: params.q,
-      status: (params.status as LeadStatus) || undefined,
-      priority: (params.priority as LeadPriority) || undefined,
-      assignedTo: params.assignedTo,
+      search: filters.search || undefined,
+      status: filters.status || undefined,
+      priority: filters.priority || undefined,
+      assignedTo: filters.assignedTo || undefined,
       page,
     }),
     listTeamMembers(workspaceId, user.id),
   ]);
 
-  const hasActiveFilters = Boolean(params.q || params.status || params.priority || params.assignedTo);
+  const hasActiveFilters = Boolean(filters.search || filters.status || filters.priority || filters.assignedTo);
 
   return (
     <>
@@ -52,10 +70,10 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
           <div className="flex items-start justify-between gap-3">
             <LeadFilterBar
               defaultValues={{
-                search: params.q ?? "",
-                status: params.status ?? "",
-                priority: params.priority ?? "",
-                assignedTo: params.assignedTo ?? "",
+                search: filters.search ?? "",
+                status: filters.status ?? "",
+                priority: filters.priority ?? "",
+                assignedTo: filters.assignedTo ?? "",
               }}
               members={members}
               hasActiveFilters={hasActiveFilters}
@@ -86,10 +104,10 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                 total={total}
                 pageSize={pageSize}
                 currentParams={{
-                  q: params.q,
-                  status: params.status,
-                  priority: params.priority,
-                  assignedTo: params.assignedTo,
+                  q: filters.search,
+                  status: filters.status,
+                  priority: filters.priority,
+                  assignedTo: filters.assignedTo,
                 }}
               />
             </>

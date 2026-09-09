@@ -5,6 +5,14 @@
 -- Um; bruno=owner do Escritório Dois. Uma membership 'sales' temporária
 -- é criada só para este teste (nenhum usuário do seed tem esse papel no
 -- Escritório Um) — mesmo padrão já usado em 06_a3_contacts_isolation.
+--
+-- Disciplina do arquivo: `request.jwt.claims` é escopo de TRANSAÇÃO, não
+-- de papel — trocar o papel do Postgres (`reset role`/`set local role
+-- authenticated`) nunca troca sozinho quem `auth.uid()` enxerga. Por
+-- isso, todo bloco reafirma explicitamente OS DOIS antes de cada chamada
+-- (RPC como um ator específico, ou leitura direta como papel privilegiado
+-- pra conferir o banco) — nunca confia em estado deixado por um bloco
+-- anterior.
 
 begin;
 select plan(34);
@@ -24,26 +32,22 @@ select plan(34);
 insert into public.memberships (workspace_id, user_id, role, status)
 values (:'ws_um'::uuid, :'bruno'::uuid, 'sales', 'active');
 
--- Contato de apoio no Escritório Um, criado como ana (owner).
+-- Contatos de apoio, cada um criado por quem legitimamente pertence ao
+-- workspace de destino.
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
-
 select (create_contact(:'ws_um'::uuid, 'pf', 'Contato A4 Um', null, null, null)).id as contact_um \gset
 select (create_contact(:'ws_um'::uuid, 'pf', 'Contato A4 Dois', null, null, null)).id as contact_outro_um \gset
 
-reset role;
-select (create_contact(:'ws_dois'::uuid, 'pf', 'Contato A4 Workspace Dois', null, null, null)).id as contact_dois \gset
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'bruno', 'role', 'authenticated')::text, true);
-select (create_contact(:'ws_dois'::uuid, 'pf', 'Contato A4 Workspace Dois criado por bruno', null, null, null)).id as contact_dois2 \gset
-reset role;
+select (create_contact(:'ws_dois'::uuid, 'pf', 'Contato A4 Workspace Dois', null, null, null)).id as contact_dois \gset
 
 -- -----------------------------------------------------------------
 -- 1) Criação com persistência (owner), valor em centavos.
 -- -----------------------------------------------------------------
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
-
 select create_lead(
   :'ws_um'::uuid, (:'contact_um')::uuid, 'Trabalhista', 'Rescisão indireta', array['urgente'],
   'alta', :'ana'::uuid, 550000
@@ -69,7 +73,6 @@ select is(
 -- -----------------------------------------------------------------
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
-
 select throws_ok(
   format(
     $i$ select create_lead(%L::uuid, %L::uuid, 'Cível', null, '{}', 'media', null, null) $i$,
@@ -84,16 +87,21 @@ select throws_ok(
 -- 3) Edição com persistência + concorrência: segunda edição com
 --    updated_at desatualizado é recusada, não sobrescreve silenciosamente.
 -- -----------------------------------------------------------------
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 select (update_lead_basic_fields(
   (:'lead_um')::uuid, 'Trabalhista', 'Resumo atualizado', array['urgente', 'audiencia_marcada'], 'alta', null
 )).updated_at as lead_um_updated_at \gset
 
+reset role;
 select is(
   (select summary from public.leads where id = (:'lead_um')::uuid),
   'Resumo atualizado',
   'Edição básica persistida'
 );
 
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 select throws_ok(
   format(
     $i$ select update_lead_basic_fields(%L::uuid, 'Trabalhista', 'Outra edição', '{}', 'media', now() - interval '1 hour') $i$,
@@ -104,6 +112,8 @@ select throws_ok(
   'Edição concorrente com updated_at desatualizado é recusada, não sobrescreve'
 );
 
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 select lives_ok(
   format(
     $i$ select update_lead_basic_fields(%L::uuid, 'Trabalhista', 'Edição correta', '{}', 'media', %L::timestamptz) $i$,
@@ -113,11 +123,10 @@ select lives_ok(
 );
 
 -- -----------------------------------------------------------------
--- 4) Permissão por papel: viewer não cria nem edita; todos os outros
---    (menos viewer) criam.
+-- 4) Permissão por papel: viewer não cria nem edita.
 -- -----------------------------------------------------------------
+set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'elisa', 'role', 'authenticated')::text, true);
-
 select throws_ok(
   format(
     $i$ select create_lead(%L::uuid, %L::uuid, 'Cível', null, '{}', 'media', null, null) $i$,
@@ -128,6 +137,8 @@ select throws_ok(
   'Visualizador não cria lead'
 );
 
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'elisa', 'role', 'authenticated')::text, true);
 select throws_ok(
   format($i$ select update_lead_basic_fields(%L::uuid, 'Cível', null, '{}', 'media', null) $i$, :'lead_um'),
   'P0001',
@@ -140,6 +151,8 @@ select throws_ok(
 --    papel pode vê-la; visualizador não recebe CPF nem honorários (aqui,
 --    a chave inteira é ausente, não um valor nulo presente).
 -- -----------------------------------------------------------------
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'elisa', 'role', 'authenticated')::text, true);
 select ok(
   not (get_lead((:'lead_um')::uuid) ? 'estimated_value_cents'),
   'Resposta de get_lead() para visualizador NÃO contém a chave estimated_value_cents'
@@ -149,6 +162,7 @@ select ok(
   'Resposta de get_lead() para visualizador também não contém a chave de faixa'
 );
 
+set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'bruno', 'role', 'authenticated')::text, true);
 select ok(
   (get_lead((:'lead_um')::uuid) ? 'estimated_value_band'),
@@ -164,6 +178,7 @@ select is(
   'Faixa calculada corretamente para R$ 5.500,00'
 );
 
+set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 select is(
   (get_lead((:'lead_um')::uuid) ->> 'estimated_value_cents')::bigint,
@@ -174,8 +189,10 @@ select is(
 -- -----------------------------------------------------------------
 -- 6) Acesso direto às tabelas — sem GRANT nenhum, nem para SELECT.
 --    Isso é o que impede o valor de honorários de vazar por fora da
---    função, mesmo pela Data API direta.
+--    função, mesmo pela Data API direta. Roda como `authenticated`
+--    DE PROPÓSITO — é exatamente o papel que deve ser barrado.
 -- -----------------------------------------------------------------
+set local role authenticated;
 select throws_ok(
   $i$ select count(*) from public.leads $i$,
   '42501',
@@ -194,8 +211,8 @@ select throws_ok(
 --    sem responsável. lead_um está atribuído a Ana — carla não deve
 --    enxergá-lo nem por get_lead() nem por list_leads().
 -- -----------------------------------------------------------------
+set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'carla', 'role', 'authenticated')::text, true);
-
 select throws_ok(
   format($i$ select get_lead(%L::uuid) $i$, :'lead_um'),
   'P0001',
@@ -203,17 +220,20 @@ select throws_ok(
   'Advogado sem vínculo com o lead recebe "não encontrado", não um erro de permissão'
 );
 
-reset role;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 select (create_lead(:'ws_um'::uuid, (:'contact_outro_um')::uuid, 'Cível', null, '{}', 'baixa', null, null))
   as lead_sem_responsavel \gset
+
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'carla', 'role', 'authenticated')::text, true);
-
 select lives_ok(
   format($i$ select get_lead(%L::uuid) $i$, :'lead_sem_responsavel'),
   'Advogado enxerga lead sem responsável'
 );
 
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'carla', 'role', 'authenticated')::text, true);
 select is(
   (select (list_leads(:'ws_um'::uuid)).total_count),
   1::bigint,
@@ -223,8 +243,8 @@ select is(
 -- -----------------------------------------------------------------
 -- 8) Busca, filtro, paginação — como owner (vê todos).
 -- -----------------------------------------------------------------
+set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
-
 select is(
   (select (list_leads(:'ws_um'::uuid)).total_count),
   2::bigint,
@@ -253,8 +273,12 @@ select is(
 
 -- -----------------------------------------------------------------
 -- 9) Isolamento entre workspaces — lead do Escritório Um não aparece em
---    list_leads()/get_lead() do Escritório Dois.
+--    list_leads() do Escritório Dois. Chamado como Bruno (owner de lá):
+--    ana não é membro do Escritório Dois, e list_leads() recusaria com
+--    insufficient_permission antes mesmo de contar linha nenhuma.
 -- -----------------------------------------------------------------
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'bruno', 'role', 'authenticated')::text, true);
 select is(
   (select (list_leads(:'ws_dois'::uuid)).total_count),
   0::bigint,
@@ -265,11 +289,17 @@ select is(
 -- 10) Integração com merge/undo de contatos (A3): mesclar reparenta o
 --     lead; desfazer restaura, com a mesma trava de conflito.
 -- -----------------------------------------------------------------
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 select (create_lead(
   :'ws_um'::uuid, (:'contact_outro_um')::uuid, 'Cível', null, '{}', 'media', null, null
 )) as lead_para_mesclar \gset
 
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 select (merge_contacts((:'contact_um')::uuid, (:'contact_outro_um')::uuid)).id as merge_kept \gset
+
+reset role;
 select (
   select id from public.contact_merges
   where kept_contact_id = (:'contact_um')::uuid and merged_contact_id = (:'contact_outro_um')::uuid
@@ -282,10 +312,14 @@ select is(
   'Mesclar contatos reparenta o lead do contato perdedor para o vencedor'
 );
 
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 select lives_ok(
   format($i$ select unmerge_contact(%L::uuid) $i$, :'merge_id'),
   'Desfazer a mesclagem funciona sem edição posterior'
 );
+
+reset role;
 select is(
   (select contact_id from public.leads where id = (:'lead_para_mesclar')::uuid),
   (:'contact_outro_um')::uuid,
