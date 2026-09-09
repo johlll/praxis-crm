@@ -518,6 +518,73 @@ como contatos normais) e o lead `6f088e60…` ligado a eles; membro novo
 `QA A4 Advogado` (papel Advogado) no workspace "Escritorio QA Praxis
 A3".
 
+### 5.6 Achado real depois do smoke-test — duplicação de texto ao editar, corrigida
+
+Depois do smoke-test da 5.5 (que não reproduziu nada de errado — a
+janela de corrida é rara), um commit só de documentação disparou o CI
+de novo e ele pegou o bug: `tests/e2e/leads.spec.ts` teste 2 falhou com
+`Received: "Rescisão indireta — audiência marcadaRescisão indireta"`.
+
+**Investigação, não suposição:** antes de tocar em qualquer código, o
+trace da execução que falhou foi baixado (`gh run download` +
+`unzip`) e o corpo bruto do POST enviado ao servidor foi lido
+diretamente do arquivo de rede do trace — não o DOM depois do fato. O
+campo `_1_summary` do multipart **já chegava concatenado**
+(`"...marcadaRescisão indireta"`) no request que o clique em "Salvar"
+disparou. Cruzando os timestamps do trace de ações com o
+`startedDateTime` do POST, a duplicação aconteceu numa janela de ~35ms
+entre o `fill()` terminar e o clique capturar o FormData — ou seja, o
+dado que foi ao banco já nascia corrompido; não era um artefato de
+exibição pós-save.
+
+**Causa:** `LeadBasicFieldsForm` usava campos `<textarea>`/`<input>`
+**não controlados** (`defaultValue`) com `key={lead.updatedAt}` para
+forçar remontagem quando o Server Component pai revalidava com dado
+novo — o mesmo padrão que a entrega original já tinha corrigido uma
+vez para esse exato sintoma. O `key` só resolve o problema **depois**
+que a prop muda; não fecha a janela de corrida entre a
+hidratação/reconciliação do React 19 num campo não controlado e uma
+edição rápida (do teste, ou de um usuário digitando rápido).
+
+**Correção:** `src/components/leads/lead-basic-fields-form.tsx`
+reescrito com campos **controlados** (`useState`), inicializados uma
+única vez na montagem e **nunca ressincronizados a partir da prop
+`lead`** depois disso — só o React decide o valor exibido, o DOM nunca
+tem autoridade sobre ele. Isso também resolve, por construção, o
+requisito de não perder uma edição em andamento: nada no componente
+reage a `lead` mudando (só o hidden `expectedUpdatedAt`, não editável
+pelo usuário, que sempre lê a prop mais recente para o controle de
+concorrência continuar funcionando). Navegar para outro lead monta uma
+instância nova do componente (mudança de rota), então cada lead começa
+com seu próprio estado correto.
+
+**Teste 2 ampliado** (sem enfraquecer nenhuma asserção existente) para
+provar isto explicitamente, não só confiar que o CI passaria por sorte
+numa próxima tentativa: dois saves consecutivos sem concatenação, e um
+cenário de resposta lenta (`page.route` atrasando o POST em 1.5s)
+onde o usuário edita o campo de novo **enquanto** a resposta do save
+anterior ainda não voltou — confirma que o texto exibido é o que o
+usuário digitou por último, não sobrescrito quando a resposta atrasada
+chega.
+
+**Validado três vezes antes de seguir:** `npm run typecheck`/`lint`/
+`test` (112) e `npm run build` limpos; CI completo verde no commit
+`3d09b35` (pgTAP PASS, isolamento 26, e2e 24/24); e contra o banco
+hospedado de verdade, rodando o código deste commit localmente
+(`next dev` na porta 3200, mesmo `.env.local` que aponta para
+`praxis-crm-dev` — sem depender do preview da Vercel) — dois saves
+consecutivos no lead `b9c3fa62…`, confirmados com `page.reload()` real
+(não estado do cliente): o valor final foi exatamente o do segundo
+save, sem concatenação nenhuma.
+
+**Observação registrada, não corrigida nesta rodada:** `AssignLeadForm`
+(`src/components/leads/assign-lead-form.tsx`) usa o mesmo padrão de
+`<select>` não controlado com `defaultValue`, sem `key`. O risco é
+menor — um `<select>` não sofre concatenação de texto, no pior caso um
+reset reverteria para o valor original — mas é o mesmo padrão
+estrutural. Fora do escopo desta correção (não falhou, não foi pedido);
+vale revisão futura se o mesmo sintoma aparecer ali.
+
 ---
 
 ## 6. Ambiente
