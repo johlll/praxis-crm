@@ -28,12 +28,28 @@ export function LeadBasicFieldsForm({ lead, readOnly }: { lead: LeadListItem; re
 
       <FormField>
         <FormLabel htmlFor="legalArea">Área jurídica</FormLabel>
-        <Input id="legalArea" name="legalArea" defaultValue={lead.legalArea} required disabled={readOnly} />
+        <Input
+          key={lead.updatedAt}
+          id="legalArea"
+          name="legalArea"
+          defaultValue={lead.legalArea}
+          required
+          disabled={readOnly}
+        />
       </FormField>
 
       <FormField>
         <FormLabel htmlFor="summary">Resumo</FormLabel>
         <textarea
+          // key força remontagem limpa quando o dado muda (logo após um
+          // save bem-sucedido) — achado no CI: React 19 reseta campos não
+          // controlados depois que uma Server Action de <form action>
+          // termina; reconciliar o MESMO nó com um defaultValue novo
+          // (em vez de remontar) duplicava o texto (novo + antigo
+          // concatenados) nesse reset. Só o campo é remontado, não o
+          // formulário inteiro — o estado de useActionState (a mensagem
+          // "Dados salvos.") não é afetado.
+          key={lead.updatedAt}
           id="summary"
           name="summary"
           rows={3}
@@ -45,12 +61,19 @@ export function LeadBasicFieldsForm({ lead, readOnly }: { lead: LeadListItem; re
 
       <FormField>
         <FormLabel htmlFor="tags">Etiquetas</FormLabel>
-        <Input id="tags" name="tags" defaultValue={lead.tags.join(", ")} disabled={readOnly} />
+        <Input
+          key={lead.updatedAt}
+          id="tags"
+          name="tags"
+          defaultValue={lead.tags.join(", ")}
+          disabled={readOnly}
+        />
       </FormField>
 
       <FormField>
         <FormLabel htmlFor="priority">Prioridade</FormLabel>
         <select
+          key={lead.updatedAt}
           id="priority"
           name="priority"
           defaultValue={lead.priority}
