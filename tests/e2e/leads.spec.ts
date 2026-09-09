@@ -92,7 +92,14 @@ test.describe.serial("leads — A4", () => {
   });
 
   test("6. isolamento entre workspaces — lead de um escritório não existe para outro", async ({ page }) => {
-    await login(page, SEED_USERS.bruno.email);
+    // Daniel, não Bruno: o e2e da A2 (auth-workspace.spec.ts, mesmo banco
+    // local do CI, sem reset entre arquivos) convida e aceita Bruno no
+    // Escritório Um mais cedo na mesma execução — ele deixa de ser um
+    // "estranho" de verdade a essa altura. Daniel cria só o workspace
+    // dele próprio na A2 e nunca ganha acesso ao Escritório Um em
+    // nenhum outro teste — achado pelo CI (rerun idêntico confirmou que
+    // não era instabilidade, e sim exatamente essa premissa errada).
+    await login(page, SEED_USERS.daniel.email);
     await page.goto(leadUrl);
 
     // notFound() do Next — a página de "não encontrado", nunca o
