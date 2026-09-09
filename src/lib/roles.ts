@@ -51,7 +51,18 @@ export type Permission =
   | "contact.view"
   | "contact.edit"
   | "contact.reveal_sensitive"
-  | "contact.merge";
+  | "contact.merge"
+  // A4 — leads. Matriz do plano: "Ver leads" (todos os papéis — mas
+  // advogado só enxerga os seus + sem responsável, um filtro de LINHA
+  // aplicado dentro das funções do banco, não expressável nesta matriz
+  // booleana — mesma regra vale para editar/arquivar/atribuir, também
+  // reforçada no banco); "Editar contatos" estendido por analogia a leads
+  // (todos menos visualizador). Honorários NÃO faz parte do modelo de
+  // dados de leads (plano seção 6.3: valor mora em `opportunities`, A5)
+  // — não existe permissão de valor aqui de propósito, depois da revisão
+  // que retirou esse fluxo antecipado da A4.
+  | "lead.view"
+  | "lead.edit";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -65,6 +76,8 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "contact.edit": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
   "contact.reveal_sensitive": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
   "contact.merge": new Set<Role>(["owner", "admin", "manager"]),
+  "lead.view": new Set(ROLES),
+  "lead.edit": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {

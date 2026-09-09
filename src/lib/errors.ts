@@ -34,7 +34,19 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   candidate_not_pending: "Esta sugestão já foi decidida.",
   merge_not_found: "Mesclagem não encontrada.",
   merge_already_undone: "Esta mesclagem já foi desfeita.",
+  // A4 — leads.
+  lead_not_found: "Lead não encontrado.",
+  assignee_not_a_member: "Essa pessoa não é membro ativo deste workspace.",
+  invalid_value: "Valor inválido.",
+  expected_version_required: "Não foi possível confirmar a versão do lead. Recarregue a página e tente de novo.",
 };
+
+/** update_lead_basic_fields()/assign_lead()/set_lead_status()/set_lead_value()
+ * levantam "lead_conflict" quando `updated_at` não bate com o que o
+ * formulário carregou — outra pessoa editou entre a abertura da tela e o
+ * envio. Nunca sobrescreve silenciosamente. */
+const LEAD_CONFLICT_MESSAGE =
+  "Este lead foi alterado por outra pessoa enquanto você editava. Recarregue a página e tente de novo.";
 
 const GENERIC_MESSAGE = "Não foi possível concluir a operação. Tente novamente.";
 
@@ -48,6 +60,7 @@ export function toUserMessage(error: unknown): string {
   if (error && typeof error === "object" && "message" in error) {
     const raw = String((error as { message?: unknown }).message ?? "");
     if (raw.startsWith("undo_conflict")) return UNDO_CONFLICT_MESSAGE;
+    if (raw === "lead_conflict") return LEAD_CONFLICT_MESSAGE;
     const mapped = KNOWN_ERROR_MESSAGES[raw];
     if (mapped) return mapped;
   }

@@ -1,4 +1,7 @@
-import { expect, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+import { expect, type APIRequestContext, type Page } from "@playwright/test";
 
 import { SEED_PASSWORD } from "./fixtures";
 
@@ -46,4 +49,82 @@ export async function switchWorkspace(page: Page, workspaceName: string): Promis
   // construído a partir da string trataria "(seed)" como grupo de
   // captura, não texto literal, e nunca bateria com o nome real.
   await page.getByRole("menuitem", { name: workspaceName }).click();
+
+  // switchWorkspaceAction() troca o cookie e faz redirect("/visao-geral")
+  // — sem esperar essa navegação terminar, uma chamada seguinte (ex.:
+  // page.goto de uma tela que lê o workspace ativo) pode correr na
+  // frente do cookie novo ainda não confirmado, lendo o workspace
+  // ANTERIOR (achado testando a A4: dependia de listagem escopada ao
+  // workspace ativo, que os testes anteriores nunca precisaram fazer
+  // logo após trocar). Espera pela URL E pelo texto do seletor de
+  // workspace na sidebar refletir o nome novo — o sinal observável que
+  // realmente importa, não um proxy indireto (a URL sozinha já se provou
+  // insuficiente).
+  await expect(page).toHaveURL(/\/visao-geral/, { timeout: 8000 });
+  await expect(page.getByRole("button", { name: "Trocar de workspace" })).toContainText(
+    workspaceName,
+    { timeout: 8000 },
+  );
+}
+
+/**
+ * `.env.local` não é carregado automaticamente no processo do Playwright —
+ * só o subprocesso `next start` do webServer o lê (Next.js tem seu próprio
+ * carregamento de env; o runner de teste, não). Os testes que chamam a API
+ * do Supabase DIRETO, por fora da UI (ver `getSupabaseAccessToken`/
+ * `callRpcDirect` abaixo), leem o arquivo à mão — sem depender de nenhum
+ * pacote de dotenv, que este projeto não tem como dependência.
+ */
+function readSupabaseEnv(): { url: string; anonKey: string } {
+  const raw = readFileSync(resolve(process.cwd(), ".env.local"), "utf8");
+  const vars: Record<string, string> = {};
+  for (const line of raw.split("\n")) {
+    const match = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim());
+    if (match) vars[match[1]!] = match[2]!;
+  }
+  const url = vars.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = vars.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  if (!url || !anonKey) {
+    throw new Error(
+      ".env.local sem NEXT_PUBLIC_SUPABASE_URL/NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY — necessário para os testes que chamam a API do Supabase direto (tentativa de escrita negada, concorrência real).",
+    );
+  }
+  return { url, anonKey };
+}
+
+/**
+ * Autentica DIRETO na API do Supabase (grant_type=password), sem passar
+ * pelo navegador — dá um access_token real e independente de qualquer
+ * cookie de sessão, usado pelos testes que chamam RPC por fora da UI para
+ * provar que a proteção não depende da página Next.js.
+ */
+export async function getSupabaseAccessToken(request: APIRequestContext, email: string): Promise<string> {
+  const { url, anonKey } = readSupabaseEnv();
+  const res = await request.post(`${url}/auth/v1/token?grant_type=password`, {
+    headers: { apikey: anonKey, "Content-Type": "application/json" },
+    data: { email, password: SEED_PASSWORD },
+  });
+  const body = (await res.json()) as { access_token?: string };
+  if (!res.ok() || !body.access_token) {
+    throw new Error(`Falha ao autenticar ${email} direto na API do Supabase: ${res.status()} ${JSON.stringify(body)}`);
+  }
+  return body.access_token;
+}
+
+/** Chama uma RPC do Supabase direto via REST (PostgREST), por fora do
+ * Server Action/Next.js — é assim que se testa que a recusa não depende
+ * só da tela. */
+export async function callRpcDirect(
+  request: APIRequestContext,
+  accessToken: string,
+  fn: string,
+  args: Record<string, unknown>,
+): Promise<{ status: number; body: unknown }> {
+  const { url, anonKey } = readSupabaseEnv();
+  const res = await request.post(`${url}/rest/v1/rpc/${fn}`, {
+    headers: { apikey: anonKey, Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    data: args,
+  });
+  const body = await res.json().catch(() => null);
+  return { status: res.status(), body };
 }
