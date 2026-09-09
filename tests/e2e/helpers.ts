@@ -46,4 +46,13 @@ export async function switchWorkspace(page: Page, workspaceName: string): Promis
   // construído a partir da string trataria "(seed)" como grupo de
   // captura, não texto literal, e nunca bateria com o nome real.
   await page.getByRole("menuitem", { name: workspaceName }).click();
+
+  // switchWorkspaceAction() troca o cookie e faz redirect("/visao-geral")
+  // — sem esperar essa navegação terminar, uma chamada seguinte (ex.:
+  // page.goto de uma tela que lê o workspace ativo) pode correr na
+  // frente do cookie novo ainda não confirmado, lendo o workspace
+  // ANTERIOR (achado testando a A4: dependia de listagem escopada ao
+  // workspace ativo, que os testes anteriores nunca precisaram fazer
+  // logo após trocar).
+  await expect(page).toHaveURL(/\/visao-geral/, { timeout: 8000 });
 }
