@@ -337,7 +337,7 @@ select throws_ok(
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'bruno', 'role', 'authenticated')::text, true);
-select create_opportunity(:'lead_dois'::uuid, null, null, 5000000, 'fixed'::public.fee_model, 60) as opp_dois \gset
+select create_opportunity(:'lead_dois'::uuid, null::uuid, null::uuid, 5000000, 'fixed'::public.fee_model, 60) as opp_dois \gset
 select (get_opportunity(:'opp_dois'::uuid) ? 'value_cents') as owner_ve_exato \gset
 select ok(:'owner_ve_exato'::boolean, 'owner vê a chave value_cents (exata)');
 
@@ -371,7 +371,7 @@ select is(
 -- viewer: nenhuma chave financeira, em nenhum caminho.
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
-select create_opportunity(:'lead_sem_resp'::uuid, null, null, 300000, 'fixed'::public.fee_model) as opp_viewer_alvo \gset
+select create_opportunity(:'lead_sem_resp'::uuid, null::uuid, null::uuid, 300000, 'fixed'::public.fee_model) as opp_viewer_alvo \gset
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'elisa', 'role', 'authenticated')::text, true);
@@ -387,7 +387,7 @@ select ok(
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
-select create_opportunity(:'lead_merge'::uuid, null, null) as opp_para_merge \gset
+select create_opportunity(:'lead_merge'::uuid, null::uuid, null::uuid) as opp_para_merge \gset
 select (get_opportunity(:'opp_para_merge'::uuid) ->> 'contact_name') as nome_antes_merge \gset
 select is((:'nome_antes_merge')::text, 'Contato A5 Merge Perdedor'::text, 'Antes da mesclagem, a oportunidade mostra o nome do contato original');
 
