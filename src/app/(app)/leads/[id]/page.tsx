@@ -29,7 +29,7 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
   const lead = await getLeadDetail(id);
 
   // Contato inexistente, de outro workspace, ou (advogado) fora do
-  // alcance de "seus + equipe" — get_lead() já responde como não
+  // alcance "seus + sem responsável" — get_lead() já responde como não
   // encontrado nesses três casos; a página trata os três do mesmo jeito,
   // sem distinguir "não existe" de "existe mas não é seu" (não revela
   // existência a quem não deveria nem saber).
