@@ -3,14 +3,15 @@
 **Projeto:** Praxis CRM Jurídico
 **Fase:** A4
 **Branch:** `feat/a4-leads`
-**PR:** https://github.com/johlll/praxis-crm/pull/4 — **aberto, aguardando CI/aprovação**
+**PR:** https://github.com/johlll/praxis-crm/pull/4 — **aberto, CI verde, aguardando aprovação**
 **Preview:** https://praxis-crm-git-feat-a4-leads-johllls-projects.vercel.app
 **Data:** 09/09/2026
 
 **Status:** implementada por completo — schema, permissões e projeções,
 interface, integração com merge/undo de contatos (A3), pgTAP, e2e e
-validação manual ao vivo. **Aguardando resultado final do CI e aprovação
-explícita para merge — nenhum merge foi feito.**
+validação manual ao vivo. **CI verde no commit final (`7215d25`).
+Aguardando aprovação explícita para merge — nenhum merge foi feito, A5
+não foi iniciada.**
 
 **Pendências herdadas, não resolvidas por esta fase:** Site URL/Redirect
 URLs do Supabase Auth (A2/A3) e o ambiente real de clientes (ainda não
@@ -139,7 +140,67 @@ pendência em `team/actions.ts`).
 
 ## 4. Verificação no CI (Docker real)
 
-_A preencher com o resultado final assim que o CI da branch fechar._
+**Verde no commit `7215d25`**, depois de 8 rodadas — todas por erro meu
+(teste ou UI), nenhuma por bug real de política de acesso do banco (a
+proteção do valor/isolamento sempre esteve correta; os achados foram
+todos em como eu TESTAVA isso ou em como a interface reage ao React 19,
+nunca em quem pode ver o quê). pgTAP: 174 asserções em 9 arquivos (34
+novas). e2e: **24 testes** (16 já existentes da A2/A3 + 8 novos da A4).
+
+### 4.1 O que cada rodada corrigiu
+
+1. **`database.ts` desatualizado** — mesma diferença cosmética
+   `--linked`/`--local` já documentada na A2/A3 (bloco
+   `__InternalSupabase` e sintaxe dos tipos utilitários). Sem mudança de
+   schema real.
+2. **pgTAP: `insufficient_permission` inesperado** — o teste usava
+   `reset role` achando que isso também trocaria quem `auth.uid()`
+   enxerga; `request.jwt.claims` é escopo de TRANSAÇÃO, não de papel do
+   Postgres. Reescrito reafirmando papel E jwt explicitamente antes de
+   cada bloco, em vez de confiar em estado deixado pelo anterior — inclui
+   corrigir o teste de isolamento entre workspaces, que chamava
+   `list_leads(ws_dois)` como Ana (sem membership lá, gerava erro em vez
+   de `total_count=0`); passou a chamar como Bruno, dono de verdade do
+   Escritório Dois.
+3. **pgTAP: filtro por prioridade falhando** — um teste anterior mudava a
+   prioridade do lead de 'alta' para 'media' como efeito colateral não
+   intencional, quebrando um filtro testado mais adiante. Prioridade
+   preservada.
+4. **e2e: `switchWorkspace()` não esperava a troca terminar de verdade**
+   — a Server Action troca o cookie e faz `redirect("/visao-geral")`;
+   sem esperar essa navegação, uma chamada seguinte que depende do
+   workspace ativo (a listagem de contatos do formulário de novo lead)
+   podia correr na frente e ler o workspace ANTERIOR. Só depois de testar
+   dois sinais diferentes (a URL sozinha não bastava — quem troca já
+   costuma estar em `/visao-geral`, então essa espera nunca esperava nada
+   de fato) que o texto do workspace ativo na sidebar se mostrou o sinal
+   confiável. Corrigido no helper compartilhado (usado por A2/A3 também,
+   sem quebrar nada lá).
+5. **e2e: `page.url()` lido antes do redirect terminar** — dois pontos do
+   teste de mesclagem liam a URL logo após clicar num botão cuja Server
+   Action faz `redirect()`, capturando a URL ANTERIOR (`/contatos/novo`)
+   em vez da nova — o `contactId` virava a string literal "novo".
+6. **e2e: Bruno não era mais um "estranho" de verdade** — o próprio e2e
+   da A2 (`auth-workspace.spec.ts`) convida e aceita Bruno no Escritório
+   Um mais cedo na MESMA execução do CI (mesmo banco local, sem reset
+   entre arquivos) — na hora em que o teste de isolamento da A4 rodava,
+   Bruno já era membro de verdade de lá. Confirmado com um rerun idêntico
+   do CI (mesma falha, não era instabilidade) e com uma chamada direta a
+   `get_lead()` contra o banco hospedado simulando um usuário
+   genuinamente sem membership nenhuma — corretamente recusado. Trocado
+   para Daniel, que nunca ganha acesso ao Escritório Um em nenhum outro
+   teste.
+7. **Achado real de UI, não de teste: React 19 duplicava texto ao
+   resetar um `<form action>` não controlado.** Depois de um save bem-
+   sucedido, React reseta os campos não controlados do formulário — e
+   reconciliar o MESMO nó de texto com um `defaultValue` novo (o dado que
+   acabou de ser salvo) durante esse reset duplicava o conteúdo (texto
+   novo + texto antigo concatenados) em vez de substituir. Reproduzido e
+   confirmado manualmente contra build de produção antes de corrigir:
+   `key={lead.updatedAt}` em cada campo (não no `<form>` inteiro, para
+   não afetar o estado de `useActionState` — a mensagem "Dados salvos."
+   continua aparecendo normalmente) força uma remontagem limpa
+   exatamente quando o dado muda.
 
 ## 5. Validação funcional — três camadas
 
@@ -219,7 +280,7 @@ funcionando de verdade (não só presente) revelando um CPF real.
 
 - **Nenhuma fase além da A4 foi iniciada.**
 - **Nenhum arquivo de referência visual foi alterado.**
-- **Sem merge em `main`.** PR #4 aberto, aguardando CI e aprovação
+- **Sem merge em `main`.** PR #4 aberto, CI verde, aguardando aprovação
   explícita.
 - **`praxis-crm-dev`:** só migrations aditivas aplicadas (dry-run
   conferido antes de cada uma).
