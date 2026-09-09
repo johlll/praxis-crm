@@ -283,6 +283,32 @@ begin
     raise exception 'stage_unchanged';
   end if;
 
+  -- Grava os valores de requisito enviados junto com o movimento ANTES
+  -- de checar o que está pendente — preencher e avançar são a mesma
+  -- chamada (a UI não faz duas idas ao servidor), então a checagem
+  -- precisa enxergar o que acabou de chegar, não só o que já existia de
+  -- tentativas anteriores. O servidor não confia que o que chegou é
+  -- suficiente: quem decide isso é a checagem logo abaixo.
+  for v_item in select * from jsonb_array_elements(coalesce(p_requirement_values, '[]'::jsonb))
+  loop
+    select * into v_req from public.stage_requirements
+    where id = (v_item ->> 'requirement_id')::uuid and workspace_id = v_opportunity.workspace_id;
+    if v_req.id is null then
+      continue;
+    end if;
+
+    insert into public.opportunity_requirement_values (
+      workspace_id, opportunity_id, requirement_id, value_text, value_bool
+    )
+    values (
+      v_opportunity.workspace_id, p_opportunity_id, v_req.id,
+      case when v_req.field_type <> 'checkbox' then nullif(btrim(coalesce(v_item ->> 'value_text', '')), '') end,
+      case when v_req.field_type = 'checkbox' then (v_item ->> 'value_bool')::boolean end
+    )
+    on conflict (opportunity_id, requirement_id) do update
+      set value_text = excluded.value_text, value_bool = excluded.value_bool, updated_at = now();
+  end loop;
+
   -- Só ao AVANÇAR: os requisitos de toda etapa entre a atual (exclusive)
   -- e o destino (inclusive) precisam estar satisfeitos — pular colunas
   -- não contorna o requisito de nenhuma delas. Voltar nunca é bloqueado.
@@ -309,29 +335,6 @@ begin
       raise exception 'stage_requirements_pending';
     end if;
   end if;
-
-  -- Grava os valores de requisito enviados junto com o movimento (a UI
-  -- só permite avançar depois de preencher — mas o servidor não confia
-  -- nisso: a checagem acima já rejeitou se algo essencial faltar).
-  for v_item in select * from jsonb_array_elements(coalesce(p_requirement_values, '[]'::jsonb))
-  loop
-    select * into v_req from public.stage_requirements
-    where id = (v_item ->> 'requirement_id')::uuid and workspace_id = v_opportunity.workspace_id;
-    if v_req.id is null then
-      continue;
-    end if;
-
-    insert into public.opportunity_requirement_values (
-      workspace_id, opportunity_id, requirement_id, value_text, value_bool
-    )
-    values (
-      v_opportunity.workspace_id, p_opportunity_id, v_req.id,
-      case when v_req.field_type <> 'checkbox' then nullif(btrim(coalesce(v_item ->> 'value_text', '')), '') end,
-      case when v_req.field_type = 'checkbox' then (v_item ->> 'value_bool')::boolean end
-    )
-    on conflict (opportunity_id, requirement_id) do update
-      set value_text = excluded.value_text, value_bool = excluded.value_bool, updated_at = now();
-  end loop;
 
   v_seconds_in_stage := extract(epoch from (now() - v_opportunity.stage_entered_at))::bigint;
 

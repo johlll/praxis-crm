@@ -195,9 +195,10 @@ select is(
 );
 
 -- Voltar nunca exige requisito, mesmo que a etapa de origem os tenha.
+reset role;
+select lock_version from public.opportunities where id = (:'opp_ana')::uuid \gset opp_ana_
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
-select lock_version from public.opportunities where id = (:'opp_ana')::uuid \gset opp_ana_
 select lives_ok(
   format(
     $i$ select move_opportunity_stage(%L::uuid, %L::uuid, %L::uuid, %s) $i$,
@@ -248,9 +249,10 @@ select is(
 -- 6) Ganho, perda e idempotência
 -- ===================================================================
 
+reset role;
+select lock_version from public.opportunities where id = (:'opp_sem_resp')::uuid \gset opp_sem_resp_
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
-select lock_version from public.opportunities where id = (:'opp_sem_resp')::uuid \gset opp_sem_resp_
 select win_opportunity(:'opp_sem_resp'::uuid, (:'opp_sem_resp_lock_version')::bigint, 550000, 'fixed', '2026-10-05') as win_result \gset
 
 reset role;
