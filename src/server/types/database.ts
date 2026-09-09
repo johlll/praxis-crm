@@ -7,6 +7,11 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.5"
+  }
   public: {
     Tables: {
       audit_logs: {
@@ -513,6 +518,105 @@ export type Database = {
           },
         ]
       }
+      lead_values: {
+        Row: {
+          created_at: string
+          estimated_value_cents: number | null
+          lead_id: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          estimated_value_cents?: number | null
+          lead_id: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          estimated_value_cents?: number | null
+          lead_id?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lead_values_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: true
+            referencedRelation: "leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "lead_values_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      leads: {
+        Row: {
+          assigned_to: string | null
+          contact_id: string
+          created_at: string
+          created_by: string
+          id: string
+          legal_area: string
+          priority: Database["public"]["Enums"]["lead_priority"]
+          status: Database["public"]["Enums"]["lead_status"]
+          summary: string | null
+          tags: string[]
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          assigned_to?: string | null
+          contact_id: string
+          created_at?: string
+          created_by: string
+          id?: string
+          legal_area: string
+          priority?: Database["public"]["Enums"]["lead_priority"]
+          status?: Database["public"]["Enums"]["lead_status"]
+          summary?: string | null
+          tags?: string[]
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          assigned_to?: string | null
+          contact_id?: string
+          created_at?: string
+          created_by?: string
+          id?: string
+          legal_area?: string
+          priority?: Database["public"]["Enums"]["lead_priority"]
+          status?: Database["public"]["Enums"]["lead_status"]
+          summary?: string | null
+          tags?: string[]
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "leads_contact_same_workspace_fkey"
+            columns: ["workspace_id", "contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "leads_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       memberships: {
         Row: {
           created_at: string
@@ -809,6 +913,33 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      assign_lead: {
+        Args: {
+          p_assigned_to?: string
+          p_expected_updated_at?: string
+          p_lead_id: string
+        }
+        Returns: {
+          assigned_to: string | null
+          contact_id: string
+          created_at: string
+          created_by: string
+          id: string
+          legal_area: string
+          priority: Database["public"]["Enums"]["lead_priority"]
+          status: Database["public"]["Enums"]["lead_status"]
+          summary: string | null
+          tags: string[]
+          updated_at: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "leads"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       cancel_workspace_invitation: {
         Args: { p_invitation_id: string }
         Returns: undefined
@@ -857,6 +988,19 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      create_lead: {
+        Args: {
+          p_assigned_to?: string
+          p_contact_id: string
+          p_estimated_value_cents?: number
+          p_legal_area: string
+          p_priority?: Database["public"]["Enums"]["lead_priority"]
+          p_summary?: string
+          p_tags?: string[]
+          p_workspace_id: string
+        }
+        Returns: string
+      }
       create_workspace_invitation: {
         Args: {
           p_email: string
@@ -898,6 +1042,24 @@ export type Database = {
           merged_contact_id: string
           merged_contact_name: string
           undone_at: string
+        }[]
+      }
+      get_lead: { Args: { p_lead_id: string }; Returns: Json }
+      list_leads: {
+        Args: {
+          p_assigned_to?: string
+          p_legal_area?: string
+          p_page?: number
+          p_page_size?: number
+          p_priority?: Database["public"]["Enums"]["lead_priority"]
+          p_search?: string
+          p_sort?: string
+          p_status?: Database["public"]["Enums"]["lead_status"]
+          p_workspace_id: string
+        }
+        Returns: {
+          items: Json
+          total_count: number
         }[]
       }
       merge_contacts: {
@@ -983,6 +1145,41 @@ export type Database = {
           p_ciphertext_base64: string
           p_contact_id: string
           p_key_version: string
+        }
+        Returns: undefined
+      }
+      set_lead_status: {
+        Args: {
+          p_expected_updated_at?: string
+          p_lead_id: string
+          p_status: Database["public"]["Enums"]["lead_status"]
+        }
+        Returns: {
+          assigned_to: string | null
+          contact_id: string
+          created_at: string
+          created_by: string
+          id: string
+          legal_area: string
+          priority: Database["public"]["Enums"]["lead_priority"]
+          status: Database["public"]["Enums"]["lead_status"]
+          summary: string | null
+          tags: string[]
+          updated_at: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "leads"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      set_lead_value: {
+        Args: {
+          p_estimated_value_cents?: number
+          p_expected_updated_at?: string
+          p_lead_id: string
         }
         Returns: undefined
       }
@@ -1088,6 +1285,36 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      update_lead_basic_fields: {
+        Args: {
+          p_expected_updated_at?: string
+          p_lead_id: string
+          p_legal_area: string
+          p_priority?: Database["public"]["Enums"]["lead_priority"]
+          p_summary?: string
+          p_tags?: string[]
+        }
+        Returns: {
+          assigned_to: string | null
+          contact_id: string
+          created_at: string
+          created_by: string
+          id: string
+          legal_area: string
+          priority: Database["public"]["Enums"]["lead_priority"]
+          status: Database["public"]["Enums"]["lead_status"]
+          summary: string | null
+          tags: string[]
+          updated_at: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "leads"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       update_membership_role: {
         Args: {
           p_membership_id: string
@@ -1123,6 +1350,8 @@ export type Database = {
       duplicate_status: "pending" | "merged" | "dismissed"
       duplicate_tier: "strong" | "review" | "low"
       invitation_status: "pending" | "accepted" | "cancelled" | "expired"
+      lead_priority: "baixa" | "media" | "alta"
+      lead_status: "ativo" | "arquivado"
       membership_role:
         | "owner"
         | "admin"
@@ -1146,12 +1375,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1175,11 +1404,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1200,11 +1429,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1225,11 +1454,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1242,11 +1471,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1270,6 +1499,8 @@ export const Constants = {
       duplicate_status: ["pending", "merged", "dismissed"],
       duplicate_tier: ["strong", "review", "low"],
       invitation_status: ["pending", "accepted", "cancelled", "expired"],
+      lead_priority: ["baixa", "media", "alta"],
+      lead_status: ["ativo", "arquivado"],
       membership_role: [
         "owner",
         "admin",
@@ -1282,4 +1513,3 @@ export const Constants = {
     },
   },
 } as const
-
