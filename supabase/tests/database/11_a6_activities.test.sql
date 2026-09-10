@@ -624,7 +624,7 @@ reset role;
 select count(*)::int as n from public.stage_auto_activity_rules where stage_id = (:'stage_um_2')::uuid \gset upsert_
 select is((:'upsert_n')::int, 1, 'No máximo uma regra por etapa — a segunda chamada SUBSTITUI, não duplica');
 
-select type as tipo_final, title as titulo_final from public.stage_auto_activity_rules where stage_id = (:'stage_um_2')::uuid \gset upsert_final_
+select activity_type as tipo_final, title as titulo_final from public.stage_auto_activity_rules where stage_id = (:'stage_um_2')::uuid \gset upsert_final_
 select is((:'upsert_final_tipo_final')::text, 'meeting'::text, 'Depois do upsert, vale a segunda chamada (meeting), não a primeira (email)');
 
 set local role authenticated;
