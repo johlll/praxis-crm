@@ -76,10 +76,17 @@ select is((:'total_lista_ana')::bigint, 1::bigint, 'list_activities() enxerga a 
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'bruno', 'role', 'authenticated')::text, true);
+-- Bruno não é membro NENHUM de ws_um (é dono só de ws_dois) — cai na
+-- checagem de papel (has_workspace_role), que responde
+-- insufficient_permission, não activity_not_found. O mascaramento por
+-- "não encontrado" é para quem É membro do workspace mas não tem
+-- alcance ao REGISTRO (caso da Carla logo abaixo) — mesmo comportamento
+-- já estabelecido em get_opportunity()/list_opportunities() na A5 para
+-- exatamente este cenário (não é bug novo da A6).
 select throws_ok(
   format($i$ select get_activity(%L::uuid) $i$, :'ativ_ana'),
-  'P0001', 'activity_not_found',
-  'Bruno (outro workspace) não enxerga a atividade de Ana via RPC direta'
+  'P0001', 'insufficient_permission',
+  'Bruno (sem NENHUMA membership em ws_um) não enxerga a atividade de Ana via RPC direta'
 );
 
 set local role authenticated;
@@ -230,10 +237,17 @@ select is(
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+-- Responsável VÁLIDO aqui (ana) de propósito — check_activity_assignee()
+-- roda ANTES do UPDATE guardado por lock_version (mesma ordem de
+-- move_opportunity_stage na A5: toda validação de conteúdo vem antes do
+-- gate de concorrência, que é sempre o último). Testar o conflito com um
+-- responsável INVÁLIDO mascararia o erro certo com
+-- activity_assignee_no_access — isolando aqui só a dimensão de
+-- concorrência.
 select throws_ok(
   format(
     $i$ select reassign_activity(%L::uuid, %s, %L::uuid) $i$,
-    :'ativ_ana', (:'ativ_ana_r_lock_version')::bigint + 1, :'carla'
+    :'ativ_ana', (:'ativ_ana_r_lock_version')::bigint + 1, :'ana'
   ),
   'P0001', 'activity_conflict',
   'reassign_activity com lock_version errado é recusado'
@@ -403,7 +417,11 @@ select ok(
 );
 
 -- Concluir a atrasada: some do contador de atrasadas.
+reset role;
 select lock_version from public.activities where id = (:'ativ_atrasada')::uuid \gset ativ_atrasada_
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 select complete_activity((:'ativ_atrasada')::uuid, (:'ativ_atrasada_lock_version')::bigint);
 select counts from list_activities(:'ws_um'::uuid) \gset counts_depois_
 select ((:'counts_depois_counts')::jsonb ->> 'overdue')::int as overdue_depois \gset
@@ -471,8 +489,8 @@ select throws_ok(
 reset role;
 select count(*)::int as n from public.activities where opportunity_id = (:'opp_ana')::uuid and source = 'stage_rule' \gset auto3_
 select is(
-  (:'auto3_n')::int, 2,
-  'Movimento RECUSADO por requisito pendente não cria a atividade automática da etapa 3 (rollback da transação inteira)'
+  (:'auto3_n')::int, 1,
+  'Movimento RECUSADO por requisito pendente não cria a atividade automática da etapa 3 (rollback da transação inteira) — continua em 1'
 );
 
 set local role authenticated;
@@ -487,7 +505,7 @@ select throws_ok(
 );
 reset role;
 select count(*)::int as n from public.activities where opportunity_id = (:'opp_ana')::uuid and source = 'stage_rule' \gset auto4_
-select is((:'auto4_n')::int, 2, 'Confirmado: continua em 2 depois da tentativa com conflito');
+select is((:'auto4_n')::int, 1, 'Confirmado: continua em 1 depois da tentativa com conflito');
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
@@ -498,7 +516,7 @@ select move_opportunity_stage(
 
 reset role;
 select count(*)::int as n from public.activities where opportunity_id = (:'opp_ana')::uuid and source = 'stage_rule' \gset auto5_
-select is((:'auto5_n')::int, 3, 'Preenchendo o requisito, o movimento é aceito e a 3ª atividade automática é criada');
+select is((:'auto5_n')::int, 2, 'Preenchendo o requisito, o movimento é aceito e a 2ª atividade automática é criada (regra da etapa 3)');
 
 select assigned_to is null as sem_resp from public.activities
   where opportunity_id = (:'opp_ana')::uuid and source = 'stage_rule' order by created_at desc limit 1 \gset auto5_ativ_
@@ -512,13 +530,23 @@ select move_opportunity_stage((:'opp_ana')::uuid, :'stage_um_3'::uuid, :'stage_u
 reset role;
 select count(*)::int as n from public.activities where opportunity_id = (:'opp_ana')::uuid and source = 'stage_rule' \gset auto6_
 select is(
-  (:'auto6_n')::int, 4,
-  'Reentrar numa etapa com regra é uma NOVA transição legítima — cria mais uma atividade automática, não é bloqueado como duplicata'
+  (:'auto6_n')::int, 3,
+  'Reentrar numa etapa com regra é uma NOVA transição legítima — cria mais uma (3ª) atividade automática, não é bloqueado como duplicata'
 );
 
 -- ===================================================================
 -- 11) "Próxima ação" nas projeções de oportunidade
 -- ===================================================================
+
+-- As 3 atividades automáticas da seção anterior ainda estão pendentes e
+-- vencem em 24-48h (bem mais cedo que os 5 dias usados abaixo) — sem
+-- isto, elas "venceriam" a disputa por "próxima ação mais próxima" e o
+-- teste ficaria refém do offset configurado nas regras. UPDATE direto
+-- (não é o que está sendo testado aqui — complete_activity() já foi
+-- provada nas seções 5/6) só pra isolar limpo esta seção.
+reset role;
+update public.activities set status = 'done', completed_at = now()
+  where opportunity_id = (:'opp_ana')::uuid and source = 'stage_rule';
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
@@ -537,7 +565,11 @@ select is((:'next_action_id')::uuid, (:'ativ_futura')::uuid, 'get_opportunity() 
 select (get_opportunity((:'opp_ana')::uuid) ->> 'overdue_activities_count')::int as overdue_da_opp \gset
 select ok((:'overdue_da_opp')::int >= 1, 'get_opportunity() conta a pendência atrasada separadamente (overdue_activities_count)');
 
+reset role;
 select lock_version from public.activities where id = (:'ativ_futura')::uuid \gset ativ_futura_
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 select complete_activity((:'ativ_futura')::uuid, (:'ativ_futura_lock_version')::bigint);
 select (get_opportunity((:'opp_ana')::uuid) -> 'next_action') as next_action_depois \gset
 select is((:'next_action_depois')::text, 'null'::text, 'Sem nenhuma pendente futura, next_action volta a "Sem próxima ação" (null)');
