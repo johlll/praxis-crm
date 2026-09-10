@@ -275,7 +275,15 @@ test.describe.serial("pipeline — A5", () => {
   });
 
   test("8. isolamento entre workspaces: outro escritório não acessa a oportunidade", async ({ page }) => {
-    await login(page, SEED_USERS.bruno.email);
+    // Daniel, não Bruno: o e2e da A2 (auth-workspace.spec.ts, mesmo banco
+    // local do CI, sem reset entre arquivos) convida e aceita Bruno no
+    // Escritório Um mais cedo na mesma execução (documentado em
+    // leads.spec.ts teste 7, mesmo achado real) — ele deixa de ser um
+    // "estranho" de verdade a essa altura. Achado de verdade aqui
+    // também: o payload real da página confirmou workspaceId do
+    // Escritório Um retornado para Bruno antes desta correção. Daniel
+    // nunca ganha acesso ao Escritório Um em nenhum outro teste.
+    await login(page, SEED_USERS.daniel.email);
 
     await page.goto(opportunityUrl);
     await expect(page.getByRole("heading", { name: "404" })).toBeVisible();
