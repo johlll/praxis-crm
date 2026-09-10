@@ -75,7 +75,7 @@ export async function switchWorkspace(page: Page, workspaceName: string): Promis
  * `callRpcDirect` abaixo), leem o arquivo à mão — sem depender de nenhum
  * pacote de dotenv, que este projeto não tem como dependência.
  */
-function readSupabaseEnv(): { url: string; anonKey: string } {
+export function readSupabaseEnv(): { url: string; anonKey: string } {
   const raw = readFileSync(resolve(process.cwd(), ".env.local"), "utf8");
   const vars: Record<string, string> = {};
   for (const line of raw.split("\n")) {

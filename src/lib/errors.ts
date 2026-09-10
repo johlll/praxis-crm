@@ -39,6 +39,26 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   assignee_not_a_member: "Essa pessoa não é membro ativo deste workspace.",
   invalid_value: "Valor inválido.",
   expected_version_required: "Não foi possível confirmar a versão do lead. Recarregue a página e tente de novo.",
+  // A5 — pipeline e oportunidades.
+  opportunity_not_found: "Oportunidade não encontrada.",
+  pipeline_not_found: "Pipeline não encontrado.",
+  pipeline_has_no_stages: "Este pipeline não tem nenhuma etapa configurada.",
+  stage_not_found: "Etapa não encontrada.",
+  stage_not_in_pipeline: "Esta etapa não pertence a este pipeline.",
+  stage_unchanged: "A oportunidade já está nesta etapa.",
+  stage_mismatch: "A etapa mudou desde que a página carregou. Recarregue e tente de novo.",
+  stage_is_terminal: "Esta etapa é marcada como ganho/perda — use os botões \"Ganhou\"/\"Perdeu\" em vez de mover para ela.",
+  stage_requirements_pending: "Preencha os requisitos pendentes antes de avançar.",
+  win_requirements_pending: "Preencha os requisitos obrigatórios para ganhar antes de concluir.",
+  stage_has_open_opportunities: "Mova as oportunidades abertas desta etapa antes de marcá-la como ganho/perda.",
+  stage_cannot_be_won_and_lost: "Uma etapa não pode ser de ganho e de perda ao mesmo tempo.",
+  stage_occupied: "Esta etapa tem oportunidades vinculadas e não pode ser excluída.",
+  stage_set_mismatch: "A lista de etapas mudou. Recarregue a página e tente de novo.",
+  requirement_not_found: "Requisito não encontrado.",
+  opportunity_closed: "Esta oportunidade já foi encerrada (ganha ou perdida).",
+  invalid_lost_reason: "Selecione um motivo de perda válido.",
+  fee_model_required: "Selecione o modelo de honorários.",
+  lost_reason_not_found: "Motivo de perda não encontrado.",
 };
 
 /** update_lead_basic_fields()/assign_lead()/set_lead_status()/set_lead_value()
@@ -47,6 +67,14 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
  * envio. Nunca sobrescreve silenciosamente. */
 const LEAD_CONFLICT_MESSAGE =
   "Este lead foi alterado por outra pessoa enquanto você editava. Recarregue a página e tente de novo.";
+
+/** move_opportunity_stage()/win_opportunity()/lose_opportunity() levantam
+ * "opportunity_conflict" tanto para lock_version divergente quanto para
+ * status já não ser 'open' (fechada, ou já processada por outra
+ * chamada) — em ambos os casos o servidor tem o estado confirmado mais
+ * recente; a interface deve recarregar, nunca sobrescrever. */
+const OPPORTUNITY_CONFLICT_MESSAGE =
+  "Esta oportunidade foi alterada por outra pessoa (ou já foi encerrada). Recarregue a página para ver o estado atual.";
 
 const GENERIC_MESSAGE = "Não foi possível concluir a operação. Tente novamente.";
 
@@ -61,6 +89,7 @@ export function toUserMessage(error: unknown): string {
     const raw = String((error as { message?: unknown }).message ?? "");
     if (raw.startsWith("undo_conflict")) return UNDO_CONFLICT_MESSAGE;
     if (raw === "lead_conflict") return LEAD_CONFLICT_MESSAGE;
+    if (raw === "opportunity_conflict") return OPPORTUNITY_CONFLICT_MESSAGE;
     const mapped = KNOWN_ERROR_MESSAGES[raw];
     if (mapped) return mapped;
   }

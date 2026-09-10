@@ -57,6 +57,118 @@ export type Database = {
           },
         ]
       }
+      client_handoffs: {
+        Row: {
+          attempts: number
+          client_id: string
+          completed_at: string | null
+          created_at: string
+          id: string
+          last_error: string | null
+          opportunity_id: string
+          payload: Json
+          status: Database["public"]["Enums"]["handoff_status"]
+          target_system: string | null
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          attempts?: number
+          client_id: string
+          completed_at?: string | null
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          opportunity_id: string
+          payload?: Json
+          status?: Database["public"]["Enums"]["handoff_status"]
+          target_system?: string | null
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          attempts?: number
+          client_id?: string
+          completed_at?: string | null
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          opportunity_id?: string
+          payload?: Json
+          status?: Database["public"]["Enums"]["handoff_status"]
+          target_system?: string | null
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_handoffs_client_same_workspace_fkey"
+            columns: ["workspace_id", "client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "client_handoffs_opportunity_same_workspace_fkey"
+            columns: ["workspace_id", "opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "client_handoffs_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      clients: {
+        Row: {
+          contact_id: string
+          created_at: string
+          id: string
+          owner_user_id: string | null
+          status: Database["public"]["Enums"]["client_status"]
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          contact_id: string
+          created_at?: string
+          id?: string
+          owner_user_id?: string | null
+          status?: Database["public"]["Enums"]["client_status"]
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          contact_id?: string
+          created_at?: string
+          id?: string
+          owner_user_id?: string | null
+          status?: Database["public"]["Enums"]["client_status"]
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "clients_contact_same_workspace_fkey"
+            columns: ["workspace_id", "contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "clients_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contact_consents: {
         Row: {
           accepted_text: string | null
@@ -612,6 +724,41 @@ export type Database = {
           },
         ]
       }
+      lost_reasons: {
+        Row: {
+          active: boolean
+          created_at: string
+          id: string
+          label: string
+          position: number
+          workspace_id: string
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          label: string
+          position?: number
+          workspace_id: string
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          label?: string
+          position?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lost_reasons_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       memberships: {
         Row: {
           created_at: string
@@ -667,6 +814,258 @@ export type Database = {
           },
         ]
       }
+      opportunities: {
+        Row: {
+          created_at: string
+          created_by: string
+          fee_model: Database["public"]["Enums"]["fee_model"] | null
+          forecast_date: string | null
+          id: string
+          lead_id: string
+          lock_version: number
+          lost_followup_date: string | null
+          lost_note: string | null
+          lost_reason_id: string | null
+          pipeline_id: string
+          probability: number | null
+          signed_at: string | null
+          stage_entered_at: string
+          stage_id: string
+          status: Database["public"]["Enums"]["opportunity_status"]
+          updated_at: string
+          value_cents: number | null
+          won_at: string | null
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          fee_model?: Database["public"]["Enums"]["fee_model"] | null
+          forecast_date?: string | null
+          id?: string
+          lead_id: string
+          lock_version?: number
+          lost_followup_date?: string | null
+          lost_note?: string | null
+          lost_reason_id?: string | null
+          pipeline_id: string
+          probability?: number | null
+          signed_at?: string | null
+          stage_entered_at?: string
+          stage_id: string
+          status?: Database["public"]["Enums"]["opportunity_status"]
+          updated_at?: string
+          value_cents?: number | null
+          won_at?: string | null
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          fee_model?: Database["public"]["Enums"]["fee_model"] | null
+          forecast_date?: string | null
+          id?: string
+          lead_id?: string
+          lock_version?: number
+          lost_followup_date?: string | null
+          lost_note?: string | null
+          lost_reason_id?: string | null
+          pipeline_id?: string
+          probability?: number | null
+          signed_at?: string | null
+          stage_entered_at?: string
+          stage_id?: string
+          status?: Database["public"]["Enums"]["opportunity_status"]
+          updated_at?: string
+          value_cents?: number | null
+          won_at?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "opportunities_lead_same_workspace_fkey"
+            columns: ["workspace_id", "lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "opportunities_lost_reason_same_workspace_fkey"
+            columns: ["workspace_id", "lost_reason_id"]
+            isOneToOne: false
+            referencedRelation: "lost_reasons"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "opportunities_pipeline_same_workspace_fkey"
+            columns: ["workspace_id", "pipeline_id"]
+            isOneToOne: false
+            referencedRelation: "pipelines"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "opportunities_stage_belongs_to_pipeline_fkey"
+            columns: ["pipeline_id", "stage_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_stages"
+            referencedColumns: ["pipeline_id", "id"]
+          },
+          {
+            foreignKeyName: "opportunities_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      opportunity_requirement_values: {
+        Row: {
+          filled_at: string
+          id: string
+          opportunity_id: string
+          requirement_id: string
+          updated_at: string
+          value_bool: boolean | null
+          value_text: string | null
+          workspace_id: string
+        }
+        Insert: {
+          filled_at?: string
+          id?: string
+          opportunity_id: string
+          requirement_id: string
+          updated_at?: string
+          value_bool?: boolean | null
+          value_text?: string | null
+          workspace_id: string
+        }
+        Update: {
+          filled_at?: string
+          id?: string
+          opportunity_id?: string
+          requirement_id?: string
+          updated_at?: string
+          value_bool?: boolean | null
+          value_text?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "opportunity_requirement_values_opportunity_same_workspace_fkey"
+            columns: ["workspace_id", "opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "opportunity_requirement_values_requirement_same_workspace_fkey"
+            columns: ["workspace_id", "requirement_id"]
+            isOneToOne: false
+            referencedRelation: "stage_requirements"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "opportunity_requirement_values_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pipeline_stages: {
+        Row: {
+          color: string | null
+          created_at: string
+          id: string
+          is_lost: boolean
+          is_won: boolean
+          name: string
+          pipeline_id: string
+          position: number
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          color?: string | null
+          created_at?: string
+          id?: string
+          is_lost?: boolean
+          is_won?: boolean
+          name: string
+          pipeline_id: string
+          position: number
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          color?: string | null
+          created_at?: string
+          id?: string
+          is_lost?: boolean
+          is_won?: boolean
+          name?: string
+          pipeline_id?: string
+          position?: number
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pipeline_stages_pipeline_same_workspace_fkey"
+            columns: ["workspace_id", "pipeline_id"]
+            isOneToOne: false
+            referencedRelation: "pipelines"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "pipeline_stages_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pipelines: {
+        Row: {
+          created_at: string
+          created_by: string
+          id: string
+          is_default: boolean
+          name: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          id?: string
+          is_default?: boolean
+          name: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          id?: string
+          is_default?: boolean
+          name?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pipelines_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sensitive_data_access: {
         Row: {
           actor_user_id: string | null
@@ -705,6 +1104,108 @@ export type Database = {
           },
           {
             foreignKeyName: "sensitive_data_access_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      stage_requirements: {
+        Row: {
+          created_at: string
+          field_type: Database["public"]["Enums"]["stage_requirement_type"]
+          hint: string | null
+          id: string
+          label: string
+          position: number
+          required_for_win: boolean
+          stage_id: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          field_type: Database["public"]["Enums"]["stage_requirement_type"]
+          hint?: string | null
+          id?: string
+          label: string
+          position?: number
+          required_for_win?: boolean
+          stage_id: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          field_type?: Database["public"]["Enums"]["stage_requirement_type"]
+          hint?: string | null
+          id?: string
+          label?: string
+          position?: number
+          required_for_win?: boolean
+          stage_id?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stage_requirements_stage_same_workspace_fkey"
+            columns: ["workspace_id", "stage_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_stages"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "stage_requirements_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      stage_transitions: {
+        Row: {
+          actor_user_id: string
+          from_stage_id: string | null
+          id: string
+          occurred_at: string
+          opportunity_id: string
+          seconds_in_previous_stage: number | null
+          to_stage_id: string
+          workspace_id: string
+        }
+        Insert: {
+          actor_user_id: string
+          from_stage_id?: string | null
+          id?: string
+          occurred_at?: string
+          opportunity_id: string
+          seconds_in_previous_stage?: number | null
+          to_stage_id: string
+          workspace_id: string
+        }
+        Update: {
+          actor_user_id?: string
+          from_stage_id?: string | null
+          id?: string
+          occurred_at?: string
+          opportunity_id?: string
+          seconds_in_previous_stage?: number | null
+          to_stage_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stage_transitions_opportunity_same_workspace_fkey"
+            columns: ["workspace_id", "opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "stage_transitions_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
@@ -995,6 +1496,42 @@ export type Database = {
         }
         Returns: string
       }
+      create_lost_reason: {
+        Args: { p_label: string; p_workspace_id: string }
+        Returns: string
+      }
+      create_opportunity: {
+        Args: {
+          p_fee_model?: Database["public"]["Enums"]["fee_model"]
+          p_forecast_date?: string
+          p_lead_id: string
+          p_pipeline_id?: string
+          p_probability?: number
+          p_stage_id?: string
+          p_value_cents?: number
+        }
+        Returns: string
+      }
+      create_pipeline_stage: {
+        Args: {
+          p_color?: string
+          p_name: string
+          p_pipeline_id: string
+          p_position?: number
+        }
+        Returns: string
+      }
+      create_stage_requirement: {
+        Args: {
+          p_field_type: Database["public"]["Enums"]["stage_requirement_type"]
+          p_hint?: string
+          p_label: string
+          p_position?: number
+          p_required_for_win?: boolean
+          p_stage_id: string
+        }
+        Returns: string
+      }
       create_workspace_invitation: {
         Args: {
           p_email: string
@@ -1024,6 +1561,18 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      deactivate_lost_reason: {
+        Args: { p_lost_reason_id: string }
+        Returns: undefined
+      }
+      delete_pipeline_stage: {
+        Args: { p_stage_id: string }
+        Returns: undefined
+      }
+      delete_stage_requirement: {
+        Args: { p_requirement_id: string }
+        Returns: undefined
+      }
       dismiss_duplicate_candidate: {
         Args: { p_candidate_id: string }
         Returns: undefined
@@ -1039,6 +1588,16 @@ export type Database = {
         }[]
       }
       get_lead: { Args: { p_lead_id: string }; Returns: Json }
+      get_opportunity: { Args: { p_opportunity_id: string }; Returns: Json }
+      get_pipeline_board: { Args: { p_pipeline_id: string }; Returns: Json }
+      get_stage_requirements_status: {
+        Args: { p_opportunity_id: string; p_to_stage_id: string }
+        Returns: Json
+      }
+      get_win_requirements_status: {
+        Args: { p_opportunity_id: string }
+        Returns: Json
+      }
       list_leads: {
         Args: {
           p_assigned_to?: string
@@ -1055,6 +1614,33 @@ export type Database = {
           items: Json
           total_count: number
         }[]
+      }
+      list_opportunities: {
+        Args: {
+          p_lead_id?: string
+          p_page?: number
+          p_page_size?: number
+          p_pipeline_id?: string
+          p_search?: string
+          p_sort?: string
+          p_stage_id?: string
+          p_status?: Database["public"]["Enums"]["opportunity_status"]
+          p_workspace_id: string
+        }
+        Returns: {
+          items: Json
+          total_count: number
+        }[]
+      }
+      lose_opportunity: {
+        Args: {
+          p_followup_date?: string
+          p_lock_version: number
+          p_lost_note?: string
+          p_lost_reason_id: string
+          p_opportunity_id: string
+        }
+        Returns: Json
       }
       merge_contacts: {
         Args: {
@@ -1085,6 +1671,16 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      move_opportunity_stage: {
+        Args: {
+          p_from_stage_id: string
+          p_lock_version: number
+          p_opportunity_id: string
+          p_requirement_values?: Json
+          p_to_stage_id: string
+        }
+        Returns: Json
+      }
       preview_workspace_invitation: {
         Args: { p_token: string }
         Returns: {
@@ -1100,6 +1696,10 @@ export type Database = {
       remove_contact_phone: { Args: { p_phone_id: string }; Returns: undefined }
       remove_membership: {
         Args: { p_membership_id: string }
+        Returns: undefined
+      }
+      reorder_pipeline_stages: {
+        Args: { p_ordered_stage_ids: string[]; p_pipeline_id: string }
         Returns: undefined
       }
       reveal_contact_cpf_cnpj: {
@@ -1331,8 +1931,34 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      update_pipeline_stage: {
+        Args: {
+          p_color?: string
+          p_is_lost?: boolean
+          p_is_won?: boolean
+          p_name?: string
+          p_stage_id: string
+        }
+        Returns: undefined
+      }
+      update_stage_requirement: {
+        Args: { p_required_for_win: boolean; p_requirement_id: string }
+        Returns: undefined
+      }
+      win_opportunity: {
+        Args: {
+          p_fee_model: Database["public"]["Enums"]["fee_model"]
+          p_lock_version: number
+          p_opportunity_id: string
+          p_requirement_values?: Json
+          p_signed_at?: string
+          p_value_cents: number
+        }
+        Returns: Json
+      }
     }
     Enums: {
+      client_status: "ativo" | "encerrado" | "suspenso"
       consent_legal_basis:
         | "consentimento"
         | "legitimo_interesse"
@@ -1343,6 +1969,8 @@ export type Database = {
       contact_type: "pf" | "pj"
       duplicate_status: "pending" | "merged" | "dismissed"
       duplicate_tier: "strong" | "review" | "low"
+      fee_model: "fixed" | "contingency" | "fixed_contingency"
+      handoff_status: "pendente" | "concluido" | "falhou"
       invitation_status: "pending" | "accepted" | "cancelled" | "expired"
       lead_priority: "baixa" | "media" | "alta"
       lead_status: "ativo" | "arquivado"
@@ -1354,6 +1982,8 @@ export type Database = {
         | "sales"
         | "viewer"
       membership_status: "active" | "suspended"
+      opportunity_status: "open" | "won" | "lost"
+      stage_requirement_type: "text" | "textarea" | "date" | "checkbox"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1481,6 +2111,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      client_status: ["ativo", "encerrado", "suspenso"],
       consent_legal_basis: [
         "consentimento",
         "legitimo_interesse",
@@ -1492,6 +2123,8 @@ export const Constants = {
       contact_type: ["pf", "pj"],
       duplicate_status: ["pending", "merged", "dismissed"],
       duplicate_tier: ["strong", "review", "low"],
+      fee_model: ["fixed", "contingency", "fixed_contingency"],
+      handoff_status: ["pendente", "concluido", "falhou"],
       invitation_status: ["pending", "accepted", "cancelled", "expired"],
       lead_priority: ["baixa", "media", "alta"],
       lead_status: ["ativo", "arquivado"],
@@ -1504,6 +2137,8 @@ export const Constants = {
         "viewer",
       ],
       membership_status: ["active", "suspended"],
+      opportunity_status: ["open", "won", "lost"],
+      stage_requirement_type: ["text", "textarea", "date", "checkbox"],
     },
   },
 } as const

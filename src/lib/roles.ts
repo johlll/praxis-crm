@@ -62,7 +62,17 @@ export type Permission =
   // — não existe permissão de valor aqui de propósito, depois da revisão
   // que retirou esse fluxo antecipado da A4.
   | "lead.view"
-  | "lead.edit";
+  | "lead.edit"
+  // A5 — pipeline e oportunidades. "Ver"/"Movimentar oportunidades" segue
+  // a matriz do plano (todos os papéis veem; advogado e atendimento só
+  // "suas", herdado do lead pai, reforçado no banco). Honorários exatos
+  // vs. faixa vs. ausente é projeção do SERVIDOR (não uma permissão desta
+  // matriz — não há como expressar "sales vê só a faixa" como um booleano
+  // por papel aqui). Configurar pipeline/etapas/requisitos/motivos de
+  // perda é administrativo, mesmo nível de "configurar integrações".
+  | "opportunity.view"
+  | "opportunity.edit"
+  | "pipeline.configure";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -78,6 +88,9 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "contact.merge": new Set<Role>(["owner", "admin", "manager"]),
   "lead.view": new Set(ROLES),
   "lead.edit": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
+  "opportunity.view": new Set(ROLES),
+  "opportunity.edit": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
+  "pipeline.configure": new Set<Role>(["owner", "admin", "manager"]),
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {
