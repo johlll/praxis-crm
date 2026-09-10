@@ -207,7 +207,14 @@ test.describe.serial("pipeline — A5", () => {
     await page.goto(lostUrl);
     await page.getByRole("button", { name: "Perdeu" }).click();
     await page.getByLabel("Motivo da perda").selectOption({ label: "Sem retorno do cliente" });
+    // Mesmo achado da A4 (revisão do PR #4): esperar a resposta de rede
+    // real ANTES de navegar/recarregar — o reload sem isso corre à
+    // frente da Server Action e aborta a requisição em voo.
+    const lostResponse = page.waitForResponse(
+      (response) => response.url() === lostUrl && response.request().method() === "POST",
+    );
     await page.getByRole("button", { name: "Registrar perda" }).click();
+    await lostResponse;
 
     await page.reload();
     await expect(page.getByText("Perdida")).toBeVisible();
