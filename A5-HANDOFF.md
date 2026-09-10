@@ -9,7 +9,11 @@
 
 **Status:** implementada, CI verde, validada no preview real da Vercel
 (smoke-test funcional dos fluxos principais, com um bug real encontrado
-e corrigido nesse processo — seção 3.1). **PR aberto, mergeável, sem
+e corrigido nesse processo — seção 3.1). **Revisão pós-fechamento em
+andamento (seção 8):** item 1 (consistência de etapas) corrigido, item
+2 (tela de configuração) entregue, item 3 (requisitos de fechamento)
+investigado com proposta apresentada — **decisão pendente do usuário,
+nada implementado para o item 3**. **PR aberto, mergeável, sem
 conflito. Merge NÃO realizado — aguardando autorização explícita, por
 instrução do usuário. A6/A8 não foram iniciadas.**
 
@@ -266,7 +270,114 @@ push real ao banco hospedado.
 
 ---
 
-## 7. Confirmações explícitas
+## 8. Revisão pós-fechamento (antes do merge)
+
+O usuário pediu para fechar três pontos antes de autorizar o merge do
+PR #5. Nenhum merge foi feito nem A6 iniciada durante este trabalho.
+
+### 8.1 Item 1 — Consistência de etapas (corrigido)
+
+**Achado, por leitura de código (não presumido):**
+`move_opportunity_stage()` recusava marcar uma etapa OCUPADA como
+terminal (checagem já existente em `update_pipeline_stage()`), mas não
+recusava o espelho — mover uma oportunidade ABERTA para uma etapa JÁ
+marcada `is_won`/`is_lost`. Confirmado por grep no corpo da função:
+zero referências a `is_won`/`is_lost` antes da correção.
+
+**Correção:** migration `20260910130000_a5_block_move_to_terminal_stage.sql`
+(`CREATE OR REPLACE`, mesma assinatura — nenhuma migration aplicada foi
+alterada). A etapa de destino é checada logo após confirmar que
+pertence ao pipeline; `is_won`/`is_lost` bloqueia incondicionalmente com
+o novo erro `stage_is_terminal`, antes de qualquer gravação de
+`requirement_values` — preserva ganhar/perder como ações próprias.
+
+**Verificado por execução (pgTAP, seção 10 de `10_a5_pipeline.test.sql`,
+9 novas asserções — plan 55→64):** tentativa de mover para etapa
+`is_won` recusada com `stage_is_terminal`; mesmo bloqueio para
+`is_lost`; sem efeito parcial (lock_version/etapa inalterados); mover
+para etapa NORMAL continua funcionando (sem regressão); bloqueio vale
+mesmo enviando `requirement_values` junto; proteção espelhada de
+`update_pipeline_stage()` (recusar marcar etapa OCUPADA como terminal)
+confirmada intacta.
+
+Não foi possível reproduzir o bug ORIGINAL (pré-correção) por execução
+direta contra o banco hospedado: exigiria service_role (indisponível em
+`.env.local` local, só na Vercel) ou senha de conta de QA existente —
+optei por não pedir nem buscar credencial para essa verificação
+pontual, já que a causa raiz já estava inequivocamente confirmada por
+leitura de código, e o pgTAP em CI dá verificação executada real da
+**correção**. Reflexo também na UI: `pipeline-board.tsx` não oferece
+mais etapas terminais no menu "mover para" (`stageOptions` filtra
+`isWon`/`isLost`) — evita oferecer uma opção que o servidor recusaria.
+
+### 8.2 Item 2 — Configuração (interface mínima entregue)
+
+Nova tela `/configuracoes/pipelines`, gated por `pipeline.configure`
+(owner/admin/manager — `notFound()` para quem não tem a permissão, sem
+o link aparecer em `/configuracoes`). Reaproveita **só** as RPCs já
+existentes e testadas desde a entrega original da A5 — nenhuma regra de
+negócio nova:
+
+- **Etapas:** listar, criar (`create_pipeline_stage`), editar
+  nome/cor/`is_won`/`is_lost` (`update_pipeline_stage`), reordenar com
+  botões subir/descer (`reorder_pipeline_stages`), excluir
+  (`delete_pipeline_stage`).
+- **Requisitos de avanço:** listar por etapa, criar
+  (`create_stage_requirement`), excluir (`delete_stage_requirement`).
+- **Motivos de perda:** listar (ativos), criar (`create_lost_reason`),
+  desativar (`deactivate_lost_reason`).
+
+Duas Server Actions e dois schemas Zod que faltavam foram adicionados
+(`updatePipelineStageAction`, `reorderPipelineStagesAction`,
+`deleteStageRequirementAction`, `deactivateLostReasonAction` — as
+outras quatro já existiam de uma tentativa anterior não finalizada).
+
+**Verificado por execução (planejado para CI, não local):**
+`tests/e2e/pipeline-config.spec.ts`, 5 testes novos — link visível e
+tela lista as 8 etapas padrão; criar etapa + marcar como ganho, e
+confirmar que ela some do menu "mover para" do kanban (liga o item 2 ao
+item 1); criar e excluir requisito de avanço; criar e desativar motivo
+de perda; papel sem permissão (`viewer`) não vê o link e a URL direta
+responde 404. **Não pôde ser executado localmente** (Docker Desktop
+sem WSL2 instalado nesta máquina — `docker info` nunca respondeu, ver
+nota abaixo) — `typecheck`, `lint`, `test` (unitários) e `build` de
+produção rodaram limpos localmente; e2e e pgTAP dependem do CI.
+
+**Nota de ambiente:** esta sessão tentou subir o Supabase local via
+Docker Desktop para validar pgTAP/e2e antes do push (mesma disciplina
+das fases anteriores) — o WSL2 não está instalado nesta máquina
+Windows, então o Docker Desktop nunca ficou pronto. A validação
+pré-push desta rodada ficou limitada a `typecheck`/`lint`/`test
+unitário`/`build`; pgTAP e e2e são verificados só pelo CI (que sobe seu
+próprio Postgres local via Docker no runner do GitHub Actions, sem essa
+limitação).
+
+### 8.3 Item 3 — Requisitos de fechamento (investigado, DECISÃO PENDENTE — nada implementado)
+
+Ver `docs/decisoes/a5-pipeline.md`, seção "Requisitos de fechamento
+(ganhar) — decisão pendente", para o texto completo. Resumo:
+
+**Comportamento atual, confirmado por leitura de código:**
+`win_opportunity()` (e `lose_opportunity()`) não fazem nenhuma
+referência a `stage_requirements`/`opportunity_requirement_values` —
+uma oportunidade pode ser ganha em qualquer etapa aberta, mesmo com
+requisitos configurados e pendentes em alguma etapa do caminho já
+percorrido (inclusive requisito configurado DEPOIS que a etapa foi
+visitada — não há checagem retroativa).
+
+**Três propostas de regra apresentadas** (nenhuma implementada):
+1. Manter sem checagem nenhuma.
+2. Ganhar reaplica a mesma checagem de avanço para todas as etapas até
+   a atual (inclusive) — não exige nada de etapas à frente.
+3. Campo explícito `required_for_win` por requisito — o admin marca
+   quais requisitos também bloqueiam o fechamento, independente da
+   etapa atual.
+
+Recomendação registrada: opção 3. **Nenhuma alteração de código foi
+feita para este item** — aguardando decisão explícita do usuário antes
+de implementar, conforme instruído.
+
+## 9. Confirmações explícitas
 
 - **Nenhuma fase além da A5 foi iniciada** — A6/A8 não implementadas.
 - **Nenhum arquivo de referência visual foi alterado.**

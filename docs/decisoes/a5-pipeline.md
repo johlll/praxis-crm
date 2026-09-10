@@ -131,16 +131,86 @@ ativo de `leads` — **não convertidos automaticamente** em
 antigo. Remoção de `lead_values` fica para uma manutenção separada, com
 destino explicitamente aprovado — não bloqueia esta fase.
 
-## Sem tela de configuração de pipeline nesta entrega
+## Tela de configuração de pipeline (`/configuracoes/pipelines`)
 
-As funções de configuração (`create_pipeline_stage`,
-`update_pipeline_stage`, `reorder_pipeline_stages`,
-`delete_pipeline_stage`, `create_stage_requirement`,
-`delete_stage_requirement`, `create_lost_reason`,
-`deactivate_lost_reason`) existem, têm autorização no servidor
-(owner/admin/manager) e são testadas no pgTAP — mas não há tela em
-`/configuracoes` para chamá-las ainda. O teste e2e de requisito de
-avanço configura o requisito via RPC direta (mesmo padrão usado para
-provar que a autorização não depende da UI). Registrado como pendência
-explícita, não como decisão de escopo — ver seção de limitações no
-handoff.
+Adicionada na revisão pós-fechamento da A5 (item 2), reaproveitando
+**só** as RPCs já existentes e testadas pelo pgTAP desde a entrega
+original — nenhuma regra nova de negócio, só a interface que faltava.
+Acesso gated por `pipeline.configure` (owner/admin/manager): quem não
+tem a permissão não vê o link em `/configuracoes` nem acessa a URL
+direta (`notFound()`, mesmo padrão de "recurso não encontrado" já usado
+para isolamento entre workspaces — não é um caso novo de 403 disfarçado
+de 404). Reordenar etapas usa botões subir/descer chamando
+`reorder_pipeline_stages()` com a ordem recomputada no cliente — sem
+arrastar (dnd-kit já é dependência da fase, mas drag-and-drop de
+configuração de etapas é um adicional que a entrega mínima não exige).
+Motivos de perda desativados somem da lista de configuração (mesmo
+espírito de "não pode ser excluído, só desativado" — reativar não
+existe nesta fase, então não há por que listar os já desativados aqui).
+
+O teste e2e de requisito de avanço (`pipeline.spec.ts`, teste 3)
+continua configurando o requisito via RPC direta, deliberadamente — ele
+testa que a autorização e o bloqueio são reforçados no **servidor**,
+não que a tela existe (isso agora tem teste próprio em
+`pipeline-config.spec.ts`).
+
+## Etapa terminal (is_won/is_lost) — move não pode contornar ganhar/perder
+
+Achado na revisão pós-fechamento (item 1): `move_opportunity_stage()`
+recusava marcar uma etapa OCUPADA como terminal (`update_pipeline_stage`
+já tinha essa proteção, migration original), mas não recusava o
+espelho — mover uma oportunidade ABERTA para uma etapa JÁ marcada
+`is_won`/`is_lost`, deixando `status='open'` numa etapa que a própria
+configuração do pipeline diz ser terminal. Corrigido em
+`20260910130000` (`CREATE OR REPLACE`, mesma assinatura): a etapa de
+destino é checada logo após confirmar que pertence ao pipeline, e
+`is_won`/`is_lost` bloqueia incondicionalmente com `stage_is_terminal`,
+antes de qualquer gravação de `requirement_values` — preserva o modelo
+aprovado de que ganhar/perder são **ações próprias**
+(`win_opportunity`/`lose_opportunity`), nunca uma consequência de mover
+para uma coluna. A UI reflete isso: etapas terminais não aparecem no
+menu "mover para" do kanban (o servidor recusaria de qualquer forma —
+é só para não oferecer uma opção fadada ao erro).
+
+## Requisitos de fechamento (ganhar) — decisão pendente, ainda não implementada
+
+Investigação (revisão pós-fechamento, item 3): `win_opportunity()` **não
+verifica `stage_requirements` de nenhuma etapa** — confirmado por
+leitura direta do corpo da função (nenhuma referência a
+`stage_requirements`/`opportunity_requirement_values`), não presumido.
+Uma oportunidade pode ser ganha em qualquer etapa aberta, mesmo com
+requisitos pendentes — inclusive requisitos configurados **depois** que
+a oportunidade já passou por aquela etapa (não há checagem
+retroativa). `lose_opportunity()` tem a mesma ausência.
+
+Isso é **diferente** do requisito de avanço (que só bloqueia
+`move_opportunity_stage()` ao entrar numa etapa) — ganhar não passa por
+`move_opportunity_stage()` nenhuma vez. Três desenhos possíveis para uma
+regra de fechamento, apresentados ao usuário antes de qualquer
+implementação (nenhum foi escolhido ainda):
+
+1. **Sem checagem nenhuma (comportamento atual)** — mais simples e
+   flexível, mas permite ganhar sem nunca ter confirmado um requisito
+   que o escritório considera essencial (ex.: "conflito de interesses
+   verificado"), mesmo que ele exista configurado em alguma etapa do
+   caminho.
+2. **Ganhar exige os requisitos de todas as etapas até a atual
+   (inclusive)** — mesma regra de avanço, só que reaplicada no momento
+   de ganhar, cobrindo o caso de requisito configurado depois que a
+   etapa foi visitada. Não exige nada de etapas **à frente** da atual
+   (a oportunidade nunca chegou lá) — não torna toda pergunta
+   intermediária obrigatória, só as do caminho já percorrido.
+3. **Campo explícito por requisito** (`required_for_win boolean default
+   false` em `stage_requirements`) — o admin marca, requisito a
+   requisito, quais também bloqueiam o fechamento, **independente da
+   etapa atual** (ex.: "conflito de interesses" bloqueia ganhar mesmo
+   que a oportunidade feche direto na etapa 1). Mais preciso e mais
+   alinhado à frase "sem tornar automaticamente toda pergunta
+   intermediária obrigatória" (só o que for explicitamente marcado
+   passa a valer), mas exige coluna nova, migration e um controle a mais
+   na tela de configuração.
+
+Recomendação: opção 3, por separar de verdade os dois conceitos que o
+usuário pediu para distinguir — mas a escolha final depende de como o
+escritório realmente usa "requisito" na prática, e por isso não foi
+implementada sem confirmação explícita.

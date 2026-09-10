@@ -195,8 +195,16 @@ export function PipelineBoard({
     useSensor(KeyboardSensor),
   );
 
+  // Etapas terminais (is_won/is_lost) não aparecem como destino de
+  // "mover para" — o servidor recusa esse movimento (stage_is_terminal);
+  // ganhar/perder são ações próprias (botões "Ganhou"/"Perdeu"), não uma
+  // coluna para onde arrastar.
   const stageOptions = useMemo(
-    () => columns.map((c) => ({ id: c.stageId, name: c.stageName })).sort((a, b) => a.name.localeCompare(b.name)),
+    () =>
+      columns
+        .filter((c) => !c.isWon && !c.isLost)
+        .map((c) => ({ id: c.stageId, name: c.stageName }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
     [columns],
   );
 

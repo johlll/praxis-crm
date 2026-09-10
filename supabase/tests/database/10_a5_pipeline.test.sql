@@ -10,7 +10,7 @@
 -- cada chamada, nunca confia em estado deixado por um bloco anterior.
 
 begin;
-select plan(55);
+select plan(64);
 
 \set ws_um   '10000000-0000-0000-0000-000000000001'
 \set ws_dois '10000000-0000-0000-0000-000000000002'
@@ -469,6 +469,90 @@ select is(
 select is(
   (select count(*)::int from public.lost_reasons where workspace_id = :'ws_um'::uuid),
   5, 'Nenhum motivo de perda foi excluído — desativar preserva a linha'
+);
+
+-- ===================================================================
+-- 10) Etapa terminal (is_won/is_lost) — move_opportunity_stage() não
+--     pode contornar ganhar/perder por ação própria. Achado na revisão
+--     pós-A5: o servidor recusava marcar uma etapa OCUPADA como
+--     terminal, mas não recusava o espelho — ocupar uma etapa JÁ
+--     terminal. Corrigido em 20260910130000; testado aqui.
+-- ===================================================================
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+select create_pipeline_stage(:'pipe_um'::uuid, 'Etapa terminal (ganho) — teste') as stage_terminal_won \gset
+select update_pipeline_stage(:'stage_terminal_won'::uuid, null, null, true, null);
+select create_pipeline_stage(:'pipe_um'::uuid, 'Etapa terminal (perda) — teste') as stage_terminal_lost \gset
+select update_pipeline_stage(:'stage_terminal_lost'::uuid, null, null, null, true);
+
+select (create_contact(:'ws_um'::uuid, 'pf', 'Contato A5 Terminal', null, null, null)).id as contact_terminal \gset
+select create_lead(:'ws_um'::uuid, (:'contact_terminal')::uuid, 'Cível', 'Lead A5 Terminal', '{}'::text[], 'media', :'ana'::uuid) as lead_terminal \gset
+select create_opportunity(:'lead_terminal'::uuid) as opp_terminal \gset
+select create_opportunity(:'lead_terminal'::uuid) as opp_terminal_2 \gset
+
+select throws_ok(
+  format(
+    $i$ select move_opportunity_stage(%L::uuid, %L::uuid, %L::uuid, 0) $i$,
+    :'opp_terminal', :'stage_um_0', :'stage_terminal_won'
+  ),
+  'P0001', 'stage_is_terminal',
+  'Mover oportunidade ABERTA para etapa marcada is_won é recusado — ganhar é uma ação própria, não um destino de move'
+);
+
+reset role;
+select lock_version, stage_id from public.opportunities where id = (:'opp_terminal')::uuid \gset opp_terminal_
+select is((:'opp_terminal_lock_version')::bigint, 0::bigint, 'lock_version não mudou na tentativa recusada de ocupar etapa terminal');
+select is((:'opp_terminal_stage_id')::uuid, (:'stage_um_0')::uuid, 'Oportunidade continua na etapa original — sem efeito parcial');
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+select lives_ok(
+  format(
+    $i$ select move_opportunity_stage(%L::uuid, %L::uuid, %L::uuid, 0) $i$,
+    :'opp_terminal', :'stage_um_0', :'stage_um_1'
+  ),
+  'Sem regressão: mover para uma etapa NORMAL (não terminal) continua funcionando'
+);
+
+select throws_ok(
+  format(
+    $i$ select move_opportunity_stage(%L::uuid, %L::uuid, %L::uuid, 0) $i$,
+    :'opp_terminal_2', :'stage_um_0', :'stage_terminal_lost'
+  ),
+  'P0001', 'stage_is_terminal',
+  'Mesmo bloqueio para etapa marcada is_lost — perder também é ação própria'
+);
+
+-- Espelho: agora que stage_um_1 tem uma oportunidade aberta (opp_terminal,
+-- movido acima), marcá-la como terminal continua recusado — a proteção
+-- já existente de update_pipeline_stage() não foi afetada pela correção.
+select throws_ok(
+  format($i$ select update_pipeline_stage(%L::uuid, null, null, true, null) $i$, :'stage_um_1'),
+  'P0001', 'stage_has_open_opportunities',
+  'update_pipeline_stage() continua recusando marcar como terminal uma etapa OCUPADA (proteção já existente, não afetada por esta correção)'
+);
+
+-- Enviar requirement_values junto não contorna o bloqueio — a checagem
+-- de etapa terminal vale independente do que mais vier na chamada.
+select throws_ok(
+  format(
+    $i$ select move_opportunity_stage(%L::uuid, %L::uuid, %L::uuid, 0, %L::jsonb) $i$,
+    :'opp_terminal_2', :'stage_um_0', :'stage_terminal_won',
+    json_build_array(json_build_object('requirement_id', gen_random_uuid()::text, 'value_bool', true))::text
+  ),
+  'P0001', 'stage_is_terminal',
+  'Bloqueio de etapa terminal vale mesmo com requirement_values na mesma chamada'
+);
+
+reset role;
+select is(
+  (select is_won from public.pipeline_stages where id = (:'stage_terminal_won')::uuid), true,
+  'Etapa de teste continua marcada is_won — nada reverteu a configuração'
+);
+select is(
+  (select count(*)::int from public.opportunities where stage_id = (:'stage_terminal_won')::uuid), 0,
+  'Nenhuma oportunidade ficou na etapa terminal apesar das tentativas — todas foram recusadas de verdade'
 );
 
 select * from finish();

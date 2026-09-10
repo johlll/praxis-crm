@@ -47,6 +47,7 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   stage_not_in_pipeline: "Esta etapa não pertence a este pipeline.",
   stage_unchanged: "A oportunidade já está nesta etapa.",
   stage_mismatch: "A etapa mudou desde que a página carregou. Recarregue e tente de novo.",
+  stage_is_terminal: "Esta etapa é marcada como ganho/perda — use os botões \"Ganhou\"/\"Perdeu\" em vez de mover para ela.",
   stage_requirements_pending: "Preencha os requisitos pendentes antes de avançar.",
   stage_has_open_opportunities: "Mova as oportunidades abertas desta etapa antes de marcá-la como ganho/perda.",
   stage_cannot_be_won_and_lost: "Uma etapa não pode ser de ganho e de perda ao mesmo tempo.",

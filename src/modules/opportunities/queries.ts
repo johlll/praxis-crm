@@ -273,6 +273,66 @@ export async function listPipelineStages(pipelineId: string): Promise<PipelineSt
   return (data ?? []).map((s) => ({ id: s.id, pipelineId: s.pipeline_id, name: s.name, position: s.position }));
 }
 
+export type StageRequirementDetail = {
+  id: string;
+  label: string;
+  fieldType: StageRequirementType;
+  hint: string | null;
+  position: number;
+};
+
+export type PipelineStageDetail = {
+  id: string;
+  pipelineId: string;
+  name: string;
+  position: number;
+  color: string | null;
+  isWon: boolean;
+  isLost: boolean;
+  requirements: StageRequirementDetail[];
+};
+
+/**
+ * Etapas com detalhe completo (cor, terminal, requisitos) para a tela de
+ * configuração — `listPipelineStages` (mais enxuta, só id/nome/posição) é
+ * a usada nos formulários de oportunidade, que não precisam do resto.
+ */
+export async function listPipelineStagesWithDetails(pipelineId: string): Promise<PipelineStageDetail[]> {
+  const supabase = await createServerSupabaseClient();
+  const { data: stages } = await supabase
+    .from("pipeline_stages")
+    .select("id, pipeline_id, name, position, color, is_won, is_lost")
+    .eq("pipeline_id", pipelineId)
+    .order("position", { ascending: true });
+
+  if (!stages || stages.length === 0) return [];
+
+  const stageIds = stages.map((s) => s.id);
+  const { data: requirements } = await supabase
+    .from("stage_requirements")
+    .select("id, stage_id, label, field_type, hint, position")
+    .in("stage_id", stageIds)
+    .order("position", { ascending: true });
+
+  const requirementsByStage = new Map<string, StageRequirementDetail[]>();
+  for (const r of requirements ?? []) {
+    const list = requirementsByStage.get(r.stage_id) ?? [];
+    list.push({ id: r.id, label: r.label, fieldType: r.field_type, hint: r.hint, position: r.position });
+    requirementsByStage.set(r.stage_id, list);
+  }
+
+  return stages.map((s) => ({
+    id: s.id,
+    pipelineId: s.pipeline_id,
+    name: s.name,
+    position: s.position,
+    color: s.color,
+    isWon: s.is_won,
+    isLost: s.is_lost,
+    requirements: requirementsByStage.get(s.id) ?? [],
+  }));
+}
+
 export async function listLostReasons(workspaceId: string): Promise<LostReasonOption[]> {
   const supabase = await createServerSupabaseClient();
   const { data } = await supabase

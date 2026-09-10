@@ -11,8 +11,12 @@ import {
   winOpportunitySchema,
   loseOpportunitySchema,
   createPipelineStageSchema,
+  updatePipelineStageSchema,
+  reorderPipelineStagesSchema,
   createStageRequirementSchema,
+  deleteStageRequirementSchema,
   createLostReasonSchema,
+  deactivateLostReasonSchema,
 } from "./schema";
 import { getStageRequirementsStatus, listLostReasons, type StageRequirementStatus, type LostReasonOption } from "./queries";
 
@@ -278,6 +282,76 @@ export async function deletePipelineStageAction(
   return { ok: true };
 }
 
+export async function updatePipelineStageAction(
+  _prevState: PipelineConfigActionState,
+  formData: FormData,
+): Promise<PipelineConfigActionState> {
+  const guard = await requirePermissionSafe("pipeline.configure");
+  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+
+  // Checkbox desmarcado simplesmente não aparece no FormData — por isso a
+  // presença da chave (has), não o valor (get), é o que decide true/false
+  // aqui. O formulário sempre renderiza os dois checkboxes (nunca um
+  // update parcial só de um dos dois), então sempre enviamos ambos
+  // explicitamente — nunca `undefined`, que faria a RPC MANTER o valor
+  // atual (coalesce) em vez de desmarcar.
+  const parsed = updatePipelineStageSchema.safeParse({
+    stageId: formData.get("stageId"),
+    name: formData.get("name") ?? "",
+    color: formData.get("color") ?? "",
+    isWon: formData.has("isWon"),
+    isLost: formData.has("isLost"),
+  });
+
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("update_pipeline_stage", {
+    p_stage_id: parsed.data.stageId,
+    ...(parsed.data.name ? { p_name: parsed.data.name } : {}),
+    ...(parsed.data.color ? { p_color: parsed.data.color } : {}),
+    ...(parsed.data.isWon !== undefined ? { p_is_won: parsed.data.isWon } : {}),
+    ...(parsed.data.isLost !== undefined ? { p_is_lost: parsed.data.isLost } : {}),
+  });
+
+  if (error) {
+    return { ok: false, error: toUserMessage(error) };
+  }
+
+  revalidatePath("/pipeline");
+  revalidatePath("/configuracoes/pipelines");
+  return { ok: true };
+}
+
+export async function reorderPipelineStagesAction(
+  pipelineId: string,
+  orderedStageIds: string[],
+): Promise<PipelineConfigActionState> {
+  const guard = await requirePermissionSafe("pipeline.configure");
+  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+
+  const parsed = reorderPipelineStagesSchema.safeParse({ pipelineId, orderedStageIds });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("reorder_pipeline_stages", {
+    p_pipeline_id: parsed.data.pipelineId,
+    p_ordered_stage_ids: parsed.data.orderedStageIds,
+  });
+
+  if (error) {
+    return { ok: false, error: toUserMessage(error) };
+  }
+
+  revalidatePath("/pipeline");
+  revalidatePath("/configuracoes/pipelines");
+  return { ok: true };
+}
+
 export async function createStageRequirementAction(
   _prevState: PipelineConfigActionState,
   formData: FormData,
@@ -312,6 +386,33 @@ export async function createStageRequirementAction(
   return { ok: true };
 }
 
+export async function deleteStageRequirementAction(
+  _prevState: PipelineConfigActionState,
+  formData: FormData,
+): Promise<PipelineConfigActionState> {
+  const guard = await requirePermissionSafe("pipeline.configure");
+  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+
+  const parsed = deleteStageRequirementSchema.safeParse({
+    requirementId: formData.get("requirementId"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("delete_stage_requirement", {
+    p_requirement_id: parsed.data.requirementId,
+  });
+
+  if (error) {
+    return { ok: false, error: toUserMessage(error) };
+  }
+
+  revalidatePath("/configuracoes/pipelines");
+  return { ok: true };
+}
+
 export async function createLostReasonAction(
   _prevState: PipelineConfigActionState,
   formData: FormData,
@@ -332,6 +433,33 @@ export async function createLostReasonAction(
   const { error } = await supabase.rpc("create_lost_reason", {
     p_workspace_id: parsed.data.workspaceId,
     p_label: parsed.data.label,
+  });
+
+  if (error) {
+    return { ok: false, error: toUserMessage(error) };
+  }
+
+  revalidatePath("/configuracoes/pipelines");
+  return { ok: true };
+}
+
+export async function deactivateLostReasonAction(
+  _prevState: PipelineConfigActionState,
+  formData: FormData,
+): Promise<PipelineConfigActionState> {
+  const guard = await requirePermissionSafe("pipeline.configure");
+  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+
+  const parsed = deactivateLostReasonSchema.safeParse({
+    lostReasonId: formData.get("lostReasonId"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("deactivate_lost_reason", {
+    p_lost_reason_id: parsed.data.lostReasonId,
   });
 
   if (error) {

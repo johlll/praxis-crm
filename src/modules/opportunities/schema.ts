@@ -66,6 +66,27 @@ export const createStageRequirementSchema = z.object({
   hint: z.string().trim().max(200).optional().or(z.literal("")),
 });
 
+export const updatePipelineStageSchema = z.object({
+  stageId: uuidSchema,
+  name: z.string().trim().min(1, "Informe o nome da etapa.").max(120).optional().or(z.literal("")),
+  color: z.string().trim().optional().or(z.literal("")),
+  isWon: z.coerce.boolean().optional(),
+  isLost: z.coerce.boolean().optional(),
+});
+
+export const reorderPipelineStagesSchema = z.object({
+  pipelineId: uuidSchema,
+  orderedStageIds: z.array(uuidSchema).min(1),
+});
+
+export const deleteStageRequirementSchema = z.object({
+  requirementId: uuidSchema,
+});
+
+export const deactivateLostReasonSchema = z.object({
+  lostReasonId: uuidSchema,
+});
+
 export const createLostReasonSchema = z.object({
   workspaceId: uuidSchema,
   label: z.string().trim().min(1, "Informe o motivo.").max(160),
