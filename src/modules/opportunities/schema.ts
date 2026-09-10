@@ -43,6 +43,7 @@ export const winOpportunitySchema = z.object({
   valueCents: z.coerce.number().int().min(0),
   feeModel: z.enum(FEE_MODELS),
   signedAt: z.string().trim().optional().or(z.literal("")),
+  requirementValues: z.array(requirementValueItemSchema).default([]),
 });
 
 export const loseOpportunitySchema = z.object({
@@ -64,6 +65,12 @@ export const createStageRequirementSchema = z.object({
   label: z.string().trim().min(1, "Informe o rótulo do requisito.").max(160),
   fieldType: z.enum(STAGE_REQUIREMENT_TYPES),
   hint: z.string().trim().max(200).optional().or(z.literal("")),
+  requiredForWin: z.coerce.boolean().default(false),
+});
+
+export const updateStageRequirementSchema = z.object({
+  requirementId: uuidSchema,
+  requiredForWin: z.coerce.boolean(),
 });
 
 export const updatePipelineStageSchema = z.object({

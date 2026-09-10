@@ -47,15 +47,26 @@ test.describe.serial("configuração de pipeline — A5", () => {
     // Cria a própria oportunidade aqui (não depende de nenhum card deixado
     // por outro arquivo de teste, já que os arquivos e2e compartilham o
     // mesmo banco efêmero do CI sem reset entre eles).
+    // Espera cada Server Action confirmar (URL do lead / link da
+    // oportunidade) ANTES do próximo passo — mesmo achado já documentado
+    // em outras partes da suíte: navegar sem esperar corta a Server
+    // Action em voo, e o goto("/pipeline") seguinte chega cedo demais.
     await page.goto("/leads/novo");
     await page.getByLabel("Contato").selectOption({ label: SEED_CONTACTS.robertoSilvaFilho.name });
     await page.getByLabel("Área jurídica").fill("Verificação config e2e");
     await page.getByRole("button", { name: "Criar lead" }).click();
+    await expect(page).toHaveURL(/\/leads\/[0-9a-f-]{36}$/);
+
     await page.getByRole("button", { name: "Nova oportunidade" }).click();
     await page.getByRole("button", { name: "Criar oportunidade" }).click();
+    await expect(page.getByRole("link", { name: /Fazer primeiro contato/ })).toBeVisible();
 
     await page.goto("/pipeline");
-    const moveSelect = page.getByLabel(/Mover .* para etapa/).first();
+    // Seletor escopado ao card desta oportunidade — não .first() num
+    // /Mover .* / solto, que colidiria com outros cards que arquivos
+    // e2e diferentes deixam no mesmo workspace (banco sem reset entre
+    // arquivos no CI; achado real ao rodar junto de pipeline.spec.ts).
+    const moveSelect = page.getByLabel(`Mover ${SEED_CONTACTS.robertoSilvaFilho.name} para etapa`);
     await expect(moveSelect).toBeVisible();
     const options = await moveSelect.locator("option").allTextContents();
     expect(options).not.toContain("Contrato assinado (teste e2e)");

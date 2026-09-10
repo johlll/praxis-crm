@@ -172,45 +172,70 @@ para uma coluna. A UI reflete isso: etapas terminais não aparecem no
 menu "mover para" do kanban (o servidor recusaria de qualquer forma —
 é só para não oferecer uma opção fadada ao erro).
 
-## Requisitos de fechamento (ganhar) — decisão pendente, ainda não implementada
+## Requisitos de fechamento (ganhar) — `required_for_win`, decisão aprovada e implementada
 
 Investigação (revisão pós-fechamento, item 3): `win_opportunity()` **não
-verifica `stage_requirements` de nenhuma etapa** — confirmado por
+verificava `stage_requirements` de nenhuma etapa** — confirmado por
 leitura direta do corpo da função (nenhuma referência a
 `stage_requirements`/`opportunity_requirement_values`), não presumido.
-Uma oportunidade pode ser ganha em qualquer etapa aberta, mesmo com
-requisitos pendentes — inclusive requisitos configurados **depois** que
-a oportunidade já passou por aquela etapa (não há checagem
-retroativa). `lose_opportunity()` tem a mesma ausência.
+Uma oportunidade podia ser ganha em qualquer etapa aberta, mesmo com
+requisitos pendentes.
 
-Isso é **diferente** do requisito de avanço (que só bloqueia
-`move_opportunity_stage()` ao entrar numa etapa) — ganhar não passa por
-`move_opportunity_stage()` nenhuma vez. Três desenhos possíveis para uma
-regra de fechamento, apresentados ao usuário antes de qualquer
-implementação (nenhum foi escolhido ainda):
+Três desenhos foram apresentados ao usuário antes de qualquer
+implementação (sem checagem nenhuma; reaplicar a checagem de avanço até
+a etapa atual; campo explícito por requisito). **Escolhido: campo
+explícito** — `stage_requirements.required_for_win boolean default
+false` (migration `20260910140000`). O admin marca, requisito a
+requisito, quais também bloqueiam o fechamento — **independente da
+etapa atual** da oportunidade (ex.: "conflito de interesses" bloqueia
+ganhar mesmo que a oportunidade feche direto na etapa 1, sem nunca ter
+passado pela etapa onde o requisito está configurado). Isso é o que de
+fato separa "requisito de avanço" (só bloqueia `move_opportunity_stage`
+ao entrar NAQUELA etapa) de "requisito de fechamento" (bloqueia
+`win_opportunity` em qualquer etapa) — os dois são independentes: um
+requisito pode ser só de avanço, só de fechamento, os dois, ou nenhum.
 
-1. **Sem checagem nenhuma (comportamento atual)** — mais simples e
-   flexível, mas permite ganhar sem nunca ter confirmado um requisito
-   que o escritório considera essencial (ex.: "conflito de interesses
-   verificado"), mesmo que ele exista configurado em alguma etapa do
-   caminho.
-2. **Ganhar exige os requisitos de todas as etapas até a atual
-   (inclusive)** — mesma regra de avanço, só que reaplicada no momento
-   de ganhar, cobrindo o caso de requisito configurado depois que a
-   etapa foi visitada. Não exige nada de etapas **à frente** da atual
-   (a oportunidade nunca chegou lá) — não torna toda pergunta
-   intermediária obrigatória, só as do caminho já percorrido.
-3. **Campo explícito por requisito** (`required_for_win boolean default
-   false` em `stage_requirements`) — o admin marca, requisito a
-   requisito, quais também bloqueiam o fechamento, **independente da
-   etapa atual** (ex.: "conflito de interesses" bloqueia ganhar mesmo
-   que a oportunidade feche direto na etapa 1). Mais preciso e mais
-   alinhado à frase "sem tornar automaticamente toda pergunta
-   intermediária obrigatória" (só o que for explicitamente marcado
-   passa a valer), mas exige coluna nova, migration e um controle a mais
-   na tela de configuração.
+**Desmarcado por padrão** em todo requisito, existente ou novo — nada
+vira obrigatório para ganhar sem o admin marcar explicitamente
+(`create_stage_requirement` ganha `p_required_for_win default false`;
+`update_stage_requirement`, função nova, alterna o campo num requisito
+já existente).
 
-Recomendação: opção 3, por separar de verdade os dois conceitos que o
-usuário pediu para distinguir — mas a escolha final depende de como o
-escritório realmente usa "requisito" na prática, e por isso não foi
-implementada sem confirmação explícita.
+`win_opportunity()` (DROP+CREATE, mesmo padrão de `list_opportunities`
+na A5 original) ganha `p_requirement_values` (mesmo formato de
+`move_opportunity_stage`) e passa a: gravar os valores submetidos
+junto do pedido de ganho; checar TODOS os requisitos
+`required_for_win = true` do PIPELINE inteiro da oportunidade (join
+`stage_requirements`/`pipeline_stages` por `pipeline_id`, sem filtro de
+posição); recusar com `win_requirements_pending` se algum estiver
+pendente. A checagem de `status <> 'open'` acontece **antes** dessa
+validação (recusa com `opportunity_conflict`, não com
+`win_requirements_pending`, quando o motivo real é idempotência, não
+requisito) — e antes do `UPDATE` que marca `status='won'` e de
+qualquer criação de cliente/handoff, então uma recusa não tem efeito
+nenhum (a função inteira é uma transação; a exceção desfaz também os
+`requirement_values` gravados na mesma chamada).
+
+`lose_opportunity()` **não foi alterada** — continua exigindo só
+`lost_reason_id` válido, sem nenhuma checagem de requisito de avanço ou
+de fechamento (decisão explícita do usuário: perder continua livre).
+
+**UI:** `WonDialog` busca as pendências (`get_win_requirements_status`,
+via `checkWinRequirementsAction`) ao abrir, renderiza um campo por
+requisito pendente (mesmos 4 tipos do `StageAdvanceDialog`: texto,
+texto longo, data, checkbox) e desabilita "Registrar ganho" até todos
+estarem preenchidos — a checagem real continua sendo a do servidor,
+isto só evita o clique fadado ao erro. Na tela de configuração, o
+rótulo é "Obrigatório para marcar como ganho", desmarcado por padrão,
+com um checkbox por requisito na lista de cada etapa (chama
+`updateStageRequirementAction`).
+
+**Verificado por execução:** migration aplicada com sucesso no
+`praxis-crm-dev` (dry-run + push reais); 9 novas asserções pgTAP (seção
+11 de `10_a5_pipeline.test.sql`, plan 64→73) cobrindo: default
+desmarcado; `update_stage_requirement` recusando quem não é
+owner/admin/manager; ganhar recusado com requisito pendente numa etapa
+que a oportunidade **nunca visitou** (prova a independência de posição);
+nenhum efeito colateral na recusa (status, lock_version, contagem de
+clientes); ganhar aceito ao preencher o requisito junto da chamada;
+handoff criado normalmente depois.

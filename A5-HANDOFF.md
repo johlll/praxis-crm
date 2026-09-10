@@ -9,13 +9,13 @@
 
 **Status:** implementada, CI verde, validada no preview real da Vercel
 (smoke-test funcional dos fluxos principais, com um bug real encontrado
-e corrigido nesse processo — seção 3.1). **Revisão pós-fechamento em
-andamento (seção 8):** item 1 (consistência de etapas) corrigido, item
+e corrigido nesse processo — seção 3.1). **Revisão pós-fechamento
+concluída (seção 8):** item 1 (consistência de etapas) corrigido, item
 2 (tela de configuração) entregue, item 3 (requisitos de fechamento)
-investigado com proposta apresentada — **decisão pendente do usuário,
-nada implementado para o item 3**. **PR aberto, mergeável, sem
-conflito. Merge NÃO realizado — aguardando autorização explícita, por
-instrução do usuário. A6/A8 não foram iniciadas.**
+investigado, decisão aprovada pelo usuário e implementada
+(`required_for_win`). **PR aberto, mergeável, sem conflito. Merge NÃO
+realizado — aguardando autorização explícita, por instrução do
+usuário. A6/A8 não foram iniciadas.**
 
 ---
 
@@ -352,30 +352,61 @@ unitário`/`build`; pgTAP e e2e são verificados só pelo CI (que sobe seu
 próprio Postgres local via Docker no runner do GitHub Actions, sem essa
 limitação).
 
-### 8.3 Item 3 — Requisitos de fechamento (investigado, DECISÃO PENDENTE — nada implementado)
+### 8.3 Item 3 — Requisitos de fechamento (investigado, decisão aprovada e implementada)
 
 Ver `docs/decisoes/a5-pipeline.md`, seção "Requisitos de fechamento
-(ganhar) — decisão pendente", para o texto completo. Resumo:
+(ganhar) — `required_for_win`, decisão aprovada e implementada", para o
+texto completo. Resumo:
 
-**Comportamento atual, confirmado por leitura de código:**
-`win_opportunity()` (e `lose_opportunity()`) não fazem nenhuma
-referência a `stage_requirements`/`opportunity_requirement_values` —
-uma oportunidade pode ser ganha em qualquer etapa aberta, mesmo com
-requisitos configurados e pendentes em alguma etapa do caminho já
-percorrido (inclusive requisito configurado DEPOIS que a etapa foi
-visitada — não há checagem retroativa).
+**Comportamento anterior, confirmado por leitura de código:**
+`win_opportunity()` não fazia nenhuma referência a
+`stage_requirements`/`opportunity_requirement_values` — uma
+oportunidade podia ser ganha em qualquer etapa aberta, mesmo com
+requisitos pendentes.
 
-**Três propostas de regra apresentadas** (nenhuma implementada):
-1. Manter sem checagem nenhuma.
-2. Ganhar reaplica a mesma checagem de avanço para todas as etapas até
-   a atual (inclusive) — não exige nada de etapas à frente.
-3. Campo explícito `required_for_win` por requisito — o admin marca
-   quais requisitos também bloqueiam o fechamento, independente da
-   etapa atual.
+**Três propostas apresentadas; o usuário aprovou a opção 3** (campo
+explícito `required_for_win`) e detalhou os requisitos de implementação
+exatos: rótulo "Obrigatório para marcar como ganho" desmarcado por
+padrão; servidor valida TODOS os requisitos marcados do pipeline da
+oportunidade, independente da etapa atual; diálogo mostra pendências e
+permite preencher antes de concluir; recusa não altera a oportunidade
+nem cria cliente/handoff; teste via RPC direta; perder continua livre
+(só motivo obrigatório, sem checagem de requisito).
 
-Recomendação registrada: opção 3. **Nenhuma alteração de código foi
-feita para este item** — aguardando decisão explícita do usuário antes
-de implementar, conforme instruído.
+**Implementado, migration `20260910140000_a5_win_requirements.sql`:**
+- `stage_requirements.required_for_win boolean not null default false`.
+- `create_stage_requirement()` ganha `p_required_for_win default false`
+  (DROP+CREATE).
+- `update_stage_requirement()`, função nova — alterna o campo num
+  requisito existente (owner/admin/manager).
+- `get_win_requirements_status()`, função nova — pendências de
+  `required_for_win`, em qualquer etapa do pipeline.
+- `win_opportunity()` ganha `p_requirement_values` e a validação
+  (DROP+CREATE) — checa `status <> 'open'` **antes** da validação de
+  requisito (evita `win_requirements_pending` mascarar o motivo real de
+  conflito), grava os valores submetidos, então recusa com
+  `win_requirements_pending` se algo do pipeline inteiro estiver
+  faltando — tudo antes do `UPDATE` que marca `status='won'` e antes de
+  qualquer criação de cliente/handoff (recusa sem efeito nenhum, mesma
+  garantia transacional já usada em `move_opportunity_stage`).
+- `lose_opportunity()` **não foi tocada** — perder continua exigindo só
+  o motivo.
+- UI: `WonDialog` busca pendências ao abrir e desabilita "Registrar
+  ganho" até preenchê-las; tela de configuração ganha o checkbox
+  "Obrigatório para marcar como ganho" por requisito (desmarcado por
+  padrão, inclusive nos já existentes).
+
+**Verificado por execução:** migration aplicada com sucesso no
+`praxis-crm-dev` (dry-run + push reais, sem erro). 9 novas asserções
+pgTAP (seção 11, plan 64→73) via RPC direta — incluindo o cenário
+central pedido: ganhar recusado com requisito pendente numa etapa que a
+oportunidade **nunca visitou** (prova a independência de posição), sem
+nenhum efeito colateral na recusa (status, lock_version, contagem de
+clientes = 0), aceito ao preencher junto da chamada. `typecheck`/
+`lint`/`test` unitário/`build` limpos localmente após regenerar e
+reverter os tipos (mesmo padrão cosmético já documentado). e2e e pgTAP
+completos dependem do CI (mesma limitação de ambiente da seção 8.2 —
+sem Docker/WSL2 local).
 
 ## 9. Confirmações explícitas
 

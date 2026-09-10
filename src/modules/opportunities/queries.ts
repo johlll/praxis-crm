@@ -234,6 +234,34 @@ export async function getStageRequirementsStatus(
   });
 }
 
+/**
+ * Requisitos NECESSÁRIOS PARA GANHAR (required_for_win), de qualquer
+ * etapa do pipeline — não só o caminho percorrido, diferente de
+ * getStageRequirementsStatus(). Mesmo formato de linha, reaproveitado.
+ */
+export async function getWinRequirementsStatus(opportunityId: string): Promise<StageRequirementStatus[]> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("get_win_requirements_status", {
+    p_opportunity_id: opportunityId,
+  });
+  if (error || !data) return [];
+
+  return (data as unknown[]).map((r) => {
+    const item = r as Record<string, unknown>;
+    return {
+      requirementId: item.requirement_id as string,
+      stageId: item.stage_id as string,
+      stageName: item.stage_name as string,
+      label: item.label as string,
+      fieldType: item.field_type as StageRequirementType,
+      hint: (item.hint as string | null) ?? null,
+      valueText: (item.value_text as string | null) ?? null,
+      valueBool: (item.value_bool as boolean | null) ?? null,
+      filled: item.filled as boolean,
+    };
+  });
+}
+
 export type PipelineOption = { id: string; name: string; isDefault: boolean };
 export type PipelineStageOption = { id: string; pipelineId: string; name: string; position: number };
 export type LostReasonOption = { id: string; label: string };
@@ -279,6 +307,7 @@ export type StageRequirementDetail = {
   fieldType: StageRequirementType;
   hint: string | null;
   position: number;
+  requiredForWin: boolean;
 };
 
 export type PipelineStageDetail = {
@@ -310,14 +339,21 @@ export async function listPipelineStagesWithDetails(pipelineId: string): Promise
   const stageIds = stages.map((s) => s.id);
   const { data: requirements } = await supabase
     .from("stage_requirements")
-    .select("id, stage_id, label, field_type, hint, position")
+    .select("id, stage_id, label, field_type, hint, position, required_for_win")
     .in("stage_id", stageIds)
     .order("position", { ascending: true });
 
   const requirementsByStage = new Map<string, StageRequirementDetail[]>();
   for (const r of requirements ?? []) {
     const list = requirementsByStage.get(r.stage_id) ?? [];
-    list.push({ id: r.id, label: r.label, fieldType: r.field_type, hint: r.hint, position: r.position });
+    list.push({
+      id: r.id,
+      label: r.label,
+      fieldType: r.field_type,
+      hint: r.hint,
+      position: r.position,
+      requiredForWin: r.required_for_win,
+    });
     requirementsByStage.set(r.stage_id, list);
   }
 

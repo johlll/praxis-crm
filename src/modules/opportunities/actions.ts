@@ -14,11 +14,18 @@ import {
   updatePipelineStageSchema,
   reorderPipelineStagesSchema,
   createStageRequirementSchema,
+  updateStageRequirementSchema,
   deleteStageRequirementSchema,
   createLostReasonSchema,
   deactivateLostReasonSchema,
 } from "./schema";
-import { getStageRequirementsStatus, listLostReasons, type StageRequirementStatus, type LostReasonOption } from "./queries";
+import {
+  getStageRequirementsStatus,
+  getWinRequirementsStatus,
+  listLostReasons,
+  type StageRequirementStatus,
+  type LostReasonOption,
+} from "./queries";
 
 export type OpportunityActionState = {
   ok: boolean;
@@ -134,12 +141,23 @@ export async function winOpportunityAction(
   const guard = await requirePermissionSafe("opportunity.edit");
   if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
 
+  const rawRequirementValues = formData.get("requirementValues");
+  let requirementValues: unknown = [];
+  if (typeof rawRequirementValues === "string" && rawRequirementValues.length > 0) {
+    try {
+      requirementValues = JSON.parse(rawRequirementValues);
+    } catch {
+      return { ok: false, error: "Dados inválidos." };
+    }
+  }
+
   const parsed = winOpportunitySchema.safeParse({
     opportunityId: formData.get("opportunityId"),
     lockVersion: formData.get("lockVersion"),
     valueCents: formData.get("valueCents"),
     feeModel: formData.get("feeModel"),
     signedAt: formData.get("signedAt") ?? "",
+    requirementValues,
   });
 
   if (!parsed.success) {
@@ -153,6 +171,7 @@ export async function winOpportunityAction(
     p_value_cents: parsed.data.valueCents,
     p_fee_model: parsed.data.feeModel,
     ...(parsed.data.signedAt ? { p_signed_at: parsed.data.signedAt } : {}),
+    p_requirement_values: parsed.data.requirementValues,
   });
 
   if (error) {
@@ -215,6 +234,19 @@ export async function checkStageRequirementsAction(
   const guard = await requirePermissionSafe("opportunity.view");
   if ("deniedMessage" in guard) return [];
   return getStageRequirementsStatus(opportunityId, toStageId);
+}
+
+/**
+ * Chamada pelo WonDialog ao abrir — mostra o que falta preencher dos
+ * requisitos marcados "obrigatório para marcar como ganho", em
+ * qualquer etapa do pipeline (não só o caminho percorrido). A
+ * checagem que bloqueia de fato é a mesma regra dentro de
+ * win_opportunity() no banco.
+ */
+export async function checkWinRequirementsAction(opportunityId: string): Promise<StageRequirementStatus[]> {
+  const guard = await requirePermissionSafe("opportunity.view");
+  if ("deniedMessage" in guard) return [];
+  return getWinRequirementsStatus(opportunityId);
 }
 
 export async function listLostReasonsAction(workspaceId: string): Promise<LostReasonOption[]> {
@@ -364,6 +396,7 @@ export async function createStageRequirementAction(
     label: formData.get("label"),
     fieldType: formData.get("fieldType"),
     hint: formData.get("hint") ?? "",
+    requiredForWin: formData.has("requiredForWin"),
   });
 
   if (!parsed.success) {
@@ -376,6 +409,33 @@ export async function createStageRequirementAction(
     p_label: parsed.data.label,
     p_field_type: parsed.data.fieldType,
     ...(parsed.data.hint ? { p_hint: parsed.data.hint } : {}),
+    p_required_for_win: parsed.data.requiredForWin,
+  });
+
+  if (error) {
+    return { ok: false, error: toUserMessage(error) };
+  }
+
+  revalidatePath("/configuracoes/pipelines");
+  return { ok: true };
+}
+
+export async function updateStageRequirementAction(
+  requirementId: string,
+  requiredForWin: boolean,
+): Promise<PipelineConfigActionState> {
+  const guard = await requirePermissionSafe("pipeline.configure");
+  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+
+  const parsed = updateStageRequirementSchema.safeParse({ requirementId, requiredForWin });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("update_stage_requirement", {
+    p_requirement_id: parsed.data.requirementId,
+    p_required_for_win: parsed.data.requiredForWin,
   });
 
   if (error) {

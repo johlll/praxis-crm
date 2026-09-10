@@ -54,7 +54,13 @@ test.describe.serial("pipeline — A5", () => {
     await login(page, SEED_USERS.ana.email);
     await page.goto("/pipeline");
 
-    await page.getByLabel(/Mover .* para etapa/).selectOption({ label: "Qualificar oportunidade" });
+    // Seletor escopado ao card desta oportunidade (não um /Mover .* /
+    // solto) — o workspace de Ana é compartilhado com outros arquivos
+    // e2e no mesmo banco efêmero do CI, sem reset entre eles; qualquer
+    // um deles pode ter deixado outro card de "Mover ... para etapa".
+    await page
+      .getByLabel(`Mover ${SEED_CONTACTS.robertoSilva.name} para etapa`)
+      .selectOption({ label: "Qualificar oportunidade" });
     await expect(page.getByRole("heading", { name: "Qualificar oportunidade" })).toBeVisible();
 
     await page.reload();

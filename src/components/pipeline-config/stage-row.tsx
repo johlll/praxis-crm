@@ -10,6 +10,7 @@ import {
   deletePipelineStageAction,
   deleteStageRequirementAction,
   reorderPipelineStagesAction,
+  updateStageRequirementAction,
 } from "@/modules/opportunities/actions";
 import { StageEditDialog } from "./stage-edit-dialog";
 import { AddRequirementDialog } from "./add-requirement-dialog";
@@ -59,6 +60,14 @@ export function StageRow({
     startTransition(async () => {
       const result = await deleteStageRequirementAction({ ok: false }, formData);
       if (!result.ok) setError(result.error ?? "Não foi possível excluir o requisito.");
+    });
+  }
+
+  function toggleRequiredForWin(requirementId: string, next: boolean) {
+    setError(null);
+    startTransition(async () => {
+      const result = await updateStageRequirementAction(requirementId, next);
+      if (!result.ok) setError(result.error ?? "Não foi possível atualizar o requisito.");
     });
   }
 
@@ -115,6 +124,17 @@ export function StageRow({
             <span className="flex-1">
               {req.label} <span className="text-text-muted">({req.fieldType})</span>
             </span>
+            <label className="flex items-center gap-1.5" htmlFor={`req-win-${req.id}`}>
+              <input
+                id={`req-win-${req.id}`}
+                type="checkbox"
+                className="size-3.5"
+                checked={req.requiredForWin}
+                disabled={isPending}
+                onChange={(e) => toggleRequiredForWin(req.id, e.target.checked)}
+              />
+              Obrigatório para ganhar
+            </label>
             <Button
               variant="ghost"
               size="sm"

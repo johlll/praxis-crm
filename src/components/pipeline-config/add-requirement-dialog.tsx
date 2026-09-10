@@ -123,6 +123,18 @@ function AddRequirementDialogBody({
           <FormLabel htmlFor={`req-hint-${stageId}`}>Dica (opcional)</FormLabel>
           <Input id={`req-hint-${stageId}`} name="hint" maxLength={200} />
         </FormField>
+        <FormField className="flex-row items-center gap-2">
+          <input
+            id={`req-required-for-win-${stageId}`}
+            name="requiredForWin"
+            type="checkbox"
+            value="true"
+            className="size-4"
+          />
+          <FormLabel htmlFor={`req-required-for-win-${stageId}`} className="mb-0">
+            Obrigatório para marcar como ganho
+          </FormLabel>
+        </FormField>
         {state.error ? (
           <Alert variant="danger">
             <AlertDescription>{state.error}</AlertDescription>

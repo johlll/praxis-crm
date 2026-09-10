@@ -10,7 +10,7 @@
 -- cada chamada, nunca confia em estado deixado por um bloco anterior.
 
 begin;
-select plan(64);
+select plan(73);
 
 \set ws_um   '10000000-0000-0000-0000-000000000001'
 \set ws_dois '10000000-0000-0000-0000-000000000002'
@@ -553,6 +553,82 @@ select is(
 select is(
   (select count(*)::int from public.opportunities where stage_id = (:'stage_terminal_won')::uuid), 0,
   'Nenhuma oportunidade ficou na etapa terminal apesar das tentativas — todas foram recusadas de verdade'
+);
+
+-- ===================================================================
+-- 11) Requisito obrigatório para GANHAR (required_for_win) — distinto
+--     do requisito de avanço. Decisão aprovada pelo usuário na revisão
+--     pós-A5 (item 3): ganhar valida TODOS os requisitos marcados do
+--     PIPELINE inteiro, independente da etapa atual da oportunidade.
+-- ===================================================================
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+
+-- Requisito criado SEM informar required_for_win — confirma que o
+-- default é false (desmarcado), mesmo em requisito novo.
+select create_stage_requirement(:'stage_um_2'::uuid, 'Requisito comum (sem default)', 'text') as req_sem_default \gset
+reset role;
+select is(
+  (select required_for_win from public.stage_requirements where id = (:'req_sem_default')::uuid), false,
+  'create_stage_requirement() sem informar required_for_win nasce desmarcado (default false)'
+);
+
+-- update_stage_requirement(): só owner/admin/manager pode alternar.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'carla', 'role', 'authenticated')::text, true);
+select throws_ok(
+  format($i$ select update_stage_requirement(%L::uuid, true) $i$, :'req_sem_default'),
+  'P0001', 'insufficient_permission',
+  'update_stage_requirement() recusa quem não é owner/admin/manager (carla é lawyer)'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+select create_stage_requirement(
+  :'stage_um_1'::uuid, 'Conflito de interesses verificado (ganho)', 'checkbox', null, null, true
+) as req_win \gset
+
+select (create_contact(:'ws_um'::uuid, 'pf', 'Contato A5 Fechamento', null, null, null)).id as contact_fechamento \gset
+select create_lead(:'ws_um'::uuid, (:'contact_fechamento')::uuid, 'Cível', 'Lead A5 Fechamento', '{}'::text[], 'media', :'ana'::uuid) as lead_fechamento \gset
+select create_opportunity(:'lead_fechamento'::uuid) as opp_fechamento \gset
+
+-- A oportunidade nasce na etapa 1 (stage_um_0) e NUNCA visita stage_um_1
+-- (onde está o requisito) — prova que o bloqueio independe da etapa
+-- atual, exatamente como pedido.
+select throws_ok(
+  format($i$ select win_opportunity(%L::uuid, 0, 400000, 'fixed') $i$, :'opp_fechamento'),
+  'P0001', 'win_requirements_pending',
+  'Ganhar é recusado com requisito obrigatório pendente, mesmo numa etapa que a oportunidade nunca visitou'
+);
+
+reset role;
+select status, lock_version from public.opportunities where id = (:'opp_fechamento')::uuid \gset opp_fechamento_
+select is((:'opp_fechamento_status')::text, 'open'::text, 'Oportunidade continua aberta após a recusa — não altera status');
+select is((:'opp_fechamento_lock_version')::bigint, 0::bigint, 'lock_version não mudou na tentativa recusada');
+select is(
+  (select count(*)::int from public.clients where workspace_id = :'ws_um'::uuid and contact_id = (:'contact_fechamento')::uuid),
+  0, 'Nenhum cliente foi criado na tentativa recusada — sem efeito colateral'
+);
+
+-- Preenchendo o requisito junto da chamada de ganhar, agora aceito.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+select lives_ok(
+  format(
+    $i$ select win_opportunity(%L::uuid, 0, 400000, 'fixed', null, %L::jsonb) $i$,
+    :'opp_fechamento',
+    json_build_array(json_build_object('requirement_id', :'req_win', 'value_bool', true))::text
+  ),
+  'Preenchendo o requisito obrigatório junto da chamada, ganhar é aceito'
+);
+
+reset role;
+select status from public.opportunities where id = (:'opp_fechamento')::uuid \gset opp_fechamento_
+select is((:'opp_fechamento_status')::text, 'won'::text, 'Oportunidade fica ganha depois de preencher o requisito obrigatório');
+select is(
+  (select count(*)::int from public.client_handoffs where opportunity_id = (:'opp_fechamento')::uuid),
+  1, 'Handoff criado normalmente uma vez o requisito satisfeito'
 );
 
 select * from finish();
