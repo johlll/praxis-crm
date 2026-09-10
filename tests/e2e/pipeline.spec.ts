@@ -169,7 +169,9 @@ test.describe.serial("pipeline — A5", () => {
     await page.goto(opportunityUrl);
 
     await page.getByRole("button", { name: "Ganhou" }).click();
-    await page.getByLabel("Valor final").fill("12000");
+    // Campo pede REAIS (com vírgula decimal), não centavos — "12000" sem
+    // vírgula vira R$ 12.000,00, não R$ 120,00 (achado no CI).
+    await page.getByLabel("Valor final").fill("120");
     const wonResponse = page.waitForResponse(
       (response) => response.url() === opportunityUrl && response.request().method() === "POST",
     );
