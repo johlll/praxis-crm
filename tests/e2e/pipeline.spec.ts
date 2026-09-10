@@ -204,6 +204,15 @@ test.describe.serial("pipeline — A5", () => {
     // Campo pede REAIS (com vírgula decimal), não centavos — "12000" sem
     // vírgula vira R$ 12.000,00, não R$ 120,00 (achado no CI).
     await page.getByLabel("Valor final").fill("120");
+    // O WonDialog busca os requisitos obrigatórios para ganhar ao abrir
+    // (checkWinRequirementsAction) — outra Server Action que também
+    // faz POST para esta MESMA URL. Esperar o botão habilitar antes de
+    // registrar o waitForResponse garante que aquela resposta já
+    // chegou; senão o waiter pega a resposta errada (mesma URL/método),
+    // resolve cedo demais, e o reload seguinte corta a Server Action
+    // real de "Registrar ganho" em voo (achado real no CI: POST com
+    // status -1, abortado pelo reload).
+    await expect(page.getByRole("button", { name: "Registrar ganho" })).toBeEnabled();
     const wonResponse = page.waitForResponse(
       (response) => response.url() === opportunityUrl && response.request().method() === "POST",
     );

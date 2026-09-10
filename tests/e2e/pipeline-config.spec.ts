@@ -94,7 +94,11 @@ test.describe.serial("configuração de pipeline — A5", () => {
     await page.goto("/configuracoes/pipelines");
 
     await page.getByRole("button", { name: "Novo motivo" }).click();
-    await page.getByLabel("Motivo").fill("Motivo de teste e2e");
+    // exact:true — sem isso, "Motivo" (rótulo do campo) também casa com
+    // qualquer botão "Desativar motivo X" já na lista (contém a mesma
+    // palavra) e com o próprio diálogo "Novo motivo de perda", tudo
+    // via getByLabel — achado real no CI (7 elementos, strict mode).
+    await page.getByLabel("Motivo", { exact: true }).fill("Motivo de teste e2e");
     await page.getByRole("button", { name: "Criar motivo" }).click();
     await expect(page.getByText("Motivo criado")).toBeVisible();
     await page.getByRole("button", { name: "Concluir" }).click();
