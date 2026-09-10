@@ -17,6 +17,13 @@ import { callRpcDirect, getSupabaseAccessToken, login, readSupabaseEnv, switchWo
  * pelos testes seguintes.
  */
 test.describe.serial("pipeline — A5", () => {
+  // O runner do CI e o servidor de produção local (`next start`) rodam no
+  // mesmo fuso (UTC) por padrão — sem fixar o fuso do navegador, o teste 3
+  // não teria como reproduzir o erro de hidratação real que só aparece
+  // quando servidor e navegador divergem de fuso (achado no preview da
+  // Vercel: função serverless em UTC, navegador em horário do Brasil).
+  test.use({ timezoneId: "America/Sao_Paulo" });
+
   let opportunityUrl: string;
   let opportunityId: string;
 
@@ -117,11 +124,30 @@ test.describe.serial("pipeline — A5", () => {
     });
     expect(moved.status, JSON.stringify(moved)).toBeLessThan(300);
 
+    // Achado real no smoke-test do preview: a página de detalhe (client
+    // component renderizado via SSR) formatava o histórico de etapas com
+    // toLocaleString("pt-BR") sem timeZone fixo — servidor e navegador
+    // divergem de fuso e o React acusa erro de hidratação (#418) assim
+    // que há pelo menos uma entrada de histórico, exatamente o caso
+    // deste teste. Corrigido fixando timeZone: "America/Sao_Paulo"; a
+    // asserção abaixo evita que a regressão volte sem ser notada.
+    // React reporta hidratação divergente via console.error (não é uma
+    // exceção não tratada), por isso o listener é em "console", filtrando
+    // o ruído já conhecido e alheio ao app (o widget de feedback da
+    // Vercel tenta se enquadrar num iframe e a CSP do próprio app bloqueia).
+    const consoleErrors: string[] = [];
+    page.on("console", (msg) => {
+      if (msg.type() === "error" && !msg.text().includes("vercel.live")) {
+        consoleErrors.push(msg.text());
+      }
+    });
+
     await page.goto(opportunityUrl);
     // Na página de detalhe o nome da etapa é uma <dd> (par termo/definição),
     // não um heading — diferente do kanban, onde a etapa é um <h3> de
     // coluna (é para lá que getByRole("heading") funciona, no teste 2).
     await expect(page.getByText("Agendar consulta")).toBeVisible();
+    expect(consoleErrors).toEqual([]);
   });
 
   test("4. duas movimentações concorrentes de verdade: só uma grava, a outra recebe conflito", async ({ request }) => {

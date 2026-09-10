@@ -80,7 +80,7 @@ export function OpportunityDetailPanel({
           <ul className="flex flex-col gap-2">
             {opportunity.history.map((h, i) => (
               <li key={i} className="text-meta text-text-secondary">
-                {new Date(h.occurredAt).toLocaleString("pt-BR")}
+                {new Date(h.occurredAt).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}
                 {h.secondsInPreviousStage !== null
                   ? ` — ${Math.round(h.secondsInPreviousStage / 3600)}h na etapa anterior`
                   : ""}
