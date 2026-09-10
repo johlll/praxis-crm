@@ -1816,40 +1816,23 @@ export type Database = {
           total_count: number
         }[]
       }
-      list_opportunities:
-        | {
-            Args: {
-              p_page?: number
-              p_page_size?: number
-              p_pipeline_id?: string
-              p_search?: string
-              p_sort?: string
-              p_stage_id?: string
-              p_status?: Database["public"]["Enums"]["opportunity_status"]
-              p_workspace_id: string
-            }
-            Returns: {
-              items: Json
-              total_count: number
-            }[]
-          }
-        | {
-            Args: {
-              p_lead_id?: string
-              p_page?: number
-              p_page_size?: number
-              p_pipeline_id?: string
-              p_search?: string
-              p_sort?: string
-              p_stage_id?: string
-              p_status?: Database["public"]["Enums"]["opportunity_status"]
-              p_workspace_id: string
-            }
-            Returns: {
-              items: Json
-              total_count: number
-            }[]
-          }
+      list_opportunities: {
+        Args: {
+          p_lead_id?: string
+          p_page?: number
+          p_page_size?: number
+          p_pipeline_id?: string
+          p_search?: string
+          p_sort?: string
+          p_stage_id?: string
+          p_status?: Database["public"]["Enums"]["opportunity_status"]
+          p_workspace_id: string
+        }
+        Returns: {
+          items: Json
+          total_count: number
+        }[]
+      }
       lose_opportunity: {
         Args: {
           p_followup_date?: string
