@@ -7,6 +7,11 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.5"
+  }
   public: {
     Tables: {
       audit_logs: {
@@ -1119,6 +1124,7 @@ export type Database = {
           id: string
           label: string
           position: number
+          required_for_win: boolean
           stage_id: string
           updated_at: string
           workspace_id: string
@@ -1130,6 +1136,7 @@ export type Database = {
           id?: string
           label: string
           position?: number
+          required_for_win?: boolean
           stage_id: string
           updated_at?: string
           workspace_id: string
@@ -1141,6 +1148,7 @@ export type Database = {
           id?: string
           label?: string
           position?: number
+          required_for_win?: boolean
           stage_id?: string
           updated_at?: string
           workspace_id?: string
@@ -1524,6 +1532,7 @@ export type Database = {
           p_hint?: string
           p_label: string
           p_position?: number
+          p_required_for_win?: boolean
           p_stage_id: string
         }
         Returns: string
@@ -1588,6 +1597,10 @@ export type Database = {
       get_pipeline_board: { Args: { p_pipeline_id: string }; Returns: Json }
       get_stage_requirements_status: {
         Args: { p_opportunity_id: string; p_to_stage_id: string }
+        Returns: Json
+      }
+      get_win_requirements_status: {
+        Args: { p_opportunity_id: string }
         Returns: Json
       }
       list_leads: {
@@ -1933,11 +1946,16 @@ export type Database = {
         }
         Returns: undefined
       }
+      update_stage_requirement: {
+        Args: { p_required_for_win: boolean; p_requirement_id: string }
+        Returns: undefined
+      }
       win_opportunity: {
         Args: {
           p_fee_model: Database["public"]["Enums"]["fee_model"]
           p_lock_version: number
           p_opportunity_id: string
+          p_requirement_values?: Json
           p_signed_at?: string
           p_value_cents: number
         }
@@ -1986,12 +2004,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2015,11 +2033,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2040,11 +2058,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2065,11 +2083,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2082,11 +2100,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2129,4 +2147,3 @@ export const Constants = {
     },
   },
 } as const
-
