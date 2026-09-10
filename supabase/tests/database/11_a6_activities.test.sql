@@ -459,7 +459,7 @@ select count(*)::int as n from public.activities where opportunity_id = (:'opp_a
 select is((:'auto1_n')::int, 1, 'Mover para a etapa com regra cria exatamente UMA atividade automática');
 
 select type, assigned_to, title from public.activities
-  where opportunity_id = (:'opp_ana')::uuid and source = 'stage_rule' order by created_at desc limit 1 \gset auto1_ativ_
+  where opportunity_id = (:'opp_ana')::uuid and source_rule_id = (:'rule_stage1')::uuid \gset auto1_ativ_
 select is((:'auto1_ativ_type')::text, 'call'::text, 'Tipo da atividade automática é o configurado na regra');
 select is((:'auto1_ativ_assigned_to')::uuid, (:'ana')::uuid, 'assignee_rule=lead_owner: responsável herdado do lead (Ana)');
 
@@ -495,10 +495,16 @@ select is(
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+-- Requisito PREENCHIDO aqui de propósito — a checagem de requisito
+-- pendente roda ANTES do UPDATE guardado por lock_version (mesma ordem
+-- de "toda validação de conteúdo antes do gate de concorrência" já
+-- usada em reassign_activity acima); sem preencher, stage_requirements_
+-- pending mascararia o opportunity_conflict que este teste quer isolar.
 select throws_ok(
   format(
-    $i$ select move_opportunity_stage(%L::uuid, %L::uuid, %L::uuid, %s) $i$,
-    :'opp_ana', :'stage_um_2', :'stage_um_3', (:'opp_ana_lock_version')::bigint + 99
+    $i$ select move_opportunity_stage(%L::uuid, %L::uuid, %L::uuid, %s, %L::jsonb) $i$,
+    :'opp_ana', :'stage_um_2', :'stage_um_3', (:'opp_ana_lock_version')::bigint + 99,
+    json_build_array(json_build_object('requirement_id', :'req_stage3', 'value_text', 'ok'))::text
   ),
   'P0001', 'opportunity_conflict',
   'Movimento RECUSADO por lock_version errado também não cria atividade nenhuma'
@@ -518,8 +524,14 @@ reset role;
 select count(*)::int as n from public.activities where opportunity_id = (:'opp_ana')::uuid and source = 'stage_rule' \gset auto5_
 select is((:'auto5_n')::int, 2, 'Preenchendo o requisito, o movimento é aceito e a 2ª atividade automática é criada (regra da etapa 3)');
 
+-- Filtra pela REGRA que originou (source_rule_id), não por "mais recente
+-- por created_at" — todo este arquivo roda numa ÚNICA transação, então
+-- now() (e portanto created_at) fica CONGELADO no mesmo instante do
+-- início da transação para o arquivo inteiro; "order by created_at desc"
+-- não desempata de forma confiável entre as duas atividades automáticas
+-- já existentes (achado real no CI, não presumido).
 select assigned_to is null as sem_resp from public.activities
-  where opportunity_id = (:'opp_ana')::uuid and source = 'stage_rule' order by created_at desc limit 1 \gset auto5_ativ_
+  where opportunity_id = (:'opp_ana')::uuid and source_rule_id = (:'rule_stage3')::uuid \gset auto5_ativ_
 select ok((:'auto5_ativ_sem_resp')::boolean, 'assignee_rule=unassigned: atividade nasce SEM responsável mesmo o lead tendo dono');
 
 -- Reentrar na etapa 1 é uma NOVA transição — dispara a regra de novo.
@@ -538,15 +550,17 @@ select is(
 -- 11) "Próxima ação" nas projeções de oportunidade
 -- ===================================================================
 
--- As 3 atividades automáticas da seção anterior ainda estão pendentes e
--- vencem em 24-48h (bem mais cedo que os 5 dias usados abaixo) — sem
--- isto, elas "venceriam" a disputa por "próxima ação mais próxima" e o
--- teste ficaria refém do offset configurado nas regras. UPDATE direto
--- (não é o que está sendo testado aqui — complete_activity() já foi
--- provada nas seções 5/6) só pra isolar limpo esta seção.
+-- Toda atividade pendente já vinculada a opp_ana até aqui (as 3
+-- automáticas da seção anterior, todas vencendo em 24-48h, MAIS a
+-- "Vínculo certo" da seção 3, vencendo hoje) fica mais próxima que os 5
+-- dias usados abaixo — sem isto, uma delas "venceria" a disputa por
+-- "próxima ação mais próxima" e o teste ficaria refém de dado deixado
+-- por seções anteriores. UPDATE direto (não é o que está sendo testado
+-- aqui — complete_activity() já foi provada nas seções 5/6) só pra
+-- isolar limpo esta seção.
 reset role;
 update public.activities set status = 'done', completed_at = now()
-  where opportunity_id = (:'opp_ana')::uuid and source = 'stage_rule';
+  where opportunity_id = (:'opp_ana')::uuid and status = 'pending';
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);

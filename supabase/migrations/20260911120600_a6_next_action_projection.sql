@@ -157,9 +157,24 @@ revoke all on function public.get_opportunity(uuid) from public;
 grant execute on function public.get_opportunity(uuid) to authenticated;
 
 -- ---------------------------------------------------------------------
--- list_opportunities — CREATE OR REPLACE, mesma assinatura. Único
--- acréscimo: "|| private.opportunity_next_action(p.id)" no item.
--- ---------------------------------------------------------------------
+-- list_opportunities — achado real ao rodar o pgTAP no CI: a assinatura
+-- vigente NÃO é mais a de 8 parâmetros original da A5
+-- (20260910120300) — a própria A5 já tinha corrigido para 9 parâmetros
+-- (p_lead_id no fim, para a listagem da tela do lead) via DROP+CREATE em
+-- 20260910120500_a5_list_opportunities_lead_filter.sql, incluindo
+-- também lock_version na saída. Um CREATE OR REPLACE com a assinatura
+-- ANTIGA (8 parâmetros) não substitui essa versão — cria um OVERLOAD
+-- novo e separado, e uma chamada com poucos argumentos posicionais fica
+-- ambígua entre os dois ("function list_opportunities(uuid) is not
+-- unique", erro real visto no CI). Corrigido: primeiro remove o
+-- overload de 8 parâmetros que este arquivo criou por engano, depois
+-- substitui a versão de 9 parâmetros de verdade (mesma assinatura de
+-- 20260910120500, incluindo lock_version, que este arquivo também tinha
+-- perdido por engano) com o acréscimo de next_action.
+
+drop function if exists public.list_opportunities(
+  uuid, uuid, uuid, public.opportunity_status, text, text, integer, integer
+);
 
 create or replace function public.list_opportunities(
   p_workspace_id uuid,
@@ -169,7 +184,8 @@ create or replace function public.list_opportunities(
   p_search text default null,
   p_sort text default 'created_at_desc',
   p_page integer default 1,
-  p_page_size integer default 20
+  p_page_size integer default 20,
+  p_lead_id uuid default null
 )
 returns table (items jsonb, total_count bigint)
 language plpgsql
@@ -203,7 +219,7 @@ begin
   return query
   with ranked as (
     select
-      o.id, o.lead_id, o.pipeline_id, o.stage_id, o.status,
+      o.id, o.lead_id, o.pipeline_id, o.stage_id, o.status, o.lock_version,
       o.value_cents, o.fee_model, o.probability, o.forecast_date,
       o.stage_entered_at, o.created_at, o.updated_at,
       l.legal_area, l.assigned_to, c.name as contact_name, u.full_name as assigned_to_name,
@@ -225,6 +241,7 @@ begin
       and (p_pipeline_id is null or o.pipeline_id = p_pipeline_id)
       and (p_stage_id is null or o.stage_id = p_stage_id)
       and (p_status is null or o.status = p_status)
+      and (p_lead_id is null or o.lead_id = p_lead_id)
       and (
         p_search is null or btrim(p_search) = ''
         or c.name ilike '%' || btrim(p_search) || '%'
@@ -242,7 +259,7 @@ begin
             'id', p.id, 'lead_id', p.lead_id, 'contact_name', p.contact_name,
             'legal_area', p.legal_area, 'assigned_to', p.assigned_to, 'assigned_to_name', p.assigned_to_name,
             'pipeline_id', p.pipeline_id, 'stage_id', p.stage_id, 'stage_name', p.stage_name,
-            'status', p.status, 'stage_entered_at', p.stage_entered_at,
+            'status', p.status, 'stage_entered_at', p.stage_entered_at, 'lock_version', p.lock_version,
             'created_at', p.created_at, 'updated_at', p.updated_at
           )
           || private.opportunity_financial_projection(v_role, p.value_cents, p.fee_model, p.probability, p.forecast_date)
@@ -257,8 +274,8 @@ begin
 end;
 $body$;
 
-revoke all on function public.list_opportunities(uuid, uuid, uuid, public.opportunity_status, text, text, integer, integer) from public;
-grant execute on function public.list_opportunities(uuid, uuid, uuid, public.opportunity_status, text, text, integer, integer) to authenticated;
+revoke all on function public.list_opportunities(uuid, uuid, uuid, public.opportunity_status, text, text, integer, integer, uuid) from public;
+grant execute on function public.list_opportunities(uuid, uuid, uuid, public.opportunity_status, text, text, integer, integer, uuid) to authenticated;
 
 -- ---------------------------------------------------------------------
 -- get_pipeline_board — CREATE OR REPLACE, mesma assinatura. Único
