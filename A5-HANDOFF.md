@@ -4,7 +4,7 @@
 **Fase:** A5
 **Branch:** `feat/a5-pipeline`
 **PR:** [#5](https://github.com/johlll/praxis-crm/pull/5)
-**Commit final (branch):** `65dda3e`
+**Commit final (branch):** `86a0dd9`
 **Data:** 10/09/2026
 
 **Status:** implementada, CI verde, validada no preview real da Vercel
@@ -268,6 +268,11 @@ push real ao banco hospedado.
 - **Preview validado:** `https://praxis-hon1y5km2-johllls-projects.vercel.app` (deployment do commit `65dda3e`) — resultados na seção 3.2.
 - **Merge:** **não realizado.** Instrução explícita do usuário condicionava a autorização de merge a esta validação; o PR está pronto e limpo, aguardando aprovação para prosseguir pelo fluxo normal do GitHub, respeitando as proteções de branch.
 
+> **Nota:** os números acima são do fechamento original da A5 (commit
+> `65dda3e`). Depois disso, o usuário pediu uma revisão antes do merge
+> (3 itens) — ver seção 8 para o trabalho adicional e a seção 8.4 para
+> os números de CI **finais e atuais** do branch (commit `86a0dd9`).
+
 ---
 
 ## 8. Revisão pós-fechamento (antes do merge)
@@ -402,11 +407,45 @@ pgTAP (seção 11, plan 64→73) via RPC direta — incluindo o cenário
 central pedido: ganhar recusado com requisito pendente numa etapa que a
 oportunidade **nunca visitou** (prova a independência de posição), sem
 nenhum efeito colateral na recusa (status, lock_version, contagem de
-clientes = 0), aceito ao preencher junto da chamada. `typecheck`/
-`lint`/`test` unitário/`build` limpos localmente após regenerar e
-reverter os tipos (mesmo padrão cosmético já documentado). e2e e pgTAP
-completos dependem do CI (mesma limitação de ambiente da seção 8.2 —
-sem Docker/WSL2 local).
+clientes = 0), aceito ao preencher junto da chamada.
+
+### 8.4 CI da revisão pós-fechamento — 4 rodadas até o verde
+
+Mesma disciplina de causa raiz das rodadas anteriores — nenhuma
+repetição às cegas:
+
+1. **`database.ts` desatualizado** — o commit inicial dos itens 1–3
+   ainda tinha o arquivo de tipos sem `required_for_win`/funções novas;
+   `Typecheck` falhou imediatamente (esperado, já que o schema mudou de
+   verdade desta vez, diferente do diff cosmético de outras rodadas).
+   Corrigido regenerando contra o `praxis-crm-dev` já migrado.
+2. **Diff cosmético de CLI** no `db:types:check` (mesmo padrão já
+   documentado) — corrigido extraindo o arquivo exato impresso pelo
+   próprio passo de CI entre os marcadores INICIO/FIM.
+3. **Achado real, teste próprio:** `pipeline-config.spec.ts` teste 4 —
+   `getByLabel("Motivo")` sem `exact: true` casava com 7 elementos
+   (rótulo do campo, botões "Desativar motivo X" já na lista, e o
+   próprio diálogo "Novo motivo de perda") — `strict mode violation`
+   confirmado no log do CI.
+4. **Achado real, regressão introduzida por esta revisão:**
+   `pipeline.spec.ts` teste 5 (ganhar, já existia e passava antes) —
+   `WonDialog` passou a buscar os requisitos obrigatórios para ganhar
+   ao abrir (`checkWinRequirementsAction`), uma Server Action que
+   também faz POST para a mesma URL da oportunidade. O
+   `waitForResponse` do teste (filtra só por URL+método) capturava essa
+   resposta em vez da de "Registrar ganho" e resolvia cedo demais — o
+   `reload()` seguinte cortava a Server Action real em voo. **Confirmado
+   por trace, não presumido:** o trace de rede mostrou duas respostas
+   POST para a mesma URL, a segunda com `status: -1` (abortada pelo
+   reload). Corrigido esperando o botão "Registrar ganho" habilitar
+   (sinal de que a busca de requisitos já terminou) antes de registrar
+   o `waitForResponse`.
+
+**Resultado final (commit `86a0dd9`, CI verde):** unitários 112/112;
+pgTAP 253/253 (10 arquivos, `10_a5_pipeline.test.sql` sozinho com 73);
+isolamento entre workspaces 26/26; build ok; e2e 37/37 (32 anteriores +
+5 novos de `pipeline-config.spec.ts`). PR #5: `OPEN`, `MERGEABLE`,
+`mergeStateStatus: CLEAN`.
 
 ## 9. Confirmações explícitas
 
