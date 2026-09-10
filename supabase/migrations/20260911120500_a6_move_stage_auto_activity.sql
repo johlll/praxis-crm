@@ -177,7 +177,11 @@ begin
       v_activity_assignee, now() + make_interval(hours => v_rule.due_offset_hours), true,
       'pending', 'stage_rule', v_transition_id, v_rule.id
     )
-    on conflict (source_stage_transition_id) do nothing
+    -- O índice de idempotência é PARCIAL (where source_stage_transition_id
+    -- is not null) — o Postgres só infere um índice parcial para ON
+    -- CONFLICT se a cláusula repetir o MESMO predicado; sem o WHERE aqui,
+    -- a inferência falha com "no unique or exclusion constraint matching".
+    on conflict (source_stage_transition_id) where source_stage_transition_id is not null do nothing
     returning id into v_activity_id;
 
     if v_activity_id is not null then
