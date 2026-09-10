@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { SEED_CONTACTS, SEED_USERS } from "./fixtures";
+import { SEED_USERS } from "./fixtures";
 import { login } from "./helpers";
 
 /**
@@ -12,12 +12,18 @@ import { login } from "./helpers";
  * ausência de duplicação) — este arquivo foca só no que só um e2e prova
  * de verdade: o fluxo real de UI de ponta a ponta.
  *
- * `test.describe.serial`: os testes reaproveitam o lead/oportunidade
- * criados no teste anterior.
+ * `test.describe.serial`: os testes reaproveitam o contato/lead criados
+ * no teste anterior.
+ *
+ * Contato criado do zero (não um de SEED_CONTACTS) — achado real no CI:
+ * reaproveitar "Carla Ferreira Advocacia" colidia por substring com o
+ * "Carla Ferreira" que o teste 3 da A4 (leads.spec.ts) já usa, quebrando
+ * um teste PREEXISTENTE que não tem nada a ver com esta fase.
  */
 test.describe.serial("atividades e agenda — A6", () => {
   test.use({ timezoneId: "America/Sao_Paulo" });
 
+  const contactName = "Contato Atividades A6 (teste e2e)";
   const leadArea = "Atividades A6 teste e2e";
   let leadUrl: string;
 
@@ -34,8 +40,13 @@ test.describe.serial("atividades e agenda — A6", () => {
   test("1. criar atividade pela Central de Atividades e concluir", async ({ page }) => {
     await login(page, SEED_USERS.ana.email);
 
+    await page.goto("/contatos/novo");
+    await page.getByLabel("Nome", { exact: true }).fill(contactName);
+    await page.getByRole("button", { name: "Criar contato" }).click();
+    await expect(page).toHaveURL(/\/contatos\/[0-9a-f-]{36}$/);
+
     await page.goto("/leads/novo");
-    await page.getByLabel("Contato").selectOption({ label: SEED_CONTACTS.carlaFerreiraAdvocacia.name });
+    await page.getByLabel("Contato").selectOption({ label: contactName });
     await page.getByLabel("Área jurídica").fill(leadArea);
     await page.getByRole("button", { name: "Criar lead" }).click();
     await expect(page).toHaveURL(/\/leads\/[0-9a-f-]{36}$/);
@@ -43,22 +54,24 @@ test.describe.serial("atividades e agenda — A6", () => {
 
     await page.goto("/atividades");
     await page.getByRole("button", { name: "Nova atividade" }).click();
-    await page
-      .getByLabel("Lead", { exact: true })
-      .selectOption({ label: `${SEED_CONTACTS.carlaFerreiraAdvocacia.name} — ${leadArea}` });
+    await page.getByLabel("Lead", { exact: true }).selectOption({ label: `${contactName} — ${leadArea}` });
     await page.getByLabel("Título", { exact: true }).fill("Ligar pro cliente (teste e2e)");
     await page.getByLabel("Data", { exact: true }).fill(tomorrowIso());
     await page.getByRole("button", { name: "Criar atividade" }).click();
     await expect(page.getByText("Atividade criada")).toBeVisible();
     await page.getByRole("button", { name: "Concluir", exact: true }).click();
 
-    await expect(page.getByText("Ligar pro cliente (teste e2e)")).toBeVisible();
+    // exact:true — sem isso, o título também casa por substring com o
+    // <label class="sr-only"> "Transferir Ligar pro cliente (teste e2e)
+    // para" do próprio seletor de responsável da linha (achado real no
+    // CI, mesma classe de colisão já documentada na A5).
+    await expect(page.getByText("Ligar pro cliente (teste e2e)", { exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: "Concluir Ligar pro cliente (teste e2e)" }).click();
     // Some da listagem padrão (status=pending) assim que a Server Action
     // conclui e revalida a rota — sem precisar de reload manual, mesmo
     // padrão já usado (e comprovado) por stage-row.tsx na A5.
-    await expect(page.getByText("Ligar pro cliente (teste e2e)")).toHaveCount(0);
+    await expect(page.getByText("Ligar pro cliente (teste e2e)", { exact: true })).toHaveCount(0);
   });
 
   test("2. reagendar e transferir responsável persistem de verdade", async ({ page }) => {
@@ -71,7 +84,7 @@ test.describe.serial("atividades e agenda — A6", () => {
     await page.getByRole("button", { name: "Criar atividade" }).click();
     await expect(page.getByText("Atividade criada")).toBeVisible();
     await page.getByRole("button", { name: "Concluir", exact: true }).click();
-    await expect(page.getByText("Revisar contrato (teste e2e)")).toBeVisible();
+    await expect(page.getByText("Revisar contrato (teste e2e)", { exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: "Reagendar Revisar contrato (teste e2e)" }).click();
     const novaData = inThreeDaysIso();
@@ -110,7 +123,7 @@ test.describe.serial("atividades e agenda — A6", () => {
     await page.getByRole("button", { name: "Concluir", exact: true }).click();
 
     await page.goto("/leads/novo");
-    await page.getByLabel("Contato").selectOption({ label: SEED_CONTACTS.carlaFerreiraAdvocacia.name });
+    await page.getByLabel("Contato").selectOption({ label: contactName });
     await page.getByLabel("Área jurídica").fill(`${leadArea} (mover)`);
     await page.getByRole("button", { name: "Criar lead" }).click();
     await expect(page).toHaveURL(/\/leads\/[0-9a-f-]{36}$/);
@@ -123,13 +136,11 @@ test.describe.serial("atividades e agenda — A6", () => {
     const opportunityUrl = new URL(href!, page.url()).toString();
 
     await page.goto("/pipeline");
-    await page
-      .getByLabel(`Mover ${SEED_CONTACTS.carlaFerreiraAdvocacia.name} para etapa`)
-      .selectOption({ label: "Qualificar oportunidade" });
+    await page.getByLabel(`Mover ${contactName} para etapa`).selectOption({ label: "Qualificar oportunidade" });
     await expect(page.getByRole("heading", { name: "Qualificar oportunidade" })).toBeVisible();
 
     await page.goto(opportunityUrl);
-    await expect(page.getByText("Enviar proposta inicial (teste e2e)")).toBeVisible();
+    await expect(page.getByText("Enviar proposta inicial (teste e2e)", { exact: true })).toBeVisible();
     await expect(page.getByText("Sem próxima ação")).toHaveCount(0);
   });
 
