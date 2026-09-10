@@ -17,6 +17,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { PipelineBoardColumn, OpportunityCard as OpportunityCardData } from "@/modules/opportunities/queries";
+import { formatDue } from "@/lib/timezone";
+import { ACTIVITY_TYPE_LABEL } from "@/components/activities/labels";
 import {
   checkStageRequirementsAction,
   moveOpportunityStageAction,
@@ -87,6 +89,20 @@ function OpportunityCardView({
         <p className="text-meta text-text-tertiary">{card.valueBand}</p>
       ) : null}
       <p className="text-meta text-text-tertiary">{card.assignedToName ?? "Sem responsável"}</p>
+      <p className="text-meta text-text-tertiary">
+        {card.nextAction ? (
+          <>
+            {ACTIVITY_TYPE_LABEL[card.nextAction.type]} — {formatDue(card.nextAction.dueAt, card.nextAction.hasTime)}
+          </>
+        ) : (
+          "Sem próxima ação"
+        )}
+        {card.overdueActivitiesCount > 0 ? (
+          <span className="ml-1.5 rounded-full bg-danger-bg px-1.5 py-0.5 text-label font-bold text-danger">
+            {card.overdueActivitiesCount} atrasada{card.overdueActivitiesCount === 1 ? "" : "s"}
+          </span>
+        ) : null}
+      </p>
 
       {canEdit ? (
         <div className="mt-1 flex flex-wrap items-center gap-1.5">

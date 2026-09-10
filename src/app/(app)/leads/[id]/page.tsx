@@ -13,6 +13,8 @@ import { AssignLeadForm } from "@/components/leads/assign-lead-form";
 import { LeadStatusToggle } from "@/components/leads/lead-status-toggle";
 import { listOpportunities } from "@/modules/opportunities/queries";
 import { LeadOpportunitiesSection } from "@/components/pipeline/create-opportunity-form";
+import { listActivities } from "@/modules/activities/queries";
+import { ActivitiesSection } from "@/components/activities/activities-section";
 
 export async function generateMetadata({
   params,
@@ -39,9 +41,11 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
 
   const canEdit = roleHasPermission(user.role, "lead.edit");
   const canEditOpportunities = roleHasPermission(user.role, "opportunity.edit");
-  const [members, { items: opportunities }] = await Promise.all([
+  const canEditActivities = roleHasPermission(user.role, "activity.edit");
+  const [members, { items: opportunities }, { items: activities }] = await Promise.all([
     listTeamMembers(workspaceId, user.id),
     listOpportunities(workspaceId, { leadId: id }),
+    listActivities(workspaceId, { leadId: id, status: "pending" }),
   ]);
 
   return (
@@ -73,6 +77,13 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
           ) : null}
 
           <LeadOpportunitiesSection leadId={lead.id} opportunities={opportunities} canEdit={canEditOpportunities} />
+
+          <ActivitiesSection
+            leadId={lead.id}
+            activities={activities}
+            members={members}
+            canEdit={canEditActivities}
+          />
         </div>
       </main>
     </>

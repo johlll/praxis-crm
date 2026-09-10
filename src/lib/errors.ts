@@ -59,6 +59,12 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   invalid_lost_reason: "Selecione um motivo de perda válido.",
   fee_model_required: "Selecione o modelo de honorários.",
   lost_reason_not_found: "Motivo de perda não encontrado.",
+  // A6 — atividades e agenda interna. stage_not_found já existe acima
+  // (A5) — a mesma regra de negócio (etapa inexistente) vale para
+  // set_stage_auto_activity_rule()/delete_stage_auto_activity_rule().
+  activity_not_found: "Atividade não encontrada.",
+  due_date_required: "Informe a data.",
+  activity_assignee_no_access: "Essa pessoa não tem acesso a este lead — só quem já acessa o lead pode ficar responsável pela atividade.",
 };
 
 /** update_lead_basic_fields()/assign_lead()/set_lead_status()/set_lead_value()
@@ -76,6 +82,14 @@ const LEAD_CONFLICT_MESSAGE =
 const OPPORTUNITY_CONFLICT_MESSAGE =
   "Esta oportunidade foi alterada por outra pessoa (ou já foi encerrada). Recarregue a página para ver o estado atual.";
 
+/** update_activity()/complete_activity()/reschedule_activity()/
+ * reassign_activity() levantam "activity_conflict" tanto para
+ * lock_version divergente quanto para status incompatível com a
+ * operação (ex.: concluir/reagendar uma atividade já concluída) — mesmo
+ * princípio de opportunity_conflict acima. */
+const ACTIVITY_CONFLICT_MESSAGE =
+  "Esta atividade foi alterada por outra pessoa (ou já foi concluída). Recarregue a página para ver o estado atual.";
+
 const GENERIC_MESSAGE = "Não foi possível concluir a operação. Tente novamente.";
 
 /** unmerge_contact() levanta "undo_conflict: <lista dinâmica>" — nunca
@@ -90,6 +104,7 @@ export function toUserMessage(error: unknown): string {
     if (raw.startsWith("undo_conflict")) return UNDO_CONFLICT_MESSAGE;
     if (raw === "lead_conflict") return LEAD_CONFLICT_MESSAGE;
     if (raw === "opportunity_conflict") return OPPORTUNITY_CONFLICT_MESSAGE;
+    if (raw === "activity_conflict") return ACTIVITY_CONFLICT_MESSAGE;
     const mapped = KNOWN_ERROR_MESSAGES[raw];
     if (mapped) return mapped;
   }

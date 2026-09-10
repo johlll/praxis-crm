@@ -5,6 +5,11 @@ import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import type { OpportunityDetail } from "@/modules/opportunities/queries";
+import type { ActivityListItem } from "@/modules/activities/queries";
+import type { TeamMember } from "@/modules/team/queries";
+import { formatDue } from "@/lib/timezone";
+import { ACTIVITY_TYPE_LABEL } from "@/components/activities/labels";
+import { ActivitiesSection } from "@/components/activities/activities-section";
 import { WonDialog } from "./won-dialog";
 import { LostDialog } from "./lost-dialog";
 
@@ -21,9 +26,15 @@ const STATUS_LABEL: Record<OpportunityDetail["status"], string> = {
 export function OpportunityDetailPanel({
   opportunity,
   canEdit,
+  activities,
+  members,
+  canEditActivities,
 }: {
   opportunity: OpportunityDetail;
   canEdit: boolean;
+  activities: ActivityListItem[];
+  members: TeamMember[];
+  canEditActivities: boolean;
 }) {
   const router = useRouter();
   const [wonOpen, setWonOpen] = useState(false);
@@ -52,6 +63,24 @@ export function OpportunityDetailPanel({
               {opportunity.valueCents !== undefined
                 ? formatCents(opportunity.valueCents)
                 : (opportunity.valueBand ?? "—")}
+            </dd>
+          </div>
+          <div className="col-span-2">
+            <dt className="text-meta text-text-tertiary">Próxima ação</dt>
+            <dd className="text-text">
+              {opportunity.nextAction ? (
+                <>
+                  {ACTIVITY_TYPE_LABEL[opportunity.nextAction.type]} — {opportunity.nextAction.title} —{" "}
+                  {formatDue(opportunity.nextAction.dueAt, opportunity.nextAction.hasTime)}
+                </>
+              ) : (
+                "Sem próxima ação"
+              )}
+              {opportunity.overdueActivitiesCount > 0 ? (
+                <span className="ml-2 rounded-full bg-danger-bg px-2 py-0.5 text-meta font-medium text-danger">
+                  {opportunity.overdueActivitiesCount} atrasada{opportunity.overdueActivitiesCount === 1 ? "" : "s"}
+                </span>
+              ) : null}
             </dd>
           </div>
           {opportunity.status === "lost" && opportunity.lostReasonLabel ? (
@@ -89,6 +118,14 @@ export function OpportunityDetailPanel({
           </ul>
         </section>
       ) : null}
+
+      <ActivitiesSection
+        leadId={opportunity.leadId}
+        opportunityId={opportunity.id}
+        activities={activities}
+        members={members}
+        canEdit={canEditActivities}
+      />
 
       {wonOpen ? (
         <WonDialog

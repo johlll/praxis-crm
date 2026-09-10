@@ -7,6 +7,8 @@ import { getShellContext } from "@/modules/shell/queries";
 import { requireWorkspace } from "@/server/authz/permissions";
 import { roleHasPermission } from "@/lib/roles";
 import { getOpportunity } from "@/modules/opportunities/queries";
+import { listActivities } from "@/modules/activities/queries";
+import { listTeamMembers } from "@/modules/team/queries";
 import { OpportunityDetailPanel } from "@/components/pipeline/opportunity-detail-panel";
 
 export async function generateMetadata({
@@ -24,7 +26,7 @@ export async function generateMetadata({
 export default async function OportunidadeDetalhePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const { user } = await getShellContext();
-  await requireWorkspace();
+  const workspaceId = await requireWorkspace();
   const opportunity = await getOpportunity(id);
 
   // get_opportunity() já responde "não encontrado" para inexistente, de
@@ -33,6 +35,12 @@ export default async function OportunidadeDetalhePage({ params }: { params: Prom
   if (!opportunity) notFound();
 
   const canEdit = roleHasPermission(user.role, "opportunity.edit");
+  const canEditActivities = roleHasPermission(user.role, "activity.edit");
+
+  const [{ items: activities }, members] = await Promise.all([
+    listActivities(workspaceId, { opportunityId: id, status: "pending" }),
+    listTeamMembers(workspaceId, user.id),
+  ]);
 
   return (
     <>
@@ -47,7 +55,13 @@ export default async function OportunidadeDetalhePage({ params }: { params: Prom
               Voltar ao pipeline
             </Link>
           </div>
-          <OpportunityDetailPanel opportunity={opportunity} canEdit={canEdit} />
+          <OpportunityDetailPanel
+            opportunity={opportunity}
+            canEdit={canEdit}
+            activities={activities}
+            members={members}
+            canEditActivities={canEditActivities}
+          />
         </div>
       </main>
     </>

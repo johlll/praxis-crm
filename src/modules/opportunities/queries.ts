@@ -1,15 +1,46 @@
 import { createServerSupabaseClient } from "@/server/supabase/server";
 import type { Database } from "@/server/types/database";
+import type { ActivityType } from "@/modules/activities/queries";
 
 export type FeeModel = Database["public"]["Enums"]["fee_model"];
 export type OpportunityStatus = Database["public"]["Enums"]["opportunity_status"];
 export type StageRequirementType = Database["public"]["Enums"]["stage_requirement_type"];
 
 /**
+ * A6 — "próxima ação" real: a atividade pendente mais próxima com due_at
+ * futuro vinculada à oportunidade (null se não houver nenhuma). Nunca uma
+ * atrasada — essa conta à parte em overdueActivitiesCount, sinal
+ * separado que não desaparece só porque já passou (ver
+ * private.opportunity_next_action() na migration da A6).
+ */
+export type NextActionInfo = {
+  id: string;
+  type: ActivityType;
+  title: string;
+  dueAt: string;
+  hasTime: boolean;
+} | null;
+
+type NextActionJson = {
+  id: string;
+  type: ActivityType;
+  title: string;
+  due_at: string;
+  has_time: boolean;
+} | null;
+
+function mapNextAction(raw: NextActionJson): NextActionInfo {
+  if (!raw) return null;
+  return { id: raw.id, type: raw.type, title: raw.title, dueAt: raw.due_at, hasTime: raw.has_time };
+}
+
+/**
  * Campos financeiros SEMPRE opcionais no tipo — a projeção por papel do
  * servidor decide quais chaves existem no JSON (nenhuma, faixa, ou
  * exato). Nunca assumir que `valueCents` está presente só porque o tipo
  * TypeScript permite: para o papel errado, a chave nem chega aqui.
+ * nextAction/overdueActivitiesCount NÃO são projetados por papel — quem
+ * enxerga a oportunidade enxerga sua próxima ação, sempre presentes.
  */
 export type OpportunityCard = {
   id: string;
@@ -20,6 +51,8 @@ export type OpportunityCard = {
   assignedToName: string | null;
   stageEnteredAt: string;
   lockVersion: number;
+  nextAction: NextActionInfo;
+  overdueActivitiesCount: number;
   valueCents?: number;
   feeModel?: FeeModel | null;
   probability?: number | null;
@@ -59,6 +92,8 @@ type BoardColumnJson = {
     assigned_to_name: string | null;
     stage_entered_at: string;
     lock_version: number;
+    next_action: NextActionJson;
+    overdue_activities_count: number;
     value_cents?: number;
     fee_model?: FeeModel | null;
     probability?: number | null;
@@ -77,6 +112,8 @@ function mapCard(row: BoardColumnJson["cards"][number]): OpportunityCard {
     assignedToName: row.assigned_to_name,
     stageEnteredAt: row.stage_entered_at,
     lockVersion: row.lock_version,
+    nextAction: mapNextAction(row.next_action),
+    overdueActivitiesCount: row.overdue_activities_count,
     ...(row.value_cents !== undefined ? { valueCents: row.value_cents } : {}),
     ...(row.fee_model !== undefined ? { feeModel: row.fee_model } : {}),
     ...(row.probability !== undefined ? { probability: row.probability } : {}),
@@ -164,6 +201,8 @@ export async function getOpportunity(opportunityId: string): Promise<Opportunity
     wonAt: (row.won_at as string | null) ?? null,
     signedAt: (row.signed_at as string | null) ?? null,
     lockVersion: row.lock_version as number,
+    nextAction: mapNextAction(row.next_action as NextActionJson),
+    overdueActivitiesCount: row.overdue_activities_count as number,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
     requirementValues: ((row.requirement_values as unknown[]) ?? []).map((r) => {
@@ -310,6 +349,14 @@ export type StageRequirementDetail = {
   requiredForWin: boolean;
 };
 
+export type StageAutoActivityRuleDetail = {
+  id: string;
+  activityType: ActivityType;
+  title: string;
+  dueOffsetHours: number;
+  assigneeRule: Database["public"]["Enums"]["activity_assignee_rule"];
+};
+
 export type PipelineStageDetail = {
   id: string;
   pipelineId: string;
@@ -319,6 +366,7 @@ export type PipelineStageDetail = {
   isWon: boolean;
   isLost: boolean;
   requirements: StageRequirementDetail[];
+  autoActivityRule: StageAutoActivityRuleDetail | null;
 };
 
 /**
@@ -357,6 +405,25 @@ export async function listPipelineStagesWithDetails(pipelineId: string): Promise
     requirementsByStage.set(r.stage_id, list);
   }
 
+  // stage_auto_activity_rules: no máximo uma linha por etapa — mesma
+  // tabela de configuração não sensível de stage_requirements, SELECT
+  // direto liberado por RLS.
+  const { data: autoRules } = await supabase
+    .from("stage_auto_activity_rules")
+    .select("id, stage_id, activity_type, title, due_offset_hours, assignee_rule")
+    .in("stage_id", stageIds);
+
+  const autoRuleByStage = new Map<string, StageAutoActivityRuleDetail>();
+  for (const rule of autoRules ?? []) {
+    autoRuleByStage.set(rule.stage_id, {
+      id: rule.id,
+      activityType: rule.activity_type,
+      title: rule.title,
+      dueOffsetHours: rule.due_offset_hours,
+      assigneeRule: rule.assignee_rule,
+    });
+  }
+
   return stages.map((s) => ({
     id: s.id,
     pipelineId: s.pipeline_id,
@@ -366,6 +433,7 @@ export async function listPipelineStagesWithDetails(pipelineId: string): Promise
     isWon: s.is_won,
     isLost: s.is_lost,
     requirements: requirementsByStage.get(s.id) ?? [],
+    autoActivityRule: autoRuleByStage.get(s.id) ?? null,
   }));
 }
 
@@ -441,6 +509,8 @@ export async function listOpportunities(
       createdAt: r.created_at as string,
       updatedAt: r.updated_at as string,
       lockVersion: r.lock_version as number,
+      nextAction: mapNextAction(r.next_action as NextActionJson),
+      overdueActivitiesCount: r.overdue_activities_count as number,
       ...(r.value_cents !== undefined ? { valueCents: r.value_cents as number } : {}),
       ...(r.fee_model !== undefined ? { feeModel: r.fee_model as FeeModel | null } : {}),
       ...(r.probability !== undefined ? { probability: r.probability as number | null } : {}),
