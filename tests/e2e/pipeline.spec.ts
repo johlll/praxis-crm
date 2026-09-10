@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { SEED_CONTACTS, SEED_USERS } from "./fixtures";
-import { callRpcDirect, getSupabaseAccessToken, login, readSupabaseEnv } from "./helpers";
+import { callRpcDirect, getSupabaseAccessToken, login, readSupabaseEnv, switchWorkspace } from "./helpers";
 
 /**
  * Jornada da A5 contra o Supabase local do CI. O pgTAP
@@ -226,11 +226,14 @@ test.describe.serial("pipeline — A5", () => {
     request,
   }) => {
     // Carla é lawyer no Escritório Um e sales no Escritório Dois (seed) —
-    // usa o papel sales de verdade, trocando de workspace.
+    // usa o papel sales de verdade, trocando de workspace. switchWorkspace()
+    // (não uma troca manual) é o helper que já resolve a corrida
+    // documentada em helpers.ts: esperar só a URL não basta, porque o
+    // cookie do workspace ativo pode ainda não estar confirmado quando a
+    // navegação seguinte lê o workspace — achado real no CI (a lista de
+    // contatos de /leads/novo carregou o workspace ANTERIOR).
     await login(page, SEED_USERS.carla.email);
-    await page.getByRole("button", { name: "Trocar de workspace" }).click();
-    await page.getByRole("menuitem", { name: "Escritório Dois (seed)" }).click();
-    await expect(page).toHaveURL(/\/visao-geral/);
+    await switchWorkspace(page, "Escritório Dois (seed)");
 
     await page.goto("/leads/novo");
     await page.getByLabel("Contato").selectOption({ label: SEED_CONTACTS.clienteEscritorioDois.name });
