@@ -3,13 +3,15 @@
 **Projeto:** Praxis CRM Jurídico
 **Fase:** A5
 **Branch:** `feat/a5-pipeline`
-**PR:** (aberto nesta sessão — ver seção 6)
+**PR:** [#5](https://github.com/johlll/praxis-crm/pull/5)
+**Commit final (branch):** `65dda3e`
 **Data:** 10/09/2026
 
-**Status:** implementada, validada localmente (typecheck/lint/build/
-testes unitários limpos, smoke-test manual completo contra o banco
-hospedado), aguardando CI e validação no preview antes de qualquer
-merge. **A5 não foi mergeada. A6/A8 não foram iniciadas.**
+**Status:** implementada, CI verde, validada no preview real da Vercel
+(smoke-test funcional dos fluxos principais, com um bug real encontrado
+e corrigido nesse processo — seção 3.1). **PR aberto, mergeável, sem
+conflito. Merge NÃO realizado — aguardando autorização explícita, por
+instrução do usuário. A6/A8 não foram iniciadas.**
 
 ---
 
@@ -82,6 +84,71 @@ quando era mudança de assinatura (`list_opportunities` ganhando
 `p_lead_id`) ou GRANT novo, a correção ficou isolada em sua própria
 migration, no mesmo espírito das correções da A4 — nenhuma migration já
 aplicada foi reescrita depois de aplicada.
+
+### 3.1 Achado real no smoke-test do preview (pós-CI verde) e correção
+
+Depois do primeiro CI verde (commit `61fad12`), a validação funcional no
+preview real da Vercel (não no ambiente local) encontrou um bug de
+verdade, fora do alcance de qualquer teste até então:
+
+- **Sintoma:** ao abrir `/oportunidades/[id]` com pelo menos uma entrada
+  no histórico de etapas, o console do navegador acusava `Minified React
+  error #418` (hidratação divergente) — reproduzido com `reload()` limpo,
+  antes de qualquer interação, confirmando que não era efeito colateral
+  do clique anterior.
+- **Causa real, confirmada por leitura de código (não presumida):**
+  `opportunity-detail-panel.tsx` é um Client Component renderizado via
+  SSR; a linha do histórico usava
+  `new Date(h.occurredAt).toLocaleString("pt-BR")` **sem `timeZone`
+  explícito** — o servidor (função serverless da Vercel, UTC) e o
+  navegador (fuso do usuário, ex. `America/Sao_Paulo`) formatam a mesma
+  data como strings diferentes, e o React rejeita o HTML da hidratação.
+- **Correção:** fixado `timeZone: "America/Sao_Paulo"` na formatação —
+  servidor e navegador passam a produzir sempre a mesma string,
+  independentemente do fuso do ambiente de execução.
+- **Teste de regressão adicionado** (`pipeline.spec.ts`, teste 3):
+  `test.use({ timezoneId: "America/Sao_Paulo" })` força o navegador do
+  teste a divergir do fuso do servidor local do CI (que roda em UTC),
+  reproduzindo a condição real; um listener em `page.on("console")`
+  falha o teste se aparecer qualquer erro de console (exceto o ruído já
+  conhecido e alheio ao app do widget da Vercel) ao abrir a página de
+  detalhe. Sem essa mudança de fuso forçado, o bug não seria pego em CI
+  (servidor e navegador do runner compartilham o mesmo fuso).
+- **Verificação:** reproduzido no preview antes da correção; corrigido;
+  novo commit (`65dda3e`) com CI 100% verde (unitários 112/112, pgTAP
+  235/235, isolamento 26/26, e2e 32/32 — incluindo o teste 3 já com a
+  checagem nova); revalidado no novo preview (`praxis-hon1y5km2`) com
+  `reload()` limpo confirmando ausência do erro, inclusive após um novo
+  ciclo de re-render real (clique em "Registrar ganho", que também
+  atualiza o histórico exibido).
+- **Fora do escopo desta correção, registrado para atenção futura:**
+  `contact-merge-history.tsx` (A3) usa o mesmo padrão
+  (`toLocaleString("pt-BR")` sem `timeZone`) e provavelmente tem o mesmo
+  problema — não foi tocado agora por estar fora do escopo da A5, mas
+  vale uma correção pontual quando essa tela voltar a ser mexida.
+
+### 3.2 Validação funcional no preview real da Vercel (commit `65dda3e`)
+
+Feita no deployment de preview de verdade (`praxis-hon1y5km2-…
+.vercel.app`, protegido por SSO da Vercel — autenticação manual feita
+pelo usuário no navegador de teste), não no `next dev` local. Mesma
+conta QA Proprietário usada na seção 3.
+
+| Fluxo | Resultado |
+|---|---|
+| Kanban — 8 colunas do pipeline padrão | OK — nomes, contagem e soma por coluna corretos (R$ 0,00 com o board vazio) |
+| Criar oportunidade a partir de um lead existente | OK — nasce em "Fazer primeiro contato", aparece no kanban de imediato |
+| Mover etapa pelo menu acessível (sem arrastar) | OK — persistido; confirmado navegando para `/pipeline` de novo |
+| Tentar mover para etapa sem requisito configurado | OK — passa direto, como esperado (este workspace não tem `stage_requirements` configurados — não há tela de configuração nesta entrega) |
+| Detalhe da oportunidade + histórico de etapas | OK **depois da correção da seção 3.1** — sem erro de console, timestamps corretos no fuso de São Paulo |
+| Ganhar (modal, R$ 8.500,00) | OK — status muda para "Ganha", valor exibido corretamente, sem erro de hidratação no re-render |
+| Tela de Clientes | OK — mostra "em construção (fase A8)", confirmando que a tela completa foi propositalmente adiada (só o vínculo cliente/handoff no banco existe nesta fase, já coberto pelo pgTAP) |
+| Visão tabela do Pipeline | OK — todas as oportunidades do workspace (abertas, ganhas, perdidas) com etapa, status e valor corretos |
+
+Não repetido manualmente no preview (já provado com chamadas HTTP reais
+no e2e, seção 5.2, o que é mais forte que inspeção visual): concorrência
+real de duas movimentações simultâneas, projeção financeira por papel
+para `sales` nas respostas de rede, e isolamento entre workspaces.
 
 ---
 
@@ -171,7 +238,31 @@ push real ao banco hospedado.
 
 ## 6. CI e PR
 
-*(preenchido depois da primeira rodada de CI — placeholder até lá.)*
+- **PR:** [#5 — feat: A5 — pipeline e oportunidades](https://github.com/johlll/praxis-crm/pull/5), aberto contra `main`.
+- **Branch:** `feat/a5-pipeline`, commit final `65dda3e`.
+- **Estado do PR:** `OPEN`, `mergeable: MERGEABLE`, `mergeStateStatus: CLEAN` (sem conflito com `main`).
+- **Histórico de CI nesta fase:** 11 rodadas até o primeiro verde
+  (`61fad12`) — cada uma corrigindo uma causa raiz real, nunca uma
+  repetição às cegas (detalhe: seed sem pipeline para os workspaces de
+  seed; `is()` do pgTAP sem cast em variável polimórfica; leitura de
+  tabela com deny-all sem `reset role`; ordem de validação vs. gravação
+  em `move_opportunity_stage` — bug real de aplicação; casts de tipo
+  faltando em chamadas de RPC do pgTAP; teste procurando `heading` onde
+  a etapa é `<dd>`; valor em reais vs. centavos no teste; `reload()`
+  correndo à frente da resposta do servidor; reimplementação manual de
+  troca de workspace em vez do helper existente; Bruno deixando de ser
+  "estranho" por efeito colateral de outro arquivo de teste no mesmo
+  banco do CI). Mais uma rodada (`65dda3e`) para o achado do preview
+  (seção 3.1).
+- **Resultado final do CI (commit `65dda3e`, run
+  [34427752472](https://github.com/johlll/praxis-crm/actions/runs/34427752472), conclusão `success`):**
+  - Testes unitários: **112/112** (6 arquivos)
+  - Testes de banco / RLS / hardening (pgTAP): **235/235** (10 arquivos)
+  - Testes de isolamento entre workspaces: **26/26**
+  - Build (`next build`): sucesso
+  - Testes e2e (Playwright, contra Supabase local do CI): **32/32** — 8 deles são o novo `pipeline.spec.ts` da A5, incluindo o teste 3 já com a checagem de regressão da seção 3.1
+- **Preview validado:** `https://praxis-hon1y5km2-johllls-projects.vercel.app` (deployment do commit `65dda3e`) — resultados na seção 3.2.
+- **Merge:** **não realizado.** Instrução explícita do usuário condicionava a autorização de merge a esta validação; o PR está pronto e limpo, aguardando aprovação para prosseguir pelo fluxo normal do GitHub, respeitando as proteções de branch.
 
 ---
 
@@ -179,8 +270,7 @@ push real ao banco hospedado.
 
 - **Nenhuma fase além da A5 foi iniciada** — A6/A8 não implementadas.
 - **Nenhum arquivo de referência visual foi alterado.**
-- **Sem merge em `main`.** PR aberto (link na seção 6), aguardando CI
-  verde e validação no preview antes de qualquer aprovação.
+- **Sem merge em `main`.** PR [#5](https://github.com/johlll/praxis-crm/pull/5) aberto, CI verde e preview validado (seções 3.2 e 6) — merge não realizado, aguardando autorização explícita.
 - **`praxis-crm-dev`:** só migrations aditivas aplicadas (dry-run
   conferido antes de cada uma). Nenhum dado apagado — a linha residual
   de `lead_values` da A4 segue intacta, sem uso pelo contrato ativo.
