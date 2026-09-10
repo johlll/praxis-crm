@@ -118,7 +118,10 @@ test.describe.serial("pipeline — A5", () => {
     expect(moved.status, JSON.stringify(moved)).toBeLessThan(300);
 
     await page.goto(opportunityUrl);
-    await expect(page.getByRole("heading", { name: "Agendar consulta" })).toBeVisible();
+    // Na página de detalhe o nome da etapa é uma <dd> (par termo/definição),
+    // não um heading — diferente do kanban, onde a etapa é um <h3> de
+    // coluna (é para lá que getByRole("heading") funciona, no teste 2).
+    await expect(page.getByText("Agendar consulta")).toBeVisible();
   });
 
   test("4. duas movimentações concorrentes de verdade: só uma grava, a outra recebe conflito", async ({ request }) => {
