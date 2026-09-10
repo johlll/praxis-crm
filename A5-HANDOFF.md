@@ -2,9 +2,10 @@
 
 **Projeto:** Praxis CRM Jurídico
 **Fase:** A5
-**Branch:** `feat/a5-pipeline`
-**PR:** [#5](https://github.com/johlll/praxis-crm/pull/5)
-**Commit final (branch):** `86a0dd9`
+**Branch:** `feat/a5-pipeline` (mergeada)
+**PR:** [#5](https://github.com/johlll/praxis-crm/pull/5) — **MERGED**
+**Commit final (branch):** `d4b76ef`
+**Commit de merge em `main`:** `e1b4139`
 **Data:** 10/09/2026
 
 **Status:** implementada, CI verde, validada no preview real da Vercel
@@ -12,10 +13,12 @@
 e corrigido nesse processo — seção 3.1). **Revisão pós-fechamento
 concluída (seção 8):** item 1 (consistência de etapas) corrigido, item
 2 (tela de configuração) entregue, item 3 (requisitos de fechamento)
-investigado, decisão aprovada pelo usuário e implementada
-(`required_for_win`). **PR aberto, mergeável, sem conflito. Merge NÃO
-realizado — aguardando autorização explícita, por instrução do
-usuário. A6/A8 não foram iniciadas.**
+investigado, decisão aprovada pelo usuário, implementada e **validada
+manualmente no preview real com dados fictícios (seção 8.5)**, sem
+falha encontrada. **PR mesclado em `main` (seção 10) com autorização
+explícita do usuário, deploy de produção confirmado e checagem breve
+de login/pipeline/configurações feita ao vivo. A6/A8 não foram
+iniciadas.**
 
 ---
 
@@ -270,8 +273,10 @@ push real ao banco hospedado.
 
 > **Nota:** os números acima são do fechamento original da A5 (commit
 > `65dda3e`). Depois disso, o usuário pediu uma revisão antes do merge
-> (3 itens) — ver seção 8 para o trabalho adicional e a seção 8.4 para
-> os números de CI **finais e atuais** do branch (commit `86a0dd9`).
+> (3 itens) — ver seção 8 para o trabalho adicional, a seção 8.4 para
+> os números de CI finais do branch (commit `d4b76ef`), a seção 8.5
+> para a validação manual do item 3 no preview, e a seção 10 para o
+> merge de fato (commit `e1b4139` em `main`) e a validação em produção.
 
 ---
 
@@ -441,17 +446,39 @@ repetição às cegas:
    (sinal de que a busca de requisitos já terminou) antes de registrar
    o `waitForResponse`.
 
-**Resultado final (commit `86a0dd9`, CI verde):** unitários 112/112;
+**Resultado final (commit `d4b76ef`, CI verde):** unitários 112/112;
 pgTAP 253/253 (10 arquivos, `10_a5_pipeline.test.sql` sozinho com 73);
 isolamento entre workspaces 26/26; build ok; e2e 37/37 (32 anteriores +
 5 novos de `pipeline-config.spec.ts`). PR #5: `OPEN`, `MERGEABLE`,
-`mergeStateStatus: CLEAN`.
+`mergeStateStatus: CLEAN` neste commit (mesclado depois, seção 10).
 
-## 9. Confirmações explícitas
+### 8.5 Validação manual do item 3 no preview real, com dados fictícios (commit `d4b76ef`)
+
+Pedido explícito do usuário antes de autorizar o merge: validar
+`required_for_win` de ponta a ponta no preview correspondente ao
+commit final, não só por pgTAP. Feito em
+`https://praxis-crm-git-feat-a5-pipeline-johllls-projects.vercel.app`
+(SSO da Vercel autenticado manualmente pelo usuário), workspace
+"Escritorio QA Praxis A3", conta QA A3 Teste (Proprietário).
+
+| Passo | Resultado |
+|---|---|
+| Criar requisito "Confirmar honorarios aprovados pelo socio (teste fictício)" na etapa **Negociar honorários**, marcado "Obrigatório para marcar como ganho" | OK — diálogo confirma "Passa a valer para quem tentar avançar até…"; lista da etapa mostra "Obrigatório para ganhar" marcado |
+| Criar lead + oportunidade fictícios (contato "Fulano de Tal QA", já existente de smoke-tests anteriores), nascendo em **Fazer primeiro contato** — nunca movida para "Negociar honorários" | OK — oportunidade `01da4204…`, etapa "Fazer primeiro contato", aberta |
+| Abrir "Ganhou" sem preencher nada | OK — diálogo mostra a pendência do requisito de "Negociar honorários" **mesmo numa etapa nunca visitada** ("1 requisito obrigatório pendente"), botão "Registrar ganho" desabilitado — prova visual direta da independência de posição que o pgTAP já provava por RPC |
+| Preencher valor final (R$ 7.500,00) e o campo do requisito pendente, clicar "Registrar ganho" | OK — botão habilita ao preencher; ganho registrado, status "Ganha", valor exibido corretamente |
+| `page.reload()` limpo na oportunidade | OK — status "Ganha" e valor persistidos (não é estado otimista do cliente); sem erro de console (só o ruído já documentado do widget `vercel.live`) |
+| Segunda oportunidade fictícia no mesmo lead (`bac3b056…`), mesmo requisito pendente, sem preenchê-lo — abrir "Perdeu" | OK — diálogo de perda **não menciona nenhum requisito de ganho**, só "Motivo da perda" (obrigatório) e contexto opcional; "Registrar perda" desabilitado só até escolher o motivo |
+| Selecionar motivo e confirmar | OK — perda registrada, confirmada por `reload()`: status "Perdida" — perder continua livre da checagem de `required_for_win`, exatamente como especificado |
+
+**Nenhuma falha encontrada** — nenhuma correção foi necessária nesta
+rodada de validação manual.
+
+## 9. Confirmações explícitas (estado ao fechar a revisão pós-fechamento, antes do merge)
 
 - **Nenhuma fase além da A5 foi iniciada** — A6/A8 não implementadas.
 - **Nenhum arquivo de referência visual foi alterado.**
-- **Sem merge em `main`.** PR [#5](https://github.com/johlll/praxis-crm/pull/5) aberto, CI verde e preview validado (seções 3.2 e 6) — merge não realizado, aguardando autorização explícita.
+- **Sem merge em `main`** neste ponto. PR [#5](https://github.com/johlll/praxis-crm/pull/5) aberto, CI verde e preview validado (seções 3.2, 6 e 8.5) — aguardando autorização explícita (concedida logo em seguida, ver seção 10).
 - **`praxis-crm-dev`:** só migrations aditivas aplicadas (dry-run
   conferido antes de cada uma). Nenhum dado apagado — a linha residual
   de `lead_values` da A4 segue intacta, sem uso pelo contrato ativo.
@@ -459,3 +486,40 @@ isolamento entre workspaces 26/26; build ok; e2e 37/37 (32 anteriores +
   desta fase (A5, conforme o plano), nada de A6/A7/A8 antecipado além
   do que foi explicitamente aprovado (`clients`/`client_handoffs`
   mínimos).
+
+## 10. Merge e validação em produção
+
+Autorização explícita do usuário, condicionada à validação manual do
+item 3 no preview (seção 8.5) — concluída sem falha. PR #5 mesclado com
+merge commit (mesmo padrão dos PRs #1–#4: "Merge pull request #5 from
+johlll/feat/a5-pipeline", não squash), commit `e1b4139` em `main`,
+branch `feat/a5-pipeline` preservada (repositório não apaga branch ao
+mesclar, mesmo comportamento das fases anteriores).
+
+Deploy de produção da Vercel confirmado `success` para o SHA `e1b4139`
+(deployment novo, id `6373385154`, gerado automaticamente pelo push a
+`main`). Checagem breve ao vivo em produção
+(`https://praxis-crm-eight.vercel.app`, mesma conta QA
+`joaoniero2+praxisqaa3@gmail.com`, mesmo banco `praxis-crm-dev` que o
+preview — ainda não existe ambiente de produção separado, ver
+A3-HANDOFF.md seção 7):
+
+| Fluxo | Resultado |
+|---|---|
+| Login | OK — autenticou e chegou em `/pipeline` |
+| Pipeline (kanban) | OK — 8 colunas do pipeline padrão renderizando, sem erro de console |
+| Configurações → Pipelines | OK — tela carrega, permissão de owner confirmada; o requisito "Confirmar honorarios aprovados pelo socio (teste fictício)" criado na validação da seção 8.5 aparece persistido, marcado "Obrigatório para ganhar" — mesmo banco do preview, dado real da validação anterior, não um novo teste isolado |
+| Console do navegador | 0 erros, 0 avisos nas três telas |
+
+### Confirmações finais
+
+- **PR #5: `MERGED`** em `2026-09-10T13:59:22Z`, commit de merge `e1b4139`.
+- **Produção:** deploy `success` no SHA do merge, checagem funcional
+  feita ao vivo (tabela acima) — nenhuma falha encontrada.
+- **A6 não foi iniciada.** Escopo previsto (do plano original, seção
+  12) fica registrado ao usuário na entrega desta revisão, não
+  implementado nesta sessão.
+- **Nenhum dado real de cliente usado** — toda validação manual desta
+  fase (seções 3, 3.2, 8.5 e 10) usou contatos/leads/oportunidades
+  fictícios, claramente rotulados "(teste e2e)"/"(teste fictício)" nos
+  campos de texto livre.
