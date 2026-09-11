@@ -103,8 +103,21 @@ test.describe.serial("atividades e agenda — A6", () => {
     const [, mes, dia] = novaData.split("-");
     await expect(page.getByText(`${dia}/${mes}`)).toBeVisible();
 
+    // Sem reload explícito aqui de propósito: selectOption() só espera o
+    // evento onChange disparar, não a Server Action assíncrona que ele
+    // dispara terminar — um reload logo em seguida corre na frente da
+    // resposta (mesma classe de corrida já documentada na A5) e cortaria
+    // a transferência em voo. O expect com auto-retry do Playwright
+    // espera a revalidação automática do Next.js (mesmo padrão já
+    // comprovado no teste 1, ao concluir a atividade sem reload manual).
     const responsavelSelect = page.getByLabel("Transferir Revisar contrato (teste e2e) para");
     await responsavelSelect.selectOption({ label: SEED_USERS.ana.fullName });
+    await expect(page.getByLabel("Transferir Revisar contrato (teste e2e) para").locator("option:checked")).toHaveText(
+      SEED_USERS.ana.fullName,
+    );
+
+    // Persistência de verdade (não só estado otimista do cliente): um
+    // reload agora, DEPOIS da confirmação acima, deve mostrar o mesmo.
     await page.reload();
     await expect(page.getByLabel("Transferir Revisar contrato (teste e2e) para").locator("option:checked")).toHaveText(
       SEED_USERS.ana.fullName,
