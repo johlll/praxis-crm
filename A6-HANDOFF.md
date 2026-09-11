@@ -4,10 +4,10 @@
 **Fase:** A6
 **Branch:** `feat/a6-activities-calendar`
 **PR:** [#6](https://github.com/johlll/praxis-crm/pull/6) — `OPEN`, `MERGEABLE`, `CLEAN`
-**Commit final:** `2aecaae`
+**Commit final:** `18162b5`
 **Data:** 10–11/09/2026
 
-**Status:** implementada, **CI 100% verde** (16ª rodada no total — 13 antes de qualquer validação de preview, mais 1 do achado da própria validação de preview, mais 2 desta revisão pré-merge; ver §6 para o histórico das 13 primeiras, §7 para a validação de preview e seu achado, e §8 para os 3 achados desta revisão e sua revalidação). Resultado final: testes unitários 120/120, pgTAP 336/336 (11 arquivos, `11_a6_activities.test.sql` sozinho com 83), isolamento entre workspaces 26/26, build ok, e2e 41/41 (37 da A5 preservados + 4 novos desta fase). **Validação manual no preview concluída com sucesso nos 5 fluxos pedidos (§7) — 1 bug real encontrado e corrigido. Revisão pré-merge (§8) encontrou e corrigiu mais 3 problemas reais, com as correções revalidadas pontualmente na UI real do preview. PR aberto, mergeável, sem conflito. Merge NÃO realizado — aguardando autorização explícita, por instrução do usuário. A7 não foi iniciada.**
+**Status:** implementada, **CI 100% verde** (17ª rodada no total — 13 antes de qualquer validação de preview, mais 1 do achado da própria validação de preview, mais 3 desta revisão pré-merge; ver §6 para o histórico das 13 primeiras, §7 para a validação de preview e seu achado, e §8 para os 4 achados desta revisão e sua revalidação). Resultado final: testes unitários 122/122, pgTAP 336/336 (11 arquivos, `11_a6_activities.test.sql` sozinho com 83), isolamento entre workspaces 26/26, build ok, e2e 41/41 (37 da A5 preservados + 4 novos desta fase). **Validação manual no preview concluída com sucesso nos 5 fluxos pedidos (§7) — 1 bug real encontrado e corrigido. Revisão pré-merge (§8) encontrou e corrigiu mais 4 problemas reais (3 de banco + o fechamento do tratamento de carregamento incompleto da Agenda), com as correções revalidadas pontualmente na UI real do preview e/ou por teste unitário dedicado. Merge autorizado explicitamente pelo usuário, condicionado a CI verde no commit final — condição cumprida.**
 
 ---
 
@@ -128,7 +128,7 @@ Criada uma conta nova com papel Advogado (`joaoniero2+praxisqaa6adv@gmail.com`, 
 
 ---
 
-## 8. Revisão pré-merge: 3 achados reais corrigidos
+## 8. Revisão pré-merge: 4 achados reais corrigidos
 
 Instrução do usuário depois da validação de preview (§7): corrigir 3 pontos específicos antes do merge, "sem ampliar a fase". Os três eram achados reais, não hipotéticos — reproduzidos (ou, no caso do item 2, comprovados por leitura de código + teste) antes de qualquer correção.
 
@@ -171,6 +171,20 @@ A correção do filtro semanal (§7.2) tinha sido aplicada editando diretamente 
 ### 8.4 CI depois das 3 correções
 
 2 rodadas de CI nesta revisão: a 1ª (commits dos itens 8.1/8.2, mais a 1ª tentativa da regressão do item 8.3) falhou pelo erro de enum descrito acima; a 2ª, já com o `null` corrigido, fechou verde. Resultado final: unitários 120/120 (118 + 2 novos de paginação), pgTAP 336/336 (11 arquivos — `11_a6_activities.test.sql` com 83 asserções, de 72), isolamento 26/26, e2e 41/41, build ok. `db:types:check` sem diferença (nenhuma mudança de assinatura de função, só corpo/constraint).
+
+### 8.5 Fechamento: `listAllActivities()` não podia devolver sucesso com lista parcial
+
+Revisão do próprio código de §8.2 encontrou um problema real na implementação original de `listAllActivities()`: se qualquer página falhasse no meio da paginação, ou se `LIST_ALL_MAX_PAGES` fosse atingido sem terminar de esgotar `total_count`, a função simplesmente **parava o laço e devolvia o que já tinha acumulado como se fosse a lista inteira** — sucesso silencioso com dado parcial. Sem sinal nenhum pro chamador, a Agenda podia renderizar uma semana truncada como se fosse completa ou, se a primeira página falhasse, cair no `EmptyState` "Nada agendado" mesmo havendo atividades de verdade — exatamente a classe de bug que este item pediu para fechar.
+
+**Correção:** extraída `fetchActivitiesPage()` como a chamada crua de uma única página, usada por `listActivities()` (mantém **exatamente** o comportamento já existente de devolver lista vazia em erro — função usada em `/atividades`, `/leads/[id]` e `/oportunidades/[id]`, nenhum deles tocado) e por `listAllActivities()` (que agora distingue de verdade "página falhou" de "página vazia legítima", em vez de inferir isso indiretamente).
+
+`listAllActivities()` agora joga `ActivitiesLoadError` (nova classe exportada) em vez de retornar normalmente quando: (a) qualquer página falha; (b) uma página vem vazia mas o total ainda não foi atingido (inconsistência real entre `total_count` e as linhas devolvidas — nunca presumido "acabou" aqui); (c) `LIST_ALL_MAX_PAGES` é atingido sem terminar de buscar tudo. **A trava de segurança continua em 50 páginas** — a correção não foi aumentá-la, foi parar de fingir que uma busca incompleta havia terminado.
+
+Novo `src/app/(app)/agenda/error.tsx` (mesmo padrão já usado em `leads/error.tsx`, único precedente no projeto): `ErrorState` com "Tentar novamente" (`reset()`), nunca a tela de "Nada agendado". Um `Server Component` que joga um erro dentro de `Promise.all` é capturado automaticamente pelo `error.tsx` mais próximo — nenhum try/catch precisou ser adicionado em `agenda/page.tsx`.
+
+**2 testes novos** em `activities-pagination.test.ts`: falha numa página no meio da busca (2ª chamada retorna erro do RPC — confirma `rejects.toThrow(ActivitiesLoadError)`); limite de 50 páginas atingido com total ainda pendente (10.000 itens simulados, nunca cabem em 50×100 — confirma `rejects.toThrow(ActivitiesLoadError)` **e** exatamente 50 chamadas ao RPC, provando que a trava não foi tocada).
+
+**Validação executada:** `npm run typecheck`/`lint`/`test` (122/122, incluindo os 2 novos)/`build` limpos. Revalidação de preview: smoke test de regressão na Agenda (caminho de sucesso continua renderizando normalmente); o caminho de falha em si (RPC realmente indisponível) não foi forçado ao vivo contra `praxis-crm-dev` — coberto integralmente pelos 2 testes unitários que simulam exatamente essa condição, e o `error.tsx` reaproveita um padrão (`ErrorState`/`reset()`) já usado e comprovado em `leads/error.tsx`.
 
 ---
 
