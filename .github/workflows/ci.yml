@@ -53,6 +53,19 @@ jobs:
       - name: Testes de isolamento entre workspaces
         run: npm run test:isolation
 
+      - name: Teste de concorrência real (A7 — mensagens simultâneas)
+        # pgTAP roda numa única conexão por arquivo — não prova concorrência
+        # de verdade. Aqui, duas chamadas HTTP concorrentes via
+        # @supabase/supabase-js contra o Supabase local (schema+seed já
+        # aplicados pelos passos acima) são duas transações Postgres
+        # genuinamente simultâneas — ver scripts/a7-concurrency-check.mjs.
+        run: |
+          RAW="$(supabase status -o env)"
+          eval "$RAW"
+          NEXT_PUBLIC_SUPABASE_URL="${API_URL:?API_URL vazio}" \
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="${PUBLISHABLE_KEY:?PUBLISHABLE_KEY vazio}" \
+            node scripts/a7-concurrency-check.mjs
+
       - name: Exportar credenciais do Supabase local para o build/e2e
         run: |
           # Escreve .env.local de verdade em vez de só exportar em

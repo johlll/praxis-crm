@@ -7,6 +7,11 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.5"
+  }
   public: {
     Tables: {
       activities: {
@@ -24,6 +29,7 @@ export type Database = {
           opportunity_id: string | null
           priority: Database["public"]["Enums"]["lead_priority"]
           source: Database["public"]["Enums"]["activity_source"]
+          source_conversation_message_id: string | null
           source_rule_id: string | null
           source_stage_transition_id: string | null
           status: Database["public"]["Enums"]["activity_status"]
@@ -46,6 +52,7 @@ export type Database = {
           opportunity_id?: string | null
           priority?: Database["public"]["Enums"]["lead_priority"]
           source?: Database["public"]["Enums"]["activity_source"]
+          source_conversation_message_id?: string | null
           source_rule_id?: string | null
           source_stage_transition_id?: string | null
           status?: Database["public"]["Enums"]["activity_status"]
@@ -68,6 +75,7 @@ export type Database = {
           opportunity_id?: string | null
           priority?: Database["public"]["Enums"]["lead_priority"]
           source?: Database["public"]["Enums"]["activity_source"]
+          source_conversation_message_id?: string | null
           source_rule_id?: string | null
           source_stage_transition_id?: string | null
           status?: Database["public"]["Enums"]["activity_status"]
@@ -90,6 +98,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "opportunities"
             referencedColumns: ["workspace_id", "id", "lead_id"]
+          },
+          {
+            foreignKeyName: "activities_source_conversation_message_same_workspace_fkey"
+            columns: ["workspace_id", "source_conversation_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["workspace_id", "id"]
           },
           {
             foreignKeyName: "activities_source_rule_same_workspace_fkey"
@@ -663,6 +678,90 @@ export type Database = {
           },
         ]
       }
+      conversations: {
+        Row: {
+          channel_id: string
+          contact_id: string | null
+          created_at: string
+          id: string
+          last_message_at: string | null
+          lead_id: string | null
+          link_candidate_contact_ids: string[]
+          link_candidate_lead_ids: string[]
+          needs_link_review: boolean
+          opportunity_id: string | null
+          updated_at: string
+          wa_id: string
+          workspace_id: string
+        }
+        Insert: {
+          channel_id: string
+          contact_id?: string | null
+          created_at?: string
+          id?: string
+          last_message_at?: string | null
+          lead_id?: string | null
+          link_candidate_contact_ids?: string[]
+          link_candidate_lead_ids?: string[]
+          needs_link_review?: boolean
+          opportunity_id?: string | null
+          updated_at?: string
+          wa_id: string
+          workspace_id: string
+        }
+        Update: {
+          channel_id?: string
+          contact_id?: string | null
+          created_at?: string
+          id?: string
+          last_message_at?: string | null
+          lead_id?: string | null
+          link_candidate_contact_ids?: string[]
+          link_candidate_lead_ids?: string[]
+          needs_link_review?: boolean
+          opportunity_id?: string | null
+          updated_at?: string
+          wa_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversations_channel_same_workspace_fkey"
+            columns: ["workspace_id", "channel_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_channels"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "conversations_contact_same_workspace_fkey"
+            columns: ["workspace_id", "contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "conversations_lead_same_workspace_fkey"
+            columns: ["workspace_id", "lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "conversations_opportunity_same_workspace_fkey"
+            columns: ["workspace_id", "opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "conversations_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       duplicate_candidates: {
         Row: {
           contact_a_id: string
@@ -912,6 +1011,130 @@ export type Database = {
           },
           {
             foreignKeyName: "memberships_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      message_status_events: {
+        Row: {
+          applied: boolean
+          error_code: string | null
+          error_message: string | null
+          event_wa_timestamp: string
+          id: string
+          message_id: string
+          received_at: string
+          status: Database["public"]["Enums"]["message_status"]
+          workspace_id: string
+        }
+        Insert: {
+          applied: boolean
+          error_code?: string | null
+          error_message?: string | null
+          event_wa_timestamp: string
+          id?: string
+          message_id: string
+          received_at?: string
+          status: Database["public"]["Enums"]["message_status"]
+          workspace_id: string
+        }
+        Update: {
+          applied?: boolean
+          error_code?: string | null
+          error_message?: string | null
+          event_wa_timestamp?: string
+          id?: string
+          message_id?: string
+          received_at?: string
+          status?: Database["public"]["Enums"]["message_status"]
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "message_status_events_message_same_workspace_fkey"
+            columns: ["workspace_id", "message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "message_status_events_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      messages: {
+        Row: {
+          body_text: string
+          channel_id: string
+          client_dedupe_key: string | null
+          conversation_id: string
+          created_at: string
+          direction: Database["public"]["Enums"]["message_direction"]
+          error_reason: string | null
+          id: string
+          sent_by: string | null
+          status: Database["public"]["Enums"]["message_status"]
+          status_updated_at: string
+          updated_at: string
+          wa_message_id: string
+          workspace_id: string
+        }
+        Insert: {
+          body_text: string
+          channel_id: string
+          client_dedupe_key?: string | null
+          conversation_id: string
+          created_at?: string
+          direction: Database["public"]["Enums"]["message_direction"]
+          error_reason?: string | null
+          id?: string
+          sent_by?: string | null
+          status: Database["public"]["Enums"]["message_status"]
+          status_updated_at?: string
+          updated_at?: string
+          wa_message_id: string
+          workspace_id: string
+        }
+        Update: {
+          body_text?: string
+          channel_id?: string
+          client_dedupe_key?: string | null
+          conversation_id?: string
+          created_at?: string
+          direction?: Database["public"]["Enums"]["message_direction"]
+          error_reason?: string | null
+          id?: string
+          sent_by?: string | null
+          status?: Database["public"]["Enums"]["message_status"]
+          status_updated_at?: string
+          updated_at?: string
+          wa_message_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "messages_channel_same_workspace_fkey"
+            columns: ["workspace_id", "channel_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_channels"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "messages_conversation_same_workspace_fkey"
+            columns: ["workspace_id", "conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "messages_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
@@ -1399,6 +1622,53 @@ export type Database = {
         }
         Relationships: []
       }
+      whatsapp_channels: {
+        Row: {
+          created_at: string
+          created_by: string
+          display_phone_number: string
+          id: string
+          is_simulator: boolean
+          label: string
+          phone_number_id: string
+          status: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          display_phone_number: string
+          id?: string
+          is_simulator?: boolean
+          label: string
+          phone_number_id: string
+          status?: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          display_phone_number?: string
+          id?: string
+          is_simulator?: boolean
+          label?: string
+          phone_number_id?: string
+          status?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_channels_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       workspace_invitations: {
         Row: {
           accepted_at: string | null
@@ -1568,6 +1838,17 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      apply_message_status_event: {
+        Args: {
+          p_error_code?: string
+          p_error_message?: string
+          p_event_timestamp: string
+          p_phone_number_id: string
+          p_status: Database["public"]["Enums"]["message_status"]
+          p_wa_message_id: string
+        }
+        Returns: Json
+      }
       assign_lead: {
         Args: {
           p_assigned_to?: string
@@ -1709,6 +1990,32 @@ export type Database = {
         }
         Returns: string
       }
+      create_whatsapp_channel: {
+        Args: {
+          p_display_phone_number: string
+          p_label: string
+          p_phone_number_id: string
+          p_workspace_id: string
+        }
+        Returns: {
+          created_at: string
+          created_by: string
+          display_phone_number: string
+          id: string
+          is_simulator: boolean
+          label: string
+          phone_number_id: string
+          status: string
+          updated_at: string
+          workspace_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "whatsapp_channels"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       create_workspace_invitation: {
         Args: {
           p_email: string
@@ -1771,6 +2078,7 @@ export type Database = {
           undone_at: string
         }[]
       }
+      get_conversation: { Args: { p_conversation_id: string }; Returns: Json }
       get_lead: { Args: { p_lead_id: string }; Returns: Json }
       get_opportunity: { Args: { p_opportunity_id: string }; Returns: Json }
       get_pipeline_board: { Args: { p_pipeline_id: string }; Returns: Json }
@@ -1795,6 +2103,20 @@ export type Database = {
         }
         Returns: {
           counts: Json
+          items: Json
+          total_count: number
+        }[]
+      }
+      list_conversation_messages: {
+        Args: { p_before?: string; p_conversation_id: string; p_limit?: number }
+        Returns: {
+          has_more: boolean
+          items: Json
+        }[]
+      }
+      list_conversations: {
+        Args: { p_page?: number; p_page_size?: number; p_workspace_id: string }
+        Returns: {
           items: Json
           total_count: number
         }[]
@@ -1901,6 +2223,17 @@ export type Database = {
         }
         Returns: undefined
       }
+      register_contact_consent: {
+        Args: {
+          p_accepted_text?: string
+          p_channel: Database["public"]["Enums"]["contact_channel"]
+          p_contact_id: string
+          p_evidence_source?: string
+          p_legal_basis: Database["public"]["Enums"]["consent_legal_basis"]
+          p_purpose: string
+        }
+        Returns: string
+      }
       remove_contact_email: { Args: { p_email_id: string }; Returns: undefined }
       remove_contact_phone: { Args: { p_phone_id: string }; Returns: undefined }
       remove_membership: {
@@ -1920,12 +2253,25 @@ export type Database = {
         }
         Returns: undefined
       }
+      resolve_conversation_link: {
+        Args: {
+          p_contact_id?: string
+          p_conversation_id: string
+          p_lead_id?: string
+          p_opportunity_id?: string
+        }
+        Returns: Json
+      }
       reveal_contact_cpf_cnpj: {
         Args: { p_contact_id: string; p_reason?: string }
         Returns: {
           ciphertext_base64: string
           key_version: string
         }[]
+      }
+      revoke_contact_consent: {
+        Args: { p_consent_id: string }
+        Returns: undefined
       }
       search_contacts_by_cpf_cnpj: {
         Args: { p_blind_indexes_base64: string[]; p_workspace_id: string }
@@ -1950,6 +2296,14 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      send_message: {
+        Args: {
+          p_body_text: string
+          p_client_dedupe_key: string
+          p_conversation_id: string
+        }
+        Returns: Json
       }
       set_contact_cpf_cnpj: {
         Args: {
@@ -2004,6 +2358,18 @@ export type Database = {
           p_title: string
         }
         Returns: string
+      }
+      simulate_inbound_whatsapp_message: {
+        Args: {
+          p_body_text: string
+          p_event_timestamp: string
+          p_from_e164: string
+          p_from_wa_id_raw: string
+          p_phone_number_id: string
+          p_profile_name?: string
+          p_wa_message_id: string
+        }
+        Returns: Json
       }
       unmerge_contact: {
         Args: { p_merge_id: string }
@@ -2199,7 +2565,7 @@ export type Database = {
     }
     Enums: {
       activity_assignee_rule: "unassigned" | "lead_owner"
-      activity_source: "manual" | "stage_rule"
+      activity_source: "manual" | "stage_rule" | "whatsapp_inbound"
       activity_status: "pending" | "done"
       activity_type: "call" | "meeting" | "task" | "email" | "deadline"
       client_status: "ativo" | "encerrado" | "suspenso"
@@ -2226,6 +2592,8 @@ export type Database = {
         | "sales"
         | "viewer"
       membership_status: "active" | "suspended"
+      message_direction: "inbound" | "outbound"
+      message_status: "queued" | "sent" | "delivered" | "read" | "failed"
       opportunity_status: "open" | "won" | "lost"
       stage_requirement_type: "text" | "textarea" | "date" | "checkbox"
     }
@@ -2243,12 +2611,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2272,11 +2640,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2297,11 +2665,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2322,11 +2690,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2339,11 +2707,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2356,7 +2724,7 @@ export const Constants = {
   public: {
     Enums: {
       activity_assignee_rule: ["unassigned", "lead_owner"],
-      activity_source: ["manual", "stage_rule"],
+      activity_source: ["manual", "stage_rule", "whatsapp_inbound"],
       activity_status: ["pending", "done"],
       activity_type: ["call", "meeting", "task", "email", "deadline"],
       client_status: ["ativo", "encerrado", "suspenso"],
@@ -2385,9 +2753,10 @@ export const Constants = {
         "viewer",
       ],
       membership_status: ["active", "suspended"],
+      message_direction: ["inbound", "outbound"],
+      message_status: ["queued", "sent", "delivered", "read", "failed"],
       opportunity_status: ["open", "won", "lost"],
       stage_requirement_type: ["text", "textarea", "date", "checkbox"],
     },
   },
 } as const
-

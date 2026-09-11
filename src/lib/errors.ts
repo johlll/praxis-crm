@@ -65,6 +65,22 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   activity_not_found: "Atividade não encontrada.",
   due_date_required: "Informe a data.",
   activity_assignee_no_access: "Essa pessoa não tem acesso a este lead — só quem já acessa o lead pode ficar responsável pela atividade.",
+  // A7 — conversas + simulador de WhatsApp.
+  channel_not_found: "Canal de WhatsApp não encontrado.",
+  channel_disabled: "Este canal de WhatsApp está desativado.",
+  channel_phone_number_id_taken: "Já existe um canal com este identificador de número.",
+  conversation_not_found: "Conversa não encontrada.",
+  conversation_not_linked: "Vincule esta conversa a um contato antes de enviar uma mensagem.",
+  message_not_found: "Mensagem não encontrada.",
+  invalid_status_event: "Evento de status inválido.",
+  consent_required: "Sem consentimento vigente para enviar mensagem por este canal — registre o consentimento do contato primeiro.",
+  contact_required: "Selecione um contato para vincular a esta conversa.",
+  lead_contact_mismatch: "Este lead não pertence ao contato selecionado.",
+  lead_required_for_opportunity: "Selecione o lead antes de escolher a oportunidade.",
+  opportunity_lead_mismatch: "Esta oportunidade não pertence ao lead selecionado.",
+  purpose_required: "Informe a finalidade do consentimento.",
+  consent_not_found: "Registro de consentimento não encontrado.",
+  consent_already_revoked: "Este consentimento já foi revogado.",
 };
 
 /** update_lead_basic_fields()/assign_lead()/set_lead_status()/set_lead_value()
