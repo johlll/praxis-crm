@@ -190,7 +190,18 @@ test.describe.serial("pipeline — A5", () => {
     const failed = results.filter((r) => r.status >= 400);
     expect(succeeded, JSON.stringify(results)).toHaveLength(1);
     expect(failed, JSON.stringify(results)).toHaveLength(1);
-    expect(JSON.stringify(failed[0]!.body)).toContain("opportunity_conflict");
+    // A perdedora pode ser recusada por DUAS checagens igualmente válidas
+    // e igualmente anteriores ao UPDATE guardado por lock_version:
+    // stage_mismatch (se a leitura inicial dela só aconteceu DEPOIS da
+    // vencedora já ter COMMITADO a mudança de etapa — aí o stage_id que
+    // ela lê já não bate com o p_from_stage_id enviado) ou
+    // opportunity_conflict (se ela leu antes, mas o UPDATE perde a
+    // corrida do lock_version). As duas provam a mesma proteção
+    // funcionando — qual das duas aparece depende só de timing entre
+    // requisições de verdade, não é determinístico nem é um bug.
+    // Achado real no CI (não presumido): rodou com "stage_mismatch" numa
+    // execução real, confirmado pelo log de falha.
+    expect(JSON.stringify(failed[0]!.body)).toMatch(/opportunity_conflict|stage_mismatch/);
 
     const afterRace = await callRpcDirect(request, accessToken, "get_opportunity", { p_opportunity_id: opportunityId });
     expect((afterRace.body as Record<string, unknown>).stage_name).toBe("Realizar consulta");

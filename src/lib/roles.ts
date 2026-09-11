@@ -72,7 +72,15 @@ export type Permission =
   // perda é administrativo, mesmo nível de "configurar integrações".
   | "opportunity.view"
   | "opportunity.edit"
-  | "pipeline.configure";
+  | "pipeline.configure"
+  // A6 — atividades e agenda interna. Mesma matriz de leads/oportunidades:
+  // "ver"/"editar" (todos veem; advogado e atendimento só "suas", herdado
+  // do LEAD pai da atividade, reforçado no banco); configurar a regra de
+  // atividade automática por etapa é administrativo, mesmo nível de
+  // pipeline.configure (reaproveita a mesma tela).
+  | "activity.view"
+  | "activity.edit"
+  | "activity.configure";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -91,6 +99,9 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "opportunity.view": new Set(ROLES),
   "opportunity.edit": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
   "pipeline.configure": new Set<Role>(["owner", "admin", "manager"]),
+  "activity.view": new Set(ROLES),
+  "activity.edit": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
+  "activity.configure": new Set<Role>(["owner", "admin", "manager"]),
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {

@@ -48,4 +48,21 @@ describe("Sidebar", () => {
 
     expect(screen.getByText("Escritório Um (seed)")).toBeInTheDocument();
   });
+
+  it("A6: mostra o número de atrasadas como badge em Atividades", () => {
+    render(
+      <Sidebar activeWorkspace={activeWorkspace} workspaces={[activeWorkspace]} overdueActivitiesCount={3} />,
+    );
+
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByLabelText("3 atrasadas")).toBeInTheDocument();
+  });
+
+  it("A6: não mostra badge quando não há atrasadas", () => {
+    render(
+      <Sidebar activeWorkspace={activeWorkspace} workspaces={[activeWorkspace]} overdueActivitiesCount={0} />,
+    );
+
+    expect(screen.queryByText("0")).not.toBeInTheDocument();
+  });
 });

@@ -9,6 +9,111 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      activities: {
+        Row: {
+          assigned_to: string | null
+          completed_at: string | null
+          created_at: string
+          created_by: string
+          due_at: string
+          has_time: boolean
+          id: string
+          lead_id: string
+          lock_version: number
+          notes: string | null
+          opportunity_id: string | null
+          priority: Database["public"]["Enums"]["lead_priority"]
+          source: Database["public"]["Enums"]["activity_source"]
+          source_rule_id: string | null
+          source_stage_transition_id: string | null
+          status: Database["public"]["Enums"]["activity_status"]
+          title: string
+          type: Database["public"]["Enums"]["activity_type"]
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          assigned_to?: string | null
+          completed_at?: string | null
+          created_at?: string
+          created_by: string
+          due_at: string
+          has_time?: boolean
+          id?: string
+          lead_id: string
+          lock_version?: number
+          notes?: string | null
+          opportunity_id?: string | null
+          priority?: Database["public"]["Enums"]["lead_priority"]
+          source?: Database["public"]["Enums"]["activity_source"]
+          source_rule_id?: string | null
+          source_stage_transition_id?: string | null
+          status?: Database["public"]["Enums"]["activity_status"]
+          title: string
+          type: Database["public"]["Enums"]["activity_type"]
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          assigned_to?: string | null
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string
+          due_at?: string
+          has_time?: boolean
+          id?: string
+          lead_id?: string
+          lock_version?: number
+          notes?: string | null
+          opportunity_id?: string | null
+          priority?: Database["public"]["Enums"]["lead_priority"]
+          source?: Database["public"]["Enums"]["activity_source"]
+          source_rule_id?: string | null
+          source_stage_transition_id?: string | null
+          status?: Database["public"]["Enums"]["activity_status"]
+          title?: string
+          type?: Database["public"]["Enums"]["activity_type"]
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "activities_lead_same_workspace_fkey"
+            columns: ["workspace_id", "lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "activities_opportunity_same_lead_fkey"
+            columns: ["workspace_id", "opportunity_id", "lead_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["workspace_id", "id", "lead_id"]
+          },
+          {
+            foreignKeyName: "activities_source_rule_same_workspace_fkey"
+            columns: ["workspace_id", "source_rule_id"]
+            isOneToOne: false
+            referencedRelation: "stage_auto_activity_rules"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "activities_source_transition_same_workspace_fkey"
+            columns: ["workspace_id", "source_stage_transition_id"]
+            isOneToOne: false
+            referencedRelation: "stage_transitions"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "activities_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       audit_logs: {
         Row: {
           action: string
@@ -1111,6 +1216,60 @@ export type Database = {
           },
         ]
       }
+      stage_auto_activity_rules: {
+        Row: {
+          activity_type: Database["public"]["Enums"]["activity_type"]
+          assignee_rule: Database["public"]["Enums"]["activity_assignee_rule"]
+          created_at: string
+          created_by: string
+          due_offset_hours: number
+          id: string
+          stage_id: string
+          title: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          activity_type: Database["public"]["Enums"]["activity_type"]
+          assignee_rule?: Database["public"]["Enums"]["activity_assignee_rule"]
+          created_at?: string
+          created_by: string
+          due_offset_hours?: number
+          id?: string
+          stage_id: string
+          title: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          activity_type?: Database["public"]["Enums"]["activity_type"]
+          assignee_rule?: Database["public"]["Enums"]["activity_assignee_rule"]
+          created_at?: string
+          created_by?: string
+          due_offset_hours?: number
+          id?: string
+          stage_id?: string
+          title?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stage_auto_activity_rules_stage_same_workspace_fkey"
+            columns: ["workspace_id", "stage_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_stages"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "stage_auto_activity_rules_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       stage_requirements: {
         Row: {
           created_at: string
@@ -1444,9 +1603,27 @@ export type Database = {
         Args: { p_contact_id: string }
         Returns: undefined
       }
+      complete_activity: {
+        Args: { p_activity_id: string; p_lock_version: number }
+        Returns: undefined
+      }
       contact_has_sensitive: {
         Args: { p_contact_id: string }
         Returns: boolean
+      }
+      create_activity: {
+        Args: {
+          p_assigned_to?: string
+          p_due_date: string
+          p_due_time?: string
+          p_lead_id: string
+          p_notes?: string
+          p_opportunity_id?: string
+          p_priority?: Database["public"]["Enums"]["lead_priority"]
+          p_title: string
+          p_type: Database["public"]["Enums"]["activity_type"]
+        }
+        Returns: string
       }
       create_contact: {
         Args: {
@@ -1565,7 +1742,12 @@ export type Database = {
         Args: { p_lost_reason_id: string }
         Returns: undefined
       }
+      delete_activity: { Args: { p_activity_id: string }; Returns: undefined }
       delete_pipeline_stage: {
+        Args: { p_stage_id: string }
+        Returns: undefined
+      }
+      delete_stage_auto_activity_rule: {
         Args: { p_stage_id: string }
         Returns: undefined
       }
@@ -1577,6 +1759,8 @@ export type Database = {
         Args: { p_candidate_id: string }
         Returns: undefined
       }
+      get_activity: { Args: { p_activity_id: string }; Returns: Json }
+      get_activity_counts: { Args: { p_workspace_id: string }; Returns: Json }
       get_contact_merge_history: {
         Args: { p_contact_id: string }
         Returns: {
@@ -1597,6 +1781,23 @@ export type Database = {
       get_win_requirements_status: {
         Args: { p_opportunity_id: string }
         Returns: Json
+      }
+      list_activities: {
+        Args: {
+          p_filter?: string
+          p_lead_id?: string
+          p_opportunity_id?: string
+          p_page?: number
+          p_page_size?: number
+          p_sort?: string
+          p_status?: Database["public"]["Enums"]["activity_status"]
+          p_workspace_id: string
+        }
+        Returns: {
+          counts: Json
+          items: Json
+          total_count: number
+        }[]
       }
       list_leads: {
         Args: {
@@ -1692,6 +1893,14 @@ export type Database = {
           workspace_name: string
         }[]
       }
+      reassign_activity: {
+        Args: {
+          p_activity_id: string
+          p_assigned_to?: string
+          p_lock_version: number
+        }
+        Returns: undefined
+      }
       remove_contact_email: { Args: { p_email_id: string }; Returns: undefined }
       remove_contact_phone: { Args: { p_phone_id: string }; Returns: undefined }
       remove_membership: {
@@ -1700,6 +1909,15 @@ export type Database = {
       }
       reorder_pipeline_stages: {
         Args: { p_ordered_stage_ids: string[]; p_pipeline_id: string }
+        Returns: undefined
+      }
+      reschedule_activity: {
+        Args: {
+          p_activity_id: string
+          p_due_date: string
+          p_due_time?: string
+          p_lock_version: number
+        }
         Returns: undefined
       }
       reveal_contact_cpf_cnpj: {
@@ -1777,6 +1995,16 @@ export type Database = {
         }
         Returns: undefined
       }
+      set_stage_auto_activity_rule: {
+        Args: {
+          p_activity_type: Database["public"]["Enums"]["activity_type"]
+          p_assignee_rule?: Database["public"]["Enums"]["activity_assignee_rule"]
+          p_due_offset_hours?: number
+          p_stage_id: string
+          p_title: string
+        }
+        Returns: string
+      }
       unmerge_contact: {
         Args: { p_merge_id: string }
         Returns: {
@@ -1800,6 +2028,18 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      update_activity: {
+        Args: {
+          p_activity_id: string
+          p_clear_notes?: boolean
+          p_lock_version: number
+          p_notes?: string
+          p_priority?: Database["public"]["Enums"]["lead_priority"]
+          p_title?: string
+          p_type?: Database["public"]["Enums"]["activity_type"]
+        }
+        Returns: undefined
       }
       update_contact_basic_fields: {
         Args: {
@@ -1958,6 +2198,10 @@ export type Database = {
       }
     }
     Enums: {
+      activity_assignee_rule: "unassigned" | "lead_owner"
+      activity_source: "manual" | "stage_rule"
+      activity_status: "pending" | "done"
+      activity_type: "call" | "meeting" | "task" | "email" | "deadline"
       client_status: "ativo" | "encerrado" | "suspenso"
       consent_legal_basis:
         | "consentimento"
@@ -2111,6 +2355,10 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      activity_assignee_rule: ["unassigned", "lead_owner"],
+      activity_source: ["manual", "stage_rule"],
+      activity_status: ["pending", "done"],
+      activity_type: ["call", "meeting", "task", "email", "deadline"],
       client_status: ["ativo", "encerrado", "suspenso"],
       consent_legal_basis: [
         "consentimento",

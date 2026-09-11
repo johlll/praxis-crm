@@ -12,8 +12,10 @@ import {
   reorderPipelineStagesAction,
   updateStageRequirementAction,
 } from "@/modules/opportunities/actions";
+import { deleteStageAutoActivityRuleAction } from "@/modules/activities/actions";
 import { StageEditDialog } from "./stage-edit-dialog";
 import { AddRequirementDialog } from "./add-requirement-dialog";
+import { StageAutoActivityDialog } from "./stage-auto-activity-dialog";
 
 export function StageRow({
   stage,
@@ -68,6 +70,14 @@ export function StageRow({
     startTransition(async () => {
       const result = await updateStageRequirementAction(requirementId, next);
       if (!result.ok) setError(result.error ?? "Não foi possível atualizar o requisito.");
+    });
+  }
+
+  function removeAutoActivityRule() {
+    setError(null);
+    startTransition(async () => {
+      const result = await deleteStageAutoActivityRuleAction(stage.id);
+      if (!result.ok) setError(result.error ?? "Não foi possível remover a regra.");
     });
   }
 
@@ -150,6 +160,30 @@ export function StageRow({
           <AddRequirementDialog stageId={stage.id} stageName={stage.name} />
         </div>
       </div>
+
+      {!stage.isWon && !stage.isLost ? (
+        <div className="ml-4 flex items-center gap-2 text-meta text-text-tertiary">
+          {stage.autoActivityRule ? (
+            <span className="flex-1">
+              Ao entrar aqui: cria &quot;{stage.autoActivityRule.title}&quot; ({stage.autoActivityRule.dueOffsetHours}h de prazo)
+            </span>
+          ) : (
+            <span className="flex-1">Nenhuma atividade automática configurada.</span>
+          )}
+          <StageAutoActivityDialog stageId={stage.id} stageName={stage.name} rule={stage.autoActivityRule} />
+          {stage.autoActivityRule ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={isPending}
+              aria-label={`Remover atividade automática de ${stage.name}`}
+              onClick={removeAutoActivityRule}
+            >
+              <Trash2 size={12} aria-hidden />
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
 
       {error ? (
         <Alert variant="danger">

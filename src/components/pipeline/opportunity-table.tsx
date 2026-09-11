@@ -1,6 +1,8 @@
 import Link from "next/link";
 
 import type { OpportunityListItem } from "@/modules/opportunities/queries";
+import { formatDue } from "@/lib/timezone";
+import { ACTIVITY_TYPE_LABEL } from "@/components/activities/labels";
 
 function formatCents(cents: number): string {
   return (cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -28,6 +30,7 @@ export function OpportunityTable({ items }: { items: OpportunityListItem[] }) {
             <th className="px-4 py-2.5 font-medium">Status</th>
             <th className="px-4 py-2.5 font-medium">Valor</th>
             <th className="px-4 py-2.5 font-medium">Responsável</th>
+            <th className="px-4 py-2.5 font-medium">Próxima ação</th>
           </tr>
         </thead>
         <tbody>
@@ -45,6 +48,20 @@ export function OpportunityTable({ items }: { items: OpportunityListItem[] }) {
                 {item.valueCents !== undefined ? formatCents(item.valueCents) : item.valueBand ?? "—"}
               </td>
               <td className="px-4 py-2.5 text-text-secondary">{item.assignedToName ?? "Sem responsável"}</td>
+              <td className="px-4 py-2.5 text-text-secondary">
+                {item.nextAction ? (
+                  <>
+                    {ACTIVITY_TYPE_LABEL[item.nextAction.type]} — {formatDue(item.nextAction.dueAt, item.nextAction.hasTime)}
+                  </>
+                ) : (
+                  "—"
+                )}
+                {item.overdueActivitiesCount > 0 ? (
+                  <span className="ml-1.5 rounded-full bg-danger-bg px-1.5 py-0.5 text-label font-bold text-danger">
+                    {item.overdueActivitiesCount}
+                  </span>
+                ) : null}
+              </td>
             </tr>
           ))}
         </tbody>

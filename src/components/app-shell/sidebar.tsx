@@ -54,7 +54,7 @@ const icons: Record<NavIconName, LucideIcon> = {
   settings: Settings,
 };
 
-function NavLink({ item, active }: { item: NavItem; active: boolean }) {
+function NavLink({ item, active, badge }: { item: NavItem; active: boolean; badge?: number | undefined }) {
   const Icon = icons[item.icon];
 
   return (
@@ -69,7 +69,15 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
       )}
     >
       <Icon size={16} strokeWidth={active ? 1.5 : 1.3} aria-hidden />
-      <span>{item.label}</span>
+      <span className="flex-1">{item.label}</span>
+      {badge && badge > 0 ? (
+        <span
+          className="rounded-full bg-danger px-1.5 py-0.5 text-label font-bold leading-none text-white"
+          aria-label={`${badge} atrasada${badge === 1 ? "" : "s"}`}
+        >
+          {badge > 99 ? "99+" : badge}
+        </span>
+      ) : null}
     </Link>
   );
 }
@@ -84,9 +92,10 @@ export type SidebarWorkspace = {
 type SidebarProps = {
   activeWorkspace: SidebarWorkspace;
   workspaces: SidebarWorkspace[];
+  overdueActivitiesCount?: number | undefined;
 };
 
-export function Sidebar({ activeWorkspace, workspaces }: SidebarProps) {
+export function Sidebar({ activeWorkspace, workspaces, overdueActivitiesCount }: SidebarProps) {
   const pathname = usePathname();
   const [isPending, startTransition] = useTransition();
 
@@ -123,7 +132,12 @@ export function Sidebar({ activeWorkspace, workspaces }: SidebarProps) {
 
       <nav className="flex flex-col gap-0.5" aria-label="Navegação principal">
         {[...primaryNav, ...secondaryNav].map((item) => (
-          <NavLink key={item.href} item={item} active={isActive(item.href)} />
+          <NavLink
+            key={item.href}
+            item={item}
+            active={isActive(item.href)}
+            {...(item.href === "/atividades" ? { badge: overdueActivitiesCount } : {})}
+          />
         ))}
       </nav>
 
