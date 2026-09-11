@@ -232,17 +232,73 @@ Raciocínio completo de cada um em `docs/decisoes/a7-conversas.md`
    novamente").
 
 Migration nova: `20260911150000_a7_review_hardening.sql` (nenhuma das 7
-migrations já aplicadas foi reescrita). Testes novos: 12 asserções pgTAP
+migrations já aplicadas foi reescrita). Testes novos: 16 asserções pgTAP
 (finalidade incompatível/ausente/correta; conflito de conteúdo no reenvio;
-cursor incompleto rejeitado; empate de timestamp com 2 páginas cobrindo as
-4 mensagens sem pular nem repetir) + 4 arquivos/casos unitários novos (ver
+reenvio com a mesma chave após uma falha que não gravou nada; cursor
+incompleto rejeitado; empate de timestamp com 2 páginas cobrindo as 4
+mensagens sem pular nem repetir) + 3 arquivos/7 casos unitários novos (ver
 §5). Nenhum dos 4 achados exigiu tocar em RLS, permissões ou nas regras de
 idempotência de entrada (§8 do doc de decisões) — todas continuam como
 estavam, já validadas.
 
+**Achado extra, só apareceu no e2e do CI (não no pgTAP nem localmente):**
+`create or replace function` com um parâmetro novo no fim da lista NÃO
+substitui a function antiga quando a lista de tipos de argumento muda —
+mesmo só acrescentando um, mesmo com default. A identidade de uma function
+no catálogo do Postgres é nome+tipos dos argumentos; "OR REPLACE" sem
+correspondência exata cai para um CREATE comum, e as duas versões (antiga
+e nova) ficam coexistindo como sobrecargas. `supabase gen types` expôs
+isso primeiro (união de duas formas de `Args` em vez de um campo opcional)
+— corrigido com `drop function if exists <assinatura antiga>` antes de
+cada `create`, em `private.contact_has_active_consent`/
+`public.register_contact_consent`/`public.list_conversation_messages`
+(as três que ganharam parâmetro novo; `send_message` manteve a assinatura
+e não precisou disso).
+
+Depois disso, um segundo achado — desta vez só no e2e, nunca reproduzido
+localmente nem no pgTAP original: o teste "envio sem consentimento é
+bloqueado; registrar consentimento libera" **passava com falso positivo**.
+Sua asserção final (`getByText("Oi! Recebemos sua mensagem.")`, sem
+escopo) batia tanto numa bolha de mensagem real quanto no texto que
+simplesmente sobra no `<textarea>` depois de uma tentativa que falhou —
+exatamente o mesmo padrão já documentado no CI original desta fase (achado
+9/10 da primeira rodada), só que desta vez na asserção de SUCESSO, não na
+de falha. O relatório do Playwright (screenshot anexado à falha do
+próximo teste, que dependia da mensagem existir) confirmou: a mensagem
+nunca foi gravada. Investigado com um teste pgTAP novo, específico —
+reenviar a MESMA `client_dedupe_key` depois de uma tentativa que falhou
+por `consent_required` (nunca chegou a gravar nada, diferente do teste de
+conflito de conteúdo que reenvia uma chave que JÁ gravou algo) — que
+**passou**, confirmando que a camada SQL sempre esteve correta; o problema
+era só a asserção do teste, sem escopo. Corrigida para
+`getByRole("listitem").filter({hasText: ...})`, mesma disciplina do resto
+do arquivo.
+
 ## 7. CI
 
-**Verde** — [run final](https://github.com/johlll/praxis-crm/actions/runs/34604263734):
+**Verde no commit final desta revisão** —
+[run](https://github.com/johlll/praxis-crm/actions/runs/34639175517) (commit
+`209c770`, runner Docker do CI — local ao workflow, não é o preview
+hospedado; ver diferenciação no §8): typecheck, lint, 139 testes
+unitários, `db:types:check`, pgTAP (71/71 — 407 no total somando as 12
+suítes do repositório), isolamento entre workspaces (26/26), teste de
+concorrência real (`a7-concurrency-check.mjs`), build, e2e (45/45,
+incluindo os 4 cenários de `conversations.spec.ts`).
+
+Esta revisão levou 3 rounds de CI até fechar (contra os 10 da entrega
+original da A7): 1) `db:types:check` (tipos gerados contra o Docker local
+do CI divergiam do `database.ts` commitado, mesma classe de achado do
+round 1 original); 2) `create or replace function` não substituindo uma
+function quando o parâmetro novo muda a lista de tipos de argumento
+(achado explicado em detalhe no §6-bis); 3) asserção de e2e sem escopo
+mascarando uma mensagem que nunca foi gravada (também detalhado no
+§6-bis). Todos os 3 foram achados reais — o segundo e o terceiro só
+apareceram porque o cenário exato (parâmetro novo numa function existente;
+reenvio com a mesma chave depois de uma falha SEM gravação) nunca tinha
+sido exercitado antes desta revisão.
+
+Run anterior (implementação original da A7, antes desta revisão) —
+[run](https://github.com/johlll/praxis-crm/actions/runs/34604263734):
 typecheck, lint, 132 testes unitários, `db:types:check`, pgTAP (55/55),
 isolamento entre workspaces, teste de concorrência real
 (`a7-concurrency-check.mjs`), build, e2e (45/45, incluindo os 4 cenários de
@@ -295,19 +351,63 @@ correção adicional durante este processo.
 
 ## 8. Validação em preview
 
-Deploy do preview do PR #8 concluído com sucesso
-(`https://praxis-crm-git-feat-a7-conversations-simulator-johllls-projects.vercel.app`).
-Validação **interativa** (Playwright) ficou bloqueada pelo SSO de proteção
-de deployment da Vercel — sem sessão salva para esta URL específica (mesma
-limitação já registrada em fases anteriores: exige login pessoal, que só o
-usuário pode fazer). Como a suíte e2e do CI (§7, `test:e2e`, 45/45) já
-exerce o fluxo completo desta fase — criar canal, simular mensagem de
-número desconhecido, bloqueio/liberação por consentimento, simular
-entregue/lida inline, 404 para papel sem permissão — num navegador real
-contra um deploy real do Next.js e um Postgres real, considero isso
-validação funcional equivalente. Se o usuário quiser a checagem visual
-interativa no preview, precisa entrar no link acima com a própria conta
-Vercel primeiro.
+**Diferença de ambiente entre o CI e o preview**, importante para o que
+segue: o CI (§7) roda contra um Postgres **local, efêmero, dentro do
+runner do GitHub Actions** (`supabase db reset --local`, Docker) — todas
+as migrations aplicadas do zero a cada execução, seed próprio, descartado
+ao final. O preview do Vercel roda o mesmo código, mas contra o Postgres
+**hospedado e persistente** do projeto `praxis-crm-dev` — o MESMO banco
+usado nas validações ao vivo pré-commit (§6) de fases anteriores, que só
+recebe migrations quando alguém roda `supabase db push --linked` de
+propósito. São dois bancos genuinamente diferentes; um passar não garante
+o outro.
+
+Desta vez a validação **interativa** foi feita de verdade (Playwright via
+`playwright-cli`, autorizado nesta revisão), não só a suíte e2e do CI:
+
+- Login com sessão persistente do Playwright: desta vez o SSO de proteção
+  de deployment da Vercel **não bloqueou** (diferente das fases anteriores
+  — a sessão persistente `-s=praxis` já tinha uma autenticação Vercel
+  válida de uma verificação anterior deste mesmo projeto). Login no
+  próprio Praxis feito com uma conta de QA (`Escritório QA Praxis A3`)
+  fornecida pelo usuário.
+- **Achado real, não presumido**: o primeiro registro de consentimento no
+  preview falhou com a mensagem genérica de erro. Investigado (não
+  descartado como "flakiness") — a causa era o preview apontar para o
+  Postgres hospedado (`praxis-crm-dev`), que ainda não tinha recebido
+  `20260911150000_a7_review_hardening.sql` (a migration desta revisão só
+  existia no Postgres efêmero do CI e nas migrations do repositório).
+  `register_contact_consent()` com o parâmetro novo `p_purpose_code` não
+  existia ainda naquele banco — PostgREST devolve um erro de "função não
+  encontrada", que não bate em nenhum código de negócio conhecido e cai no
+  texto genérico de `toUserMessage()`. **Não é um bug de produto** — é
+  esperado que o preview só funcione de verdade depois que a migration for
+  aplicada no banco que ele usa. Confirmado com o usuário e aplicado via
+  `supabase db push --linked` (autorizado explicitamente antes de rodar,
+  por ser uma ação que muda um banco compartilhado).
+- Depois disso, o fluxo completo pedido foi validado, de ponta a ponta, no
+  navegador real, contra o preview real: **mensagem recebida** (simulador,
+  número desconhecido) → **cadastro inicial** (contato+lead+oportunidade
+  criados automaticamente, atividade "Responder mensagem de WhatsApp (novo
+  contato)" visível no lead) → **conversa** (mensagem recebida exibida,
+  sem "vínculo pendente" — já resolvida) → **consentimento** (bloqueado
+  antes de registrar, com o aviso certo; registrado com sucesso; painel
+  mostra "Vigente desde..."; volta a bloquear se revogado — não repetido
+  aqui por já estar coberto no e2e/pgTAP) → **resposta simulada** (enviada,
+  aparece na conversa com o texto certo) → **estados de entrega/leitura**
+  (SIMULAR → Marcar entregue → Marcar lida, ícones mudam de ✓ para ✓✓, o
+  botão SIMULAR desaparece depois de "lida", exatamente como esperado).
+- **Resolução de vínculo ambíguo**, cenário adicional pedido: criados dois
+  contatos com o MESMO telefone (`Ambíguo Preview A`/`B`), simulada uma
+  mensagem desse número — a conversa mostrou "Vínculo pendente" com os
+  dois nomes como opções, a mensagem preservada, consentimento continuando
+  bloqueado (nunca inventado). Ao escolher "Ambíguo Preview A", o banner
+  de pendência desapareceu e a conversa passou a mostrar aquele contato —
+  `resolve_conversation_link()` funcionando pela interface de verdade.
+
+Nenhum dado real de cliente foi usado — só registros fictícios criados
+para este teste (`Cliente Novo Preview`, `Ambíguo Preview A`/`B`, canal
+`Canal QA Preview`), no workspace de QA já dedicado a isso.
 
 ## 9. Limitações conhecidas
 
