@@ -5,7 +5,7 @@ import { EmptyState } from "@/components/feedback/empty-state";
 import { getShellContext } from "@/modules/shell/queries";
 import { requireWorkspace } from "@/server/authz/permissions";
 import { roleHasPermission } from "@/lib/roles";
-import { listActivities } from "@/modules/activities/queries";
+import { listAllActivities } from "@/modules/activities/queries";
 import { listLeads } from "@/modules/leads/queries";
 import { listTeamMembers } from "@/modules/team/queries";
 import { WeekCalendar } from "@/components/activities/week-calendar";
@@ -27,7 +27,7 @@ export default async function AgendaPage() {
   const canEdit = roleHasPermission(user.role, "activity.edit");
 
   const [{ items }, { items: leadOptions }, members] = await Promise.all([
-    listActivities(workspaceId, { filter: "week", status: "all", pageSize: 200, sort: "due_at_asc" }),
+    listAllActivities(workspaceId, { filter: "week", status: "all", sort: "due_at_asc" }),
     listLeads(workspaceId, { status: "ativo" }),
     listTeamMembers(workspaceId, user.id),
   ]);

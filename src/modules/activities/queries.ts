@@ -138,6 +138,43 @@ export async function listActivities(
   };
 }
 
+/**
+ * Busca TODAS as atividades que casam com o filtro, ignorando o teto de
+ * página única do RPC (list_activities() limita p_page_size a 100 — ver
+ * comentário na migration). Só aumentar o pageSize pedido não resolve:
+ * qualquer teto fixo ainda pode ser ultrapassado por um workspace maior;
+ * a Agenda semanal precisa mesmo de "todas as da semana", não de "até
+ * N", então ela pagina até esgotar o total_count devolvido pelo próprio
+ * RPC — nunca omite silenciosamente o que passar do primeiro lote.
+ *
+ * MAX_PAGES é só uma trava de segurança contra loop sem fim caso
+ * total_count venha inconsistente; nunca esperado de fato bater nisso
+ * (500 atividades numa mesma semana, mesmo workspace).
+ */
+const LIST_ALL_PAGE_SIZE = 100;
+const LIST_ALL_MAX_PAGES = 50;
+
+export async function listAllActivities(
+  workspaceId: string,
+  filters: Omit<Parameters<typeof listActivities>[1], "page" | "pageSize"> = {},
+): Promise<{ items: ActivityListItem[]; total: number; counts: ActivityCounts }> {
+  let items: ActivityListItem[] = [];
+  let total = 0;
+  let counts: ActivityCounts = EMPTY_COUNTS;
+
+  for (let page = 1; page <= LIST_ALL_MAX_PAGES; page++) {
+    const result = await listActivities(workspaceId, { ...filters, page, pageSize: LIST_ALL_PAGE_SIZE });
+    if (page === 1) {
+      total = result.total;
+      counts = result.counts;
+    }
+    items = items.concat(result.items);
+    if (result.items.length === 0 || items.length >= result.total) break;
+  }
+
+  return { items, total, counts };
+}
+
 export type ActivityDetail = ActivityListItem & { workspaceId: string };
 
 export async function getActivity(activityId: string): Promise<ActivityDetail | null> {
