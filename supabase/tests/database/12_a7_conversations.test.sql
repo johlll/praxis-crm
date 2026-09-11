@@ -388,17 +388,33 @@ select is(
 );
 select is(
   (select count(*)::int from public.message_status_events where message_id = (:'env1'::jsonb ->> 'message_id')::uuid),
-  3,
-  'Os 4 eventos de status geraram 3 linhas de log (o delivered repetido colapsou pelo índice único), todos preservados'
+  4,
+  'Os 4 eventos de status (cada um com seu próprio event_wa_timestamp) geraram 4 linhas de log — todos preservados, mesmo os não aplicados'
 );
 
 select apply_message_status_event('a7-phone-um', :'wamid_env1', 'failed', now() + interval '3 second', 'ERR', 'falha simulada') as ev_failed_apos_read \gset
 select ok(not (:'ev_failed_apos_read'::jsonb ->> 'applied')::boolean, '"failed" depois de "read" é ignorado — mensagem já entregue e lida não vira falha');
 
 -- ---------------------------------------------------------------------
--- 9) Alcance por papel — lawyer só vê conversa do seu lead; conversa sem
---    lead vinculado (needs_link_review) só é visível a owner/admin/manager.
+-- 9) Alcance por papel — lawyer só vê conversa do seu lead (ou sem
+--    responsável); conversa sem lead vinculado (needs_link_review) só é
+--    visível a owner/admin/manager. Lead nasce sem responsável
+--    (create_lead() nunca atribui sozinho) — "sem responsável" já É
+--    acessível a qualquer lawyer (mesma regra "seus + sem responsável" da
+--    A4), então o teste real de NEGAÇÃO precisa de um lead atribuído a
+--    OUTRA pessoa primeiro. assign_lead() exige p_expected_updated_at
+--    (achado real no CI desta fase) — buscado via reset role a cada
+--    chamada, porque muda depois de cada atribuição.
 -- ---------------------------------------------------------------------
+
+reset role;
+select updated_at as lead_updated_at_1 from public.leads where id = (:'novo_r1'::jsonb ->> 'lead_id')::uuid \gset
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+
+select assign_lead(
+  (:'novo_r1'::jsonb ->> 'lead_id')::uuid, :'ana'::uuid, :'lead_updated_at_1'::timestamptz
+) as _assign_ana \gset
 
 reset role;
 select set_config('request.jwt.claims', json_build_object('sub', :'carla', 'role', 'authenticated')::text, true);
@@ -407,10 +423,21 @@ set local role authenticated;
 select is(
   get_conversation((:'novo_r1'::jsonb ->> 'conversation_id')::uuid),
   null,
-  'lawyer sem acesso ao lead da conversa: get_conversation() devolve null (não vaza existência)'
+  'lawyer sem acesso: lead atribuído a OUTRA pessoa — get_conversation() devolve null (não vaza existência)'
 );
 
-select assign_lead((:'novo_r1'::jsonb ->> 'lead_id')::uuid, :'carla'::uuid) as _assign \gset
+reset role;
+select updated_at as lead_updated_at_2 from public.leads where id = (:'novo_r1'::jsonb ->> 'lead_id')::uuid \gset
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+
+-- Só ana (owner) consegue reatribuir aqui: carla não teria acesso ao lead
+-- pra reatribuí-lo a si mesma (lead_accessible_to_role nega — está com ana,
+-- não "sem responsável" nem já dela) — mesma regra que send_message()/
+-- get_conversation() já aplicam, reforçada também em assign_lead() (A4).
+select assign_lead(
+  (:'novo_r1'::jsonb ->> 'lead_id')::uuid, :'carla'::uuid, :'lead_updated_at_2'::timestamptz
+) as _assign_carla \gset
 
 reset role;
 select set_config('request.jwt.claims', json_build_object('sub', :'carla', 'role', 'authenticated')::text, true);
