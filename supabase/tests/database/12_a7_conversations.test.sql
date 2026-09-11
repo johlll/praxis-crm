@@ -476,15 +476,12 @@ select register_contact_consent(
   :'ambiguo_a_id'::uuid, 'whatsapp', 'consentimento', 'Atendimento via WhatsApp (paginação)'
 ) as consent_pag \gset
 
-do $$
-declare
-  v_conv uuid := (select (:'ambiguo_r1'::jsonb ->> 'conversation_id')::uuid);
-  i integer;
-begin
-  for i in 1..12 loop
-    perform public.send_message(v_conv, 'Mensagem de paginação número ' || i, gen_random_uuid());
-  end loop;
-end $$;
+-- Nota: psql NUNCA substitui :'var' dentro de um bloco $$...$$ (dólar-
+-- quoted) — tratado como string opaca, achado real neste CI ("syntax
+-- error at or near ':'"). Por isso, um SELECT de nível superior (fora de
+-- qualquer $$) em vez de um DO/loop em PL/pgSQL.
+select send_message((:'ambiguo_r1'::jsonb ->> 'conversation_id')::uuid, 'Mensagem de paginação número ' || g, gen_random_uuid())
+from generate_series(1, 12) as g;
 
 select * from list_conversation_messages((:'ambiguo_r1'::jsonb ->> 'conversation_id')::uuid, null, 5) \gset
 
