@@ -11,7 +11,7 @@
 -- de cada chamada, nunca confia em estado deixado por um bloco anterior.
 
 begin;
-select plan(72);
+select plan(83);
 
 \set ws_um   '10000000-0000-0000-0000-000000000001'
 \set ws_dois '10000000-0000-0000-0000-000000000002'
@@ -636,6 +636,126 @@ select lives_ok(
 reset role;
 select count(*)::int as n from public.stage_auto_activity_rules where stage_id = (:'stage_um_2')::uuid \gset apos_delete_
 select is((:'apos_delete_n')::int, 0, 'Regra removida de fato');
+
+-- ===================================================================
+-- 13) Regressão: filtro semanal (status=all) não esconde concluídas
+-- ===================================================================
+--
+-- Achado real na validação manual de preview, sem cobertura até aqui:
+-- os ramos 'today'/'tomorrow'/'week'/'unassigned' do CASE de filtro
+-- traziam "status = 'pending' and" embutido neles mesmos — combinado via
+-- AND com a cláusula externa (p_status is null or status = p_status),
+-- isso fazia o filtro de data vencer sobre um p_status='all' explícito
+-- (a Agenda semanal pede isso de propósito, pra mostrar concluídas
+-- também). Só 'overdue' deve continuar exigindo pendência — uma
+-- atividade concluída nunca é "atrasada".
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+select create_activity(
+  p_lead_id := (:'lead_ana')::uuid, p_type := 'task'::activity_type, p_title := 'Concluída dentro da semana (regressão)',
+  p_due_date := (:'hoje')::date
+) as ativ_concl_semana \gset
+select complete_activity((:'ativ_concl_semana')::uuid, 0::bigint);
+
+select (list_activities(:'ws_um'::uuid, p_filter := 'week', p_status := 'all')).items as itens_semana_all \gset
+select ok(
+  (:'itens_semana_all')::jsonb @> jsonb_build_array(jsonb_build_object('id', (:'ativ_concl_semana')::text)),
+  'list_activities(filter=week, status=all) inclui uma atividade CONCLUÍDA vencendo hoje — regressão do bug real: antes ficava escondida pelo status=pending embutido no ramo week'
+);
+
+select (list_activities(:'ws_um'::uuid, p_filter := 'week', p_status := 'pending')).items as itens_semana_pending \gset
+select ok(
+  not ((:'itens_semana_pending')::jsonb @> jsonb_build_array(jsonb_build_object('id', (:'ativ_concl_semana')::text))),
+  'list_activities(filter=week, status=pending) — comportamento padrão da Central — continua sem mostrar a concluída: status=pending nunca deixou de filtrar de verdade'
+);
+
+select create_activity(
+  p_lead_id := (:'lead_ana')::uuid, p_type := 'task'::activity_type, p_title := 'Concluída e vencida (regressão overdue)',
+  p_due_date := ((:'hoje')::date - 30)
+) as ativ_concl_vencida \gset
+select complete_activity((:'ativ_concl_vencida')::uuid, 0::bigint);
+
+select (list_activities(:'ws_um'::uuid, p_filter := 'overdue', p_status := 'all')).items as itens_overdue_all \gset
+select ok(
+  not ((:'itens_overdue_all')::jsonb @> jsonb_build_array(jsonb_build_object('id', (:'ativ_concl_vencida')::text))),
+  'list_activities(filter=overdue, status=all) NÃO inclui uma atividade concluída mesmo vencida no passado — "atrasada" continua sendo um conceito só de pendência, preservado pelo fix'
+);
+
+-- ===================================================================
+-- 14) Excluir uma regra já utilizada — preserva atividades geradas
+-- ===================================================================
+--
+-- Achado real (revisão pré-merge), em duas camadas: (1)
+-- activities_source_rule_same_workspace_fkey usa "on delete set null",
+-- mas a CHECK activities_source_consistency exigia source_rule_id IS NOT
+-- NULL sempre que source='stage_rule' — excluir uma regra que já tinha
+-- gerado atividade fazia o Postgres tentar zerar source_rule_id nelas
+-- (ação da FK) e essa mesma operação violava a própria CHECK, então a
+-- exclusão inteira falhava com erro interno; (2) mesmo depois de
+-- relaxar a CHECK, "on delete set null" numa FK COMPOSTA sem lista de
+-- colunas zera TODAS as colunas da chave — inclusive workspace_id — o
+-- que violaria a NOT NULL de workspace_id (achado ao testar a correção
+-- ao vivo contra dado real de praxis-crm-dev). A migration de correção
+-- trata as duas causas: CHECK mais permissiva + "on delete set null
+-- (source_rule_id)" restringindo a ação a só essa coluna.
+-- rule_stage1 (seção 10) já gerou 2 atividades reais para opp_ana (a
+-- entrada inicial na etapa 1 e a reentrada) — identificadas aqui pelas
+-- transições que as originaram, não por source_rule_id (que é
+-- justamente o que deve virar NULL depois da correção).
+
+reset role;
+select count(*)::int as n from public.activities
+  where source_stage_transition_id in (
+    select id from public.stage_transitions
+    where opportunity_id = (:'opp_ana')::uuid and to_stage_id = (:'stage_um_1')::uuid
+  ) \gset antes_del_regra_
+select is(
+  (:'antes_del_regra_n')::int, 2,
+  'Pré-condição: a regra da etapa 1 já gerou 2 atividades reais (entrada inicial + reentrada), identificadas pelas 2 transições para esta etapa'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+select lives_ok(
+  format($i$ select delete_stage_auto_activity_rule(%L::uuid) $i$, :'stage_um_1'),
+  'Excluir uma regra que já gerou atividades reais NÃO lança erro (achados reais: a CHECK barrava o ON DELETE SET NULL da FK, e a FK sem lista de colunas zeraria também workspace_id — ambos corrigidos)'
+);
+
+reset role;
+select
+  count(*)::int as n,
+  bool_and(source = 'stage_rule') as todas_stage_rule,
+  bool_and(source_rule_id is null) as todas_sem_regra,
+  bool_and(source_stage_transition_id is not null) as todas_com_transicao,
+  count(distinct workspace_id)::int as workspaces_distintos
+from public.activities
+where source_stage_transition_id in (
+  select id from public.stage_transitions
+  where opportunity_id = (:'opp_ana')::uuid and to_stage_id = (:'stage_um_1')::uuid
+) \gset depois_del_regra_
+
+select is((:'depois_del_regra_n')::int, 2, 'As 2 atividades já geradas continuam existindo de verdade — excluir a regra não apaga nenhuma');
+select ok((:'depois_del_regra_todas_stage_rule')::boolean, 'As 2 atividades preservadas continuam com source=stage_rule — não perderam a origem automática');
+select ok((:'depois_del_regra_todas_sem_regra')::boolean, 'source_rule_id virou NULL nas 2 (a regra referenciada não existe mais) — ON DELETE SET NULL funcionando como sempre foi documentado, agora sem violar a CHECK');
+select ok((:'depois_del_regra_todas_com_transicao')::boolean, 'source_stage_transition_id continua preenchido nas 2 — rastreabilidade de QUAL transição gerou cada atividade permanece intacta mesmo com a regra excluída');
+select is((:'depois_del_regra_workspaces_distintos')::int, 1, 'workspace_id das atividades preservado — excluir a regra não afeta o workspace de nenhuma delas');
+
+-- Nova transição legítima para a MESMA etapa, depois de excluir a regra:
+-- a automação fica de fato interrompida — não tenta usar a regra
+-- apagada, não gera nenhuma atividade nova.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+select create_opportunity(:'lead_sem_resp'::uuid, :'pipe_um'::uuid, :'stage_um_0'::uuid) as opp_pos_delecao \gset
+select move_opportunity_stage((:'opp_pos_delecao')::uuid, :'stage_um_0'::uuid, :'stage_um_1'::uuid, 0::bigint);
+
+reset role;
+select count(*)::int as n from public.activities
+  where opportunity_id = (:'opp_pos_delecao')::uuid and source = 'stage_rule' \gset pos_delecao_
+select is(
+  (:'pos_delecao_n')::int, 0,
+  'Nova transição legítima para a etapa 1 DEPOIS de excluir a regra não cria atividade automática nenhuma — a automação está mesmo interrompida, não silenciosamente recriada'
+);
 
 select * from finish();
 rollback;
