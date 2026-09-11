@@ -28,7 +28,10 @@ test.describe.serial("conversas + simulador de WhatsApp — A7", () => {
     await page.getByLabel("Número (fictício)").fill("+55 11 5555-9999");
     await page.getByLabel("Identificador do número (phone_number_id)").fill(phoneNumberId);
     await page.getByRole("button", { name: "Criar canal" }).click();
-    await expect(page.getByText("Canal e2e")).toBeVisible();
+    // "Canal e2e" aparece na lista de canais E como <option> do select do
+    // formulário de simulação logo abaixo — getByRole("list") escopa só a
+    // lista (achado real no CI: strict mode violation do Playwright).
+    await expect(page.getByRole("list").getByText("Canal e2e")).toBeVisible();
 
     await page.getByLabel("Número de quem envia").fill(fromPhone);
     await page.getByLabel("Nome (opcional)").fill("Contato E2E A7");
