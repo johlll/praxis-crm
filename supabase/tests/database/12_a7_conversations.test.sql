@@ -483,6 +483,29 @@ select register_contact_consent(
 select send_message((:'ambiguo_r1'::jsonb ->> 'conversation_id')::uuid, 'Mensagem de paginação número ' || g, gen_random_uuid())
 from generate_series(1, 12) as g;
 
+-- now() é estável por TRANSAÇÃO no Postgres (não por statement) — como o
+-- arquivo inteiro roda numa única transação, as 13 mensagens desta
+-- conversa (1 recebida + 12 enviadas acima) nasceriam todas com o MESMO
+-- created_at, empatando a ordenação e quebrando o cursor de paginação
+-- (que depende de created_at estritamente crescente pra desempatar).
+-- Nunca acontece em produção de verdade — cada send_message()/simulate_
+-- inbound_whatsapp_message() é sua própria transação PostgREST, com
+-- now() sempre avançando. Espaçado aqui só pra reproduzir isso no teste;
+-- reset role porque messages é deny-all.
+reset role;
+-- Window function não é permitida direto no SET de um UPDATE — calculada
+-- numa subquery à parte, casada de volta por id.
+update public.messages m
+set created_at = sub.new_created_at
+from (
+  select id, created_at + (row_number() over (order by id) * interval '1 second') as new_created_at
+  from public.messages
+  where conversation_id = (:'ambiguo_r1'::jsonb ->> 'conversation_id')::uuid
+) sub
+where m.id = sub.id;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+
 -- \gset captura o resultado em VARIÁVEIS PSQL (:'items'/:'has_more'),
 -- nunca em colunas de tabela — usar "items"/"has_more" sem ":" no SELECT
 -- seguinte é erro de sintaxe/coluna inexistente (achado real neste CI).
