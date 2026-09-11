@@ -2,12 +2,12 @@
 
 **Projeto:** Praxis CRM Jurídico
 **Fase:** A6
-**Branch:** `feat/a6-activities-calendar`
-**PR:** [#6](https://github.com/johlll/praxis-crm/pull/6) — `OPEN`, `MERGEABLE`, `CLEAN`
-**Commit final:** `18162b5`
+**Branch:** `feat/a6-activities-calendar` (mesclada e já pode ser removida)
+**PR:** [#6](https://github.com/johlll/praxis-crm/pull/6) — `MERGED` em `main` via merge commit `3272503`
+**Último commit da branch antes do merge:** `6ae676f`
 **Data:** 10–11/09/2026
 
-**Status:** implementada, **CI 100% verde** (17ª rodada no total — 13 antes de qualquer validação de preview, mais 1 do achado da própria validação de preview, mais 3 desta revisão pré-merge; ver §6 para o histórico das 13 primeiras, §7 para a validação de preview e seu achado, e §8 para os 4 achados desta revisão e sua revalidação). Resultado final: testes unitários 122/122, pgTAP 336/336 (11 arquivos, `11_a6_activities.test.sql` sozinho com 83), isolamento entre workspaces 26/26, build ok, e2e 41/41 (37 da A5 preservados + 4 novos desta fase). **Validação manual no preview concluída com sucesso nos 5 fluxos pedidos (§7) — 1 bug real encontrado e corrigido. Revisão pré-merge (§8) encontrou e corrigiu mais 4 problemas reais (3 de banco + o fechamento do tratamento de carregamento incompleto da Agenda), com as correções revalidadas pontualmente na UI real do preview e/ou por teste unitário dedicado. Merge autorizado explicitamente pelo usuário, condicionado a CI verde no commit final — condição cumprida.**
+**Status:** **MERGEADA e em produção.** CI 100% verde (17ª rodada no total — 13 antes de qualquer validação de preview, mais 1 do achado da própria validação de preview, mais 3 desta revisão pré-merge; ver §6 para o histórico das 13 primeiras, §7 para a validação de preview e seu achado, e §8 para os 4 achados desta revisão e sua revalidação). Resultado final: testes unitários 122/122, pgTAP 336/336 (11 arquivos, `11_a6_activities.test.sql` sozinho com 83), isolamento entre workspaces 26/26, build ok, e2e 41/41 (37 da A5 preservados + 4 novos desta fase). Validação manual no preview concluída com sucesso nos 5 fluxos pedidos (§7) — 1 bug real encontrado e corrigido. Revisão pré-merge (§8) encontrou e corrigiu mais 4 problemas reais (3 de banco + o fechamento do tratamento de carregamento incompleto da Agenda), com as correções revalidadas pontualmente na UI real do preview e/ou por teste unitário dedicado. **Merge autorizado explicitamente pelo usuário, condicionado a CI verde no commit final — condição cumprida. Deploy de produção confirmado e checagem breve (login/Atividades/Agenda/próxima ação) sem falhas — ver §11. A7 não foi iniciada.**
 
 ---
 
@@ -202,8 +202,29 @@ Novo `src/app/(app)/agenda/error.tsx` (mesmo padrão já usado em `leads/error.t
 
 - **Nenhuma fase além da A6 foi iniciada** — A7 não implementada.
 - **Nenhum arquivo de referência visual foi alterado.**
-- **Sem merge em `main`, sem commit direto em `main`.** PR aberto contra `main` a partir de `feat/a6-activities-calendar`.
 - **`praxis-crm-dev`:** só migrations aditivas aplicadas (10 no total desta fase — as 8 originais + as 2 de §8.1/§8.3 desta revisão — todas via `db push` real, sem dry-run apenas — Docker local indisponível, mesma limitação já registrada), mais a correção pontual de `list_activities()` (§7.2) e da FK/CHECK de `source_rule_id` (§8.1), ambas testadas ao vivo dentro de transações revertidas antes de virar migration definitiva, sem apagar dado nenhum. Único dado fictício adicional deixado no ambiente: contato/lead/oportunidade/atividades "(validação)" e a conta `joaoniero2+praxisqaa6adv@gmail.com` (Advogado) usados na validação de preview — mesmo padrão de dados de teste já acumulado nas fases anteriores neste workspace de QA.
 - **Nenhuma dependência de fase futura instalada** — nenhum pacote novo entrou no `package.json` nesta fase (nenhuma biblioteca de calendário/data foi necessária; `<input type="date">`/`<input type="time">` nativos bastaram, mesmo padrão já usado pela A5).
 - **Design system preservado** — nenhum componente novo de UI genérico foi introduzido fora do padrão já existente (tabelas manuais, diálogos com `key={instanceKey}`, `<select>` nativo, Tailwind com os tokens já definidos).
-- **Merge e checagem em produção:** aguardando revisão final e autorização explícita do usuário, conforme instruído.
+
+---
+
+## 11. Merge e confirmação em produção
+
+**Merge:** autorizado explicitamente pelo usuário, condicionado a CI verde no commit final do PR #6 — condição cumprida (§8.4/§8.5, commit `6ae676f`). PR #6 mesclado em `main` via merge commit `3272503`, mesmo método já usado no PR #5 (`--merge`, sem squash/rebase). Nenhum commit direto em `main` — toda mudança desta fase entrou por PR.
+
+**Deploy de produção:** confirmado — `Vercel` reportou `Deployment has completed` para o commit `3272503` (checagem via `gh api repos/.../commits/3272503/status`, `state: success`).
+
+**Checagem breve em produção** (`https://praxis-crm-eight.vercel.app`, mesma conta QA já usada — `joaoniero2+praxisqaa3@gmail.com`):
+
+| Fluxo | Resultado |
+|---|---|
+| Login | OK — sessão já ativa (cookie persistente da mesma máquina/perfil), página protegida (`/pipeline`) renderizou com dado real do workspace, confirmando que o middleware validou a sessão de verdade |
+| Atividades | OK — Central de Atividades em `/atividades` renderizou "4 atividades", chips com contagens corretas (Atrasadas 3, Hoje 1, Amanhã 0, Esta semana 2, Sem responsável 4) |
+| Agenda | OK — `/agenda` renderizou a semana normalmente (caminho de sucesso do fix de §8.5), incluindo a atividade automática gerada antes da exclusão da regra ("Ligar para qualificar (validação A6)", sexta-feira) — nada foi apagado pela correção de §8.1 |
+| Próxima ação | OK — oportunidade de teste (`Contato Próxima Ação A6 (validação)`) mostrou "Ligação — Ligar para qualificar (validação A6) — 11/09/2026, 23:20:50" e o badge "1 atrasada" corretamente |
+
+Nenhuma falha encontrada nesta checagem. Ambiente de produção usa o mesmo projeto Supabase de QA (`praxis-crm-dev`) já usado em todas as fases anteriores — dado fictício, nenhum cliente real.
+
+**A partir daqui:** qualquer atualização a `main`, incluindo esta própria atualização de handoff, passa por PR — nenhum commit direto em `main`, por instrução explícita do usuário.
+
+**A7 não foi iniciada.**
