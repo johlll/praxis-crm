@@ -1,9 +1,10 @@
 # A7 — Conversas + simulador de WhatsApp — Handoff
 
-**Status: implementada, revisada, corrigida.** Branch
-`feat/a7-conversations-simulator`,
-[PR #8](https://github.com/johlll/praxis-crm/pull/8). **Não mesclada** —
-aguardando autorização explícita, conforme instruído.
+**Status: MERGEADA e em produção.** Branch `feat/a7-conversations-simulator`,
+[PR #8](https://github.com/johlll/praxis-crm/pull/8), mesclado em `main`
+via merge commit `6068cac0`. Deploy de produção confirmado e checagem
+breve (login/Conversas/histórico/envio simulado) sem falhas — ver §11.
+**A8 não foi iniciada.**
 
 Esta revisão (segunda rodada, pré-merge) corrigiu 4 achados apontados na
 revisão de código: gate de consentimento sem finalidade técnica, paginação
@@ -432,4 +433,61 @@ para este teste (`Cliente Novo Preview`, `Ambíguo Preview A`/`B`, canal
 - Nenhuma migration já aplicada por outro ambiente foi editada — as 8
   migrations da A7 (7 originais + `20260911150000_a7_review_hardening.sql`
   desta revisão) são todas novas.
-- Nenhum merge foi feito; nenhum commit direto em `main`.
+- Merge feito — ver §11. A partir do PR #8, toda mudança em `main`
+  continua passando por PR; esta própria seção foi escrita por um PR
+  exclusivo de documentação (`docs/a7-handoff-producao`), sem commit
+  direto em `main`.
+
+## 11. Merge e confirmação em produção
+
+**Merge:** autorizado explicitamente pelo usuário, condicionado a CI verde
+no commit final e ausência de conflitos — as duas condições já estavam
+cumpridas (§7, commit `d58fce8`, CI verde; `mergeStateStatus: CLEAN`). PR
+#8 mesclado em `main` via merge commit `6068cac0`
+(`https://github.com/johlll/praxis-crm/commit/6068cac0`), mesmo método já
+usado nos PRs #5/#6/#7 (`--merge`, sem squash/rebase). Nenhum commit direto
+em `main` — toda mudança desta fase entrou por PR.
+
+**Deploy de produção:** confirmado — `Vercel` reportou
+`Deployment has completed` para o commit `6068cac0`
+(checagem via `gh api repos/.../commits/6068cac0.../status`,
+`state: success`), correspondendo exatamente ao commit mesclado.
+
+**Checagem breve em produção** (`https://praxis-crm-eight.vercel.app`,
+mesma conta QA já usada — `joaoniero2+praxisqaa3@gmail.com`, dado
+100% fictício, nenhum cliente real):
+
+| Fluxo | Resultado |
+|---|---|
+| Login | OK — sessão já ativa (mesmo perfil persistente do Playwright), `/visao-geral` renderizou com o workspace certo ("Escritorio QA Praxis A3"), confirmando sessão validada de verdade pelo middleware |
+| Central de Conversas | OK — `/conversas` listou as duas conversas fictícias criadas na validação de preview (§8) — "Ambíguo Preview A" e "Cliente Novo Preview", com prévia da última mensagem e status "Lida" exibido corretamente |
+| Abertura do histórico | OK — `/conversas/[id]` abriu a conversa "Cliente Novo Preview" com a mensagem recebida original e a resposta simulada anterior, ambas visíveis |
+| Envio simulado com consentimento adequado | OK — consentimento (`purpose_code=whatsapp_atendimento`) continuava vigente para este contato; enviada uma mensagem nova de checagem ("Checagem de produção após o merge do PR #8 (A7) — dado fictício."), apareceu na conversa com status "enviada" (✓), tag "SIMULAÇÃO — sem conexão real com o WhatsApp" visível no topo da tela |
+
+Nenhuma falha encontrada nesta checagem. Ambiente de produção usa o mesmo
+projeto Supabase de QA (`praxis-crm-dev`) já usado em todas as fases
+anteriores — é por isso que a migration desta revisão, aplicada nesse
+projeto durante a validação de preview (§8), já estava disponível em
+produção sem nenhum passo extra.
+
+**Nenhuma conexão real com a Meta foi ativada — confirmado por inspeção,
+não presumido:**
+- `find src/app/api` não encontra nenhum diretório `api/` em
+  `src/app/` — não existe rota de webhook nesta fase (a conexão real é
+  B3, ainda não implementada).
+- `grep` no código por chamadas de saída (`fetch(`, `axios`,
+  `http.request`) dentro de `src/server/whatsapp/` e
+  `src/modules/conversations/` não encontra nenhuma — o simulador só lê e
+  grava no próprio Postgres, nunca faz uma requisição HTTP para fora.
+- `grep` por qualquer referência a domínio/token da Meta
+  (`graph.facebook`, `META_`, `WHATSAPP_TOKEN`, `WABA_`) no código-fonte
+  não encontra nada.
+- As variáveis de ambiente de produção da Vercel (`vercel env ls
+  production`) contêm só chaves do Supabase, das chaves de cifra de
+  contato (A3) e do segredo do cookie de workspace — nenhuma credencial
+  relacionada a Meta/WhatsApp existe no ambiente.
+
+**A partir daqui:** qualquer atualização a `main` continua passando por
+PR — nenhum commit direto, por instrução explícita do usuário.
+
+**A8 não foi iniciada.**
