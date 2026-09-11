@@ -1,11 +1,16 @@
 import { createServerSupabaseClient } from "@/server/supabase/server";
 import type { Database } from "@/server/types/database";
 import type { FeeModel } from "@/modules/opportunities/queries";
+import { CLIENT_STATUSES } from "./schema";
 
 export type ClientStatus = Database["public"]["Enums"]["client_status"];
 export type HandoffStatus = Database["public"]["Enums"]["handoff_status"];
 
-export const CLIENT_STATUSES = ["ativo", "encerrado", "suspenso"] as const satisfies readonly ClientStatus[];
+// Reexportado por conveniência (código existente importa CLIENT_STATUSES
+// daqui) — a definição real vive em ./schema, client-safe (ver comentário
+// lá). Client Components devem importar de ./schema diretamente, nunca
+// daqui, mesmo que seja só este const.
+export { CLIENT_STATUSES };
 
 export type ClientListItem = {
   id: string;

@@ -3,7 +3,7 @@ import { Search } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { CLIENT_STATUSES } from "@/modules/clients/queries";
+import { CLIENT_STATUSES } from "@/modules/clients/schema";
 
 const STATUS_LABEL: Record<(typeof CLIENT_STATUSES)[number], string> = {
   ativo: "Ativo",

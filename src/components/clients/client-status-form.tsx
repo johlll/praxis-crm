@@ -5,7 +5,8 @@ import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { updateClientStatusAction, type ClientActionState } from "@/modules/clients/actions";
-import { CLIENT_STATUSES, type ClientDetail } from "@/modules/clients/queries";
+import type { ClientDetail } from "@/modules/clients/queries";
+import { CLIENT_STATUSES } from "@/modules/clients/schema";
 
 const STATUS_LABEL: Record<(typeof CLIENT_STATUSES)[number], string> = {
   ativo: "Ativo",
