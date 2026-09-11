@@ -468,8 +468,12 @@ select ok(
 --     a mais antiga continua acessível, "há mais" é sinalizado direito.
 -- ---------------------------------------------------------------------
 
+-- ambiguo_r1.contact_id continua null NO JSON JÁ CAPTURADO (snapshot de
+-- antes da resolução) — resolve_conversation_link() atualizou a CONVERSA,
+-- não essa variável psql. O contato de verdade, já resolvido, é
+-- ambiguo_a_id.
 select register_contact_consent(
-  (:'ambiguo_r1'::jsonb ->> 'contact_id')::uuid, 'whatsapp', 'consentimento', 'Atendimento via WhatsApp (paginação)'
+  :'ambiguo_a_id'::uuid, 'whatsapp', 'consentimento', 'Atendimento via WhatsApp (paginação)'
 ) as consent_pag \gset
 
 do $$
