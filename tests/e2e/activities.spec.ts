@@ -177,7 +177,7 @@ test.describe.serial("atividades e agenda — A6", () => {
     await expect(page.getByRole("heading", { name: "Qualificar oportunidade" })).toBeVisible();
 
     await page.goto(opportunityUrl);
-    await expect(page.getByText("Etapa")).toBeVisible();
+    await expect(page.getByText("Etapa", { exact: true })).toBeVisible();
     await expect(page.getByText("Qualificar oportunidade", { exact: true })).toBeVisible();
     await expect(page.getByText("Enviar proposta inicial (teste e2e)", { exact: true })).toBeVisible();
     await expect(page.getByText("Sem próxima ação")).toHaveCount(0);
