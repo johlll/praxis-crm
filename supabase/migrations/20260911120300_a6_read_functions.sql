@@ -232,13 +232,23 @@ begin
       count(*) over () as full_count
     from accessible
     where (p_status is null or status = p_status)
+      -- "overdue" continua exigindo status='pending' aqui dentro mesmo
+      -- quando o chamador pede p_status='all' (agenda semanal) — uma
+      -- atividade concluída nunca é "atrasada", é só uma atividade que
+      -- foi concluída (isOverdue nunca é true para status='done', mesmo
+      -- critério usado em toda a aplicação). Os outros filtros (hoje/
+      -- amanhã/semana/sem responsável) são só sobre DATA/atribuição —
+      -- quem decide quais status entram é exclusivamente a cláusula
+      -- p_status acima, não o filtro; sem isso, a agenda semanal
+      -- (p_status='all') nunca mostraria uma atividade já concluída na
+      -- coluna do dia certo (achado real na validação manual no preview).
       and (
         case p_filter
           when 'overdue' then (status = 'pending' and due_at < now())
-          when 'today' then (status = 'pending' and due_at >= v_today_start and due_at < v_tomorrow_start)
-          when 'tomorrow' then (status = 'pending' and due_at >= v_tomorrow_start and due_at < v_day_after)
-          when 'week' then (status = 'pending' and due_at >= v_week_start and due_at < v_week_end)
-          when 'unassigned' then (status = 'pending' and assigned_to is null)
+          when 'today' then (due_at >= v_today_start and due_at < v_tomorrow_start)
+          when 'tomorrow' then (due_at >= v_tomorrow_start and due_at < v_day_after)
+          when 'week' then (due_at >= v_week_start and due_at < v_week_end)
+          when 'unassigned' then (assigned_to is null)
           else true
         end
       )
