@@ -85,7 +85,8 @@ test.describe.serial("clientes — A8", () => {
     // histórico) — ambas as ocorrências têm de existir, .first() basta
     // para confirmar visibilidade sem violar o modo estrito do Playwright.
     await expect(page.getByText("R$ 350,00").first()).toBeVisible();
-    await expect(page.getByText("Empresarial")).toBeVisible();
+    // Mesmo motivo do R$ 350,00 acima: aparece no resumo e no histórico.
+    await expect(page.getByText("Empresarial").first()).toBeVisible();
 
     // Handoff honesto (item 6 do pedido): sem integração configurada,
     // nunca finge que um processo foi criado.
