@@ -73,9 +73,15 @@ test.describe.serial("conversas + simulador de WhatsApp — A7", () => {
     await page.getByRole("button", { name: "Registrar consentimento" }).click();
     await expect(page.getByText("Vigente desde", { exact: false })).toBeVisible();
 
+    // Mesma client_dedupe_key da tentativa anterior (nunca rotacionada
+    // porque aquela tentativa falhou sem gravar nada) — precisa gravar
+    // normalmente agora que o consentimento existe.
     await composer.fill("Oi! Recebemos sua mensagem.");
     await page.getByRole("button", { name: "Enviar" }).click();
-    await expect(page.getByText("Oi! Recebemos sua mensagem.")).toBeVisible();
+    // Escopado à BOLHA de mensagem de verdade, não a qualquer ocorrência do
+    // texto na página — o mesmo texto também ficaria visível se tivesse
+    // apenas sobrado no <textarea> de uma falha (achado real de CI).
+    await expect(page.getByRole("listitem").filter({ hasText: "Oi! Recebemos sua mensagem." })).toBeVisible();
   });
 
   test("3. simular entregue/lida no simulador reflete na tela", async ({ page }) => {

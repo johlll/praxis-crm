@@ -9,7 +9,7 @@
 -- passo próprio do CI, logo depois deste arquivo.
 
 begin;
-select plan(67);
+select plan(71);
 
 -- ---------------------------------------------------------------------
 -- Fixtures: dois workspaces (isolamento), pipeline+etapa em cada (a criação
@@ -352,6 +352,49 @@ select throws_ok(
   'P0001', 'consent_already_revoked',
   'Revogar um consentimento já revogado é rejeitado (não silenciosamente ignorado)'
 );
+
+-- Cenário do Composer real (a7-conversas.md §8): a MESMA client_dedupe_key
+-- de uma tentativa que FALHOU sem gravar nada (consent_required aborta
+-- ANTES do INSERT — nunca cria linha parcial) precisa continuar
+-- funcionando normalmente assim que a causa da falha for corrigida. Isso é
+-- DIFERENTE do teste de conflito de conteúdo da seção 7 (que reenvia uma
+-- chave que JÁ gravou algo) — nunca exercitado antes deste teste.
+\set dedupe_retry_apos_falha '88888888-8888-8888-8888-888888888888'
+
+select throws_ok(
+  format(
+    $i$ select send_message(%L::uuid, 'Mensagem após falha de consentimento', %L::uuid) $i$,
+    (:'novo_r1'::jsonb ->> 'conversation_id'), :'dedupe_retry_apos_falha'
+  ),
+  'P0001', 'consent_required',
+  'Primeira tentativa (sem consentimento vigente) falha e não grava nada'
+);
+
+select register_contact_consent(
+  (:'novo_r1'::jsonb ->> 'contact_id')::uuid, 'whatsapp', 'consentimento',
+  'Atendimento via WhatsApp (retry pós-falha)', null, null, 'whatsapp_atendimento'
+) as consent_retry_id \gset
+
+select send_message(
+  (:'novo_r1'::jsonb ->> 'conversation_id')::uuid, 'Mensagem após falha de consentimento', :'dedupe_retry_apos_falha'::uuid
+) as retry_apos_falha \gset
+
+select ok(
+  (:'retry_apos_falha'::jsonb ->> 'message_id') is not null,
+  'Reenvio com a MESMA client_dedupe_key, depois que a causa da falha foi corrigida, grava normalmente'
+);
+select ok(
+  not (:'retry_apos_falha'::jsonb ->> 'content_conflict')::boolean,
+  'Essa mensagem nova não é tratada como conflito de conteúdo — a tentativa anterior nunca gravou nada'
+);
+reset role;
+select is(
+  (select count(*)::int from public.messages where conversation_id = (:'novo_r1'::jsonb ->> 'conversation_id')::uuid and client_dedupe_key = :'dedupe_retry_apos_falha'::uuid),
+  1,
+  'Exatamente 1 mensagem gravada com essa client_dedupe_key — a tentativa que falhou não deixou nada para trás'
+);
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 
 -- ---------------------------------------------------------------------
 -- 7) Reenvio de saída não duplica (client_dedupe_key).

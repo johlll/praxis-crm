@@ -129,8 +129,8 @@ usado em atividades/oportunidades (`private.lead_accessible_to_role`, A4).
   duas tentativas); reenvio com conteúdo diferente sinaliza
   `content_conflict` e devolve o texto REALMENTE persistido.
 
-**pgTAP** (`supabase/tests/database/12_a7_conversations.test.sql`, 67
-asserções — 55 originais + 12 desta revisão, roda no CI via
+**pgTAP** (`supabase/tests/database/12_a7_conversations.test.sql`, 71
+asserções — 55 originais + 16 desta revisão, roda no CI via
 `npm run test:db`): isolamento entre workspaces; acesso negado via SELECT
 direto nas tabelas deny-all; simulador exige owner/admin; primeiro contato
 cria contato+lead+oportunidade+atividade uma única vez (sequencial); contato
@@ -140,7 +140,10 @@ consentimento ausente/revogado bloqueia, finalidade INCOMPATÍVEL (existe e
 está vigente, mas para outra finalidade) continua bloqueando, finalidade
 CORRETA libera (§6-bis); reenvio de saída com o MESMO texto é idempotente,
 reenvio com TEXTO DIFERENTE sob a mesma chave gera `content_conflict` e
-nunca cria uma segunda mensagem (§6-bis); estados de mensagem nunca
+nunca cria uma segunda mensagem, reenvio com a MESMA chave depois de uma
+tentativa que FALHOU sem gravar nada (ex.: `consent_required`) grava
+normalmente assim que a causa da falha é corrigida (§6-bis, achado do e2e
+— ver abaixo); estados de mensagem nunca
 regridem (delivered tardio depois de read, failed depois de read); alcance
 por papel (`get_conversation()` nulo para quem não deveria ver); paginação
 do histórico com cursor incompleto rejeitado (`invalid_cursor`) e mensagens
