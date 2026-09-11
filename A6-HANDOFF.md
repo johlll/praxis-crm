@@ -3,10 +3,11 @@
 **Projeto:** Praxis CRM Jurídico
 **Fase:** A6
 **Branch:** `feat/a6-activities-calendar`
-**PR:** (preenchido na seção 6, após abertura)
-**Data:** 10/09/2026
+**PR:** [#6](https://github.com/johlll/praxis-crm/pull/6) — `OPEN`, `MERGEABLE`, `CLEAN`
+**Commit final:** `e883f6d`
+**Data:** 10–11/09/2026
 
-**Status:** implementada, aguardando CI. Migrations aplicadas com sucesso no banco hospedado `praxis-crm-dev` (verificação executada real). `typecheck`/`lint`/`test` unitário (118/118, incluindo os novos testes desta fase)/`build` de produção limpos localmente. pgTAP (72 asserções) e e2e (4 testes) foram escritos e revisados linha a linha, mas **não puderam ser executados nesta sessão** — Docker Desktop sem WSL2 nesta máquina Windows, mesma limitação já registrada em A5-HANDOFF.md §8.2. CI é o canal de verificação executada para esses dois. **PR ainda não aberto no momento em que este parágrafo foi escrito** — aberto logo em seguida, sem merge, sem iniciar a A7, por instrução explícita do usuário.
+**Status:** implementada, **CI 100% verde** (13ª rodada, ver §6 para o histórico completo e honesto das 12 rodadas anteriores — cada uma corrigindo uma causa raiz real, nenhuma repetição às cegas). Resultado final: testes unitários 118/118, pgTAP 325/325 (11 arquivos, `11_a6_activities.test.sql` sozinho com 72), isolamento entre workspaces 26/26, build ok, e2e 41/41 (37 da A5 preservados + 4 novos desta fase). **PR aberto, mergeável, sem conflito. Merge NÃO realizado — aguardando autorização explícita, por instrução do usuário. A7 não foi iniciada.**
 
 ---
 
@@ -55,23 +56,42 @@ Fuso `America/Sao_Paulo` explícito em toda formatação (`src/lib/timezone.ts`,
 
 ## 5. Testes
 
-### 5.1 pgTAP (`11_a6_activities.test.sql`, 72 asserções — **escrito, não executado nesta sessão, ver nota da seção 8.2 herdada da A5**)
+### 5.1 pgTAP (`11_a6_activities.test.sql`, 72 asserções — **executado no CI, verde: `ok`**)
 
 12 seções: criar+ler básico; isolamento entre workspaces e alcance "seus + sem responsável"; coerência de vínculo lead/oportunidade; validação de responsável (não é atalho de acesso); concorrência (update/reschedule/reassign); concluir e recusa em concluir/reagendar já concluída; excluir; RPC direta negada e grants exatos (incluindo a existência do índice único de idempotência); fronteiras de hoje/amanhã/atrasada/sem responsável com contadores; atividade automática por etapa (regra dispara em movimento aceito, não dispara em etapa sem regra, não dispara em movimento recusado por requisito pendente nem por conflito, reentrar numa etapa é nova transição e dispara de novo); "próxima ação" nas três projeções de oportunidade; configuração da regra (permissão, upsert substitui em vez de duplicar).
 
-### 5.2 e2e (`activities.spec.ts`, 4 testes — **escrito, não executado nesta sessão**)
+### 5.2 e2e (`activities.spec.ts`, 4 testes — **executado no CI, verde: 41/41 no total, incluindo os 37 da A5 preservados**)
 
-Criar atividade pela Central e concluir (some da listagem padrão); reagendar e transferir responsável com persistência confirmada por `reload()` real; configurar regra automática numa etapa, mover uma oportunidade até lá pelo kanban e confirmar a atividade + "próxima ação" refletidas no painel de detalhe; papel sem permissão (`viewer`) não vê a ação "Nova atividade". Revisão de risco de colisão de seletor feita antes de fechar o arquivo (mesma classe de bug já documentada na A5 — `getByRole`/`getByText` sem `exact: true` colidindo por substring com outro elemento da própria tela): corrigido nos botões "Concluir"/"Reagendar" (colidiam com os botões de linha "Concluir {título}"/"Reagendar {título}") e no rótulo do botão de configurar regra automática (usa regex para aceitar tanto "Configurar" quanto "Editar", cobrindo o caso de um retry do CI rodar o teste de novo contra o mesmo banco).
+Criar atividade pela Central e concluir (some da listagem padrão); reagendar e transferir responsável com persistência confirmada por `reload()` real; configurar regra automática numa etapa, mover uma oportunidade até lá pelo kanban e confirmar a atividade + "próxima ação" refletidas no painel de detalhe; papel sem permissão (`viewer`) não vê a ação "Nova atividade".
 
 ### 5.3 Validação local antes do push
 
-`npm run typecheck`/`lint`/`test` (118, incluindo os 6 testes novos desta fase) e `npm run build` — todos limpos, a cada rodada de correção. As 8 migrations da A6 aplicadas com `supabase db push --linked` contra `praxis-crm-dev` **sem erro de SQL** (verificação executada real do schema/funções — a única forma disponível nesta máquina de confirmar que a sintaxe e as referências entre objetos estão corretas antes do CI).
+`npm run typecheck`/`lint`/`test` (118, incluindo os 6 testes novos desta fase) e `npm run build` — todos limpos, a cada rodada de correção. As migrations da A6 aplicadas com `supabase db push --linked` contra `praxis-crm-dev` sem erro de SQL antes do primeiro push, e as correções seguintes verificadas com `supabase db query --linked -f <migration corrigida>` direto contra o banco hospedado (incluindo consulta a `pg_proc` para confirmar ausência de overloads duplicados) — a única forma disponível nesta máquina de confirmar sintaxe/comportamento antes do CI, sem Docker local.
 
 ---
 
-## 6. CI e PR
+## 6. CI e PR — histórico completo e honesto
 
-(preenchido após a abertura do PR e a primeira rodada de CI)
+**13 rodadas até o verde**, cada uma corrigindo uma causa raiz real confirmada por log/trace — nenhuma repetição às cegas, nenhuma suposição não verificada, nenhum teste enfraquecido para mascarar um problema real:
+
+1. **`db:types:check`** — diff cosmético de versão da CLI do Supabase (mesmo padrão já documentado na A5). Corrigido extraindo o arquivo canônico do próprio log de falha do CI.
+2. **pgTAP** — leitura direta de `public.activities` sem `reset role` antes ("permission denied for table activities").
+3. **pgTAP** — `ON CONFLICT (source_stage_transition_id)` não batia com o índice de idempotência porque ele é PARCIAL; o Postgres só infere um índice parcial em `ON CONFLICT` se a cláusula repetir o mesmo `WHERE`.
+4. **pgTAP** — 4 causas reais no mesmo lote: (a) teste esperava `activity_not_found` para um usuário sem NENHUMA membership no workspace, mas o código corretamente responde `insufficient_permission` nesse caso (mesmo comportamento já estabelecido na A5 — expectativa do teste estava errada, não o código); (b) teste de conflito em `reassign_activity` usava um responsável inválido, mascarando `opportunity_conflict`/`activity_conflict` com `activity_assignee_no_access`; (c) sequência de contagens da atividade automática (seção 10) estava consistentemente errada — retraçada e corrigida; (d) limpeza insuficiente antes do teste de "próxima ação" (atividades de seções anteriores continuavam pendentes e venciam a disputa).
+5. **`db:types:check`** de novo — a migration do `next_action` recriou `list_opportunities()` com a assinatura ANTIGA de 8 parâmetros (lida no início da sessão), mas a própria A5 já tinha corrigido para 9 (`p_lead_id`, com `DROP+CREATE`) antes desta fase começar — um `CREATE OR REPLACE` com assinatura errada não substitui, cria um OVERLOAD, e uma chamada com poucos argumentos vira ambígua ("function list_opportunities(uuid) is not unique", erro real de produção). Corrigido restaurando a assinatura de 9 parâmetros (incluindo `lock_version`, que também tinha se perdido); confirmado por consulta a `pg_proc` no banco hospedado que só resta 1 overload.
+6. **pgTAP** — nome de coluna errado no teste (`type` em vez de `activity_type` em `stage_auto_activity_rules`).
+7. **e2e** — 2 colisões reais de seletor: meu próprio `getByText` sem `exact:true` colidindo com o `<label class="sr-only">` "Transferir {título} para"; e uma regressão real num teste PREEXISTENTE da A4 (`leads.spec.ts`) — reaproveitar o contato seed "Carla Ferreira Advocacia" colidia por substring com a busca por "Carla Ferreira" de um teste que não tem nada a ver com esta fase. Corrigido trocando para um contato criado do zero, com nome exclusivo, dentro do próprio teste.
+8. **e2e** — mês e dia invertidos ao montar a data esperada após reagendar (`"YYYY-MM-DD".split("-").slice(1)` dá `[mês, dia]`, mas a variável estava nomeada `[dd, mm]`).
+9. **e2e** — `page.reload()` corria na frente da Server Action assíncrona de transferir responsável (mesma classe "reload correndo à frente da resposta" já documentada na A5). Corrigido confiando no auto-retry do `expect()` para esperar a revalidação automática do Next.js antes de recarregar.
+10. **e2e — 2 achados no mesmo lote:** (a) meu próprio teste de mover oportunidade pelo kanban navegava para a página de detalhe antes de `moveOpportunityStageAction` terminar, cortando o movimento em voo — confirmado pelo snapshot do DOM na falha (oportunidade ainda em "Fazer primeiro contato"); (b) o teste 4 de concorrência da A5 (`pipeline.spec.ts`) assumia que a requisição perdedora sempre recebe `opportunity_conflict`, mas ela pode legitimamente receber `stage_mismatch` dependendo só de timing real entre as duas chamadas — as duas são checagens igualmente válidas e anteriores ao gate de `lock_version`, provando a mesma proteção. Corrigido sem afrouxar o que é verificado (exatamente uma grava, a outra é recusada, estado final correto).
+11. **e2e** — esperar 1 resposta de rede não bastava: `requestMove()` no kanban sempre dispara DUAS Server Actions em sequência para a mesma URL (`checkStageRequirementsAction`, depois `moveOpportunityStageAction`), indistinguíveis por URL+método. Corrigido contando respostas via listener registrado antes da ação e esperando pelo menos 2.
+12. **e2e** — minha própria checagem extra `getByText("Etapa")` sem `exact:true` colidia (case-insensitive, substring) com o heading "Histórico de etapas" e com o texto do próprio histórico — o movimento e a atividade automática já estavam funcionando corretamente nesse ponto (confirmado pelo histórico real de transição aparecendo no snapshot).
+13. **Verde.** `npm run typecheck`/`lint`/`test`/`build` limpos; pgTAP 325/325 (11 arquivos); isolamento 26/26; e2e 41/41.
+
+**PR:** [#6 — feat: A6 — atividades e agenda interna](https://github.com/johlll/praxis-crm/pull/6), aberto contra `main`.
+**Branch:** `feat/a6-activities-calendar`, commit final `e883f6d`.
+**Estado do PR:** `OPEN`, `mergeable: MERGEABLE`, `mergeStateStatus: CLEAN`.
+**Merge:** **não realizado.** Aguardando autorização explícita do usuário.
 
 ---
 
