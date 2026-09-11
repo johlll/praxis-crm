@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Response } from "@playwright/test";
 
 import { SEED_USERS } from "./fixtures";
 import { login } from "./helpers";
@@ -153,17 +153,27 @@ test.describe.serial("atividades e agenda — A6", () => {
     const opportunityUrl = new URL(href!, page.url()).toString();
 
     await page.goto("/pipeline");
-    // Espera a resposta real da Server Action (POST para a própria
-    // /pipeline) ANTES de navegar para a oportunidade — achado real no
-    // CI: sem isso, o goto() seguinte corta moveOpportunityStageAction
-    // em voo (mesma classe de bug "navegar sem esperar" já documentada
-    // repetidas vezes nesta suíte); o snapshot do DOM na falha confirmou
-    // a oportunidade ainda em "Fazer primeiro contato", não movida.
-    const moveResponse = page.waitForResponse(
-      (r) => r.url().endsWith("/pipeline") && r.request().method() === "POST",
-    );
+    // requestMove() no pipeline-board dispara DUAS Server Actions em
+    // sequência para a mesma /pipeline — checkStageRequirementsAction
+    // primeiro (sempre, pra decidir se abre o StageAdvanceDialog) e só
+    // depois moveOpportunityStageAction de verdade — indistinguíveis por
+    // URL+método. Esperar só UMA resposta pega a checagem, não o
+    // movimento, e o goto() seguinte corta o movimento em voo (achado
+    // real no CI: DOM snapshot na falha mostrou a oportunidade ainda em
+    // "Fazer primeiro contato" mesmo depois de "esperar uma resposta").
+    // Como "Qualificar oportunidade" não tem requisito de avanço
+    // configurado neste teste, a checagem sempre libera direto pro
+    // movimento — são sempre exatamente 2 POSTs, nesta ordem.
+    const pipelinePostCount = { n: 0 };
+    const countPipelinePost = (response: Response) => {
+      if (response.url().endsWith("/pipeline") && response.request().method() === "POST") {
+        pipelinePostCount.n += 1;
+      }
+    };
+    page.on("response", countPipelinePost);
     await page.getByLabel(`Mover ${contactName} para etapa`).selectOption({ label: "Qualificar oportunidade" });
-    await moveResponse;
+    await expect.poll(() => pipelinePostCount.n).toBeGreaterThanOrEqual(2);
+    page.off("response", countPipelinePost);
     await expect(page.getByRole("heading", { name: "Qualificar oportunidade" })).toBeVisible();
 
     await page.goto(opportunityUrl);
