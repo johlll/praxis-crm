@@ -151,6 +151,13 @@ select is(
   1,
   'Contato foi criado de verdade'
 );
+
+-- leads/opportunities/activities são deny-all (sem GRANT nenhum, só RPC) —
+-- igual conversations/messages, verificação direta precisa do papel
+-- "dono" (reset role), nunca de "authenticated" (que aqui daria "permission
+-- denied", achado real no primeiro CI desta fase). Volta pro papel/contexto
+-- de "ana" logo em seguida, pra não afetar as próximas chamadas de RPC.
+reset role;
 select is(
   (select count(*)::int from public.leads where contact_id = (:'novo_r1'::jsonb ->> 'contact_id')::uuid),
   1,
@@ -171,6 +178,8 @@ select is(
   'whatsapp_inbound',
   'Atividade automática tem source=whatsapp_inbound'
 );
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 
 -- Evento repetido (mesmo wa_message_id): idempotente, nada novo.
 select simulate_inbound_whatsapp_message(
@@ -184,11 +193,14 @@ select is(
   1,
   'Reenvio do mesmo evento não duplicou o contato'
 );
+reset role;
 select is(
   (select count(*)::int from public.messages where conversation_id = (:'novo_r1'::jsonb ->> 'conversation_id')::uuid),
   1,
   'Reenvio do mesmo evento não duplicou a mensagem'
 );
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 
 -- Nova transição/mensagem DEPOIS do reenvio: continua funcionando (mesmo
 -- espírito do "nova transição após desativar regra" pedido na A6 — aqui,
@@ -203,11 +215,14 @@ select is(
   'Mensagem seguinte do mesmo número cai na MESMA conversa'
 );
 select ok(not (:'novo_r2'::jsonb ->> 'was_new_contact')::boolean, 'Mensagem seguinte não cria outro contato');
+reset role;
 select is(
   (select count(*)::int from public.leads where contact_id = (:'novo_r1'::jsonb ->> 'contact_id')::uuid),
   1,
   'Mensagem seguinte não cria outro lead (reaproveita)'
 );
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 
 -- ---------------------------------------------------------------------
 -- 5) Contato conhecido — telefone já cadastrado reaproveita; vínculo
@@ -230,11 +245,14 @@ select is(
 );
 select ok((:'conhecido_r1'::jsonb ->> 'needs_link_review')::boolean, 'Contato conhecido sem lead ativo: fica pendente de vínculo (não cria lead sozinho)');
 select is((:'conhecido_r1'::jsonb ->> 'lead_id'), null, 'Contato conhecido sem lead ativo: lead_id null');
+reset role;
 select is(
   (select count(*)::int from public.contact_identifiers where contact_id = :'contato_conhecido_id'::uuid and provider = 'whatsapp'),
   1,
   'contact_identifiers foi gravado — próxima mensagem já acha por identidade forte'
 );
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 
 -- Dois contatos diferentes com o MESMO telefone: ambíguo, não escolhe.
 select id as ambiguo_a_id from create_contact(:'ws_um'::uuid, 'pf', 'Ambíguo A', null, null, 'whatsapp',
@@ -254,11 +272,14 @@ select is(
   2,
   'Nenhum terceiro contato foi criado para "resolver" a ambiguidade — continuam só os 2 originais'
 );
+reset role;
 select is(
   (select count(*)::int from public.messages where conversation_id = (:'ambiguo_r1'::jsonb ->> 'conversation_id')::uuid),
   1,
   'A mensagem foi preservada mesmo com o vínculo pendente — nunca descartada'
 );
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 
 -- resolve_conversation_link() resolve a ambiguidade pela interface.
 select resolve_conversation_link(
@@ -266,11 +287,14 @@ select resolve_conversation_link(
 ) as resolvido \gset
 
 select is((:'resolvido'::jsonb ->> 'contact_id'), :'ambiguo_a_id', 'resolve_conversation_link() vincula ao contato escolhido');
+reset role;
 select is(
   (select needs_link_review::text from public.conversations where id = (:'ambiguo_r1'::jsonb ->> 'conversation_id')::uuid),
   'false',
   'Depois de resolvido, needs_link_review volta a false'
 );
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 
 -- ---------------------------------------------------------------------
 -- 6) Consentimento — bloqueia envio, registra, permite, revoga, bloqueia
@@ -330,6 +354,7 @@ select is(
   'Reenvio com a mesma client_dedupe_key devolve a MESMA mensagem'
 );
 select ok((:'env1_retry'::jsonb ->> 'duplicate_submit')::boolean, 'Reenvio sinaliza duplicate_submit=true');
+reset role;
 select is(
   (select count(*)::int from public.messages where conversation_id = (:'conhecido_r1'::jsonb ->> 'conversation_id')::uuid and direction = 'outbound'),
   1,
@@ -338,6 +363,9 @@ select is(
 
 -- ---------------------------------------------------------------------
 -- 8) Estados de mensagem — nunca regride; evento tardio/fora de ordem.
+-- Continua com o papel "dono" (reset role, acima) até o fim da seção — só
+-- apply_message_status_event() (RPC) precisa de auth.uid(), que funciona
+-- independente do papel da conexão (só lê o GUC de JWT já configurado).
 -- ---------------------------------------------------------------------
 
 select wa_message_id as wamid_env1 from public.messages where id = (:'env1'::jsonb ->> 'message_id')::uuid \gset

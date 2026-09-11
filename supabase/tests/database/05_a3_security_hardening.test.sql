@@ -48,7 +48,12 @@ select table_privs_are('public', 'contact_identifiers', 'anon', array[]::text[],
 select table_privs_are('public', 'contact_sensitive', 'authenticated', array[]::text[], 'contact_sensitive: authenticated NADA — nem SELECT');
 select table_privs_are('public', 'contact_sensitive', 'anon', array[]::text[], 'contact_sensitive: anon nada');
 
-select table_privs_are('public', 'contact_consents', 'authenticated', array[]::text[], 'contact_consents: authenticated nada (sem tela nesta fase)');
+-- A7 (20260911140600_a7_table_grants.sql) concede SELECT — a Central de
+-- Conversas passou a ler consentimento direto (RLS por workspace já
+-- cobria o isolamento; só faltava o GRANT, igual contacts/contact_phones).
+-- Mutação continua só por RPC (register_contact_consent()/
+-- revoke_contact_consent()), por isso INSERT/UPDATE/DELETE não aparecem.
+select table_privs_are('public', 'contact_consents', 'authenticated', array['SELECT'], 'contact_consents: authenticated só SELECT (desde a A7)');
 select table_privs_are('public', 'contact_consents', 'anon', array[]::text[], 'contact_consents: anon nada');
 
 select table_privs_are('public', 'contact_merges', 'authenticated', array[]::text[], 'contact_merges: authenticated nada (sem tela de histórico nesta fase)');
