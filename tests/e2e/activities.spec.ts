@@ -153,10 +153,22 @@ test.describe.serial("atividades e agenda — A6", () => {
     const opportunityUrl = new URL(href!, page.url()).toString();
 
     await page.goto("/pipeline");
+    // Espera a resposta real da Server Action (POST para a própria
+    // /pipeline) ANTES de navegar para a oportunidade — achado real no
+    // CI: sem isso, o goto() seguinte corta moveOpportunityStageAction
+    // em voo (mesma classe de bug "navegar sem esperar" já documentada
+    // repetidas vezes nesta suíte); o snapshot do DOM na falha confirmou
+    // a oportunidade ainda em "Fazer primeiro contato", não movida.
+    const moveResponse = page.waitForResponse(
+      (r) => r.url().endsWith("/pipeline") && r.request().method() === "POST",
+    );
     await page.getByLabel(`Mover ${contactName} para etapa`).selectOption({ label: "Qualificar oportunidade" });
+    await moveResponse;
     await expect(page.getByRole("heading", { name: "Qualificar oportunidade" })).toBeVisible();
 
     await page.goto(opportunityUrl);
+    await expect(page.getByText("Etapa")).toBeVisible();
+    await expect(page.getByText("Qualificar oportunidade", { exact: true })).toBeVisible();
     await expect(page.getByText("Enviar proposta inicial (teste e2e)", { exact: true })).toBeVisible();
     await expect(page.getByText("Sem próxima ação")).toHaveCount(0);
   });
