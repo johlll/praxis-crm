@@ -80,7 +80,20 @@ export type Permission =
   // pipeline.configure (reaproveita a mesma tela).
   | "activity.view"
   | "activity.edit"
-  | "activity.configure";
+  | "activity.configure"
+  // A7 — conversas + simulador de WhatsApp. "Ver"/"Enviar mensagens" segue
+  // a matriz do plano ao pé da letra (linha "Enviar mensagens": todos menos
+  // viewer). Resolver vínculo ambíguo (conversation.link) é tratado como
+  // resolução de identidade — mesmo nível de contact.merge (owner/admin/
+  // manager). Consentimento é uma ação sobre o CONTATO, mesmo nível de
+  // contact.edit. O simulador em si (conversation.simulate) é mais
+  // restrito que "administrativo" nas outras fases: só owner/admin, nunca
+  // manager — decisão documentada em docs/decisoes/a7-conversas.md §3.
+  | "conversation.view"
+  | "conversation.send"
+  | "conversation.link"
+  | "conversation.simulate"
+  | "contact.consent_manage";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -102,6 +115,11 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "activity.view": new Set(ROLES),
   "activity.edit": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
   "activity.configure": new Set<Role>(["owner", "admin", "manager"]),
+  "conversation.view": new Set(ROLES),
+  "conversation.send": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
+  "conversation.link": new Set<Role>(["owner", "admin", "manager"]),
+  "conversation.simulate": new Set<Role>(["owner", "admin"]),
+  "contact.consent_manage": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {

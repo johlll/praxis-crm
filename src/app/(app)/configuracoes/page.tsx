@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Metadata, Route } from "next";
-import { Users, Workflow, type LucideIcon } from "lucide-react";
+import { Users, Workflow, MessageCircle, type LucideIcon } from "lucide-react";
 
 import { Topbar } from "@/components/app-shell/topbar";
 import { getShellContext } from "@/modules/shell/queries";
@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 const FUTURE_SECTIONS = [
   {
     title: "Integrações",
-    description: "Google Agenda, WhatsApp.",
+    description: "Google Agenda; conexão real com a WhatsApp Cloud API (hoje, só o simulador).",
     phase: "B",
   },
   {
@@ -27,6 +27,7 @@ export default async function ConfiguracoesPage() {
   const { user } = await getShellContext();
   const membership = await requireMembership();
   const canConfigurePipeline = roleHasPermission(membership.role, "pipeline.configure");
+  const canUseSimulator = roleHasPermission(membership.role, "conversation.simulate");
 
   // "Pipelines" só aparece para quem tem a permissão — diferente das
   // seções de fase futura abaixo (que todo mundo vê como "ainda não
@@ -46,6 +47,16 @@ export default async function ConfiguracoesPage() {
             icon: Workflow,
             title: "Pipelines",
             description: "Etapas, requisitos de avanço e motivos de perda.",
+          },
+        ]
+      : []),
+    ...(canUseSimulator
+      ? [
+          {
+            href: "/configuracoes/simulador-whatsapp" as Route,
+            icon: MessageCircle,
+            title: "Simulador de WhatsApp",
+            description: "Canais e mensagens simuladas — sem conexão real com a Meta.",
           },
         ]
       : []),
