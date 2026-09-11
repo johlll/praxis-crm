@@ -236,7 +236,7 @@ select lives_ok(
 reset role;
 select status::text as client_sem_resp_status_1, lock_version as client_sem_resp_lock_1
   from public.clients where id = (:'client_sem_resp')::uuid \gset
-select is(:'client_sem_resp_status_1', 'encerrado', 'Status realmente muda para encerrado');
+select is((:'client_sem_resp_status_1')::text, 'encerrado'::text, 'Status realmente muda para encerrado');
 select is(:'client_sem_resp_lock_1'::int, 1, 'lock_version incrementa a cada mudança bem-sucedida');
 
 -- Ganhar uma NOVA oportunidade do mesmo contato (que só tem cliente
