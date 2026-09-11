@@ -38,6 +38,22 @@ function mapConversationRow(row: Record<string, unknown>): ConversationListItem 
 
 const PAGE_SIZE = 20;
 
+/**
+ * Achado da revisão pré-merge: a versão anterior tratava erro de consulta
+ * e "zero conversas de verdade" como a MESMA coisa — devolvia
+ * `{items: [], total: 0}` nos dois casos. A Central de Conversas mostrava
+ * "nenhuma conversa ainda" mesmo quando a busca tinha falhado de verdade.
+ * Mesmo espírito de ConversationMessagesLoadError/ActivitiesLoadError (A6):
+ * erro de carregamento sobe puro até error.tsx da rota, nunca vira lista
+ * vazia disfarçada de "sem conversas".
+ */
+export class ConversationsLoadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConversationsLoadError";
+  }
+}
+
 export async function listConversations(
   workspaceId: string,
   opts: { page?: number | undefined } = {},
@@ -50,7 +66,10 @@ export async function listConversations(
     p_page_size: PAGE_SIZE,
   });
 
-  if (error || !data || data.length === 0) {
+  if (error) {
+    throw new ConversationsLoadError(`Falha ao buscar conversas do workspace ${workspaceId}: ${error.message}`);
+  }
+  if (!data || data.length === 0) {
     return { items: [], total: 0, page, pageSize: PAGE_SIZE };
   }
 
@@ -147,14 +166,25 @@ export class ConversationMessagesLoadError extends Error {
 
 const MESSAGES_PAGE_SIZE = 30;
 
+/**
+ * Cursor composto (created_at, id) — achado da revisão pré-merge:
+ * created_at sozinho não desempata mensagens com o MESMO timestamp
+ * (possível de verdade: duas mensagens inseridas na mesma transação, ou
+ * simplesmente timestamps que colidem no milissegundo). O id garante um
+ * desempate único, sempre repassado junto com o created_at do cursor —
+ * nunca um sozinho (list_conversation_messages() rejeita a combinação
+ * incompleta com invalid_cursor).
+ */
+export type MessagesCursor = { createdAt: string; id: string };
+
 export async function listConversationMessages(
   conversationId: string,
-  opts: { before?: string | undefined; limit?: number | undefined } = {},
+  opts: { before?: MessagesCursor | undefined; limit?: number | undefined } = {},
 ): Promise<{ items: MessageListItem[]; hasMore: boolean }> {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("list_conversation_messages", {
     p_conversation_id: conversationId,
-    ...(opts.before ? { p_before: opts.before } : {}),
+    ...(opts.before ? { p_before: opts.before.createdAt, p_before_id: opts.before.id } : {}),
     p_limit: opts.limit ?? MESSAGES_PAGE_SIZE,
   });
 
@@ -204,6 +234,7 @@ export type ContactConsent = {
   channel: string;
   legalBasis: string;
   purpose: string;
+  purposeCode: string | null;
   grantedAt: string | null;
   revokedAt: string | null;
   evidenceSource: string | null;
@@ -214,7 +245,7 @@ export async function listContactConsents(contactId: string): Promise<ContactCon
   const supabase = await createServerSupabaseClient();
   const { data } = await supabase
     .from("contact_consents")
-    .select("id, channel, legal_basis, purpose, granted_at, revoked_at, evidence_source, created_at")
+    .select("id, channel, legal_basis, purpose, purpose_code, granted_at, revoked_at, evidence_source, created_at")
     .eq("contact_id", contactId)
     .order("created_at", { ascending: false });
 
@@ -223,6 +254,7 @@ export async function listContactConsents(contactId: string): Promise<ContactCon
     channel: row.channel,
     legalBasis: row.legal_basis,
     purpose: row.purpose,
+    purposeCode: row.purpose_code,
     grantedAt: row.granted_at,
     revokedAt: row.revoked_at,
     evidenceSource: row.evidence_source,
@@ -230,6 +262,44 @@ export async function listContactConsents(contactId: string): Promise<ContactCon
   }));
 }
 
+/**
+ * Vigente para o gate de envio de atendimento = mesma finalidade técnica
+ * que send_message() exige no servidor (private.contact_has_active_consent,
+ * default 'whatsapp_atendimento'). Um consentimento antigo (purposeCode
+ * null, anterior à migration que introduziu a finalidade técnica) NUNCA
+ * conta como vigente aqui — mesma regra do servidor, nunca inferida.
+ */
 export function hasActiveWhatsAppConsent(consents: ContactConsent[]): boolean {
-  return consents.some((c) => c.channel === "whatsapp" && c.grantedAt && !c.revokedAt);
+  return consents.some(
+    (c) => c.channel === "whatsapp" && c.purposeCode === "whatsapp_atendimento" && c.grantedAt && !c.revokedAt,
+  );
+}
+
+/** Formato completo devolvido por send_message() (RPC) — usado para
+ * reconciliar a UI com o que foi REALMENTE persistido (a7-conversas.md
+ * §8), nunca com um valor fabricado no cliente a partir do texto digitado. */
+export type SendMessageResult = {
+  messageId: string;
+  duplicateSubmit: boolean;
+  contentConflict: boolean;
+  message: MessageListItem;
+};
+
+export function mapSendMessageResult(row: Record<string, unknown>): SendMessageResult {
+  return {
+    messageId: row.message_id as string,
+    duplicateSubmit: row.duplicate_submit as boolean,
+    contentConflict: row.content_conflict as boolean,
+    message: {
+      id: row.message_id as string,
+      direction: row.direction as MessageDirection,
+      bodyText: row.body_text as string,
+      status: row.status as MessageStatus,
+      statusUpdatedAt: row.status_updated_at as string,
+      errorReason: (row.error_reason as string | null) ?? null,
+      sentBy: (row.sent_by as string | null) ?? null,
+      createdAt: row.created_at as string,
+      waMessageId: row.wa_message_id as string,
+    },
+  };
 }

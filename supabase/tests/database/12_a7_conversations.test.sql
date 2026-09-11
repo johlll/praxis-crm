@@ -9,7 +9,7 @@
 -- passo próprio do CI, logo depois deste arquivo.
 
 begin;
-select plan(55);
+select plan(67);
 
 -- ---------------------------------------------------------------------
 -- Fixtures: dois workspaces (isolamento), pipeline+etapa em cada (a criação
@@ -310,16 +310,33 @@ select is(
 select throws_ok(
   format($i$ select send_message(%L::uuid, 'Oi, tudo bem?', gen_random_uuid()) $i$, (:'novo_r1'::jsonb ->> 'conversation_id')),
   'P0001', 'consent_required',
-  'Envio ativo sem consentimento vigente é bloqueado'
+  'Envio ativo sem NENHUM consentimento (ausente) é bloqueado'
 );
 
+-- Finalidade INCOMPATÍVEL (a7-conversas.md §10, revisado): o consentimento
+-- EXISTE, está vigente (concedido, não revogado), canal certo — mas para
+-- uma finalidade diferente da que send_message() exige. "Existe e está
+-- vigente" nunca é suficiente sozinho; tem que ser a finalidade certa.
 select register_contact_consent(
-  (:'novo_r1'::jsonb ->> 'contact_id')::uuid, 'whatsapp', 'consentimento', 'Atendimento via WhatsApp (teste)'
+  (:'novo_r1'::jsonb ->> 'contact_id')::uuid, 'whatsapp', 'consentimento',
+  'Autorização só para campanha de marketing (teste)', null, null, 'whatsapp_marketing'
+) as consent_incompativel_id \gset
+
+select throws_ok(
+  format($i$ select send_message(%L::uuid, 'Oi, tudo bem?', gen_random_uuid()) $i$, (:'novo_r1'::jsonb ->> 'conversation_id')),
+  'P0001', 'consent_required',
+  'Consentimento vigente para finalidade INCOMPATÍVEL (marketing) continua bloqueando envio de atendimento'
+);
+
+-- Finalidade CORRETA.
+select register_contact_consent(
+  (:'novo_r1'::jsonb ->> 'contact_id')::uuid, 'whatsapp', 'consentimento',
+  'Atendimento via WhatsApp (teste)', null, null, 'whatsapp_atendimento'
 ) as consent_id \gset
 
 select lives_ok(
   format($i$ select send_message(%L::uuid, 'Oi! Recebemos sua mensagem.', gen_random_uuid()) $i$, (:'novo_r1'::jsonb ->> 'conversation_id')),
-  'Com consentimento vigente, o envio é permitido'
+  'Com consentimento vigente PARA A FINALIDADE CERTA, o envio é permitido'
 );
 
 select revoke_contact_consent(:'consent_id'::uuid);
@@ -341,7 +358,8 @@ select throws_ok(
 -- ---------------------------------------------------------------------
 
 select register_contact_consent(
-  (:'conhecido_r1'::jsonb ->> 'contact_id')::uuid, 'whatsapp', 'consentimento', 'Atendimento via WhatsApp (teste 2)'
+  (:'conhecido_r1'::jsonb ->> 'contact_id')::uuid, 'whatsapp', 'consentimento',
+  'Atendimento via WhatsApp (teste 2)', null, null, 'whatsapp_atendimento'
 ) as consent_id_2 \gset
 
 \set dedupe_fixo '77777777-7777-7777-7777-777777777777'
@@ -354,11 +372,37 @@ select is(
   'Reenvio com a mesma client_dedupe_key devolve a MESMA mensagem'
 );
 select ok((:'env1_retry'::jsonb ->> 'duplicate_submit')::boolean, 'Reenvio sinaliza duplicate_submit=true');
+select ok(
+  not (:'env1_retry'::jsonb ->> 'content_conflict')::boolean,
+  'Reenvio com o MESMO texto da primeira tentativa: content_conflict=false'
+);
+
+-- Chave imutável (a7-conversas.md §8, revisado): a MESMA client_dedupe_key,
+-- agora com um TEXTO DIFERENTE do que já foi persistido — nunca um falso
+-- sucesso. Simula "servidor grava, resposta se perde, usuário edita o
+-- texto e tenta de novo com a mesma composição".
+select send_message(
+  (:'conhecido_r1'::jsonb ->> 'conversation_id')::uuid, 'Texto diferente da primeira tentativa', :'dedupe_fixo'::uuid
+) as env1_conflito \gset
+
+select ok(
+  (:'env1_conflito'::jsonb ->> 'content_conflict')::boolean,
+  'Mesma client_dedupe_key com texto DIFERENTE do persistido: content_conflict=true'
+);
+select is(
+  (:'env1_conflito'::jsonb ->> 'message_id'), (:'env1'::jsonb ->> 'message_id'),
+  'Conflito de conteúdo devolve o id da mensagem JÁ persistida — nunca cria uma segunda mensagem'
+);
+select is(
+  (:'env1_conflito'::jsonb ->> 'body_text'), 'Primeira tentativa',
+  'Conflito de conteúdo devolve o TEXTO realmente persistido (a interface reconcilia com isto, nunca com o texto novo)'
+);
+
 reset role;
 select is(
   (select count(*)::int from public.messages where conversation_id = (:'conhecido_r1'::jsonb ->> 'conversation_id')::uuid and direction = 'outbound'),
   1,
-  'Só 1 mensagem de saída gravada, apesar do reenvio'
+  'Só 1 mensagem de saída gravada, apesar do reenvio idêntico E da tentativa de conflito de conteúdo'
 );
 
 -- ---------------------------------------------------------------------
@@ -473,7 +517,7 @@ select ok(
 -- não essa variável psql. O contato de verdade, já resolvido, é
 -- ambiguo_a_id.
 select register_contact_consent(
-  :'ambiguo_a_id'::uuid, 'whatsapp', 'consentimento', 'Atendimento via WhatsApp (paginação)'
+  :'ambiguo_a_id'::uuid, 'whatsapp', 'consentimento', 'Atendimento via WhatsApp (paginação)', null, null, 'whatsapp_atendimento'
 ) as consent_pag \gset
 
 -- Nota: psql NUNCA substitui :'var' dentro de um bloco $$...$$ (dólar-
@@ -515,8 +559,13 @@ select is(jsonb_array_length(:'items'::jsonb), 5, 'Primeira página do históric
 select ok((:'has_more')::boolean, 'has_more=true quando ainda há mensagens mais antigas');
 
 select (:'items'::jsonb -> 0 ->> 'created_at')::timestamptz as cursor_mais_antiga \gset
+select (:'items'::jsonb -> 0 ->> 'id')::uuid as cursor_mais_antiga_id \gset
 
-select * from list_conversation_messages((:'ambiguo_r1'::jsonb ->> 'conversation_id')::uuid, :'cursor_mais_antiga'::timestamptz, 100) \gset
+-- Cursor composto (created_at, id) — os dois sempre juntos; um p_before sem
+-- o p_before_id correspondente é rejeitado (invalid_cursor, ver abaixo).
+select * from list_conversation_messages(
+  (:'ambiguo_r1'::jsonb ->> 'conversation_id')::uuid, :'cursor_mais_antiga'::timestamptz, 100, :'cursor_mais_antiga_id'::uuid
+) \gset
 
 -- Total: 1 (mensagem original recebida) + 12 enviadas = 13; página 1 pegou
 -- as 5 mais recentes, sobrando 8 mais antigas (a "mais antiga de todas" é a
@@ -526,6 +575,82 @@ select ok(not (:'has_more')::boolean, 'has_more=false quando não sobra mais nad
 
 select * from list_conversation_messages((:'novo_r1'::jsonb ->> 'conversation_id')::uuid, null, 30) \gset
 select is((:'has_more')::boolean, false, 'Conversa pequena (menos que o limite pedido): has_more=false já na primeira página');
+
+select throws_ok(
+  format(
+    $i$ select list_conversation_messages(%L::uuid, %L::timestamptz, 30) $i$,
+    (:'ambiguo_r1'::jsonb ->> 'conversation_id'), :'cursor_mais_antiga'
+  ),
+  'P0001', 'invalid_cursor',
+  'p_before sem o p_before_id correspondente é rejeitado — nunca um cursor incompleto'
+);
+
+-- ---------------------------------------------------------------------
+-- 10b) Cursor composto — mensagens com o MESMO created_at (achado da
+--     revisão pré-merge: created_at sozinho não desempata) nunca são
+--     puladas nem repetidas entre páginas.
+-- ---------------------------------------------------------------------
+
+select simulate_inbound_whatsapp_message(
+  'a7-phone-um', '5511977778888', '+5511977778888', 'wamid.a7.empate.001',
+  now(), 'Mensagem para teste de empate de timestamp', 'Empate A7'
+) as empate_r1 \gset
+
+select register_contact_consent(
+  (:'empate_r1'::jsonb ->> 'contact_id')::uuid, 'whatsapp', 'consentimento',
+  'Atendimento via WhatsApp (empate)', null, null, 'whatsapp_atendimento'
+) as consent_empate \gset
+
+select send_message((:'empate_r1'::jsonb ->> 'conversation_id')::uuid, 'Empate 1', gen_random_uuid()) as empate_env1 \gset
+select send_message((:'empate_r1'::jsonb ->> 'conversation_id')::uuid, 'Empate 2', gen_random_uuid()) as empate_env2 \gset
+select send_message((:'empate_r1'::jsonb ->> 'conversation_id')::uuid, 'Empate 3', gen_random_uuid()) as empate_env3 \gset
+
+-- Força EMPATE de created_at nas 4 mensagens desta conversa (1 recebida +
+-- 3 enviadas) — reproduz duas linhas inseridas na mesma transação real (ou
+-- um timestamp colidido no milissegundo); messages é deny-all.
+reset role;
+update public.messages
+set created_at = '2026-09-11T12:00:00Z'::timestamptz
+where conversation_id = (:'empate_r1'::jsonb ->> 'conversation_id')::uuid;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+
+-- 4 mensagens, todas com o MESMO created_at, página de 2 em 2: só o id
+-- desempata quem entra em cada página.
+select * from list_conversation_messages((:'empate_r1'::jsonb ->> 'conversation_id')::uuid, null, 2) \gset
+select is(jsonb_array_length(:'items'::jsonb), 2, 'Empate de timestamp: primeira página respeita o limite pedido (2)');
+select ok((:'has_more')::boolean, 'Empate de timestamp: has_more=true (restam 2 das 4)');
+
+-- Copia o conteúdo da variável ANTES da próxima \gset sobrescrever "items".
+select :'items'::jsonb as pagina1_empate \gset
+select (:'pagina1_empate'::jsonb -> 0 ->> 'created_at')::timestamptz as empate_cursor_created_at \gset
+select (:'pagina1_empate'::jsonb -> 0 ->> 'id')::uuid as empate_cursor_id \gset
+
+select * from list_conversation_messages(
+  (:'empate_r1'::jsonb ->> 'conversation_id')::uuid, :'empate_cursor_created_at'::timestamptz, 100, :'empate_cursor_id'::uuid
+) \gset
+
+select is(jsonb_array_length(:'items'::jsonb), 2, 'Empate de timestamp: segunda página traz as 2 restantes');
+select ok(not (:'has_more')::boolean, 'Empate de timestamp: has_more=false depois da última página');
+
+select is(
+  (select count(*)::int from (
+    select elem ->> 'id' as id from jsonb_array_elements(:'pagina1_empate'::jsonb) as elem
+    union all
+    select elem ->> 'id' as id from jsonb_array_elements(:'items'::jsonb) as elem
+  ) todas_as_ocorrencias),
+  4,
+  'Empate de timestamp: as duas páginas somadas trazem exatamente as 4 mensagens — nenhuma pulada'
+);
+select is(
+  (select count(distinct id)::int from (
+    select elem ->> 'id' as id from jsonb_array_elements(:'pagina1_empate'::jsonb) as elem
+    union all
+    select elem ->> 'id' as id from jsonb_array_elements(:'items'::jsonb) as elem
+  ) todas_as_ocorrencias),
+  4,
+  'Empate de timestamp: as 4 mensagens são todas DISTINTAS entre as duas páginas — nenhuma repetida'
+);
 
 select * from finish();
 rollback;

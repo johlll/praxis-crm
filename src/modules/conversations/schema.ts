@@ -26,6 +26,12 @@ export const CONSENT_LEGAL_BASIS = [
 
 export const MESSAGE_STATUS_EVENTS = ["sent", "delivered", "read", "failed"] as const;
 
+// Vocabulário fechado do gate de consentimento (a7-conversas.md §10,
+// revisado) — só "whatsapp_atendimento" tem um fluxo de envio nesta fase;
+// "whatsapp_marketing" existe no banco mas sem tela própria ainda (sem
+// campanha para autorizar), por isso não aparece como opção aqui.
+export const CONSENT_PURPOSE_WHATSAPP_ATENDIMENTO = "whatsapp_atendimento" as const;
+
 export const createWhatsAppChannelSchema = z.object({
   workspaceId: uuidSchema,
   label: z.string().trim().min(1, "Informe um nome para o canal.").max(120),
@@ -73,6 +79,11 @@ export const registerContactConsentSchema = z.object({
   purpose: z.string().trim().min(1, "Informe a finalidade.").max(300),
   evidenceSource: z.string().trim().max(300).optional().or(z.literal("")),
   acceptedText: z.string().trim().max(2000).optional().or(z.literal("")),
+  // Exigido pelo servidor quando channel="whatsapp" (único canal com gate
+  // de envio nesta fase) — a tela sempre envia
+  // CONSENT_PURPOSE_WHATSAPP_ATENDIMENTO num campo oculto (ver
+  // consent-panel.tsx); nenhuma tela oferece "whatsapp_marketing" ainda.
+  purposeCode: z.enum(["whatsapp_atendimento", "whatsapp_marketing"]).optional(),
 });
 
 export const revokeContactConsentSchema = z.object({ consentId: uuidSchema });

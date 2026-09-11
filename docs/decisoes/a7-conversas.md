@@ -154,6 +154,23 @@ composição — persistido no componente até a Server Action confirmar sucesso
 falha de rede) nunca duplique a mensagem já aceita, mesmo que o `wa_id` de
 destino e o texto sejam idênticos.
 
+**Revisão pré-merge — chave imutável, não só "idempotente":** a versão
+original só conferia se a `client_dedupe_key` já existia; se existisse,
+devolvia a mensagem já gravada sem comparar o texto. Isso permitia um falso
+sucesso: reenviar a MESMA chave com um texto DIFERENTE (ex.: usuário editou
+a mensagem entre duas tentativas, sem perceber que a primeira já tinha
+saído) devolvia "sucesso", e a interface mostrava o texto novo como se
+tivesse sido enviado — quando na verdade o servidor nunca gravou esse texto.
+`send_message()` agora compara `body_text` com o que já está persistido sob
+a mesma chave: texto igual → mesmo comportamento de antes (idempotente,
+devolve o registro existente); texto diferente → `content_conflict: true`,
+devolvendo o registro REALMENTE persistido (texto, status, tudo) em vez de
+gravar o texto novo. A interface (`sendMessageAction`/`ConversationThread`)
+trata isso como erro tratado, reconcilia a bolha da conversa com o que veio
+do servidor (nunca com o texto local do composer) e descarta a chave antiga
+— ela já está permanentemente associada ao conteúdo original, então a
+próxima tentativa (do texto editado) precisa de uma chave nova.
+
 ## 9. Estados de mensagem — nunca regride, evento ≠ mensagem
 
 `messages.status` é PROJEÇÃO (o estado atual); `message_status_events` é o
@@ -170,26 +187,74 @@ o texto/id da mensagem original — só `status`/`status_updated_at`/
 `send_message()` (único caminho de envio ativo, usado pelo simulador E que
 a conexão real vai reaproveitar sem modificação) exige, antes de gravar
 qualquer coisa: `contact_consents` com `channel='whatsapp'`,
-`granted_at is not null`, `revoked_at is null`, para o contato da conversa.
-Ausência de registro = sem consentimento (nunca presumido). Criar contato a
-partir de mensagem recebida (§6) NUNCA grava `contact_consents` — receber
-não é autorização para enviar.
+`granted_at is not null`, `revoked_at is null`, **e finalidade técnica
+`purpose_code = 'whatsapp_atendimento'`** (revisado — ver abaixo), para o
+contato da conversa. Ausência de registro = sem consentimento (nunca
+presumido). Criar contato a partir de mensagem recebida (§6) NUNCA grava
+`contact_consents` — receber não é autorização para enviar.
 
-**Decisão de produto sem correspondência exata no plano** (`purpose` é texto
-livre no schema da A3, sem vocabulário fechado): o gate técnico verifica
-canal + vigência, não um texto de finalidade específico — `purpose` é
-gravado e exibido para fins de auditoria/LGPD (qual foi a finalidade
-autorizada), mas não further restringe quais envios são permitidos nesta
-fase. Uma taxonomia fechada de finalidades fica para quando o escritório
-definir isso de verdade (marco B/C) — sinalizado no handoff como decisão
-tomada, não como lacuna do código.
+**Revisão pré-merge — finalidade passa a ser verificada, não só documentada
+(20260911150000_a7_review_hardening.sql):** a decisão original ("`purpose`
+é texto livre, o gate só olha canal+vigência") não foi aprovada — o pedido
+original já dizia "verificando finalidade, canal e situação vigente", e a
+implementação inicial só cobria as duas últimas. Correção: `contact_consents`
+ganhou `purpose_code`, um vocabulário FECHADO
+(`public.consent_purpose`: `'whatsapp_atendimento' | 'whatsapp_marketing'`)
+separado do texto livre `purpose` (que continua existindo, inalterado —
+evidência/auditoria de qual finalidade foi descrita ao contato, nunca usado
+para decidir acesso). O gate (`private.contact_has_active_consent`) agora
+exige `purpose_code = 'whatsapp_atendimento'` — a única finalidade com um
+fluxo de envio ativo nesta fase. `'whatsapp_marketing'` existe no vocabulário
+sem tela própria (nenhuma campanha para autorizar ainda); serve para que
+"finalidade incompatível" seja um cenário real e testável (RPC direto,
+`register_contact_consent(..., p_purpose_code => 'whatsapp_marketing')`) —
+um contato pode legitimamente ter consentido para atendimento e não para
+campanha, e o gate precisa distinguir isso de verdade, não só documentar a
+distinção.
+
+**Sem conversão automática de consentimentos antigos**, conforme pedido
+explicitamente: `purpose_code` nasce `NULL` para todo registro anterior a
+esta migration (e para qualquer canal sem gate de envio ainda) — nunca
+inferido do texto livre de `purpose`. Um `NULL` nunca bate com a igualdade
+exigida pelo gate, então um consentimento "antigo" (mesmo que vigente pelos
+critérios de canal+data) passa a bloquear envio até alguém registrar um
+consentimento novo já com a finalidade técnica certa. É o comportamento
+correto e pedido, mesmo custando a reautorização de consentimentos
+pré-existentes.
 
 ## 11. Paginação do histórico — cursor incremental, nunca "carregar tudo"
 
 Diferente do problema corrigido na A6 (Agenda pedia a SEMANA inteira de uma
 vez), o histórico de uma conversa é naturalmente incremental: a tela carrega
-a página mais recente e paginação "carregar mais antigas" busca por cursor
-(`created_at` da mensagem mais antiga já carregada). Nunca finge que uma
-falha de carregamento é "conversa vazia", nem que uma página que falhou é
-"não há mais mensagens" — erro de rede em qualquer página mostra estado de
-erro tratado com nova tentativa, preservando o que já carregou.
+a página mais recente e paginação "carregar mais antigas" busca por cursor.
+Nunca finge que uma falha de carregamento é "conversa vazia", nem que uma
+página que falhou é "não há mais mensagens" — erro de rede em qualquer
+página mostra estado de erro tratado com nova tentativa, preservando o que
+já carregou.
+
+**Revisão pré-merge — cursor composto `(created_at, id)`:** a versão
+original usava só `created_at` como cursor e critério de desempate.
+`created_at` sozinho não garante ordem total — duas mensagens podem ter o
+MESMO timestamp de verdade (ex.: duas linhas na mesma transação, ou
+colisão no milissegundo), e nesse caso o corte `created_at < cursor` tanto
+podia pular uma mensagem quanto repeti-la entre duas páginas, dependendo de
+qual lado do empate cada uma caía. Corrigido: o cursor (e a ordenação, e o
+corte de página) usam o par `(created_at, id)` como uma comparação de linha
+— `id` (uuid) desempata de forma determinística e única qualquer
+`created_at` repetido. `list_conversation_messages()` exige os dois juntos
+(`p_before` + `p_before_id`); um sozinho é rejeitado (`invalid_cursor`)
+antes de produzir um resultado incoerente. `ConversationThread`/
+`loadOlderMessagesAction` sempre repassam o par vindo da mensagem mais
+antiga já carregada — nunca só o timestamp.
+
+## 12. Erro de carregamento da Central de Conversas — revisão pré-merge
+
+`listConversations()` tratava erro de consulta (RPC falhou) e "workspace sem
+nenhuma conversa de verdade" como a MESMA coisa — os dois casos devolviam
+`{items: [], total: 0}`, e a tela mostrava "nenhuma conversa ainda" mesmo
+quando a busca tinha falhado. Corrigido com o mesmo padrão já usado em
+`ActivitiesLoadError` (A6) e `ConversationMessagesLoadError` (A7 original):
+`listConversations()` agora joga `ConversationsLoadError` quando `error` vem
+preenchido, e `src/app/(app)/conversas/error.tsx` (novo) mostra erro tratado
+com "tentar novamente" — nunca mais uma falha de rede disfarçada de "sem
+conversas".

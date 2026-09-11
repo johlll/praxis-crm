@@ -49,6 +49,33 @@ describe("listConversationMessages", () => {
     expect(result.items[0]?.id).toBe("msg-1");
   });
 
+  /**
+   * Achado da revisão pré-merge: created_at sozinho não desempata mensagens
+   * com o MESMO timestamp — o cursor precisa ser composto (created_at, id).
+   * Este teste garante que o wiring do lado do cliente sempre manda os DOIS
+   * juntos (nunca um cursor incompleto); a matemática real do desempate
+   * (duas mensagens empatadas no timestamp aparecendo cada uma exatamente
+   * uma vez entre páginas) é validada no banco de verdade — pgTAP,
+   * 12_a7_conversations.test.sql, seção de paginação.
+   */
+  it("repassa created_at E id do cursor juntos (p_before/p_before_id) — nunca um cursor incompleto", async () => {
+    rpcMock.mockReset();
+    rpcMock.mockImplementation(async () => ({ data: [{ items: [], has_more: false }], error: null }));
+
+    await listConversationMessages("conv-1", {
+      before: { createdAt: "2026-09-11T10:05:00.000Z", id: "msg-5" },
+      limit: 5,
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith(
+      "list_conversation_messages",
+      expect.objectContaining({
+        p_before: "2026-09-11T10:05:00.000Z",
+        p_before_id: "msg-5",
+      }),
+    );
+  });
+
   it("joga ConversationMessagesLoadError quando a busca falha — nunca devolve lista vazia disfarçada de 'sem mensagens'", async () => {
     rpcMock.mockReset();
     rpcMock.mockImplementation(async () => ({
@@ -74,7 +101,7 @@ describe("loadOlderMessagesAction", () => {
     rpcMock.mockReset();
     rpcMock.mockImplementation(async () => ({ data: null, error: { message: "falha simulada" } }));
 
-    const result = await loadOlderMessagesAction("conv-1", "2026-09-11T10:00:00.000Z");
+    const result = await loadOlderMessagesAction("conv-1", { createdAt: "2026-09-11T10:00:00.000Z", id: "msg-1" });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -89,7 +116,7 @@ describe("loadOlderMessagesAction", () => {
       error: null,
     }));
 
-    const result = await loadOlderMessagesAction("conv-1", "2026-09-11T10:02:00.000Z");
+    const result = await loadOlderMessagesAction("conv-1", { createdAt: "2026-09-11T10:02:00.000Z", id: "msg-2" });
 
     expect(result.ok).toBe(true);
     if (result.ok) {

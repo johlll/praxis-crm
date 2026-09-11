@@ -1,8 +1,16 @@
 # A7 — Conversas + simulador de WhatsApp — Handoff
 
-**Status: implementada, CI verde.** Branch `feat/a7-conversations-simulator`,
+**Status: implementada, revisada, corrigida.** Branch
+`feat/a7-conversations-simulator`,
 [PR #8](https://github.com/johlll/praxis-crm/pull/8). **Não mesclada** —
 aguardando autorização explícita, conforme instruído.
+
+Esta revisão (segunda rodada, pré-merge) corrigiu 4 achados apontados na
+revisão de código: gate de consentimento sem finalidade técnica, paginação
+do histórico sem desempate único, reenvio sem checagem de conteúdo
+imutável, e erro de consulta da Central de Conversas disfarçado de lista
+vazia. Detalhes em §6-bis abaixo; o restante deste documento (§1-5, §9-10)
+foi atualizado in-line para refletir o estado final.
 
 ## 1. Escopo
 
@@ -33,14 +41,12 @@ mensagem, regra de gate de consentimento) está em
 [`docs/decisoes/a7-conversas.md`](docs/decisoes/a7-conversas.md) — escrito
 ANTES da implementação, igual às fases anteriores.
 
-**Decisão de produto sem correspondência exata no pedido**, sinalizada
-explicitamente aqui (não é lacuna, é escolha documentada — ver §10 do
-documento de decisões): o gate de consentimento verifica canal (`whatsapp`)
-+ vigência (concedido, não revogado); `purpose` é texto livre gravado para
-auditoria/LGPD, mas não filtra tecnicamente o envio — o schema da A3 nunca
-definiu um vocabulário fechado de finalidades, e inventar um aqui seria
-decisão de negócio fora do meu alçada. Revisável quando o escritório
-definir a taxonomia real.
+**Revisado (§6-bis):** a decisão original de que o gate de consentimento
+verificava só canal+vigência (sem finalidade técnica) não foi aprovada.
+Corrigida — o gate agora exige também `purpose_code = 'whatsapp_atendimento'`
+(vocabulário fechado, novo), além de canal e vigência. `purpose` continua
+existindo como texto livre (evidência/auditoria, inalterado). Ver §10 do
+documento de decisões para o raciocínio completo.
 
 ## 3. Modelo de dados
 
@@ -64,6 +70,19 @@ definir a taxonomia real.
 - `register_contact_consent()`/`revoke_contact_consent()` — completam o
   caminho de escrita de `contact_consents` que a A3 desenhou (schema+RLS)
   mas não expôs ainda.
+- `contact_consents.purpose_code` (novo, §6-bis) — vocabulário fechado
+  (`public.consent_purpose`: `whatsapp_atendimento`/`whatsapp_marketing`),
+  nasce `NULL` em todo registro anterior à migration (sem conversão
+  automática); o gate de envio exige `whatsapp_atendimento` explicitamente.
+
+**Migration desta revisão:** `20260911150000_a7_review_hardening.sql` (nova
+— nenhuma das 7 anteriores foi reescrita), com `create or replace function`
+em `private.contact_has_active_consent`/`public.send_message`/
+`public.register_contact_consent`/`public.list_conversation_messages` —
+sempre acrescentando parâmetro novo ao FINAL da lista, sempre com valor
+padrão (mesmo padrão de `20260909100500_a4_review_hardening.sql`), o que
+preserva a mesma identidade de função e os grants já concedidos, sem
+precisar de `drop`+`create` nem de novos `grant`.
 
 ## 4. Permissões
 
@@ -84,25 +103,40 @@ usado em atividades/oportunidades (`private.lead_accessible_to_role`, A4).
 
 ## 5. Testes
 
-**Unitários** (`npm test`, 132/132 passando):
+**Unitários** (`npm test`, 139/139 passando — 132 originais + 7 desta revisão):
 - `whatsapp-normalize-event.test.ts` — normalizador contra o formato real
   documentado da Cloud API (não só contra o que o simulador produz),
   incluindo batch de várias mensagens/status num único payload.
 - `conversation-messages-pagination.test.ts` — histórico paginado por
   cursor nunca vira "conversa vazia" numa falha (`ConversationMessagesLoadError`),
-  distinto de uma conversa genuinamente sem mensagens.
+  distinto de uma conversa genuinamente sem mensagens; (revisão) cursor
+  composto `(created_at, id)` sempre repassado junto, nunca incompleto.
+- `conversations-list-error.test.ts` (novo, §6-bis) —
+  `listConversations()` joga `ConversationsLoadError` numa falha de
+  consulta, distinto de "workspace genuinamente sem conversas".
+- `send-message-result-mapping.test.ts` (novo, §6-bis) —
+  `mapSendMessageResult()` nunca fabrica texto/status: reenvio idêntico
+  devolve o registro persistido (inclusive se o status avançou entre as
+  duas tentativas); reenvio com conteúdo diferente sinaliza
+  `content_conflict` e devolve o texto REALMENTE persistido.
 
-**pgTAP** (`supabase/tests/database/12_a7_conversations.test.sql`, 55
-asserções, roda no CI via `npm run test:db`): isolamento entre workspaces;
-acesso negado via SELECT direto nas tabelas deny-all; simulador exige
-owner/admin; primeiro contato cria contato+lead+oportunidade+atividade uma
-única vez (sequencial); contato conhecido com lead+oportunidade ativa
-auto-vincula sem duplicar; telefone ambíguo não escolhe e preserva a
-mensagem; `resolve_conversation_link()`; consentimento bloqueia/libera/
-revoga/bloqueia de novo; reenvio de saída idempotente; estados de mensagem
-nunca regridem (delivered tardio depois de read, failed depois de read);
-alcance por papel (`get_conversation()` nulo para quem não deveria ver);
-paginação do histórico com cursor.
+**pgTAP** (`supabase/tests/database/12_a7_conversations.test.sql`, 67
+asserções — 55 originais + 12 desta revisão, roda no CI via
+`npm run test:db`): isolamento entre workspaces; acesso negado via SELECT
+direto nas tabelas deny-all; simulador exige owner/admin; primeiro contato
+cria contato+lead+oportunidade+atividade uma única vez (sequencial); contato
+conhecido com lead+oportunidade ativa auto-vincula sem duplicar; telefone
+ambíguo não escolhe e preserva a mensagem; `resolve_conversation_link()`;
+consentimento ausente/revogado bloqueia, finalidade INCOMPATÍVEL (existe e
+está vigente, mas para outra finalidade) continua bloqueando, finalidade
+CORRETA libera (§6-bis); reenvio de saída com o MESMO texto é idempotente,
+reenvio com TEXTO DIFERENTE sob a mesma chave gera `content_conflict` e
+nunca cria uma segunda mensagem (§6-bis); estados de mensagem nunca
+regridem (delivered tardio depois de read, failed depois de read); alcance
+por papel (`get_conversation()` nulo para quem não deveria ver); paginação
+do histórico com cursor incompleto rejeitado (`invalid_cursor`) e mensagens
+com timestamp EMPATADO aparecendo cada uma exatamente uma vez entre duas
+páginas (§6-bis).
 
 **Concorrência real** (`scripts/a7-concurrency-check.mjs`, passo próprio do
 CI, depois do pgTAP): pgTAP roda numa única conexão por arquivo — não prova
@@ -146,6 +180,53 @@ lead/oportunidade ativa → telefone ambíguo → `resolve_conversation_link` �
 consentimento bloqueia/libera → reenvio idempotente → status nunca
 regride) validada com sucesso contra dado real do workspace de QA
 ("Escritório QA Praxis"), sempre dentro de transações revertidas.
+
+## 6-bis. Revisão pré-merge — 4 achados corrigidos
+
+Revisão de código no PR #8 apontou 4 pontos antes de autorizar o merge.
+Raciocínio completo de cada um em `docs/decisoes/a7-conversas.md`
+(§8/§10/§11/§12, marcados "revisão pré-merge"); resumo do que mudou:
+
+1. **Consentimento sem finalidade técnica.** O gate original
+   (`private.contact_has_active_consent`) só verificava canal+vigência —
+   o pedido original já pedia "verificando finalidade, canal e situação
+   vigente", e a finalidade tinha ficado de fora. Corrigido:
+   `contact_consents.purpose_code` (vocabulário fechado, novo — ver §3)
+   passa a ser exigido pelo gate (`= 'whatsapp_atendimento'`), sem
+   conversão automática de registros antigos (nascem `NULL`, nunca contam
+   como vigentes). `purpose` (texto livre) continua existindo, inalterado,
+   como evidência/auditoria.
+2. **Paginação sem desempate único.** `list_conversation_messages()` usava
+   só `created_at` como cursor — mensagens com o MESMO timestamp podiam
+   ser puladas ou repetidas entre páginas. Corrigido: cursor composto
+   `(created_at, id)`, `p_before`/`p_before_id` sempre exigidos juntos
+   (`invalid_cursor` se só um vier).
+3. **Reenvio sem checagem de conteúdo.** `send_message()` tratava
+   `client_dedupe_key` como puramente idempotente — reenviar a MESMA chave
+   com um TEXTO DIFERENTE do já persistido devolvia "sucesso" sem
+   comparar. Corrigido: a chave agora é imutável — texto igual continua
+   idempotente; texto diferente devolve `content_conflict: true` com o
+   registro REALMENTE persistido (nunca cria uma segunda mensagem, nunca
+   finge que o texto novo foi enviado). `ConversationThread`/`Composer`
+   reconciliam a bolha da conversa com o que o servidor devolve (nunca
+   fabricam a partir do texto local do textarea) e descartam a
+   `client_dedupe_key` antiga após um conflito.
+4. **Erro da Central de Conversas virava lista vazia.** `listConversations()`
+   devolvia `{items: [], total: 0}` tanto numa falha de consulta quanto num
+   workspace genuinamente sem conversas. Corrigido com o mesmo padrão de
+   `ActivitiesLoadError`/`ConversationMessagesLoadError`: joga
+   `ConversationsLoadError`, capturado pelo novo
+   `src/app/(app)/conversas/error.tsx` (erro tratado com "tentar
+   novamente").
+
+Migration nova: `20260911150000_a7_review_hardening.sql` (nenhuma das 7
+migrations já aplicadas foi reescrita). Testes novos: 12 asserções pgTAP
+(finalidade incompatível/ausente/correta; conflito de conteúdo no reenvio;
+cursor incompleto rejeitado; empate de timestamp com 2 páginas cobrindo as
+4 mensagens sem pular nem repetir) + 4 arquivos/casos unitários novos (ver
+§5). Nenhum dos 4 achados exigiu tocar em RLS, permissões ou nas regras de
+idempotência de entrada (§8 do doc de decisões) — todas continuam como
+estavam, já validadas.
 
 ## 7. CI
 
@@ -225,7 +306,10 @@ Vercel primeiro.
   usa a lista de oportunidades abertas do lead, buscada na página — não há
   `link_candidate_opportunity_ids` persistido na conversa (diferente de
   contato/lead, que persistem candidatos). Documentado, não escondido.
-- `purpose` do consentimento é texto livre (ver §2) — sem taxonomia fechada.
+- `purpose_code` (finalidade técnica, §6-bis) cobre hoje só `whatsapp`
+  (único canal com fluxo de envio ativo nesta fase) — email/telefone/
+  presencial continuam sem gate de finalidade, porque não têm envio ainda.
+  `purpose` (texto livre) continua existindo ao lado, sem mudança.
 - Sem upload de mídia (só texto) — Cloud API real suporta mais tipos;
   fora do pedido desta fase.
 
@@ -233,6 +317,7 @@ Vercel primeiro.
 
 - Nenhuma conexão real com Meta/números reais/IA/serviço de envio.
 - A8 não foi iniciada.
-- Nenhuma migration já aplicada por outro ambiente foi editada — todas as
-  7 migrations da A7 são novas.
+- Nenhuma migration já aplicada por outro ambiente foi editada — as 8
+  migrations da A7 (7 originais + `20260911150000_a7_review_hardening.sql`
+  desta revisão) são todas novas.
 - Nenhum merge foi feito; nenhum commit direto em `main`.

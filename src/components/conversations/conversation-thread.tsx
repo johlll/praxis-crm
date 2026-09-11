@@ -58,7 +58,7 @@ export function ConversationThread({
     if (!oldest) return;
     setLoadError(null);
     startLoadOlder(async () => {
-      const result = await loadOlderMessagesAction(conversationId, oldest.createdAt);
+      const result = await loadOlderMessagesAction(conversationId, { createdAt: oldest.createdAt, id: oldest.id });
       if (!result.ok) {
         setLoadError(result.error);
         return;
@@ -68,8 +68,17 @@ export function ConversationThread({
     });
   }
 
+  /**
+   * Reconcilia com o registro REALMENTE persistido (id/texto/status vêm do
+   * servidor, nunca fabricados a partir do texto local digitado —
+   * a7-conversas.md §8). Se o id já está na lista (reenvio da mesma
+   * client_dedupe_key, ex.: resposta perdida e usuário tentou de novo),
+   * atualiza a bolha existente em vez de duplicar.
+   */
   function handleSent(message: MessageListItem) {
-    setItems((prev) => [...prev, message]);
+    setItems((prev) =>
+      prev.some((m) => m.id === message.id) ? prev.map((m) => (m.id === message.id ? message : m)) : [...prev, message],
+    );
   }
 
   function handleStatusSimulated(messageId: string, status: MessageListItem["status"]) {
@@ -162,23 +171,28 @@ function Composer({
     setError(null);
     startTransition(async () => {
       const result = await sendMessageAction(conversationId, bodyText, dedupeKey);
-      if (!result.ok || !result.messageId) {
-        setError(result.error ?? "Não foi possível enviar.");
+
+      if (result.ok) {
+        // message vem do servidor (texto/status/id realmente persistidos) —
+        // nunca fabricado localmente a partir do que estava no textarea.
+        onSent(result.message);
+        setText("");
+        setDedupeKey(crypto.randomUUID());
         return;
       }
-      onSent({
-        id: result.messageId,
-        direction: "outbound",
-        bodyText,
-        status: "sent",
-        statusUpdatedAt: new Date().toISOString(),
-        errorReason: null,
-        sentBy: null,
-        createdAt: new Date().toISOString(),
-        waMessageId: "",
-      });
-      setText("");
-      setDedupeKey(crypto.randomUUID());
+
+      setError(result.error);
+
+      if (result.conflict && result.persisted) {
+        // A MESMA client_dedupe_key já tinha sido usada com outro texto —
+        // nunca um falso sucesso. Mostra na conversa o que foi REALMENTE
+        // enviado da vez anterior e queima a chave antiga: a próxima
+        // tentativa (com o texto atual, editado) precisa de uma chave nova,
+        // porque a antiga já está permanentemente associada a outro
+        // conteúdo (a7-conversas.md §8).
+        onSent(result.persisted);
+        setDedupeKey(crypto.randomUUID());
+      }
     });
   }
 

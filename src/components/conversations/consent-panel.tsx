@@ -25,7 +25,11 @@ function formatDate(iso: string | null): string {
 
 export function ConsentPanel({ contactId, consents, canManage }: { contactId: string; consents: ContactConsent[]; canManage: boolean }) {
   const whatsappConsents = consents.filter((c) => c.channel === "whatsapp");
-  const active = whatsappConsents.find((c) => c.grantedAt && !c.revokedAt);
+  // Mesma finalidade técnica que o gate de envio no servidor exige
+  // (private.contact_has_active_consent) — um consentimento antigo, sem
+  // purposeCode, nunca conta como vigente aqui (achado da revisão: a tela
+  // não pode mostrar "vigente" para algo que o servidor bloquearia).
+  const active = whatsappConsents.find((c) => c.purposeCode === "whatsapp_atendimento" && c.grantedAt && !c.revokedAt);
 
   return (
     <section className="rounded-card border border-border bg-surface p-4">
@@ -97,6 +101,11 @@ function RegisterConsentForm({ contactId }: { contactId: string }) {
     <form action={formAction} className="flex flex-col gap-2 border-t border-border pt-3">
       <input type="hidden" name="contactId" value={contactId} />
       <input type="hidden" name="channel" value="whatsapp" />
+      {/* Única finalidade técnica com fluxo de envio nesta fase — o
+          servidor exige purposeCode para channel="whatsapp" (a7-
+          conversas.md §10, revisado); sem seletor na tela porque não há
+          outra finalidade utilizável ainda (ver schema.ts). */}
+      <input type="hidden" name="purposeCode" value="whatsapp_atendimento" />
       <div className="grid grid-cols-2 gap-2">
         <FormField>
           <FormLabel htmlFor="consent-legal-basis">Base legal</FormLabel>

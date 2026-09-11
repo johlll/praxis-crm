@@ -7,7 +7,7 @@ import { requirePermission, AuthzError, type Permission } from "@/server/authz/p
 import { toUserMessage } from "@/lib/errors";
 import { normalizeWebhookPayload } from "@/server/whatsapp/normalize-event";
 import { buildSimulatedInboundMessage, buildSimulatedStatusEvent } from "@/server/whatsapp/simulator";
-import { listConversationMessages, type MessageListItem } from "./queries";
+import { listConversationMessages, mapSendMessageResult, type MessageListItem, type MessagesCursor } from "./queries";
 import {
   createWhatsAppChannelSchema,
   simulateInboundMessageSchema,
@@ -188,11 +188,15 @@ export async function simulateStatusEventAction(
 // Envio (mesmo caminho, simulado ou real futuro) e vínculo/consentimento.
 // ---------------------------------------------------------------------
 
+export type SendMessageActionResult =
+  | { ok: true; message: MessageListItem; duplicateSubmit: boolean }
+  | { ok: false; error: string; conflict?: true; persisted?: MessageListItem };
+
 export async function sendMessageAction(
   conversationId: string,
   bodyText: string,
   clientDedupeKey: string,
-): Promise<ActionState & { messageId?: string }> {
+): Promise<SendMessageActionResult> {
   const guard = await requirePermissionSafe("conversation.send");
   if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
 
@@ -210,8 +214,24 @@ export async function sendMessageAction(
 
   if (error || !data) return { ok: false, error: toUserMessage(error) };
 
+  const result = mapSendMessageResult(data as unknown as Record<string, unknown>);
+
+  if (result.contentConflict) {
+    // A MESMA client_dedupe_key voltou a ser usada com um texto diferente
+    // do que já está gravado — nunca um falso sucesso: devolve o registro
+    // REALMENTE persistido (texto, status) para a interface reconciliar em
+    // vez de fingir que o texto novo foi enviado (a7-conversas.md §8).
+    revalidateConversationRoutes(parsed.data.conversationId);
+    return {
+      ok: false,
+      error: "Esta tentativa de envio já tinha sido registrada com outro texto — a mensagem realmente enviada foi recuperada.",
+      conflict: true,
+      persisted: result.message,
+    };
+  }
+
   revalidateConversationRoutes(parsed.data.conversationId);
-  return { ok: true, messageId: (data as { message_id: string }).message_id };
+  return { ok: true, message: result.message, duplicateSubmit: result.duplicateSubmit };
 }
 
 export async function resolveConversationLinkAction(
@@ -256,6 +276,7 @@ export async function registerContactConsentAction(
     purpose: formData.get("purpose"),
     evidenceSource: formData.get("evidenceSource") ?? "",
     acceptedText: formData.get("acceptedText") ?? "",
+    purposeCode: (formData.get("purposeCode") as string | null) || undefined,
   });
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
@@ -269,6 +290,7 @@ export async function registerContactConsentAction(
     p_purpose: parsed.data.purpose,
     ...(parsed.data.evidenceSource ? { p_evidence_source: parsed.data.evidenceSource } : {}),
     ...(parsed.data.acceptedText ? { p_accepted_text: parsed.data.acceptedText } : {}),
+    ...(parsed.data.purposeCode ? { p_purpose_code: parsed.data.purposeCode } : {}),
   });
 
   if (error) return { ok: false, error: toUserMessage(error) };
@@ -287,7 +309,7 @@ export async function registerContactConsentAction(
  */
 export async function loadOlderMessagesAction(
   conversationId: string,
-  before: string,
+  before: MessagesCursor,
 ): Promise<{ ok: true; items: MessageListItem[]; hasMore: boolean } | { ok: false; error: string }> {
   try {
     const result = await listConversationMessages(conversationId, { before });

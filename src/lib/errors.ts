@@ -79,8 +79,10 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   lead_required_for_opportunity: "Selecione o lead antes de escolher a oportunidade.",
   opportunity_lead_mismatch: "Esta oportunidade não pertence ao lead selecionado.",
   purpose_required: "Informe a finalidade do consentimento.",
+  purpose_code_required: "Selecione a finalidade técnica do consentimento.",
   consent_not_found: "Registro de consentimento não encontrado.",
   consent_already_revoked: "Este consentimento já foi revogado.",
+  invalid_cursor: "Não foi possível continuar a paginação — recarregue a conversa e tente de novo.",
 };
 
 /** update_lead_basic_fields()/assign_lead()/set_lead_status()/set_lead_value()

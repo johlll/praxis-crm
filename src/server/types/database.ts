@@ -296,6 +296,7 @@ export type Database = {
           id: string
           legal_basis: Database["public"]["Enums"]["consent_legal_basis"]
           purpose: string
+          purpose_code: Database["public"]["Enums"]["consent_purpose"] | null
           revoked_at: string | null
           updated_at: string
           workspace_id: string
@@ -311,6 +312,7 @@ export type Database = {
           id?: string
           legal_basis: Database["public"]["Enums"]["consent_legal_basis"]
           purpose: string
+          purpose_code?: Database["public"]["Enums"]["consent_purpose"] | null
           revoked_at?: string | null
           updated_at?: string
           workspace_id: string
@@ -326,6 +328,7 @@ export type Database = {
           id?: string
           legal_basis?: Database["public"]["Enums"]["consent_legal_basis"]
           purpose?: string
+          purpose_code?: Database["public"]["Enums"]["consent_purpose"] | null
           revoked_at?: string | null
           updated_at?: string
           workspace_id?: string
@@ -2103,7 +2106,12 @@ export type Database = {
         }[]
       }
       list_conversation_messages: {
-        Args: { p_before?: string; p_conversation_id: string; p_limit?: number }
+        Args: {
+          p_before?: string
+          p_before_id?: string
+          p_conversation_id: string
+          p_limit?: number
+        }
         Returns: {
           has_more: boolean
           items: Json
@@ -2226,6 +2234,7 @@ export type Database = {
           p_evidence_source?: string
           p_legal_basis: Database["public"]["Enums"]["consent_legal_basis"]
           p_purpose: string
+          p_purpose_code?: Database["public"]["Enums"]["consent_purpose"]
         }
         Returns: string
       }
@@ -2570,6 +2579,7 @@ export type Database = {
         | "execucao_de_contrato"
         | "obrigacao_legal"
         | "outro"
+      consent_purpose: "whatsapp_atendimento" | "whatsapp_marketing"
       contact_channel: "whatsapp" | "email" | "telefone" | "presencial"
       contact_type: "pf" | "pj"
       duplicate_status: "pending" | "merged" | "dismissed"
@@ -2730,6 +2740,7 @@ export const Constants = {
         "obrigacao_legal",
         "outro",
       ],
+      consent_purpose: ["whatsapp_atendimento", "whatsapp_marketing"],
       contact_channel: ["whatsapp", "email", "telefone", "presencial"],
       contact_type: ["pf", "pj"],
       duplicate_status: ["pending", "merged", "dismissed"],
