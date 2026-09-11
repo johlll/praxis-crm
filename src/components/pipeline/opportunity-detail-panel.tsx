@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import type { OpportunityDetail } from "@/modules/opportunities/queries";
@@ -87,6 +88,16 @@ export function OpportunityDetailPanel({
             <div className="col-span-2">
               <dt className="text-meta text-text-tertiary">Motivo da perda</dt>
               <dd className="text-text">{opportunity.lostReasonLabel}</dd>
+            </div>
+          ) : null}
+          {opportunity.status === "won" && opportunity.clientId ? (
+            <div className="col-span-2">
+              <dt className="text-meta text-text-tertiary">Cliente</dt>
+              <dd className="text-text">
+                <Link href={`/clientes/${opportunity.clientId}`} className="text-primary hover:underline">
+                  Ver cliente
+                </Link>
+              </dd>
             </div>
           ) : null}
         </dl>

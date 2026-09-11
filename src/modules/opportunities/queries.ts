@@ -149,6 +149,9 @@ export type OpportunityDetail = OpportunityCard & {
   stageId: string;
   stageName: string;
   status: OpportunityStatus;
+  /** Só não-nulo quando status === 'won' — o cliente criado/vinculado ao
+   * ganhar (A8). client_handoffs_one_per_opportunity garante no máximo um. */
+  clientId: string | null;
   lostReasonId: string | null;
   lostReasonLabel: string | null;
   lostNote: string | null;
@@ -194,6 +197,7 @@ export async function getOpportunity(opportunityId: string): Promise<Opportunity
     stageName: row.stage_name as string,
     stageEnteredAt: row.stage_entered_at as string,
     status: row.status as OpportunityStatus,
+    clientId: (row.client_id as string | null) ?? null,
     lostReasonId: (row.lost_reason_id as string | null) ?? null,
     lostReasonLabel: (row.lost_reason_label as string | null) ?? null,
     lostNote: (row.lost_note as string | null) ?? null,
@@ -454,6 +458,7 @@ export type OpportunityListItem = OpportunityCard & {
   stageId: string;
   stageName: string;
   status: OpportunityStatus;
+  clientId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -505,6 +510,7 @@ export async function listOpportunities(
       stageId: r.stage_id as string,
       stageName: r.stage_name as string,
       status: r.status as OpportunityStatus,
+      clientId: (r.client_id as string | null) ?? null,
       stageEnteredAt: r.stage_entered_at as string,
       createdAt: r.created_at as string,
       updatedAt: r.updated_at as string,

@@ -48,14 +48,30 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
     listActivities(workspaceId, { leadId: id, status: "pending" }),
   ]);
 
+  // "Ver cliente" (item 1 do pedido da A8) — o vínculo de cliente da
+  // oportunidade mais recente entre as já carregadas acima (não uma
+  // segunda consulta); listOpportunities() ordena created_at_desc por
+  // padrão, então o primeiro achado já é o mais recente. Normalmente há
+  // no máximo um cliente ATIVO por contato, mas oportunidades ganhas em
+  // momentos diferentes podem apontar para clientes distintos ao longo
+  // do tempo.
+  const clientId = opportunities.find((o) => o.clientId)?.clientId ?? null;
+
   return (
     <>
       <Topbar title={lead.contactName} subtitle={lead.legalArea} user={user} />
       <main className="flex-1 overflow-y-auto p-5">
         <div className="mx-auto flex max-w-[640px] flex-col gap-5">
-          <Link href={`/contatos/${lead.contactId}`} className="text-meta text-primary hover:underline">
-            Ver contato
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link href={`/contatos/${lead.contactId}`} className="text-meta text-primary hover:underline">
+              Ver contato
+            </Link>
+            {clientId ? (
+              <Link href={`/clientes/${clientId}`} className="text-meta text-primary hover:underline">
+                Ver cliente
+              </Link>
+            ) : null}
+          </div>
 
           <section className="rounded-lg border border-border bg-surface p-4">
             <h2 className="mb-3 text-body font-semibold text-text">Dados do lead</h2>

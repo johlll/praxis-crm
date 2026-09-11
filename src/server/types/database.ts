@@ -244,6 +244,7 @@ export type Database = {
           contact_id: string
           created_at: string
           id: string
+          lock_version: number
           owner_user_id: string | null
           status: Database["public"]["Enums"]["client_status"]
           updated_at: string
@@ -253,6 +254,7 @@ export type Database = {
           contact_id: string
           created_at?: string
           id?: string
+          lock_version?: number
           owner_user_id?: string | null
           status?: Database["public"]["Enums"]["client_status"]
           updated_at?: string
@@ -262,6 +264,7 @@ export type Database = {
           contact_id?: string
           created_at?: string
           id?: string
+          lock_version?: number
           owner_user_id?: string | null
           status?: Database["public"]["Enums"]["client_status"]
           updated_at?: string
@@ -2066,6 +2069,7 @@ export type Database = {
       }
       get_activity: { Args: { p_activity_id: string }; Returns: Json }
       get_activity_counts: { Args: { p_workspace_id: string }; Returns: Json }
+      get_client: { Args: { p_client_id: string }; Returns: Json }
       get_contact_merge_history: {
         Args: { p_contact_id: string }
         Returns: {
@@ -2101,6 +2105,20 @@ export type Database = {
         }
         Returns: {
           counts: Json
+          items: Json
+          total_count: number
+        }[]
+      }
+      list_clients: {
+        Args: {
+          p_page?: number
+          p_page_size?: number
+          p_search?: string
+          p_sort?: string
+          p_status?: Database["public"]["Enums"]["client_status"]
+          p_workspace_id: string
+        }
+        Returns: {
           items: Json
           total_count: number
         }[]
@@ -2375,6 +2393,14 @@ export type Database = {
         }
         Returns: Json
       }
+      transfer_client_owner: {
+        Args: {
+          p_client_id: string
+          p_lock_version: number
+          p_owner_user_id?: string
+        }
+        Returns: Json
+      }
       unmerge_contact: {
         Args: { p_merge_id: string }
         Returns: {
@@ -2410,6 +2436,14 @@ export type Database = {
           p_type?: Database["public"]["Enums"]["activity_type"]
         }
         Returns: undefined
+      }
+      update_client_status: {
+        Args: {
+          p_client_id: string
+          p_lock_version: number
+          p_status: Database["public"]["Enums"]["client_status"]
+        }
+        Returns: Json
       }
       update_contact_basic_fields: {
         Args: {
