@@ -78,11 +78,20 @@ documento de decisões para o raciocínio completo.
 **Migration desta revisão:** `20260911150000_a7_review_hardening.sql` (nova
 — nenhuma das 7 anteriores foi reescrita), com `create or replace function`
 em `private.contact_has_active_consent`/`public.send_message`/
-`public.register_contact_consent`/`public.list_conversation_messages` —
-sempre acrescentando parâmetro novo ao FINAL da lista, sempre com valor
-padrão (mesmo padrão de `20260909100500_a4_review_hardening.sql`), o que
-preserva a mesma identidade de função e os grants já concedidos, sem
-precisar de `drop`+`create` nem de novos `grant`.
+`public.register_contact_consent`/`public.list_conversation_messages`.
+`send_message` manteve a assinatura (só o corpo mudou) — `create or
+replace` preserva a mesma função e os grants já concedidos, sem qualquer
+alteração extra. As outras três ganharam um parâmetro novo (sempre ao
+FINAL, sempre com default) — achado real de CI (§7, item novo abaixo):
+`create or replace function` NÃO reaproveita a mesma função quando a lista
+de tipos de argumento muda, mesmo só um parâmetro a mais com default; sem
+um `drop function` explícito da assinatura antiga antes de recriar, as
+DUAS versões ficam registradas como sobrecargas (overloads) coexistindo
+— `supabase gen types` expôs isso como um tipo UNIÃO de duas formas de
+`Args` em vez de um único objeto com o campo novo opcional. Corrigido com
+`drop function if exists <assinatura antiga>` antes de cada `create`, e
+`grant`/`revoke` novos para as duas funções `public.*` (objetos de
+catálogo genuinamente novos após o drop).
 
 ## 4. Permissões
 

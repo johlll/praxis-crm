@@ -1,9 +1,18 @@
 -- A7 — correções pedidas na revisão pré-merge do PR #8. Migration nova
--- (nenhuma das já aplicadas é reescrita); mesmo padrão de
--- 20260909100500_a4_review_hardening.sql / 20260911130100_a6_fix_...: novos
--- parâmetros SEMPRE acrescentados ao FINAL da lista, sempre com default —
--- é o que permite `create or replace function` preservar a mesma
--- identidade (e os grants já concedidos) em vez de precisar dropar/recriar.
+-- (nenhuma das já aplicadas é reescrita).
+--
+-- Toda função que ganhou parâmetro novo aqui recebe um `drop function if
+-- exists <assinatura antiga>` logo antes do `create` — `create or replace`
+-- NÃO reaproveita a mesma function quando a lista de tipos de argumento
+-- muda (mesmo só acrescentando um no fim, mesmo com default): a identidade
+-- de uma function no catálogo do Postgres é nome+tipos dos argumentos, e
+-- "OR REPLACE" sem uma correspondência exata cai para um CREATE comum,
+-- deixando a versão antiga registrada como uma SOBRECARGA (overload)
+-- separada em vez de ser substituída. Achado real neste CI (não
+-- presumido) — ver nota detalhada antes de `private.contact_has_active_consent`
+-- abaixo. Onde o parâmetro NÃO muda (send_message, corpo reescrito mas
+-- mesma assinatura de sempre), `create or replace` continua preservando a
+-- mesma identidade e os grants já concedidos, sem precisar de DROP.
 --
 -- Três achados corrigidos aqui:
 -- 1) Consentimento só verificava canal+vigência, nunca finalidade —
@@ -58,7 +67,22 @@ create index contact_consents_active_lookup_idx
 -- de envio nesta fase, então o único chamador existente (send_message,
 -- abaixo) nem precisa mudar a chamada — mas passa explícito mesmo assim,
 -- por clareza.
+--
+-- IMPORTANTE (achado real neste CI): `create or replace function` NÃO
+-- substitui em vigor quando o parâmetro novo muda a LISTA de tipos de
+-- argumento (mesmo só acrescentando um no fim, mesmo com default) — a
+-- identidade de uma function no catálogo do Postgres é nome+tipos dos
+-- argumentos, então "OR REPLACE" simplesmente não encontra a assinatura
+-- antiga para substituir e cai para um CREATE comum: as DUAS versões
+-- (antiga e nova) ficam registradas como sobrecargas (overloads)
+-- coexistindo. `supabase gen types` expõe isso ao gerar um tipo UNIÃO de
+-- duas formas de Args em vez de um único objeto com o campo novo opcional
+-- — foi assim que este achado apareceu (db:types:check). Corrigido: DROP
+-- explícito da assinatura antiga logo antes de recriar, em cada função
+-- abaixo que ganhou parâmetro novo.
 -- ---------------------------------------------------------------------
+
+drop function if exists private.contact_has_active_consent(uuid, public.contact_channel);
 
 create or replace function private.contact_has_active_consent(
   p_contact_id uuid,
@@ -83,14 +107,29 @@ $body$;
 comment on function private.contact_has_active_consent(uuid, public.contact_channel, public.consent_purpose) is
   'Consentimento vigente = canal certo + finalidade técnica certa + concedido + não revogado. purpose_code NULL (consentimento anterior a esta migration) nunca bate com nenhuma finalidade — nunca autoriza envio.';
 
+-- Fresh CREATE (não um REPLACE de verdade, ver nota acima) começa sem os
+-- grants explícitos de sempre — Postgres concede EXECUTE a PUBLIC por
+-- padrão numa function nova, então sem este revoke ficaria executável por
+-- QUALQUER role (inclusive anon), mesmo sem rota HTTP exposta (schema
+-- `private` não está em `schemas` no config.toml). Mesma disciplina do
+-- resto do arquivo.
+revoke all on function private.contact_has_active_consent(uuid, public.contact_channel, public.consent_purpose) from public;
+grant execute on function private.contact_has_active_consent(uuid, public.contact_channel, public.consent_purpose) to authenticated;
+
 -- ---------------------------------------------------------------------
--- register_contact_consent — novo parâmetro p_purpose_code ao FINAL
--- (mesma regra de sempre: CREATE OR REPLACE só aceita novos parâmetros no
--- fim da lista, todos com default). Exigido (não pode ficar null) quando
--- o canal é 'whatsapp', porque é o único canal com gate de envio nesta
--- fase — outros canais (email/telefone/presencial) não têm fluxo de envio
--- ainda, então nada consulta a finalidade deles por enquanto.
+-- register_contact_consent — novo parâmetro p_purpose_code ao FINAL.
+-- Exigido (não pode ficar null) quando o canal é 'whatsapp', porque é o
+-- único canal com gate de envio nesta fase — outros canais (email/
+-- telefone/presencial) não têm fluxo de envio ainda, então nada consulta
+-- a finalidade deles por enquanto. DROP da assinatura antiga (6 args)
+-- antes de recriar (ver nota acima sobre CREATE OR REPLACE + novo
+-- parâmetro) — precisa de GRANT novo depois, porque é um objeto de
+-- catálogo genuinamente novo.
 -- ---------------------------------------------------------------------
+
+drop function if exists public.register_contact_consent(
+  uuid, public.contact_channel, public.consent_legal_basis, text, text, text
+);
 
 create or replace function public.register_contact_consent(
   p_contact_id uuid,
@@ -153,13 +192,23 @@ begin
 end;
 $body$;
 
+revoke all on function public.register_contact_consent(
+  uuid, public.contact_channel, public.consent_legal_basis, text, text, text, public.consent_purpose
+) from public;
+grant execute on function public.register_contact_consent(
+  uuid, public.contact_channel, public.consent_legal_basis, text, text, text, public.consent_purpose
+) to authenticated;
+
 -- ---------------------------------------------------------------------
 -- 2) list_conversation_messages — cursor composto (created_at, id) com
---    desempate único. p_before_id acrescentado ao FINAL da lista (mesma
---    regra de sempre); p_before sozinho (sem p_before_id) só é válido
---    quando null (primeira página) — combinação inválida vira erro
---    explícito, nunca um cursor "quebrado" silencioso.
+--    desempate único. p_before_id acrescentado ao FINAL da lista, DROP da
+--    assinatura antiga (3 args) antes de recriar (ver nota no topo do
+--    arquivo); p_before sozinho (sem p_before_id) só é válido quando null
+--    (primeira página) — combinação inválida vira erro explícito, nunca
+--    um cursor "quebrado" silencioso.
 -- ---------------------------------------------------------------------
+
+drop function if exists public.list_conversation_messages(uuid, timestamptz, integer);
 
 create or replace function public.list_conversation_messages(
   p_conversation_id uuid,
@@ -252,6 +301,9 @@ begin
     coalesce((select n from older_count), 0) > 0;
 end;
 $body$;
+
+revoke all on function public.list_conversation_messages(uuid, timestamptz, integer, uuid) from public;
+grant execute on function public.list_conversation_messages(uuid, timestamptz, integer, uuid) to authenticated;
 
 -- ---------------------------------------------------------------------
 -- 3) send_message — client_dedupe_key vira uma chave IMUTÁVEL: a mesma
