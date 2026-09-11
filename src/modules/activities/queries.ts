@@ -90,22 +90,32 @@ function mapCounts(raw: unknown): ActivityCounts {
   };
 }
 
-export async function listActivities(
+type ListActivitiesFilters = {
+  filter?: ActivityFilter | undefined;
+  leadId?: string | undefined;
+  opportunityId?: string | undefined;
+  /** "all" pede pendentes + concluídas juntas (usado pela agenda semanal) — omitido, o RPC assume 'pending'. */
+  status?: ActivityStatus | "all" | undefined;
+  sort?: "due_at_asc" | "due_at_desc" | undefined;
+  page: number;
+  pageSize: number;
+};
+
+type ActivitiesPage = { items: ActivityListItem[]; total: number; counts: ActivityCounts };
+
+/**
+ * Chamada crua ao RPC, para uma única página — usada tanto por
+ * listActivities() (que preserva o comportamento já existente de
+ * devolver uma lista vazia em caso de erro, mantido para não afetar os
+ * outros lugares que já dependem disso) quanto por listAllActivities()
+ * (que precisa saber DE VERDADE se uma página falhou, para nunca
+ * disfarçar isso de "sem itens").
+ */
+async function fetchActivitiesPage(
   workspaceId: string,
-  filters: {
-    filter?: ActivityFilter | undefined;
-    leadId?: string | undefined;
-    opportunityId?: string | undefined;
-    /** "all" pede pendentes + concluídas juntas (usado pela agenda semanal) — omitido, o RPC assume 'pending'. */
-    status?: ActivityStatus | "all" | undefined;
-    sort?: "due_at_asc" | "due_at_desc" | undefined;
-    page?: number | undefined;
-    pageSize?: number | undefined;
-  } = {},
-): Promise<{ items: ActivityListItem[]; total: number; page: number; pageSize: number; counts: ActivityCounts }> {
+  filters: ListActivitiesFilters,
+): Promise<{ ok: true; page: ActivitiesPage } | { ok: false }> {
   const supabase = await createServerSupabaseClient();
-  const page = Math.max(1, filters.page ?? 1);
-  const pageSize = Math.max(1, Math.min(filters.pageSize ?? 20, 200));
 
   const { data, error } = await supabase.rpc("list_activities", {
     p_workspace_id: workspaceId,
@@ -118,24 +128,50 @@ export async function listActivities(
     // TypeScript; o valor que trafega em runtime é o `null` real.
     p_status: (filters.status === "all" ? null : (filters.status ?? "pending")) as ActivityStatus,
     p_sort: filters.sort ?? "due_at_asc",
-    p_page: page,
-    p_page_size: pageSize,
+    p_page: filters.page,
+    p_page_size: filters.pageSize,
   });
 
-  if (error || !data || data.length === 0) {
-    return { items: [], total: 0, page, pageSize, counts: EMPTY_COUNTS };
-  }
+  if (error) return { ok: false };
+  if (!data || data.length === 0) return { ok: true, page: { items: [], total: 0, counts: EMPTY_COUNTS } };
 
   const row = data[0]!;
   const items = (row.items as unknown as Array<Record<string, unknown>> | null) ?? [];
 
   return {
-    items: items.map(mapActivityRow),
-    total: row.total_count,
-    page,
-    pageSize,
-    counts: mapCounts(row.counts),
+    ok: true,
+    page: { items: items.map(mapActivityRow), total: row.total_count, counts: mapCounts(row.counts) },
   };
+}
+
+export async function listActivities(
+  workspaceId: string,
+  filters: Omit<ListActivitiesFilters, "page" | "pageSize"> & { page?: number | undefined; pageSize?: number | undefined } = {},
+): Promise<{ items: ActivityListItem[]; total: number; page: number; pageSize: number; counts: ActivityCounts }> {
+  const page = Math.max(1, filters.page ?? 1);
+  const pageSize = Math.max(1, Math.min(filters.pageSize ?? 20, 200));
+
+  const result = await fetchActivitiesPage(workspaceId, { ...filters, page, pageSize });
+  if (!result.ok) {
+    return { items: [], total: 0, page, pageSize, counts: EMPTY_COUNTS };
+  }
+
+  return { ...result.page, page, pageSize };
+}
+
+/**
+ * Erro deliberado (nunca uma lista parcial disfarçada de completa) para
+ * quando listAllActivities() não consegue buscar TODAS as atividades que
+ * casam com o filtro. A Agenda semanal (única chamadora) deixa isso
+ * subir para o error.tsx da própria rota — ErrorState com "tentar
+ * novamente", nunca a tela de "Nada agendado" (que mentiria sobre o que
+ * de fato existe).
+ */
+export class ActivitiesLoadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ActivitiesLoadError";
+  }
 }
 
 /**
@@ -145,34 +181,54 @@ export async function listActivities(
  * qualquer teto fixo ainda pode ser ultrapassado por um workspace maior;
  * a Agenda semanal precisa mesmo de "todas as da semana", não de "até
  * N", então ela pagina até esgotar o total_count devolvido pelo próprio
- * RPC — nunca omite silenciosamente o que passar do primeiro lote.
+ * RPC.
  *
- * MAX_PAGES é só uma trava de segurança contra loop sem fim caso
- * total_count venha inconsistente; nunca esperado de fato bater nisso
- * (500 atividades numa mesma semana, mesmo workspace).
+ * Nunca devolve sucesso com uma lista parcial: se qualquer página falhar,
+ * ou se LIST_ALL_MAX_PAGES for atingido sem terminar de buscar tudo, joga
+ * ActivitiesLoadError em vez de retornar o que já tinha acumulado — a
+ * trava de segurança continua em 50 páginas (não é a solução aumentar
+ * esse número; é nunca fingir que uma busca incompleta terminou).
  */
 const LIST_ALL_PAGE_SIZE = 100;
 const LIST_ALL_MAX_PAGES = 50;
 
 export async function listAllActivities(
   workspaceId: string,
-  filters: Omit<Parameters<typeof listActivities>[1], "page" | "pageSize"> = {},
+  filters: Omit<ListActivitiesFilters, "page" | "pageSize"> = {},
 ): Promise<{ items: ActivityListItem[]; total: number; counts: ActivityCounts }> {
   let items: ActivityListItem[] = [];
   let total = 0;
   let counts: ActivityCounts = EMPTY_COUNTS;
 
   for (let page = 1; page <= LIST_ALL_MAX_PAGES; page++) {
-    const result = await listActivities(workspaceId, { ...filters, page, pageSize: LIST_ALL_PAGE_SIZE });
-    if (page === 1) {
-      total = result.total;
-      counts = result.counts;
+    const result = await fetchActivitiesPage(workspaceId, { ...filters, page, pageSize: LIST_ALL_PAGE_SIZE });
+    if (!result.ok) {
+      throw new ActivitiesLoadError(`Falha ao buscar a página ${page} de atividades (workspace ${workspaceId}).`);
     }
-    items = items.concat(result.items);
-    if (result.items.length === 0 || items.length >= result.total) break;
+
+    if (page === 1) {
+      total = result.page.total;
+      counts = result.page.counts;
+    }
+    items = items.concat(result.page.items);
+
+    if (items.length >= total) return { items, total, counts };
+
+    if (result.page.items.length === 0) {
+      // O total dizia que ainda faltavam itens, mas a página veio vazia —
+      // inconsistência real entre total_count e as linhas devolvidas.
+      // Nunca presumir "acabou" aqui: sinaliza carregamento incompleto em
+      // vez de devolver uma lista menor que o total como se fosse a
+      // semana inteira.
+      throw new ActivitiesLoadError(
+        `Carregamento incompleto: a página ${page} veio vazia mas ${items.length}/${total} atividades ainda faltavam (workspace ${workspaceId}).`,
+      );
+    }
   }
 
-  return { items, total, counts };
+  throw new ActivitiesLoadError(
+    `Carregamento incompleto: ${items.length}/${total} atividades buscadas após o limite de ${LIST_ALL_MAX_PAGES} páginas (workspace ${workspaceId}).`,
+  );
 }
 
 export type ActivityDetail = ActivityListItem & { workspaceId: string };
