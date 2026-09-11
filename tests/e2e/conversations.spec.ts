@@ -63,7 +63,11 @@ test.describe.serial("conversas + simulador de WhatsApp — A7", () => {
     // O servidor recusa (consent_required) com uma mensagem tratada — nunca
     // um erro cru, nem a mensagem enviada silenciosamente.
     await expect(page.getByText("Sem consentimento vigente para enviar mensagem por este canal", { exact: false })).toBeVisible();
-    await expect(page.getByText("Oi! Recebemos sua mensagem.")).toHaveCount(0);
+    // O texto continua no <textarea> (não perde o que foi digitado numa
+    // falha) — getByText("...") bate nisso também, então checa a ausência
+    // de BOLHA de mensagem (item de lista), não de qualquer ocorrência do
+    // texto na página (achado real no CI).
+    await expect(page.getByRole("listitem").filter({ hasText: "Oi! Recebemos sua mensagem." })).toHaveCount(0);
 
     await page.getByLabel("Finalidade").fill("Atendimento via WhatsApp (teste e2e)");
     await page.getByRole("button", { name: "Registrar consentimento" }).click();
