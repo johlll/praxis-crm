@@ -4,10 +4,10 @@
 **Fase:** A6
 **Branch:** `feat/a6-activities-calendar`
 **PR:** [#6](https://github.com/johlll/praxis-crm/pull/6) — `OPEN`, `MERGEABLE`, `CLEAN`
-**Commit final:** `1c0a07d`
+**Commit final:** `2aecaae`
 **Data:** 10–11/09/2026
 
-**Status:** implementada, **CI 100% verde** (14ª rodada, contando a correção encontrada na validação manual de preview — ver §6 para o histórico completo e honesto das 13 rodadas de CI, e §9 para a rodada 14 e a validação de preview em si). Resultado final: testes unitários 118/118, pgTAP 325/325 (11 arquivos, `11_a6_activities.test.sql` sozinho com 72), isolamento entre workspaces 26/26, build ok, e2e 41/41 (37 da A5 preservados + 4 novos desta fase). **Validação manual no preview concluída com sucesso nos 5 fluxos pedidos (§9) — 1 bug real encontrado e corrigido. PR aberto, mergeável, sem conflito. Merge NÃO realizado — aguardando autorização explícita, por instrução do usuário. A7 não foi iniciada.**
+**Status:** implementada, **CI 100% verde** (16ª rodada no total — 13 antes de qualquer validação de preview, mais 1 do achado da própria validação de preview, mais 2 desta revisão pré-merge; ver §6 para o histórico das 13 primeiras, §7 para a validação de preview e seu achado, e §8 para os 3 achados desta revisão e sua revalidação). Resultado final: testes unitários 120/120, pgTAP 336/336 (11 arquivos, `11_a6_activities.test.sql` sozinho com 83), isolamento entre workspaces 26/26, build ok, e2e 41/41 (37 da A5 preservados + 4 novos desta fase). **Validação manual no preview concluída com sucesso nos 5 fluxos pedidos (§7) — 1 bug real encontrado e corrigido. Revisão pré-merge (§8) encontrou e corrigiu mais 3 problemas reais, com as correções revalidadas pontualmente na UI real do preview. PR aberto, mergeável, sem conflito. Merge NÃO realizado — aguardando autorização explícita, por instrução do usuário. A7 não foi iniciada.**
 
 ---
 
@@ -128,7 +128,53 @@ Criada uma conta nova com papel Advogado (`joaoniero2+praxisqaa6adv@gmail.com`, 
 
 ---
 
-## 8. Limitações conhecidas, honestamente registradas
+## 8. Revisão pré-merge: 3 achados reais corrigidos
+
+Instrução do usuário depois da validação de preview (§7): corrigir 3 pontos específicos antes do merge, "sem ampliar a fase". Os três eram achados reais, não hipotéticos — reproduzidos (ou, no caso do item 2, comprovados por leitura de código + teste) antes de qualquer correção.
+
+### 8.1 Excluir uma regra automática já usada sempre falhava
+
+**Reprodução pedida:** configurar regra → gerar atividade por transição → remover regra.
+
+**1ª causa raiz:** `activities_source_rule_same_workspace_fkey` usa `ON DELETE SET NULL` (documentado desde a criação — o comentário da própria `delete_stage_auto_activity_rule()` sempre disse "nenhuma atividade já criada é afetada, ela só perde a referência da regra"), mas a CHECK `activities_source_consistency` exigia `source_rule_id IS NOT NULL` sempre que `source = 'stage_rule'`. Excluir a regra faz o Postgres tentar zerar `source_rule_id` nas atividades que a referenciam (ação da FK) — e essa mesma operação interna era imediatamente barrada pela própria CHECK. A exclusão inteira falhava com um erro interno do Postgres, nunca um erro de negócio limpo.
+
+**2ª causa raiz** (só descoberta testando a correção da 1ª ao vivo contra a regra e atividade **reais** já existentes em `praxis-crm-dev`, da validação de preview em §7.4): `ON DELETE SET NULL` numa FK **composta** sem lista de colunas zera **todas** as colunas da chave referenciadora — não só `source_rule_id`, mas também `workspace_id`, porque a FK é `foreign key (workspace_id, source_rule_id)`. Isso violava a `NOT NULL` de `activities.workspace_id` (erro real observado: `null value in column "workspace_id" ... violates not-null constraint`) — um bug mais sério que o da CHECK, que teria corrompido o próprio vínculo de workspace da atividade.
+
+O mesmo defeito também era alcançável por um caminho da A5 sem relação direta com "excluir regra": `delete_pipeline_stage()` só bloqueia se a etapa tiver oportunidades **atualmente** nela (`stage_occupied`) — não checa histórico. Uma etapa esvaziada que já teve uma regra com atividades geradas também cascateava (`pipeline_stages` → `stage_auto_activity_rules`, `ON DELETE CASCADE`) para o mesmo conflito.
+
+**Correção** (`20260911130000_a6_fix_source_rule_deletion.sql`): a CHECK passa a aceitar `source_rule_id` nulo também para `source = 'stage_rule'` (`source_stage_transition_id` continua obrigatório — rastreabilidade de qual transição gerou a atividade nunca se perde); a FK passa a usar `ON DELETE SET NULL (source_rule_id)` — sintaxe de lista de colunas (Postgres 15+; confirmado 17.6 em `praxis-crm-dev`), restringindo a ação a só essa coluna. Resolve os dois caminhos de uma vez, sem tocar em `delete_pipeline_stage()` nem em `delete_stage_auto_activity_rule()`, que já faziam exatamente o que deviam. Nenhuma atividade é apagada; `workspace_id` nunca muda.
+
+**Verificado ao vivo, duas vezes:** (1) dentro de uma transação revertida contra a regra e atividade reais de `praxis-crm-dev` ("Ligar para qualificar (validação A6)", da validação de preview) — confirmado `source_rule_id` nulo, `workspace_id`/`source`/`source_stage_transition_id` preservados, sem erro; (2) **de verdade, pela UI do preview**: botão "Remover atividade automática" em `/configuracoes/pipelines` executado sem erro, a atividade continuou aparecendo normalmente na oportunidade e na Agenda depois.
+
+**Teste novo:** seção 14 de `11_a6_activities.test.sql` (8 asserções) — reproduz configurar regra → mover oportunidade (2×, incluindo reentrada) → excluir regra → confirma as 2 atividades geradas preservadas (`source`, `source_stage_transition_id`, `workspace_id` intactos, `source_rule_id` nulo) → confirma que uma **nova transição legítima** para a mesma etapa depois da exclusão não recria a atividade automática (automação de fato interrompida, não recriada silenciosamente).
+
+### 8.2 Agenda truncada além de 100 atividades
+
+**Achado:** `agenda/page.tsx` pedia `listActivities(..., { pageSize: 200 })` numa chamada só, mas `list_activities()` limita `p_page_size` a 100 no banco (proteção correta e preexistente) — o pedido de 200 era simplesmente ignorado e cortado em 100, sem sinalizar nada. Qualquer atividade além da centésima da semana desaparecia em silêncio da Agenda. Só aumentar o teto pedido não resolveria de verdade: qualquer teto fixo ainda pode ser ultrapassado por um workspace maior.
+
+**Correção:** nova função `listAllActivities()` em `src/modules/activities/queries.ts`, que pagina de verdade usando o próprio `total_count` devolvido pelo RPC, até esgotar o resultado — com uma trava de segurança (50 páginas) contra loop sem fim caso `total_count` venha inconsistente. `agenda/page.tsx` passou a usar essa função em vez de `listActivities()` com `pageSize` fixo.
+
+**Teste novo:** `tests/unit/activities-pagination.test.ts` (2 testes, mock do RPC) — simula um workspace com 105 atividades numa semana (100 na primeira página, 5 na segunda) e confirma que a 105ª (última) continua acessível; confirma também que nenhuma página extra é buscada quando tudo já cabe na primeira busca.
+
+**Revalidado no preview:** Agenda recarregada depois do fix, renderizando corretamente os itens da semana (sem seed de 100+ atividades reais — coberto pelo teste unitário; a revalidação de preview foi um smoke test de regressão, não uma repetição da carga de 100+ itens).
+
+### 8.3 Migration formal para a correção de `list_activities()`
+
+A correção do filtro semanal (§7.2) tinha sido aplicada editando diretamente `20260911120300_a6_read_functions.sql` (ainda não mergeado) e executando o SQL corrigido direto contra `praxis-crm-dev` — sem uma migration própria que entregasse a correção a um banco que já tivesse rodado a versão anterior por um `db push` normal.
+
+**Correção:** nova migration `20260911130100_a6_fix_list_activities_status_filter.sql`, com `CREATE OR REPLACE FUNCTION` do mesmo corpo já corrigido. Num banco que já aplicou a versão corrigida do arquivo original (caso do CI, que sempre aplica os arquivos do zero, em ordem), é um no-op. Num banco que só rodou a versão anterior, corrige de verdade — sem `db reset`, sem apagar dado.
+
+**Regressão nova:** seção 13 de `11_a6_activities.test.sql` (3 asserções) — `list_activities(filter=week, status=all)` inclui uma atividade concluída vencendo hoje; `list_activities(filter=week, status=pending)` continua sem mostrá-la; `list_activities(filter=overdue, status=all)` nunca inclui uma concluída, mesmo vencida no passado — "atrasada" continua um conceito só de pendência.
+
+**Achado colateral corrigido no processo:** a primeira versão desta seção do teste passava a string `'all'` diretamente para `p_status` (que é `public.activity_status`, só `'pending'`/`'done'`) — o CI acusou `invalid input value for enum activity_status: "all"`. `"all"` é um sentinelo que existe só na camada TypeScript (`queries.ts` já troca por um `NULL` de verdade antes de chamar o RPC); corrigido para passar `null` mesmo, como o RPC sempre esperou. Verificado ao vivo contra `praxis-crm-dev` antes de commitar a correção.
+
+### 8.4 CI depois das 3 correções
+
+2 rodadas de CI nesta revisão: a 1ª (commits dos itens 8.1/8.2, mais a 1ª tentativa da regressão do item 8.3) falhou pelo erro de enum descrito acima; a 2ª, já com o `null` corrigido, fechou verde. Resultado final: unitários 120/120 (118 + 2 novos de paginação), pgTAP 336/336 (11 arquivos — `11_a6_activities.test.sql` com 83 asserções, de 72), isolamento 26/26, e2e 41/41, build ok. `db:types:check` sem diferença (nenhuma mudança de assinatura de função, só corpo/constraint).
+
+---
+
+## 9. Limitações conhecidas, honestamente registradas
 
 - **Sem navegação de semana na Agenda** — sempre mostra a semana atual; ver `docs/decisoes/a6-atividades.md` §11.
 - **Seletor de lead simples na Central** — `<select>` nativo, sem busca; ver `docs/decisoes/a6-atividades.md` §12.
@@ -138,12 +184,12 @@ Criada uma conta nova com papel Advogado (`joaoniero2+praxisqaa6adv@gmail.com`, 
 
 ---
 
-## 9. Confirmações explícitas
+## 10. Confirmações explícitas
 
 - **Nenhuma fase além da A6 foi iniciada** — A7 não implementada.
 - **Nenhum arquivo de referência visual foi alterado.**
 - **Sem merge em `main`, sem commit direto em `main`.** PR aberto contra `main` a partir de `feat/a6-activities-calendar`.
-- **`praxis-crm-dev`:** só migrations aditivas aplicadas (todas as 8 desta fase, `db push` real, sem dry-run apenas — Docker local indisponível, mesma limitação já registrada), mais a correção pontual de `list_activities()` (§7.2), também aditiva/comportamental, sem apagar dado nenhum. Único dado fictício adicional deixado no ambiente: contato/lead/oportunidade/atividades "(validação)" e a conta `joaoniero2+praxisqaa6adv@gmail.com` (Advogado) usados na validação de preview — mesmo padrão de dados de teste já acumulado nas fases anteriores neste workspace de QA.
+- **`praxis-crm-dev`:** só migrations aditivas aplicadas (10 no total desta fase — as 8 originais + as 2 de §8.1/§8.3 desta revisão — todas via `db push` real, sem dry-run apenas — Docker local indisponível, mesma limitação já registrada), mais a correção pontual de `list_activities()` (§7.2) e da FK/CHECK de `source_rule_id` (§8.1), ambas testadas ao vivo dentro de transações revertidas antes de virar migration definitiva, sem apagar dado nenhum. Único dado fictício adicional deixado no ambiente: contato/lead/oportunidade/atividades "(validação)" e a conta `joaoniero2+praxisqaa6adv@gmail.com` (Advogado) usados na validação de preview — mesmo padrão de dados de teste já acumulado nas fases anteriores neste workspace de QA.
 - **Nenhuma dependência de fase futura instalada** — nenhum pacote novo entrou no `package.json` nesta fase (nenhuma biblioteca de calendário/data foi necessária; `<input type="date">`/`<input type="time">` nativos bastaram, mesmo padrão já usado pela A5).
 - **Design system preservado** — nenhum componente novo de UI genérico foi introduzido fora do padrão já existente (tabelas manuais, diálogos com `key={instanceKey}`, `<select>` nativo, Tailwind com os tokens já definidos).
 - **Merge e checagem em produção:** aguardando revisão final e autorização explícita do usuário, conforme instruído.
