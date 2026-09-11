@@ -483,23 +483,26 @@ select register_contact_consent(
 select send_message((:'ambiguo_r1'::jsonb ->> 'conversation_id')::uuid, 'Mensagem de paginação número ' || g, gen_random_uuid())
 from generate_series(1, 12) as g;
 
+-- \gset captura o resultado em VARIÁVEIS PSQL (:'items'/:'has_more'),
+-- nunca em colunas de tabela — usar "items"/"has_more" sem ":" no SELECT
+-- seguinte é erro de sintaxe/coluna inexistente (achado real neste CI).
 select * from list_conversation_messages((:'ambiguo_r1'::jsonb ->> 'conversation_id')::uuid, null, 5) \gset
 
-select is(jsonb_array_length(items), 5, 'Primeira página do histórico respeita o limite pedido (5)');
-select ok(has_more, 'has_more=true quando ainda há mensagens mais antigas');
+select is(jsonb_array_length(:'items'::jsonb), 5, 'Primeira página do histórico respeita o limite pedido (5)');
+select ok((:'has_more')::boolean, 'has_more=true quando ainda há mensagens mais antigas');
 
-select (items -> 0 ->> 'created_at')::timestamptz as cursor_mais_antiga \gset
+select (:'items'::jsonb -> 0 ->> 'created_at')::timestamptz as cursor_mais_antiga \gset
 
 select * from list_conversation_messages((:'ambiguo_r1'::jsonb ->> 'conversation_id')::uuid, :'cursor_mais_antiga'::timestamptz, 100) \gset
 
 -- Total: 1 (mensagem original recebida) + 12 enviadas = 13; página 1 pegou
 -- as 5 mais recentes, sobrando 8 mais antigas (a "mais antiga de todas" é a
 -- própria mensagem recebida).
-select is(jsonb_array_length(items), 8, 'Segunda página (cursor) traz o restante — a mensagem mais antiga de todas continua acessível');
-select ok(not has_more, 'has_more=false quando não sobra mais nada antes do cursor');
+select is(jsonb_array_length(:'items'::jsonb), 8, 'Segunda página (cursor) traz o restante — a mensagem mais antiga de todas continua acessível');
+select ok(not (:'has_more')::boolean, 'has_more=false quando não sobra mais nada antes do cursor');
 
 select * from list_conversation_messages((:'novo_r1'::jsonb ->> 'conversation_id')::uuid, null, 30) \gset
-select is(has_more, false, 'Conversa pequena (menos que o limite pedido): has_more=false já na primeira página');
+select is((:'has_more')::boolean, false, 'Conversa pequena (menos que o limite pedido): has_more=false já na primeira página');
 
 select * from finish();
 rollback;
