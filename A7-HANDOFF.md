@@ -1,7 +1,8 @@
 # A7 — Conversas + simulador de WhatsApp — Handoff
 
-**Status: implementada, aguardando CI e validação em preview.** Branch
-`feat/a7-conversations-simulator`, PR ainda a abrir. **Não mesclada.**
+**Status: implementada, CI verde.** Branch `feat/a7-conversations-simulator`,
+[PR #8](https://github.com/johlll/praxis-crm/pull/8). **Não mesclada** —
+aguardando autorização explícita, conforme instruído.
 
 ## 1. Escopo
 
@@ -148,15 +149,72 @@ regride) validada com sucesso contra dado real do workspace de QA
 
 ## 7. CI
 
-_A preencher após o primeiro push — `npm run typecheck`, `npm run lint` e
-`npm test` (132/132) já rodam limpos localmente; `db:types:check`,
-`test:db` (pgTAP), `test:isolation`, o novo passo de concorrência e
-`test:e2e` só podem ser confirmados pelo pipeline (sem Docker local nesta
-máquina)._
+**Verde** — [run final](https://github.com/johlll/praxis-crm/actions/runs/34604263734):
+typecheck, lint, 132 testes unitários, `db:types:check`, pgTAP (55/55),
+isolamento entre workspaces, teste de concorrência real
+(`a7-concurrency-check.mjs`), build, e2e (45/45, incluindo os 4 cenários de
+`conversations.spec.ts`).
+
+Levou 10 rounds de correção até fechar — cada achado real, listado aqui
+porque nenhum foi encontrado localmente (sem Docker nesta máquina, o CI foi
+o primeiro ambiente a rodar pgTAP/isolamento/concorrência/e2e de verdade):
+
+1. `database.ts` gerado contra o hospedado (`--linked`) divergia do gerado
+   contra o Docker local do CI (`--local`) — boilerplate diferente
+   (`__InternalSupabase`, formatação de genéricos) mesmo na mesma versão da
+   CLI. Substituído pelo conteúdo exato que o CI gerou.
+2. pgTAP fazia SELECT direto em `leads`/`opportunities`/`activities`/
+   `contact_identifiers`/`messages`/`message_status_events` (deny-all, só
+   RPC) sob o papel `authenticated` — `reset role` antes de cada
+   verificação direta, restaurado depois.
+3. `assign_lead()` (A4) sempre exige `p_expected_updated_at` — o teste de
+   alcance por papel nunca passava esse parâmetro; reescrito para buscar o
+   valor atual antes de cada chamada e para testar o cenário real de
+   negação (lead atribuído a OUTRA pessoa, não "sem responsável").
+4. Contagem errada de `message_status_events` (a asserção presumia
+   deduplicação que a lógica nunca prometeu para timestamps diferentes).
+5. Variável psql com snapshot pré-resolução (`ambiguo_r1.contact_id`
+   continuava null depois de `resolve_conversation_link()` mudar a
+   conversa no banco — a variável já capturada não se atualiza sozinha).
+6. psql nunca substitui `:'var'` dentro de um bloco `DO $$...$$` (tratado
+   como string opaca) — trocado por um `SELECT` de nível superior com
+   `generate_series()`.
+7. `\gset` captura em VARIÁVEL psql, não em coluna — `select
+   is(jsonb_array_length(items), ...)` sem os dois-pontos é "column items
+   does not exist".
+8. `now()` é estável por TRANSAÇÃO no Postgres — como o arquivo pgTAP
+   inteiro roda numa única transação, 13 mensagens inseridas em sequência
+   nasciam todas com o MESMO `created_at`, empatando o cursor de paginação
+   (nunca acontece em produção real, onde cada envio é sua própria
+   transação PostgREST). Espaçados manualmente só para o teste.
+9. e2e: `getByText("Canal e2e")` também batia na `<option>` do select do
+   formulário de simulação — escopado para a lista.
+10. e2e: `getByText(...)` também batia no valor do `<textarea>` (que
+    preserva o texto digitado depois de uma falha, de propósito) —
+    escopado para `getByRole("listitem")` (bolha de mensagem de verdade).
+
+Nenhum desses 10 achados apontou um problema real de PRODUTO — todos foram
+erros de sintaxe/uso de psql ou de teste (variável obsoleta, expectativa
+numérica errada, seletor ambíguo). A lógica de negócio em si (idempotência,
+consentimento, alcance por papel, resolução de vínculo) já tinha sido
+validada ao vivo (§6) antes do primeiro commit e não precisou de nenhuma
+correção adicional durante este processo.
 
 ## 8. Validação em preview
 
-_A preencher depois do deploy do preview do PR._
+Deploy do preview do PR #8 concluído com sucesso
+(`https://praxis-crm-git-feat-a7-conversations-simulator-johllls-projects.vercel.app`).
+Validação **interativa** (Playwright) ficou bloqueada pelo SSO de proteção
+de deployment da Vercel — sem sessão salva para esta URL específica (mesma
+limitação já registrada em fases anteriores: exige login pessoal, que só o
+usuário pode fazer). Como a suíte e2e do CI (§7, `test:e2e`, 45/45) já
+exerce o fluxo completo desta fase — criar canal, simular mensagem de
+número desconhecido, bloqueio/liberação por consentimento, simular
+entregue/lida inline, 404 para papel sem permissão — num navegador real
+contra um deploy real do Next.js e um Postgres real, considero isso
+validação funcional equivalente. Se o usuário quiser a checagem visual
+interativa no preview, precisa entrar no link acima com a própria conta
+Vercel primeiro.
 
 ## 9. Limitações conhecidas
 
