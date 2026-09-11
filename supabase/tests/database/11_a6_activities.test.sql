@@ -658,7 +658,12 @@ select create_activity(
 ) as ativ_concl_semana \gset
 select complete_activity((:'ativ_concl_semana')::uuid, 0::bigint);
 
-select (list_activities(:'ws_um'::uuid, p_filter := 'week', p_status := 'all')).items as itens_semana_all \gset
+-- p_status é public.activity_status (só 'pending'/'done') — "all" é um
+-- sentinelo que existe SÓ na camada TypeScript (queries.ts troca por um
+-- NULL de verdade antes de chamar o RPC); aqui, pedir "todos os status"
+-- é null mesmo, nunca a string 'all' (que o Postgres rejeitaria como
+-- valor de enum inválido).
+select (list_activities(:'ws_um'::uuid, p_filter := 'week', p_status := null)).items as itens_semana_all \gset
 select ok(
   (:'itens_semana_all')::jsonb @> jsonb_build_array(jsonb_build_object('id', (:'ativ_concl_semana')::text)),
   'list_activities(filter=week, status=all) inclui uma atividade CONCLUÍDA vencendo hoje — regressão do bug real: antes ficava escondida pelo status=pending embutido no ramo week'
@@ -676,7 +681,7 @@ select create_activity(
 ) as ativ_concl_vencida \gset
 select complete_activity((:'ativ_concl_vencida')::uuid, 0::bigint);
 
-select (list_activities(:'ws_um'::uuid, p_filter := 'overdue', p_status := 'all')).items as itens_overdue_all \gset
+select (list_activities(:'ws_um'::uuid, p_filter := 'overdue', p_status := null)).items as itens_overdue_all \gset
 select ok(
   not ((:'itens_overdue_all')::jsonb @> jsonb_build_array(jsonb_build_object('id', (:'ativ_concl_vencida')::text))),
   'list_activities(filter=overdue, status=all) NÃO inclui uma atividade concluída mesmo vencida no passado — "atrasada" continua sendo um conceito só de pendência, preservado pelo fix'
