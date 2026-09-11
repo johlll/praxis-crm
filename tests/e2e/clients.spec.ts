@@ -81,7 +81,10 @@ test.describe.serial("clientes — A8", () => {
 
     await page.goto(clientUrl);
     await expect(page.getByRole("heading", { name: "Cliente A8 E2E" })).toBeVisible();
-    await expect(page.getByText("R$ 350,00")).toBeVisible();
+    // Aparece duas vezes (resumo do valor total do cliente e item do
+    // histórico) — ambas as ocorrências têm de existir, .first() basta
+    // para confirmar visibilidade sem violar o modo estrito do Playwright.
+    await expect(page.getByText("R$ 350,00").first()).toBeVisible();
     await expect(page.getByText("Empresarial")).toBeVisible();
 
     // Handoff honesto (item 6 do pedido): sem integração configurada,
