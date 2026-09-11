@@ -4,10 +4,10 @@
 **Fase:** A6
 **Branch:** `feat/a6-activities-calendar`
 **PR:** [#6](https://github.com/johlll/praxis-crm/pull/6) — `OPEN`, `MERGEABLE`, `CLEAN`
-**Commit final:** `e883f6d`
+**Commit final:** `1c0a07d`
 **Data:** 10–11/09/2026
 
-**Status:** implementada, **CI 100% verde** (13ª rodada, ver §6 para o histórico completo e honesto das 12 rodadas anteriores — cada uma corrigindo uma causa raiz real, nenhuma repetição às cegas). Resultado final: testes unitários 118/118, pgTAP 325/325 (11 arquivos, `11_a6_activities.test.sql` sozinho com 72), isolamento entre workspaces 26/26, build ok, e2e 41/41 (37 da A5 preservados + 4 novos desta fase). **PR aberto, mergeável, sem conflito. Merge NÃO realizado — aguardando autorização explícita, por instrução do usuário. A7 não foi iniciada.**
+**Status:** implementada, **CI 100% verde** (14ª rodada, contando a correção encontrada na validação manual de preview — ver §6 para o histórico completo e honesto das 13 rodadas de CI, e §9 para a rodada 14 e a validação de preview em si). Resultado final: testes unitários 118/118, pgTAP 325/325 (11 arquivos, `11_a6_activities.test.sql` sozinho com 72), isolamento entre workspaces 26/26, build ok, e2e 41/41 (37 da A5 preservados + 4 novos desta fase). **Validação manual no preview concluída com sucesso nos 5 fluxos pedidos (§9) — 1 bug real encontrado e corrigido. PR aberto, mergeável, sem conflito. Merge NÃO realizado — aguardando autorização explícita, por instrução do usuário. A7 não foi iniciada.**
 
 ---
 
@@ -87,15 +87,48 @@ Criar atividade pela Central e concluir (some da listagem padrão); reagendar e 
 11. **e2e** — esperar 1 resposta de rede não bastava: `requestMove()` no kanban sempre dispara DUAS Server Actions em sequência para a mesma URL (`checkStageRequirementsAction`, depois `moveOpportunityStageAction`), indistinguíveis por URL+método. Corrigido contando respostas via listener registrado antes da ação e esperando pelo menos 2.
 12. **e2e** — minha própria checagem extra `getByText("Etapa")` sem `exact:true` colidia (case-insensitive, substring) com o heading "Histórico de etapas" e com o texto do próprio histórico — o movimento e a atividade automática já estavam funcionando corretamente nesse ponto (confirmado pelo histórico real de transição aparecendo no snapshot).
 13. **Verde.** `npm run typecheck`/`lint`/`test`/`build` limpos; pgTAP 325/325 (11 arquivos); isolamento 26/26; e2e 41/41.
+14. **pgTAP e e2e passam, mas achado real na validação manual de preview (não coberto por nenhum teste automatizado existente)** — ver §7 para a causa raiz completa e a correção. Recommitado, CI rodou de novo do zero e ficou verde outra vez com os mesmos números (118/118 unitários, 325/325 pgTAP, 26/26 isolamento, 41/41 e2e) — commit final `1c0a07d`.
 
 **PR:** [#6 — feat: A6 — atividades e agenda interna](https://github.com/johlll/praxis-crm/pull/6), aberto contra `main`.
-**Branch:** `feat/a6-activities-calendar`, commit final `e883f6d`.
+**Branch:** `feat/a6-activities-calendar`, commit final `1c0a07d`.
 **Estado do PR:** `OPEN`, `mergeable: MERGEABLE`, `mergeStateStatus: CLEAN`.
 **Merge:** **não realizado.** Aguardando autorização explícita do usuário.
 
 ---
 
-## 7. Limitações conhecidas, honestamente registradas
+## 7. Validação manual no preview (pós-CI, dados fictícios em `praxis-crm-dev`)
+
+Instrução do usuário após o CI fechar verde na 13ª rodada: a validação de preview da A5 não cobre os fluxos novos desta fase, então os 5 fluxos abaixo foram verificados manualmente no preview do commit `ee05e2e` (e revalidados no commit final `1c0a07d` após a correção do item 7.2), com dados fictícios, workspace "Escritorio QA Praxis A3" (`praxis-crm-dev`). Merge continua **não autorizado** até este ponto — check em produção só depois da revisão final.
+
+### 7.1 Criar, editar, concluir, reagendar, transferir (fluxo 1) — sem falhas
+
+Fluxo completo executado numa oportunidade fictícia nova ("Contato Próxima Ação A6 (validação)"): criar atividade com prazo futuro pela seção "Atividades" da oportunidade; reagendar para outra data futura, com persistência confirmada por `reload()` real (não só estado otimista); concluir, confirmando desaparecimento imediato da listagem padrão (`status=pending`) sem precisar de reload — mesmo padrão já provado pelo e2e. Nenhuma falha.
+
+### 7.2 Agenda semanal e filtros de atrasadas/hoje/amanhã/semana — 1 bug real encontrado e corrigido
+
+Os chips de contagem (Atrasadas/Hoje/Amanhã/Esta semana/Sem responsável) bateram certo em toda navegação. **Falha real encontrada na Agenda semanal:** uma atividade concluída e reagendada para domingo não aparecia na coluna de domingo, mesmo a Agenda pedindo explicitamente `status: "all"` (para mostrar itens concluídos também, não só pendentes).
+
+**Causa raiz** (confirmada lendo `list_activities()`, não presumida): os ramos `'today'`/`'tomorrow'`/`'week'`/`'unassigned'` do `CASE p_filter` traziam `status = 'pending' and` embutido dentro de si mesmos. Combinado via `AND` com a cláusula externa `(p_status is null or status = p_status)`, isso fazia o filtro de data vencer sobre um `p_status='all'` explícito — o ramo interno já eliminava qualquer linha com `status <> 'pending'` antes mesmo da cláusula externa entrar em jogo.
+
+**Correção:** removido `status = 'pending' and` desses quatro ramos em `supabase/migrations/20260911120300_a6_read_functions.sql`, mantendo-o **só** no ramo `'overdue'` — que é semanticamente sempre um conceito de pendência (uma atividade concluída nunca é "atrasada", mesmo critério de `isOverdue` já usado em toda a aplicação e coberto pelos testes pgTAP existentes, que não pegaram este bug porque nenhum deles testava `p_status='all'` combinado com um `p_filter` de data). O bloco de contagem dos chips (CTE `counts`) não foi afetado — já fixava `status = 'pending'` em cada `count(*) filter (...)` independente do `p_filter`/`p_status` do chamador, o que é correto e intencional (chips sempre mostram só pendentes).
+
+Verificado ao vivo: aplicado via `CREATE OR REPLACE FUNCTION` direto no `praxis-crm-dev` antes do commit, reload da Agenda confirmou o item aparecendo corretamente na coluna de domingo; depois commitado (`1c0a07d`), pushado, e o CI voltou a ficar 100% verde com os mesmos números.
+
+### 7.3 Próxima ação da oportunidade e contador da sidebar — sem falhas
+
+Na mesma oportunidade fictícia: estado inicial sem atividades mostrou "Sem próxima ação" corretamente. Criar uma atividade futura fez "Próxima ação" mostrá-la (tipo, título, data). Reagendá-la para outra data futura atualizou "Próxima ação" de verdade, confirmado por `reload()`. Concluí-la fez "Próxima ação" voltar a "Sem próxima ação" imediatamente, sem reload. Criar uma segunda atividade com data passada (atrasada) fez o contador de atrasadas da sidebar subir de "1" para "2", e o mesmo badge "N atrasada(s)" apareceu também no próprio card de dados da oportunidade ao lado de "Próxima ação" — confirmando que `overdue_activities_count` nunca se disfarça de próxima ação (mesma separação documentada em `private.opportunity_next_action()`) nem desaparece por estar no passado.
+
+### 7.4 Atividade automática por etapa — sem falhas
+
+Configurada uma regra em "Qualificar oportunidade" (tipo Ligação, prazo 24h) pela tela de configuração de pipelines. Movida a oportunidade fictícia até essa etapa pelo kanban: exatamente **uma** atividade automática foi criada ("Ligar para qualificar (validação A6)", com vencimento 24h após a movimentação, origem automática visível na seção de atividades da oportunidade) — sem duplicação, e a atividade manual atrasada criada anteriormente continuou intacta ao lado dela (total de 2 atividades, como esperado).
+
+### 7.5 Acesso com papel restrito respeitando o alcance do lead — sem falhas
+
+Criada uma conta nova com papel Advogado (`joaoniero2+praxisqaa6adv@gmail.com`, convite aceito ao vivo pelo link copiável, mesmo padrão já usado na validação da A4). Enquanto o lead da oportunidade fictícia estava "sem responsável", suas atividades apareciam normalmente na Central de Atividades da advogada. Reatribuído o lead para outro usuário (QA Sales Teste, nem a advogada nem "sem responsável"): as duas atividades ligadas a ele **desapareceram** da Central de Atividades da advogada (lista caiu de 4 para 2 itens, restando só os de leads efetivamente "sem responsável"), o contador de atrasadas da sidebar caiu de "2" para "1" de acordo, e o acesso direto por URL ao lead retornou **404** — nunca 403, mesmo padrão de "não encontrado" já estabelecido na A4/A5, agora confirmado valendo também para o alcance das atividades.
+
+---
+
+## 8. Limitações conhecidas, honestamente registradas
 
 - **Sem navegação de semana na Agenda** — sempre mostra a semana atual; ver `docs/decisoes/a6-atividades.md` §11.
 - **Seletor de lead simples na Central** — `<select>` nativo, sem busca; ver `docs/decisoes/a6-atividades.md` §12.
@@ -105,11 +138,12 @@ Criar atividade pela Central e concluir (some da listagem padrão); reagendar e 
 
 ---
 
-## 8. Confirmações explícitas
+## 9. Confirmações explícitas
 
 - **Nenhuma fase além da A6 foi iniciada** — A7 não implementada.
 - **Nenhum arquivo de referência visual foi alterado.**
 - **Sem merge em `main`, sem commit direto em `main`.** PR aberto contra `main` a partir de `feat/a6-activities-calendar`.
-- **`praxis-crm-dev`:** só migrations aditivas aplicadas (todas as 8 desta fase, `db push` real, sem dry-run apenas — Docker local indisponível, mesma limitação já registrada). Nenhum dado apagado.
+- **`praxis-crm-dev`:** só migrations aditivas aplicadas (todas as 8 desta fase, `db push` real, sem dry-run apenas — Docker local indisponível, mesma limitação já registrada), mais a correção pontual de `list_activities()` (§7.2), também aditiva/comportamental, sem apagar dado nenhum. Único dado fictício adicional deixado no ambiente: contato/lead/oportunidade/atividades "(validação)" e a conta `joaoniero2+praxisqaa6adv@gmail.com` (Advogado) usados na validação de preview — mesmo padrão de dados de teste já acumulado nas fases anteriores neste workspace de QA.
 - **Nenhuma dependência de fase futura instalada** — nenhum pacote novo entrou no `package.json` nesta fase (nenhuma biblioteca de calendário/data foi necessária; `<input type="date">`/`<input type="time">` nativos bastaram, mesmo padrão já usado pela A5).
 - **Design system preservado** — nenhum componente novo de UI genérico foi introduzido fora do padrão já existente (tabelas manuais, diálogos com `key={instanceKey}`, `<select>` nativo, Tailwind com os tokens já definidos).
+- **Merge e checagem em produção:** aguardando revisão final e autorização explícita do usuário, conforme instruído.
