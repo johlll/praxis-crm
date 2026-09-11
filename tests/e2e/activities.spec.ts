@@ -96,8 +96,12 @@ test.describe.serial("atividades e agenda — A6", () => {
     await expect(page.getByRole("dialog")).toHaveCount(0);
 
     await page.reload();
-    const [dd, mm] = novaData.split("-").slice(1);
-    await expect(page.getByText(`${dd}/${mm}`)).toBeVisible();
+    // "YYYY-MM-DD" -> exibido como DD/MM (formato brasileiro, pt-BR) —
+    // slice(1) dá [mês, dia]; nomear direito evita inverter a ordem na
+    // hora de montar o texto esperado (achado real no CI: a versão
+    // anterior desta linha checava "mês/dia" em vez de "dia/mês").
+    const [, mes, dia] = novaData.split("-");
+    await expect(page.getByText(`${dia}/${mes}`)).toBeVisible();
 
     const responsavelSelect = page.getByLabel("Transferir Revisar contrato (teste e2e) para");
     await responsavelSelect.selectOption({ label: SEED_USERS.ana.fullName });
