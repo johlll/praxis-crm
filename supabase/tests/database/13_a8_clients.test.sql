@@ -391,6 +391,18 @@ select is(
   'Segunda oportunidade do mesmo contato reaproveita o MESMO cliente ativo (setup do teste de origem)'
 );
 
+-- now() é estável por TRANSAÇÃO no Postgres (mesmo achado já documentado
+-- na A7, §8, item 8) — como o arquivo pgTAP inteiro roda numa única
+-- transação, os dois handoffs (opp_ana e opp_ana_2) nasceriam com o MESMO
+-- created_at, e o desempate por ch.id (uuid aleatório) viraria uma
+-- loteria: às vezes opp_ana_2 "ganhava" o desempate e era escolhido como
+-- origin, quebrando o teste (e revelando a mesma ambiguidade em qualquer
+-- cenário real onde dois handoffs nascessem no mesmo microssegundo).
+-- Espaçado manualmente só para o teste — nunca acontece em produção real,
+-- onde cada win_opportunity() é sua própria transação.
+update public.client_handoffs set created_at = created_at + interval '1 second'
+where opportunity_id = :'opp_ana_2'::uuid;
+
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'carla', 'role', 'authenticated')::text, true);
 select lives_ok(
