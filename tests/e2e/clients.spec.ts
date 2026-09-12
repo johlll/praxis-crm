@@ -100,7 +100,9 @@ test.describe.serial("clientes — A8", () => {
 
     await page.getByLabel("Status do cliente").selectOption("suspenso");
     await page.getByRole("button", { name: "Salvar status" }).click();
-    await expect(page.getByText("suspenso", { exact: false })).toBeVisible();
+    // Restrito ao Topbar: a mesma palavra também existe como <option> do
+    // select de status, que ainda "resolve" no locator mesmo oculto.
+    await expect(page.getByRole("banner").getByText("Suspenso")).toBeVisible();
 
     await page.reload();
     await expect(page.getByLabel("Status do cliente")).toHaveValue("suspenso");
