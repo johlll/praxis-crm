@@ -2,9 +2,10 @@
 
 **Status: PR aberta, NÃO mesclada.** Branch `feat/a8-clients-handoff`,
 [PR #10](https://github.com/johlll/praxis-crm/pull/10). CI verde no commit
-final `0ca580d`. Validação interativa no preview concluída com sucesso
-(§8). **Merge, commit direto em `main` e início da A9 seguem explicitamente
-não autorizados** — nenhum dos três foi feito.
+final `580c84a` (revisão pré-merge, §9). Validação interativa no preview
+concluída com sucesso, incluindo os comportamentos corrigidos na revisão
+(§9). **Merge, commit direto em `main` e início da A9 seguem
+explicitamente não autorizados** — nenhum dos três foi feito.
 
 ## 1. Escopo
 
@@ -195,16 +196,71 @@ Nenhum dado real de cliente foi usado — só registros fictícios
   confirmada no código: é a criação do cliente na conversão) — sem coluna
   duplicada.
 - Origem identificada pelo primeiro `client_handoffs` (ordenação
-  `created_at, id`), resolvido no cliente a partir de `history[0]`, sem
-  consulta redundante.
+  `created_at, id`), resolvida no SERVIDOR (revisão pré-merge, §9) —
+  nunca a partir de `history[0]`, que vem filtrado por alcance.
 - Atribuição/touchpoints comerciais continuam fora do escopo (A11).
 - `win_opportunity()` continua criando/reaproveitando cliente mesmo quando
   só existem clientes encerrados/suspensos para o contato (comportamento
   da A5, documentado, não alterado silenciosamente).
 
-## 9. Confirmações explícitas
+## 9. Revisão pré-merge — 3 achados corrigidos
 
-- Nenhuma migration já aplicada por outro ambiente foi editada — as 4
+Revisão de código na PR #10 apontou 3 pontos antes de autorizar o merge.
+Migration nova: `20260912100000_a8_review_hardening.sql` (`create or
+replace` em `list_clients()`/`get_client()`, mesmas assinaturas — nenhuma
+migration já aplicada foi reescrita). Raciocínio completo em
+`docs/decisoes/a8-clientes.md` §11.
+
+1. **Cliente sem negociação vinculada.** A regra original só restringia
+   `lawyer` quando não havia handoff em seu alcance — `sales`/`viewer`
+   continuavam vendo um cliente sem NENHUMA negociação vinculada (alcance
+   indeterminável, não só "fora do alcance"). Corrigido: agora qualquer
+   papel que não seja owner/admin/manager exige ao menos uma negociação em
+   seu alcance para acessar o cliente (em `list_clients()` e `get_client()`).
+2. **Origem calculada a partir do histórico já filtrado.** `history[0]`
+   podia mostrar uma oportunidade que não é a origem real, se a origem
+   verdadeira estivesse fora do alcance de quem pediu mas uma posterior
+   estivesse dentro. Corrigido: `get_client()` resolve a origem
+   separadamente, sempre a partir do primeiro handoff de verdade, e só a
+   inclui na resposta se essa oportunidade específica estiver no alcance
+   do usuário — caso contrário `origin` vem `null` (omitida, nunca
+   substituída por outra).
+3. **404 disfarçando falha operacional.** `getClient()` tratava qualquer
+   erro da RPC do mesmo jeito (`null` → 404). Corrigido: só
+   `client_not_found`/`insufficient_permission` viram 404;
+   qualquer outro erro lança `ClientDetailLoadError`, capturado por
+   `clientes/[id]/error.tsx` com "Tentar novamente" — `generateMetadata()`
+   propaga a mesma exceção.
+
+**CI:** verde de primeira no commit `580c84a`
+([run](https://github.com/johlll/praxis-crm/actions/runs/34697883692)) —
+17 novas asserções pgTAP (61 no total), incluindo os seis papéis contra um
+cliente sem handoff e o cenário de origem com duas oportunidades (uma
+dentro, uma fora do alcance do advogado). Teste unitário novo
+(`tests/unit/client-detail-error.test.ts`) cobre a diferenciação 404 vs
+falha operacional, inclusive `generateMetadata()`.
+
+**Validação em preview** (mesma migration aplicada via `db:push --linked`
+antes de validar): recriado o cenário de origem filtrada de ponta a ponta
+— contato com duas oportunidades ganhas (uma atribuída à própria owner,
+fora do alcance de um advogado; outra sem responsável, dentro do alcance).
+Como owner: as duas aparecem no histórico, "Origem" mostra corretamente a
+primeira (R$ 700,00). Como advogado (login real, `QA A6 Advogado`): a
+seção "Origem" some inteiramente da tela (nunca troca pela segunda
+oportunidade), o histórico mostra só a acessível (R$ 900,00), e "Valor
+total" reflete só essa (R$ 900,00, não R$ 1.600,00) — exatamente o
+comportamento pedido. Regressão confirmada: cliente inexistente continua
+respondendo 404 normalmente (não virou tela de erro).
+
+O achado 1 (cliente sem handoff) não foi reproduzido no preview — exigiria
+inserir uma linha direto na tabela `clients` fora do fluxo normal da
+aplicação (só possível via SQL administrativo, que o preview não expõe);
+está coberto exaustivamente pelas 9 novas asserções pgTAP contra os seis
+papéis.
+
+## 10. Confirmações explícitas
+
+- Nenhuma migration já aplicada por outro ambiente foi editada — as 5
   migrations da A8 são todas novas.
 - `win_opportunity()` em si não foi tocado (só as leituras que passaram a
   incluir `client_id` no retorno).
