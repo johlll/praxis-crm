@@ -83,6 +83,12 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   consent_not_found: "Registro de consentimento não encontrado.",
   consent_already_revoked: "Este consentimento já foi revogado.",
   invalid_cursor: "Não foi possível continuar a paginação — recarregue a conversa e tente de novo.",
+  // A8 — clientes e handoff.
+  client_not_found: "Cliente não encontrado.",
+  active_client_conflict:
+    "Já existe um cliente ativo para este contato. Encerre ou suspenda o outro cadastro antes de reativar este.",
+  client_merge_conflict_active_client:
+    "Não é possível mesclar: os dois contatos têm cliente ativo. Encerre ou suspenda um deles antes de mesclar.",
 };
 
 /** update_lead_basic_fields()/assign_lead()/set_lead_status()/set_lead_value()
@@ -99,6 +105,12 @@ const LEAD_CONFLICT_MESSAGE =
  * recente; a interface deve recarregar, nunca sobrescrever. */
 const OPPORTUNITY_CONFLICT_MESSAGE =
   "Esta oportunidade foi alterada por outra pessoa (ou já foi encerrada). Recarregue a página para ver o estado atual.";
+
+/** update_client_status()/transfer_client_owner() levantam
+ * "client_conflict" quando lock_version não bate — mesmo princípio de
+ * opportunity_conflict/activity_conflict acima. */
+const CLIENT_CONFLICT_MESSAGE =
+  "Este cliente foi alterado por outra pessoa. Recarregue a página para ver o estado atual.";
 
 /** update_activity()/complete_activity()/reschedule_activity()/
  * reassign_activity() levantam "activity_conflict" tanto para
@@ -123,6 +135,7 @@ export function toUserMessage(error: unknown): string {
     if (raw === "lead_conflict") return LEAD_CONFLICT_MESSAGE;
     if (raw === "opportunity_conflict") return OPPORTUNITY_CONFLICT_MESSAGE;
     if (raw === "activity_conflict") return ACTIVITY_CONFLICT_MESSAGE;
+    if (raw === "client_conflict") return CLIENT_CONFLICT_MESSAGE;
     const mapped = KNOWN_ERROR_MESSAGES[raw];
     if (mapped) return mapped;
   }

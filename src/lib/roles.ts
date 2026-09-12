@@ -93,7 +93,18 @@ export type Permission =
   | "conversation.send"
   | "conversation.link"
   | "conversation.simulate"
-  | "contact.consent_manage";
+  | "contact.consent_manage"
+  // A8 — clientes e handoff. "Ver" segue a matriz do plano: todos os
+  // papéis veem (owner/admin/manager sem restrição de linha; lawyer só
+  // clientes com ao menos uma oportunidade vinculada em seu alcance
+  // "seus + sem responsável"; sales/viewer têm o MESMO alcance por
+  // registro de owner/admin/manager — private.lead_accessible_to_role()
+  // só restringe 'lawyer' desde a A5 —, distinguindo-se só pela projeção
+  // financeira, nunca pelo conjunto de clientes visíveis). Alterar status
+  // e transferir responsável são administrativos, mesmo nível de
+  // pipeline.configure — nenhum outro papel muda isso nesta entrega.
+  | "client.view"
+  | "client.manage";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -120,6 +131,8 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "conversation.link": new Set<Role>(["owner", "admin", "manager"]),
   "conversation.simulate": new Set<Role>(["owner", "admin"]),
   "contact.consent_manage": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
+  "client.view": new Set(ROLES),
+  "client.manage": new Set<Role>(["owner", "admin", "manager"]),
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {
