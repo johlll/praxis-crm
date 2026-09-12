@@ -138,7 +138,13 @@ test.describe.serial("clientes — A8", () => {
   });
 
   test("5. isolamento entre workspaces — cliente de um escritório não existe para outro", async ({ page }) => {
-    await login(page, SEED_USERS.bruno.email);
+    // daniel, não bruno: auth-workspace.spec.ts (mesmo banco efêmero da
+    // suíte) convida bruno para o workspace da ana e ele aceita — na hora
+    // em que este arquivo roda, bruno já é membro legítimo de ws_um.
+    // daniel nunca ganha acesso a ws_um (só cria o workspace PRÓPRIO dele
+    // no onboarding) — mesmo padrão de isolamento usado em
+    // leads.spec.ts/pipeline.spec.ts.
+    await login(page, SEED_USERS.daniel.email);
     await page.goto(clientUrl);
     await expect(page.getByText("Cliente A8 E2E")).not.toBeVisible();
   });
