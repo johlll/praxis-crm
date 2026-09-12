@@ -51,10 +51,12 @@ export default async function ClienteDetalhePage({ params }: { params: Promise<{
   const canManage = roleHasPermission(user.role, "client.manage");
   const members = canManage ? await listTeamMembers(workspaceId, user.id) : [];
 
-  // history[0] (ordem cronológica crescente, ver get_client()) é a
-  // origem — item 5 do pedido: identificada pelo primeiro handoff
-  // vinculado, com ordenação determinística, sem consulta redundante.
-  const origin = client.history[0];
+  // Resolvida no servidor a partir do primeiro handoff de verdade —
+  // NUNCA history[0] (achado da revisão pré-merge: o histórico já vem
+  // filtrado pelo alcance de quem pediu, e a origem real pode estar fora
+  // dele). null aqui significa "existe mas fora do alcance" — omitida,
+  // nunca substituída por outra oportunidade.
+  const origin = client.origin;
 
   return (
     <>

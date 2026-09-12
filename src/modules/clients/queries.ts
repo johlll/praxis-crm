@@ -142,6 +142,11 @@ export type ClientHistoryItem = {
   valueBand?: string;
 };
 
+export type ClientOrigin = {
+  opportunityId: string;
+  legalArea: string;
+};
+
 export type ClientDetail = {
   id: string;
   workspaceId: string;
@@ -153,19 +158,49 @@ export type ClientDetail = {
   lockVersion: number;
   createdAt: string;
   updatedAt: string;
-  /** Ordem cronológica crescente — history[0] é a origem (item 5 do
-   * pedido: primeiro handoff vinculado, ordenação determinística por
-   * created_at,id — resolvido aqui, sem consulta redundante no banco). */
+  /** Resolvida no servidor a partir do primeiro handoff de VERDADE
+   * (ordenação determinística created_at/id), nunca de history[0] —
+   * history já vem filtrado pelo alcance de quem pediu, e a origem real
+   * pode estar fora dele (achado da revisão pré-merge). Ausente (não
+   * `undefined` por omissão de chave, e sim `null` vindo do servidor)
+   * quando a oportunidade de origem existe mas está fora do alcance do
+   * usuário — nesse caso a interface omite a origem, nunca mostra outra
+   * em seu lugar. */
+  origin: ClientOrigin | null;
   history: ClientHistoryItem[];
   valueSumCents?: number;
 };
 
+/**
+ * `get_client()` levanta 'client_not_found'/'insufficient_permission' para
+ * "não existe, ou existe mas seu alcance não chega lá" — os dois casos que
+ * a página trata como 404 (mesmo princípio de leads/[id], A4). Qualquer
+ * OUTRO erro (rede, banco fora do ar, etc.) é uma falha operacional de
+ * verdade — vira `ClientDetailLoadError`, capturado por
+ * `clientes/[id]/error.tsx` com "Tentar novamente", nunca um 404 enganoso
+ * (achado da revisão pré-merge, item 3).
+ */
+const CLIENT_NOT_FOUND_CODES = new Set(["client_not_found", "insufficient_permission"]);
+
+export class ClientDetailLoadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ClientDetailLoadError";
+  }
+}
+
 export async function getClient(clientId: string): Promise<ClientDetail | null> {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("get_client", { p_client_id: clientId });
-  if (error || !data) return null;
+
+  if (error) {
+    if (CLIENT_NOT_FOUND_CODES.has(error.message)) return null;
+    throw new ClientDetailLoadError(`Falha ao carregar o cliente ${clientId}: ${error.message}`);
+  }
+  if (!data) return null;
 
   const row = data as Record<string, unknown>;
+  const originRaw = row.origin as Record<string, unknown> | null;
   const history = ((row.history as unknown[]) ?? []).map((h) => {
     const item = h as Record<string, unknown>;
     return {
@@ -199,6 +234,7 @@ export async function getClient(clientId: string): Promise<ClientDetail | null> 
     lockVersion: row.lock_version as number,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
+    origin: originRaw ? { opportunityId: originRaw.opportunity_id as string, legalArea: originRaw.legal_area as string } : null,
     history,
     ...(row.value_sum_cents !== undefined ? { valueSumCents: row.value_sum_cents as number } : {}),
   };

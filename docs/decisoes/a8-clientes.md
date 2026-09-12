@@ -42,19 +42,23 @@ sendo inteiramente na PROJEÇÃO financeira, nunca no conjunto de linhas
 visíveis. Essa é a regra vigente desde a A5 para leads/oportunidades, e a
 A8 a reaproveita literalmente, sem uma segunda implementação:
 
-- `list_clients()`/`get_client()` só filtram clientes para `lawyer`: um
-  cliente aparece/é acessível se tiver ao menos UM handoff cujo lead
-  (herdado da oportunidade) esteja no alcance do advogado.
+- `list_clients()`/`get_client()` filtram clientes para qualquer papel que
+  não seja owner/admin/manager (**revisado em §11**, item 1 — a versão
+  original só filtrava `lawyer`): um cliente aparece/é acessível se tiver
+  ao menos UM handoff cujo lead (herdado da oportunidade) esteja no
+  alcance de quem pediu.
 - Dentro de um cliente visível, `history` filtra CADA linha pelo mesmo
   alcance — ver uma oportunidade não libera as demais do mesmo cliente,
   mesmo que pertençam ao mesmo cliente. Um advogado com acesso a uma
   negociação do cliente X não vê automaticamente outra negociação do
   mesmo cliente atribuída a outro colega.
 - Registro legado sem nenhum handoff vinculado (alcance indeterminável):
-  fica de fora da lista do advogado — sua checagem é "existe ao menos uma
-  oportunidade em meu alcance", vacuamente falsa sem nenhuma — e permanece
-  visível para owner/admin/manager/sales/viewer. Não é um caso especial
-  tratado em código; é a mesma regra aplicada a um conjunto vazio.
+  fica de fora da lista de qualquer papel não administrativo — a checagem
+  é "existe ao menos uma oportunidade em meu alcance", vacuamente falsa
+  sem nenhuma — e permanece visível só para owner/admin/manager
+  (**revisado em §11**: antes também ficava visível para sales/viewer, o
+  que era o próprio achado 1 da revisão). Não é um caso especial tratado
+  em código; é a mesma regra aplicada a um conjunto vazio.
 
 Ser responsável (`owner_user_id`) por um cliente **não** concede acesso
 adicional a nenhuma oportunidade ou lead — esse campo é só um rótulo de
@@ -64,8 +68,10 @@ restrito.
 ## 4. Permissões — administrativo para mudar, não para ver
 
 `client.view`: todos os papéis (owner/admin/manager sem filtro de linha;
-lawyer com o alcance do item 3; sales/viewer com o mesmo alcance de owner/
-admin/manager, distinguindo-se só pela projeção financeira).
+lawyer/sales/viewer com o alcance do item 3 — **revisado em §11**: os três
+agora exigem ao menos uma negociação em seu alcance, distinguindo-se da
+administração pela projeção financeira E por esse filtro de linha no caso-
+limite de cliente sem nenhum handoff).
 `client.manage` (mudar status, transferir responsável): só owner/admin/
 manager, mesmo nível de `pipeline.configure`. Nem sales, nem viewer, nem
 lawyer alteram cliente algum nesta entrega — `contact.edit` NÃO foi copiado
@@ -176,3 +182,47 @@ clientes" — a mesma correção aplicada a `ActivitiesLoadError` (A6) e
 como correção pós-revisão: `ClientsLoadError` é lançada quando a RPC
 responde com erro; `clientes/error.tsx` mostra erro tratado com "tentar
 novamente", nunca uma lista vazia disfarçada de "nenhum cliente ainda".
+
+## 11. Revisão pré-merge — 3 achados corrigidos
+
+Revisão de código na PR #10 apontou 3 pontos antes de autorizar o merge.
+Migration nova: `20260912100000_a8_review_hardening.sql` (`create or
+replace` em `list_clients()`/`get_client()`, mesmas assinaturas — nenhuma
+migration já aplicada foi reescrita).
+
+**1. Cliente sem negociação vinculada.** A regra original (§3) só
+restringia `lawyer` quando não havia nenhum handoff em seu alcance —
+`sales`/`viewer` continuavam vendo o cliente mesmo sem NENHUMA negociação
+vinculada (alcance literalmente indeterminável, não apenas "fora do
+alcance"). Corrigido: `list_clients()`/`get_client()` agora exigem que
+qualquer papel que não seja owner/admin/manager tenha ao menos uma
+negociação em seu alcance — na prática, `sales`/`viewer` só perdem acesso
+ao cliente que não tem NENHUM handoff (já que `lead_accessible_to_role()`
+só restringe `lawyer` quando existe alcance a verificar). Histórico e
+totais continuam filtrados individualmente por registro, sem mudança.
+
+**2. Origem calculada a partir do histórico já filtrado.** `history[0]`
+(resolvido no cliente, A8 original) podia mostrar uma oportunidade que não
+é a origem real: se a origem verdadeira (primeiro handoff) estivesse fora
+do alcance do advogado mas uma posterior estivesse dentro, o filtro de
+alcance descartava a primeira e a segunda virava `history[0]` — parecendo
+a origem sem ser. Corrigido: `get_client()` resolve a origem
+separadamente, sempre a partir do primeiro handoff de VERDADE (mesma
+ordenação determinística `created_at, id`), e só a inclui na resposta
+(`origin`) se o usuário puder acessar aquela oportunidade específica. Caso
+contrário `origin` vem `null` — a interface omite a origem, nunca a
+substitui por outra oportunidade do histórico nem expõe o identificador da
+restrita.
+
+**3. 404 disfarçando falha operacional.** `getClient()` (TypeScript)
+tratava qualquer erro da RPC — cliente inexistente, acesso negado, OU uma
+falha real de rede/banco — do mesmo jeito: `null`, virando 404. Isso está
+certo para `client_not_found`/`insufficient_permission` (mesmo princípio
+de `leads/[id]`, A4), mas escondia uma falha operacional de verdade atrás
+de um 404 enganoso. Corrigido: só esses dois códigos viram `null`; qualquer
+outro erro lança `ClientDetailLoadError`, capturado por um novo
+`clientes/[id]/error.tsx` com "Tentar novamente" — mesmo princípio de
+`ActivitiesLoadError`/`ConversationsLoadError`/`ClientsLoadError`, agora
+também para o detalhe de um único registro. `generateMetadata()` chama
+`getClient()` também e propaga a mesma exceção (Next.js roteia para o
+`error.tsx` mais próximo igual a qualquer outro erro de render).

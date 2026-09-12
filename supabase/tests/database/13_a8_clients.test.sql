@@ -10,7 +10,7 @@
 -- chamada, nunca confia em estado deixado por um bloco anterior.
 
 begin;
-select plan(44);
+select plan(61);
 
 \set ws_um    '10000000-0000-0000-0000-000000000001'
 \set ws_dois  '10000000-0000-0000-0000-000000000002'
@@ -38,6 +38,7 @@ select (create_contact(:'ws_um'::uuid, 'pf', 'Contato A8 Ana', null, null, null)
 select (create_contact(:'ws_um'::uuid, 'pf', 'Contato A8 Sem Resp', null, null, null)).id as contact_sem_resp \gset
 select (create_contact(:'ws_um'::uuid, 'pf', 'Contato A8 Merge Vencedor', null, null, null)).id as contact_merge_vencedor \gset
 select (create_contact(:'ws_um'::uuid, 'pf', 'Contato A8 Merge Perdedor', null, null, null)).id as contact_merge_perdedor \gset
+select (create_contact(:'ws_um'::uuid, 'pf', 'Contato A8 Sem Handoff', null, null, null)).id as contact_sem_handoff \gset
 
 select create_lead(:'ws_um'::uuid, (:'contact_ana')::uuid, 'Trabalhista', 'Lead A8 Ana', '{}'::text[], 'media', :'ana'::uuid) as lead_ana \gset
 select create_lead(:'ws_um'::uuid, (:'contact_sem_resp')::uuid, 'Cível', 'Lead A8 Sem Resp', '{}'::text[], 'media', null) as lead_sem_resp \gset
@@ -132,7 +133,11 @@ select is(
 );
 select is(
   ((:'client_ana_detail'::jsonb -> 'history') -> 0 ->> 'opportunity_id'),
-  :'opp_ana', 'history[0] (origem) é a oportunidade que gerou o cliente'
+  :'opp_ana', 'history[0] traz a oportunidade que gerou o cliente'
+);
+select is(
+  ((:'client_ana_detail'::jsonb -> 'origin') ->> 'opportunity_id'),
+  :'opp_ana', 'origin (resolvida no servidor, achado da revisão) também aponta pra mesma oportunidade quando só existe uma'
 );
 select is(
   ((:'client_ana_detail'::jsonb -> 'history') -> 0 ->> 'handoff_status'), 'pendente',
@@ -364,7 +369,146 @@ select ok(
 );
 
 -- ===================================================================
--- 9) Isolamento entre workspaces
+-- 9) Origem correta quando o histórico é filtrado por alcance
+-- (achado 2 da revisão pré-merge): a segunda oportunidade GANHA do
+-- MESMO contato_ana reaproveita o cliente ativo já existente
+-- (client_ana). Ela é atribuída a NINGUÉM (dentro do alcance do
+-- advogado), enquanto a primeira (opp_ana) é atribuída à ana (fora do
+-- alcance de carla). Para o advogado, o histórico deve mostrar só a
+-- segunda — mas ela NUNCA pode aparecer como origin, porque a origem
+-- de verdade (opp_ana) está fora do seu alcance.
+-- ===================================================================
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+select create_lead(:'ws_um'::uuid, (:'contact_ana')::uuid, 'Trabalhista', 'Lead A8 Ana Segunda Oportunidade', '{}'::text[], 'media', null) as lead_ana_2 \gset
+select create_opportunity(:'lead_ana_2'::uuid) as opp_ana_2 \gset
+select win_opportunity(:'opp_ana_2'::uuid, 0, 400000, 'fixed') as win_ana_2 \gset
+reset role;
+select (:'win_ana_2'::jsonb ->> 'client_id') as client_ana_2_check \gset
+select is(
+  (:'client_ana_2_check')::uuid, (:'client_ana')::uuid,
+  'Segunda oportunidade do mesmo contato reaproveita o MESMO cliente ativo (setup do teste de origem)'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'carla', 'role', 'authenticated')::text, true);
+select lives_ok(
+  format($i$ select get_client(%L::uuid) $i$, :'client_ana'),
+  'Advogado agora acessa o cliente — a segunda oportunidade está dentro do seu alcance'
+);
+select get_client(:'client_ana'::uuid) as client_ana_detail_lawyer \gset
+select is(
+  jsonb_array_length((:'client_ana_detail_lawyer'::jsonb -> 'history')), 1,
+  'Histórico do advogado mostra só a oportunidade dentro do alcance — a de fora continua oculta'
+);
+select is(
+  ((:'client_ana_detail_lawyer'::jsonb -> 'history') -> 0 ->> 'opportunity_id'), :'opp_ana_2',
+  'A única oportunidade visível no histórico do advogado é a segunda, não a origem real'
+);
+select is(
+  jsonb_typeof((:'client_ana_detail_lawyer'::jsonb -> 'origin')), 'null',
+  'Origem é OMITIDA (jsonb null) para o advogado — a oportunidade de origem real está fora do seu alcance e NUNCA é substituída pela segunda (achado 2 da revisão)'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+select get_client(:'client_ana'::uuid) as client_ana_detail_owner_origin \gset
+select is(
+  ((:'client_ana_detail_owner_origin'::jsonb -> 'origin') ->> 'opportunity_id'), :'opp_ana',
+  'Owner vê a origem correta (a PRIMEIRA oportunidade), nunca a segunda, mesmo com dois itens no histórico'
+);
+select is(
+  jsonb_array_length((:'client_ana_detail_owner_origin'::jsonb -> 'history')), 2,
+  'Owner vê as DUAS oportunidades no histórico — sem filtro de alcance'
+);
+
+-- ===================================================================
+-- 10) Cliente sem NENHUM handoff vinculado (alcance indeterminável) —
+-- restrito à administração (owner/admin/manager); lawyer/sales/viewer
+-- não enxergam mais (achado 1 da revisão pré-merge — antes só 'lawyer'
+-- era restrito nesse caso).
+-- ===================================================================
+
+reset role;
+insert into public.clients (workspace_id, contact_id, status)
+values (:'ws_um'::uuid, (:'contact_sem_handoff')::uuid, 'suspenso')
+returning id as client_sem_handoff \gset
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+select lives_ok(
+  format($i$ select get_client(%L::uuid) $i$, :'client_sem_handoff'),
+  'Owner acessa cliente sem NENHUM handoff vinculado (alcance indeterminável, acesso administrativo mantido)'
+);
+select items as ch_owner_items from list_clients(:'ws_um'::uuid) \gset
+select ok(
+  (:'ch_owner_items'::jsonb) @> format('[{"id": "%s"}]', :'client_sem_handoff')::jsonb,
+  'Owner também vê esse cliente na listagem'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'carla', 'role', 'authenticated')::text, true);
+select throws_ok(
+  format($i$ select get_client(%L::uuid) $i$, :'client_sem_handoff'),
+  'P0001', 'client_not_found',
+  'Lawyer NÃO acessa cliente sem nenhum handoff vinculado'
+);
+select items as ch_lawyer_items from list_clients(:'ws_um'::uuid) \gset
+select ok(
+  not ((:'ch_lawyer_items'::jsonb) @> format('[{"id": "%s"}]', :'client_sem_handoff')::jsonb),
+  'Lawyer não vê esse cliente na listagem'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'elisa', 'role', 'authenticated')::text, true);
+select throws_ok(
+  format($i$ select get_client(%L::uuid) $i$, :'client_sem_handoff'),
+  'P0001', 'client_not_found',
+  'Viewer NÃO acessa cliente sem nenhum handoff vinculado (achado 1 da revisão — antes ficava visível)'
+);
+select items as ch_viewer_items from list_clients(:'ws_um'::uuid) \gset
+select ok(
+  not ((:'ch_viewer_items'::jsonb) @> format('[{"id": "%s"}]', :'client_sem_handoff')::jsonb),
+  'Viewer não vê esse cliente na listagem (achado 1 da revisão — antes ficava visível)'
+);
+
+-- Promove elisa temporariamente (sales → manager → admin) só para
+-- exercitar os seis papéis contra o MESMO cliente sem handoff; devolvida
+-- a 'viewer' (seu papel real no seed) ao final desta seção.
+reset role;
+update public.memberships set role = 'sales' where workspace_id = :'ws_um'::uuid and user_id = :'elisa'::uuid;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'elisa', 'role', 'authenticated')::text, true);
+select throws_ok(
+  format($i$ select get_client(%L::uuid) $i$, :'client_sem_handoff'),
+  'P0001', 'client_not_found',
+  'Sales NÃO acessa cliente sem nenhum handoff vinculado (achado 1 da revisão)'
+);
+
+reset role;
+update public.memberships set role = 'manager' where workspace_id = :'ws_um'::uuid and user_id = :'elisa'::uuid;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'elisa', 'role', 'authenticated')::text, true);
+select lives_ok(
+  format($i$ select get_client(%L::uuid) $i$, :'client_sem_handoff'),
+  'Manager acessa cliente sem nenhum handoff vinculado (papel administrativo)'
+);
+
+reset role;
+update public.memberships set role = 'admin' where workspace_id = :'ws_um'::uuid and user_id = :'elisa'::uuid;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'elisa', 'role', 'authenticated')::text, true);
+select lives_ok(
+  format($i$ select get_client(%L::uuid) $i$, :'client_sem_handoff'),
+  'Admin acessa cliente sem nenhum handoff vinculado (papel administrativo)'
+);
+
+reset role;
+update public.memberships set role = 'viewer' where workspace_id = :'ws_um'::uuid and user_id = :'elisa'::uuid;
+
+-- ===================================================================
+-- 11) Isolamento entre workspaces
 -- ===================================================================
 
 set local role authenticated;
