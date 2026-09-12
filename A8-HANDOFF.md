@@ -1,11 +1,11 @@
 # A8 — Clientes e handoff — Handoff
 
-**Status: PR aberta, NÃO mesclada.** Branch `feat/a8-clients-handoff`,
-[PR #10](https://github.com/johlll/praxis-crm/pull/10). CI verde no commit
-final `580c84a` (revisão pré-merge, §9). Validação interativa no preview
-concluída com sucesso, incluindo os comportamentos corrigidos na revisão
-(§9). **Merge, commit direto em `main` e início da A9 seguem
-explicitamente não autorizados** — nenhum dos três foi feito.
+**Status: MERGEADA e em produção.** Branch `feat/a8-clients-handoff`,
+[PR #10](https://github.com/johlll/praxis-crm/pull/10), mesclada em `main`
+via merge commit `c8d4135` (§11). Deploy de produção confirmado e checagem
+breve (login/Clientes/detalhe/histórico/handoff/papel restrito) sem
+falhas — ver §11. **A9 ainda não foi iniciada** — apenas seu escopo foi
+apresentado, sem implementação.
 
 ## 1. Escopo
 
@@ -264,5 +264,42 @@ papéis.
   migrations da A8 são todas novas.
 - `win_opportunity()` em si não foi tocado (só as leituras que passaram a
   incluir `client_id` no retorno).
-- **Merge NÃO realizado.** Nenhum commit direto em `main`. **A9 não foi
-  iniciada.**
+
+## 11. Merge e confirmação em produção
+
+**Merge:** autorizado explicitamente pelo usuário, condicionado a CI verde
+no commit final (já cumprido — §9, commit `fd00f87`) e ausência de
+conflitos (`mergeStateStatus: CLEAN`, `mergeable: MERGEABLE`). PR #10
+mesclada em `main` via merge commit `c8d4135`
+(`https://github.com/johlll/praxis-crm/commit/c8d4135`), mesmo método já
+usado nos PRs anteriores (`--merge`, sem squash/rebase). Nenhum commit
+direto em `main` — toda mudança desta fase entrou por PR.
+
+**Deploy de produção:** confirmado — `gh api repos/.../commits/c8d4135.../status`
+devolveu `state: success`, `Vercel` reportando `Deployment has completed`
+para exatamente o commit mesclado.
+
+**Checagem breve em produção** (`https://praxis-crm-eight.vercel.app`,
+mesma conta QA já usada — `joaoniero2+praxisqaa3@gmail.com`, dado 100%
+fictício, nenhum cliente real; foco no que muda depois do deploy, sem
+repetir a suíte manual já validada no preview):
+
+| Fluxo | Resultado |
+|---|---|
+| Login (owner) | OK — `/visao-geral` renderizou com o workspace certo |
+| `/clientes` | OK — lista o mesmo cliente fictício da validação em preview (mesmo projeto Supabase hospedado usado por preview e produção, como já documentado na A7) |
+| Detalhe/histórico/handoff (owner) | OK — "Origem" mostra a oportunidade correta, histórico traz as duas oportunidades, handoff mostra "Aguardando integração" (nunca "concluído") |
+| Papel restrito (login real como advogado) | OK — seção "Origem" ausente da tela, histórico mostra só a oportunidade dentro do alcance, "Valor total" reflete só essa (R$ 900,00), sem controles de status/responsável — confirma em produção o mesmo comportamento da revisão pré-merge (§9) |
+
+Nenhuma falha encontrada nesta checagem. Ambiente de produção usa o mesmo
+projeto Supabase de QA (`praxis-crm-dev`) já usado em todas as fases
+anteriores — por isso as migrations da A8 (aplicadas manualmente durante a
+validação em preview, §7/§9) já estavam disponíveis em produção sem nenhum
+passo extra no momento do deploy.
+
+**A partir daqui:** qualquer atualização a `main` continua passando por
+PR — nenhum commit direto, por instrução explícita do usuário. Esta própria
+seção foi escrita por um PR exclusivo de documentação
+(`docs/a8-handoff-producao`), sem commit direto em `main`.
+
+**A9 não foi iniciada.**
