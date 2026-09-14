@@ -30,12 +30,23 @@ export function OpportunityDetailPanel({
   activities,
   members,
   canEditActivities,
+  showClientLink = true,
+  showActivities = true,
 }: {
   opportunity: OpportunityDetail;
   canEdit: boolean;
   activities: ActivityListItem[];
   members: TeamMember[];
   canEditActivities: boolean;
+  /** A página de lead já mostra "Ver cliente" no cabeçalho (a partir de
+   * QUALQUER oportunidade do lead com cliente, não só desta) — desliga
+   * aqui para não duplicar o link quando esta oportunidade também é a
+   * exibida no Perfil 360. */
+  showClientLink?: boolean;
+  /** A página de lead já mostra as atividades do LEAD inteiro (não só
+   * desta oportunidade) numa única `ActivitiesSection` própria — desliga
+   * aqui para não duplicar o botão "Nova atividade" na mesma tela. */
+  showActivities?: boolean;
 }) {
   const router = useRouter();
   const [wonOpen, setWonOpen] = useState(false);
@@ -90,7 +101,7 @@ export function OpportunityDetailPanel({
               <dd className="text-text">{opportunity.lostReasonLabel}</dd>
             </div>
           ) : null}
-          {opportunity.status === "won" && opportunity.clientId ? (
+          {opportunity.status === "won" && opportunity.clientId && showClientLink ? (
             <div className="col-span-2">
               <dt className="text-meta text-text-tertiary">Cliente</dt>
               <dd className="text-text">
@@ -130,13 +141,15 @@ export function OpportunityDetailPanel({
         </section>
       ) : null}
 
-      <ActivitiesSection
-        leadId={opportunity.leadId}
-        opportunityId={opportunity.id}
-        activities={activities}
-        members={members}
-        canEdit={canEditActivities}
-      />
+      {showActivities ? (
+        <ActivitiesSection
+          leadId={opportunity.leadId}
+          opportunityId={opportunity.id}
+          activities={activities}
+          members={members}
+          canEdit={canEditActivities}
+        />
+      ) : null}
 
       {wonOpen ? (
         <WonDialog

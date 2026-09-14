@@ -78,6 +78,20 @@ para ações de oportunidade já existe e é desacoplado do kanban:
 
 Nenhuma dessas peças foi copiada ou reescrita — são importadas como estão.
 
+Ajuste feito depois de rodar os e2e existentes contra a página nova:
+`OpportunityDetailPanel` ganhou dois props opcionais,
+`showClientLink`/`showActivities` (default `true`, comportamento
+inalterado em `/oportunidades/[id]`), desligados só na página de lead —
+sem eles, o "Ver cliente" do cabeçalho colidia com o do painel, e a
+`ActivitiesSection` do painel (só as atividades DESTA oportunidade)
+colidia com a `ActivitiesSection` do lead inteiro, cada uma com seu
+próprio botão "Nova atividade" visível ao mesmo tempo na aba "Visão
+geral". A página de lead agora usa **uma única** `ActivitiesSection`
+(todas as atividades do lead), reaproveitada tanto na aba "Visão geral"
+quanto na aba "Atividades" — nunca as duas montadas ao mesmo tempo (abas
+são mutuamente exclusivas), então não há segunda consulta nem segundo
+botão.
+
 ## 4. O que é novo nesta fase
 
 - **`proposals`** (schema já previsto no plano §6.5, implementado agora):
@@ -169,11 +183,15 @@ protótipo) mas mostra um `EmptyState` explícito ("Envio de arquivos ainda
 não está disponível — previsto para a fase B4") — nenhum arquivo fictício,
 nenhum botão de upload funcional.
 
-## 8. Composer — anotação, atividade, mensagem (condicional), anexo (desabilitado)
+## 8. Composer — anotação, mensagem (condicional), anexo (desabilitado)
 
 - **Anotação**: cria um `lead_notes`, aparece na timeline imediatamente.
-- **Atividade**: abre o `CreateActivityDialog` já existente (A6),
-  `leadId` fixo — sem duplicar o formulário.
+- **Atividade**: não é um botão do composer — a "Visão geral" já mostra o
+  botão "Nova atividade" do `OpportunityDetailPanel`/`ActivitiesSection`
+  (A6) quando há oportunidade ativa, e a aba "Atividades" sempre mostra o
+  seu próprio. Um terceiro gatilho no composer duplicaria a mesma ação na
+  mesma tela (achado real do e2e: dois botões "Nova atividade" visíveis
+  ao mesmo tempo quebravam `getByRole("button", { name: "Nova atividade" })`).
 - **Mensagem**: só habilitado se já existir ao menos uma `conversation`
   vinculada a este lead (reaproveita `sendMessageAction`, A7). Sem
   conversa vinculada, o botão fica desabilitado com texto explicando o

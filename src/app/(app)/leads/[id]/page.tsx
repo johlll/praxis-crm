@@ -57,6 +57,7 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
   const canEditActivities = roleHasPermission(user.role, "activity.edit");
   const canEditProposals = roleHasPermission(user.role, "proposal.edit");
   const canEditConflictCheck = roleHasPermission(user.role, "conflict_check.edit");
+  const canEditLeadNotes = roleHasPermission(user.role, "lead_note.edit");
 
   const [
     members,
@@ -100,6 +101,14 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
 
   const firstConversationId = conversations[0]?.id ?? null;
 
+  // Uma única ActivitiesSection (todas as atividades do LEAD, não só de
+  // uma oportunidade) reaproveitada em duas abas — nunca duas instâncias
+  // visíveis ao mesmo tempo (tabs são mutuamente exclusivas), então não
+  // duplica o botão "Nova atividade" nem a consulta.
+  const activitiesSection = (
+    <ActivitiesSection leadId={lead.id} activities={allActivities} members={members} canEdit={canEditActivities} />
+  );
+
   return (
     <>
       <Topbar title={lead.contactName} subtitle={lead.legalArea} user={user} />
@@ -138,7 +147,9 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
           <LeadProfileTabs
             visao={
               <div className="flex flex-col gap-4">
-                <LeadComposer leadId={lead.id} members={members} conversationId={firstConversationId} />
+                {canEditLeadNotes ? (
+                  <LeadComposer leadId={lead.id} conversationId={firstConversationId} />
+                ) : null}
 
                 {primaryOpportunity ? (
                   <section className="rounded-lg border border-border bg-surface p-4">
@@ -153,10 +164,14 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
                     activities={primaryOpportunityActivities.items}
                     members={members}
                     canEditActivities={canEditActivities}
+                    showClientLink={false}
+                    showActivities={false}
                   />
                 ) : null}
 
                 <ConflictCheckPanel leadId={lead.id} conflictCheck={conflictCheck} canEdit={canEditConflictCheck} />
+
+                {activitiesSection}
 
                 <section className="rounded-lg border border-border bg-surface p-4">
                   <h2 className="mb-3 text-body font-semibold text-text">Linha do tempo</h2>
@@ -195,14 +210,7 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
                 </ul>
               )
             }
-            atividades={
-              <ActivitiesSection
-                leadId={lead.id}
-                activities={allActivities}
-                members={members}
-                canEdit={canEditActivities}
-              />
-            }
+            atividades={activitiesSection}
             arquivos={
               <EmptyState
                 title="Envio de arquivos ainda não está disponível"

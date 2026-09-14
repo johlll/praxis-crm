@@ -6,8 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { createLeadNoteAction, type LeadNoteActionState } from "@/modules/lead-notes/actions";
 import { sendMessageAction } from "@/modules/conversations/actions";
-import { CreateActivityDialog } from "@/components/activities/create-activity-dialog";
-import type { TeamMember } from "@/modules/team/queries";
 
 type ComposerMode = "anotacao" | "mensagem";
 
@@ -32,7 +30,7 @@ function NoteComposer({ leadId }: { leadId: string }) {
         className="h-9 flex-1 rounded-input border border-border-input bg-surface px-3 text-body text-text"
       />
       <Button type="submit" size="sm" disabled={pending}>
-        {pending ? "Salvando…" : "Salvar"}
+        {pending ? "Registrando…" : "Registrar anotação"}
       </Button>
       {state.error ? (
         <Alert variant="danger">
@@ -86,13 +84,13 @@ function MessageComposer({ conversationId }: { conversationId: string }) {
 
 export function LeadComposer({
   leadId,
-  members,
   conversationId,
 }: {
   leadId: string;
-  members: TeamMember[];
   /** Conversa já vinculada a este lead — sem ela, "Mensagem" fica
-   * desabilitado (a A9 não cria um canal de WhatsApp novo). */
+   * desabilitado (a A9 não cria um canal de WhatsApp novo). Criar
+   * atividade já tem entrada própria (painel da oportunidade / aba
+   * Atividades) — o composer não duplica esse botão. */
   conversationId: string | null;
 }) {
   const [mode, setMode] = useState<ComposerMode>("anotacao");
@@ -130,7 +128,6 @@ export function LeadComposer({
             Anexo
           </button>
         </div>
-        <CreateActivityDialog leadId={leadId} members={members} />
       </div>
 
       {mode === "anotacao" ? <NoteComposer leadId={leadId} /> : null}
