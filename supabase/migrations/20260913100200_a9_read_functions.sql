@@ -8,7 +8,13 @@
 -- para list_conversation_messages ganhar p_before_id na A7.
 -- ---------------------------------------------------------------------
 
-create or replace function public.list_conversations(
+-- Assinatura muda de aridade (3 -> 4 parâmetros) — CREATE OR REPLACE
+-- sozinho criaria uma segunda function (overload) em vez de substituir a
+-- existente (mesmo achado já resolvido para list_conversation_messages
+-- ganhar p_before_id na A7, 20260911150000).
+drop function if exists public.list_conversations(uuid, integer, integer);
+
+create function public.list_conversations(
   p_workspace_id uuid,
   p_page integer default 1,
   p_page_size integer default 20,

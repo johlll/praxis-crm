@@ -2130,7 +2130,10 @@ export type Database = {
         }
         Returns: string
       }
-      create_lead_note: { Args: { p_body: string; p_lead_id: string }; Returns: string }
+      create_lead_note: {
+        Args: { p_body: string; p_lead_id: string }
+        Returns: string
+      }
       create_lost_reason: {
         Args: { p_label: string; p_workspace_id: string }
         Returns: string
@@ -3005,6 +3008,12 @@ export const Constants = {
       activity_status: ["pending", "done"],
       activity_type: ["call", "meeting", "task", "email", "deadline"],
       client_status: ["ativo", "encerrado", "suspenso"],
+      conflict_check_status: [
+        "nao_verificado",
+        "sem_conflito",
+        "conflito_identificado",
+        "em_analise",
+      ],
       consent_legal_basis: [
         "consentimento",
         "legitimo_interesse",
@@ -3034,6 +3043,8 @@ export const Constants = {
       message_direction: ["inbound", "outbound"],
       message_status: ["queued", "sent", "delivered", "read", "failed"],
       opportunity_status: ["open", "won", "lost"],
+      proposal_channel: ["email", "whatsapp"],
+      proposal_status: ["rascunho", "enviada", "aceita", "recusada"],
       stage_requirement_type: ["text", "textarea", "date", "checkbox"],
     },
   },
