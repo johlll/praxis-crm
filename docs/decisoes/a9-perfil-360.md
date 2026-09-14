@@ -81,18 +81,26 @@ Nenhuma dessas peças foi copiada ou reescrita — são importadas como estão.
 Ajustes feitos depois de rodar os e2e existentes contra a página nova
 (nenhuma regra de negócio mudou, só composição de UI):
 
-- `OpportunityDetailPanel` ganhou dois props opcionais,
-  `showClientLink`/`showActivities` (default `true`, comportamento
-  inalterado em `/oportunidades/[id]`), desligados só na página de lead —
-  sem eles, o "Ver cliente" do cabeçalho colidia com o do painel.
-- A `ActivitiesSection` (lista completa, com seu próprio botão "Nova
-  atividade") mora SÓ na aba "Atividades" — a "Visão geral" não a mostra.
-  Sem essa separação, a MESMA atividade aparecia duas vezes na aba "Visão
-  geral" ao mesmo tempo: uma na lista, outra como evento na linha do
-  tempo — quebrando `getByText(título, {exact:true})` no e2e (dois
-  elementos com o mesmo texto). A "Visão geral" mantém só o botão
-  "Atividade" do composer (`CreateActivityDialog`, sem lista) — cria e o
-  resultado aparece na linha do tempo, sem duplicar.
+- `OpportunityDetailPanel` ganhou o prop opcional `showClientLink`
+  (default `true`, comportamento inalterado em `/oportunidades/[id]`),
+  desligado só na página de lead — sem ele, o "Ver cliente" do cabeçalho
+  colidia com o do painel.
+- A `ActivitiesSection` (lista completa, com "Nova atividade" e as ações
+  de reagendar/transferir/concluir de cada linha) fica na aba "Visão
+  geral" — é a mesma seção que o e2e da A6 já exercita de ponta a ponta
+  (criar → reagendar → transferir), então ela precisa estar acessível
+  sem trocar de aba. `OpportunityDetailPanel` ganhou também
+  `showActivities` (default `true`) para não montar uma SEGUNDA
+  `ActivitiesSection` (a dele, escopada só a esta oportunidade) ao lado
+  da do lead inteiro.
+- A linha do tempo mostra o MESMO evento de atividade, mas nunca com o
+  título sozinho: `detail` é `"{título} — agendada/concluída"`, nunca só
+  `"{título}"`. Achado real do e2e: com os dois nós de texto idênticos
+  (`"Revisar contrato (teste e2e)"` na lista E na timeline),
+  `getByText(título, {exact:true})` resolvia para dois elementos. A
+  aba "Atividades" reaproveita a MESMA `ActivitiesSection`/consulta —
+  nunca as duas instâncias montadas ao mesmo tempo (abas são mutuamente
+  exclusivas).
 
 ## 4. O que é novo nesta fase
 
@@ -185,18 +193,13 @@ protótipo) mas mostra um `EmptyState` explícito ("Envio de arquivos ainda
 não está disponível — previsto para a fase B4") — nenhum arquivo fictício,
 nenhum botão de upload funcional.
 
-## 8. Composer — anotação, atividade, mensagem (condicional), anexo (desabilitado)
+## 8. Composer — anotação, mensagem (condicional), anexo (desabilitado)
 
 - **Anotação**: cria um `lead_notes`, aparece na timeline imediatamente.
-- **Atividade**: abre o `CreateActivityDialog` já existente (A6),
-  `leadId` fixo. É a ÚNICA entrada de "Nova atividade" na aba "Visão
-  geral" — essa aba NÃO mostra a lista completa de atividades (isso
-  ficou só na aba "Atividades"), exatamente para evitar o achado real do
-  e2e: a mesma atividade aparecendo duas vezes na tela (uma na lista, uma
-  na linha do tempo) quebrava `getByText(titulo, {exact:true})`. A lista
-  completa (`ActivitiesSection`) mora só na aba "Atividades"; a "Visão
-  geral" só tem o botão de criar + o evento na linha do tempo depois de
-  criada.
+- **Atividade**: não é um botão do composer — a `ActivitiesSection` já
+  visível na "Visão geral" (ver §3) já tem seu próprio "Nova atividade";
+  um segundo gatilho no composer duplicaria esse botão na mesma tela
+  (achado real do e2e, mesma classe do achado da timeline em §3).
 - **Mensagem**: só habilitado se já existir ao menos uma `conversation`
   vinculada a este lead (reaproveita `sendMessageAction`, A7). Sem
   conversa vinculada, o botão fica desabilitado com texto explicando o

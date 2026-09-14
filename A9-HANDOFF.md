@@ -12,13 +12,16 @@ Entregue nesta fase, conforme o pedido (raciocínio completo em
 - `/leads/[id]` enriquecida com as 6 abas do protótipo aprovado (Visão
   geral, Conversas, Atividades, Arquivos, Propostas, Histórico) — não é
   uma rota nova.
-- Composer (Anotação/Atividade/Mensagem/Anexo) — Anotação e Atividade
-  funcionam de ponta a ponta; Mensagem só quando já existe conversa
-  vinculada ao lead; Anexo desabilitado (upload é B4). A aba "Visão
-  geral" não mostra a lista completa de atividades (só o botão de criar
-  + o evento na linha do tempo) — a lista completa mora só na aba
-  "Atividades", para não duplicar o título da mesma atividade duas vezes
-  na mesma tela (achado do e2e, ver §3 do documento de decisões).
+- Composer (Anotação/Mensagem/Anexo) — Anotação funciona de ponta a
+  ponta; Mensagem só quando já existe conversa vinculada ao lead; Anexo
+  desabilitado (upload é B4). "Atividade" não é um botão do composer — a
+  `ActivitiesSection` completa (com reagendar/transferir/concluir por
+  linha) já fica visível na "Visão geral" com seu próprio "Nova
+  atividade"; um segundo gatilho duplicaria o botão. A linha do tempo
+  mostra o mesmo evento sem repetir o título sozinho (`"{título} —
+  agendada/concluída"`, nunca só `"{título}"`), para nunca colidir por
+  igualdade exata com o texto da lista (achado do e2e, ver §3 do
+  documento de decisões).
 - Timeline unificada (`get_lead_timeline`) cruzando anotações, atividades,
   mensagens, transições de etapa, propostas e verificação de conflito —
   cursor composto `(occurred_at, id)`, paginação sem furo nem repetição em

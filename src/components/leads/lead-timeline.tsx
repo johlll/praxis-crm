@@ -38,8 +38,12 @@ function EventRow({ event, members }: { event: LeadTimelineEvent; members: TeamM
     case "atividade": {
       const type = p.type as ActivityType;
       const done = p.status === "done";
-      title = `${ACTIVITY_TYPE_LABEL[type] ?? "Atividade"} — ${done ? "concluída" : "agendada"}`;
-      detail = String(p.title ?? "");
+      title = ACTIVITY_TYPE_LABEL[type] ?? "Atividade";
+      // Nunca só o título puro: coincidiria por igualdade exata com o
+      // título da mesma atividade na ActivitiesSection, visível na
+      // mesma tela (achado real do e2e) — o status junto no mesmo nó de
+      // texto garante que os dois nunca sejam idênticos.
+      detail = `${String(p.title ?? "")} — ${done ? "concluída" : "agendada"}`;
       break;
     }
     case "mensagem": {
