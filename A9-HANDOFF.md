@@ -2,9 +2,10 @@
 
 **Status: PR aberta, NÃO mesclada.** Branch `feat/a9-perfil-360`,
 [PR #13](https://github.com/johlll/praxis-crm/pull/13), commit final
-`8b3cf28`. CI verde e fluxo principal validado no preview com dados
-fictícios (§§6–7). **Merge não solicitado nem autorizado** — aguardando
-instrução.
+`4dc8a3b` (código em `8b3cf28`, mesmo commit validado no preview — `4dc8a3b`
+só acrescenta este documento e o de decisões, CI verde de novo nele). CI
+verde e fluxo principal validado no preview com dados fictícios (§§6–7).
+**Merge não solicitado nem autorizado** — aguardando instrução.
 
 ## 1. Escopo
 
