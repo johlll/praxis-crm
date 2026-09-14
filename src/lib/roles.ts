@@ -104,7 +104,18 @@ export type Permission =
   // e transferir responsável são administrativos, mesmo nível de
   // pipeline.configure — nenhum outro papel muda isso nesta entrega.
   | "client.view"
-  | "client.manage";
+  | "client.manage"
+  // A9 — Perfil 360º. "Ver"/"editar" proposta e anotação seguem a MESMA
+  // matriz de activity.view/edit (todos veem; advogado/atendimento só
+  // "suas", herdado do lead pai, reforçado no banco). Verificação de
+  // conflito é mais restrita na ESCRITA (decisão registrada em
+  // docs/decisoes/a9-perfil-360.md §5): sales/viewer só leem, nunca
+  // registram — mesmo nível de pipeline.configure para quem pode escrever.
+  | "proposal.view"
+  | "proposal.edit"
+  | "conflict_check.view"
+  | "conflict_check.edit"
+  | "lead_note.edit";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -133,6 +144,11 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "contact.consent_manage": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
   "client.view": new Set(ROLES),
   "client.manage": new Set<Role>(["owner", "admin", "manager"]),
+  "proposal.view": new Set(ROLES),
+  "proposal.edit": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
+  "conflict_check.view": new Set(ROLES),
+  "conflict_check.edit": new Set<Role>(["owner", "admin", "manager", "lawyer"]),
+  "lead_note.edit": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {

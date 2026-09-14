@@ -56,7 +56,7 @@ export class ConversationsLoadError extends Error {
 
 export async function listConversations(
   workspaceId: string,
-  opts: { page?: number | undefined } = {},
+  opts: { page?: number | undefined; leadId?: string | undefined } = {},
 ): Promise<{ items: ConversationListItem[]; total: number; page: number; pageSize: number }> {
   const page = Math.max(1, opts.page ?? 1);
   const supabase = await createServerSupabaseClient();
@@ -64,6 +64,7 @@ export async function listConversations(
     p_workspace_id: workspaceId,
     p_page: page,
     p_page_size: PAGE_SIZE,
+    ...(opts.leadId ? { p_lead_id: opts.leadId } : {}),
   });
 
   if (error) {
