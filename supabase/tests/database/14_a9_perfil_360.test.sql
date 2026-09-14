@@ -256,14 +256,20 @@ select is((:'lc9_total_count')::int, 0, 'list_conversations(p_lead_id) sem conve
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'bruno', 'role', 'authenticated')::text, true);
+-- Bruno não é membro NENHUM do ws_um — o gate de papel do workspace
+-- (private.has_workspace_role) barra antes mesmo de chegar ao alcance por
+-- registro, e falha com insufficient_permission (mesmo comportamento já
+-- valido na A8 para get_client() com um owner de outro workspace,
+-- 13_a8_clients.test.sql §11). lead_not_found é reservado para quem É
+-- membro do workspace certo mas não tem alcance sobre ESTE registro.
 select throws_ok(
   format($i$ select list_proposals_for_lead(%L::uuid) $i$, :'lead_a'),
-  'P0001', 'lead_not_found',
+  'P0001', 'insufficient_permission',
   'Owner de outro workspace não lista propostas de um lead que não é dele'
 );
 select throws_ok(
   format($i$ select get_conflict_check(%L::uuid) $i$, :'lead_a'),
-  'P0001', 'lead_not_found',
+  'P0001', 'insufficient_permission',
   'Owner de outro workspace não lê a verificação de conflito de um lead que não é dele'
 );
 
