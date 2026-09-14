@@ -208,17 +208,22 @@ nenhum botão de upload funcional.
 - **Anexo**: desabilitado, com texto "Anexos entram na fase B4" — mesma
   razão da aba Arquivos.
 
-## 9. "Consulta" — sem tabela nova
+## 9. "Consulta" — sem tabela nova, e não implementado nesta fase
 
-O bloco "Consulta" do protótipo (status, data, duração, advogado,
-modalidade, nota) é derivado da **atividade mais recente do tipo `meeting`
-já concluída** desta oportunidade — não é uma entidade nova. Duração e
-modalidade não existem como campos estruturados em `activities` hoje; a
-tela mostra apenas o que os dados atuais sustentam (título, data,
-responsável, notas) — nenhum campo é inventado para preencher o layout do
-protótipo. Se o escritório precisar de duração/modalidade estruturadas,
-isso é uma decisão futura (possivelmente parte da B2, junto da agenda
-integrada ao Google).
+Decisão original: o bloco "Consulta" do protótipo (status, data,
+duração, advogado, modalidade, nota) seria derivado da **atividade mais
+recente do tipo `meeting` já concluída** desta oportunidade — não uma
+entidade nova, sem inventar duração/modalidade (campos que não existem em
+`activities` hoje).
+
+**Na prática, esse cartão de resumo dedicado não chegou a ser
+construído** — a atividade em si já aparece na `ActivitiesSection` e na
+linha do tempo, mas não há uma seção separada "Consulta" na tela.
+Registrado como limitação real em `A9-HANDOFF.md` §8, não como algo
+entregue com escopo reduzido. Se o escritório quiser esse resumo
+dedicado, é uma tarefa pequena e separada; duração/modalidade
+estruturadas continuam uma decisão futura (possivelmente B2, junto da
+agenda integrada ao Google).
 
 ## 10. Testes obrigatórios (verificação ao fim da fase, §14 do plano)
 

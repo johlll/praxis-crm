@@ -1,8 +1,10 @@
 # A9 — Perfil 360º do lead — Handoff
 
-**Status: PR aberta, NÃO mesclada.** Branch `feat/a9-perfil-360`. CI e
-validação em preview em andamento — este documento é atualizado com o
-resultado final antes do pedido de merge.
+**Status: PR aberta, NÃO mesclada.** Branch `feat/a9-perfil-360`,
+[PR #13](https://github.com/johlll/praxis-crm/pull/13), commit final
+`8b3cf28`. CI verde e fluxo principal validado no preview com dados
+fictícios (§§6–7). **Merge não solicitado nem autorizado** — aguardando
+instrução.
 
 ## 1. Escopo
 
@@ -126,11 +128,53 @@ regra de alcance.
 
 ## 6. CI
 
-_A preencher após a execução._
+Verde no commit `8b3cf28` (run
+[34909524632](https://github.com/johlll/praxis-crm/actions/runs/34909524632),
+5m59s): typecheck, lint, testes unitários (154), `db:types:check`, pgTAP
+(14 arquivos incluindo `14_a9_perfil_360.test.sql`, 30/30), isolamento,
+concorrência A7, build, e2e completo.
+
+Chegar até aqui exigiu 5 correções sucessivas, todas encontradas pelo
+próprio CI/preview, não hipotéticas:
+1. `list_conversations` virou dois overloads em vez de substituir a
+   assinatura antiga (`CREATE OR REPLACE` não troca aridade) —
+   `db:types:check` acusou; corrigido com `DROP FUNCTION` explícito antes
+   (mesmo achado já resolvido para `list_conversation_messages` na A7).
+2. Teste de isolamento esperava o código de erro errado
+   (`lead_not_found` em vez de `insufficient_permission`) para um ator
+   que não é membro de workspace nenhum — pgTAP acusou.
+3–5. Três duplicações de UI reais na página de lead, cada uma quebrando
+   um e2e pré-existente (não escrito para a A9): link "Ver cliente"
+   duplicado, botão "Nova atividade" duplicado, e o TÍTULO da mesma
+   atividade aparecendo idêntico na lista e na linha do tempo. Todas
+   corrigidas — detalhe em
+   [`docs/decisoes/a9-perfil-360.md`](docs/decisoes/a9-perfil-360.md) §3.
+   Nenhuma envolveu mudar uma regra de negócio, só composição de UI.
 
 ## 7. Validação em preview
 
-_A preencher após a validação manual com dados fictícios._
+Aplicadas as 3 migrations novas em `praxis-crm-dev` (autorização
+explícita do usuário) e validado manualmente como advogado
+(`QA A6 Advogado`) contra
+`https://praxis-5i90mtb25-johllls-projects.vercel.app` — deployment do
+commit final:
+
+- Criado lead + oportunidade fictícios ("Cliente A9 Preview QA").
+- Criada proposta (R$ 5.000, modelo fixo) → número `PROP-2026-0001`
+  gerado corretamente → enviada (WhatsApp) → aceita. Projeção financeira
+  confirmada: valor exato visível para o advogado.
+- Verificação de conflito registrada ("Sem conflito") e persistida.
+- Anotação registrada pelo composer.
+- Linha do tempo mostrando os 3 eventos acima em ordem cronológica
+  correta, com valor/status projetados.
+- Criada uma atividade ("Revisar contrato") — apareceu uma única vez na
+  lista (com Reagendar/Transferir/Editar/Excluir funcionais) e uma vez
+  na timeline com texto distinto (`"... — agendada"`), confirmando a
+  correção do achado #5 acima.
+- Um lead já convertido em cliente (de dados de preview da A8) mostrado
+  para conferir que "Ver cliente" aparece uma única vez e que, com a
+  oportunidade já ganha, "Ganhou"/"Perdeu" corretamente não aparecem.
+- Painel de atribuição de marketing confirmado AUSENTE (decisão da §1).
 
 ## 8. Limitações reais
 
@@ -139,9 +183,13 @@ _A preencher após a validação manual com dados fictícios._
   corrigiu em `get_client()`) — pré-existente da A5, fora do escopo desta
   fase; a página de lead herda essa limitação ao reaproveitar
   `OpportunityDetailPanel`.
-- "Consulta" (bloco do protótipo) é derivada de atividades concluídas do
-  tipo `meeting` — duração e modalidade não são campos estruturados hoje;
-  a tela não inventa esses dados.
+- **Bloco "Consulta" do protótipo não foi implementado.** A ideia
+  original (derivá-lo da atividade `meeting` mais recente concluída,
+  registrada em `docs/decisoes/a9-perfil-360.md` §9) não chegou a virar
+  código — a atividade em si já aparece na `ActivitiesSection`/timeline,
+  mas não há um cartão de resumo dedicado. Pendência real, não uma
+  omissão silenciosa: se o escritório quiser esse resumo dedicado, é
+  uma tarefa pequena e separada.
 - `StageProgressBar` é só leitura; avançar/voltar etapa continua exigindo
   ir à tela de Pipeline (a A9 não duplicou o drag-and-drop nem o `<select>`
   de mover etapa do kanban dentro do Perfil 360).
