@@ -95,8 +95,25 @@ export function LeadTimeline({
   const [filter, setFilter] = useState<LeadTimelineEventType | "todos">("todos");
   const [items, setItems] = useState(initialItems);
   const [hasMore, setHasMore] = useState(initialHasMore);
+  const [syncedInitialItems, setSyncedInitialItems] = useState(initialItems);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+
+  // useState só usa initialItems no primeiro mount — sem isto, uma
+  // anotação/proposta criada por uma Server Action IRMÃ (composer,
+  // ProposalsSection) revalida a página e o servidor manda um
+  // `initialItems` novo, mas esta timeline continuava presa aos dados do
+  // primeiro carregamento (achado real ao validar no preview). Ajuste
+  // durante a renderização (padrão recomendado pelo React para resetar
+  // estado quando uma prop muda — nunca um setState dentro de useEffect,
+  // que dispararia uma renderização em cascata) — reseta para a primeira
+  // página sempre que o servidor manda dados novos, aceitável já que os
+  // dados mudaram de verdade.
+  if (initialItems !== syncedInitialItems) {
+    setSyncedInitialItems(initialItems);
+    setItems(initialItems);
+    setHasMore(initialHasMore);
+  }
 
   const visible = filter === "todos" ? items : items.filter((e) => e.eventType === filter);
 
