@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { createLeadNoteAction, type LeadNoteActionState } from "@/modules/lead-notes/actions";
 import { sendMessageAction } from "@/modules/conversations/actions";
+import { CreateActivityDialog } from "@/components/activities/create-activity-dialog";
+import type { TeamMember } from "@/modules/team/queries";
 
 type ComposerMode = "anotacao" | "mensagem";
 
@@ -84,13 +86,17 @@ function MessageComposer({ conversationId }: { conversationId: string }) {
 
 export function LeadComposer({
   leadId,
+  members,
   conversationId,
 }: {
   leadId: string;
+  members: TeamMember[];
   /** Conversa já vinculada a este lead — sem ela, "Mensagem" fica
-   * desabilitado (a A9 não cria um canal de WhatsApp novo). Criar
-   * atividade já tem entrada própria (painel da oportunidade / aba
-   * Atividades) — o composer não duplica esse botão. */
+   * desabilitado (a A9 não cria um canal de WhatsApp novo). "Atividade"
+   * é a ÚNICA entrada de "Nova atividade" na aba Visão geral (a lista
+   * completa de atividades mora só na aba Atividades) — mostrá-la aqui
+   * TAMBÉM na Visão geral duplicaria o título da atividade com o mesmo
+   * evento já visível na linha do tempo (achado real do e2e). */
   conversationId: string | null;
 }) {
   const [mode, setMode] = useState<ComposerMode>("anotacao");
@@ -128,6 +134,7 @@ export function LeadComposer({
             Anexo
           </button>
         </div>
+        <CreateActivityDialog leadId={leadId} members={members} />
       </div>
 
       {mode === "anotacao" ? <NoteComposer leadId={leadId} /> : null}

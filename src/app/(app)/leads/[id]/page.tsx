@@ -148,7 +148,7 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
             visao={
               <div className="flex flex-col gap-4">
                 {canEditLeadNotes ? (
-                  <LeadComposer leadId={lead.id} conversationId={firstConversationId} />
+                  <LeadComposer leadId={lead.id} members={members} conversationId={firstConversationId} />
                 ) : null}
 
                 {primaryOpportunity ? (
@@ -170,8 +170,6 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
                 ) : null}
 
                 <ConflictCheckPanel leadId={lead.id} conflictCheck={conflictCheck} canEdit={canEditConflictCheck} />
-
-                {activitiesSection}
 
                 <section className="rounded-lg border border-border bg-surface p-4">
                   <h2 className="mb-3 text-body font-semibold text-text">Linha do tempo</h2>
