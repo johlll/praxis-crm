@@ -225,7 +225,11 @@ falha na segunda página de atividades não some mais com o "carregar
 mais"; cartão "Consulta" vindo de uma RPC dedicada em vez da página de 50
 já carregada; filtro da timeline coerente com os eventos depois de uma
 revalidação ou de uma troca que falhou. Cobertos por testes direcionados
-(unitários + pgTAP), sem repetir a validação manual inteira.
+(unitários + pgTAP), sem repetir a validação manual inteira. A migration
+`20260915100000_a9_last_completed_meeting.sql` foi aplicada em
+`praxis-crm-dev` com autorização (dry-run antes: só ela, sem alteração de
+dados); a página do lead no preview voltou a carregar com o cartão
+Consulta.
 
 Nenhuma das três rodadas envolveu mudar uma regra de negócio — a primeira
 foi só composição de UI; a segunda foram lacunas reais de proteção/UX e
