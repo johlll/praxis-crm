@@ -1,9 +1,10 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { EditForm } from "@/components/feedback/edit-form";
 import type { ConflictCheck } from "@/modules/conflict-checks/queries";
 import { upsertConflictCheckAction, type ConflictCheckActionState } from "@/modules/conflict-checks/actions";
 import { CONFLICT_CHECK_STATUSES } from "@/modules/conflict-checks/schema";
@@ -28,6 +29,10 @@ export function ConflictCheckPanel({
   canEdit: boolean;
 }) {
   const [state, formAction, pending] = useActionState(upsertConflictCheckAction, INITIAL);
+  // Controlados + EditForm: sem isso a tela voltava a mostrar o valor
+  // anterior ao salvo depois do envio (ver components/feedback/edit-form.tsx).
+  const [status, setStatus] = useState(conflictCheck.status);
+  const [note, setNote] = useState(conflictCheck.note ?? "");
 
   return (
     <div className="rounded-lg border border-border bg-surface p-4">
@@ -43,7 +48,7 @@ export function ConflictCheckPanel({
       {conflictCheck.note ? <p className="mt-1 text-meta text-text-secondary">{conflictCheck.note}</p> : null}
 
       {canEdit ? (
-        <form action={formAction} className="mt-3 flex flex-col gap-2">
+        <EditForm action={formAction} className="mt-3 flex flex-col gap-2">
           <input type="hidden" name="leadId" value={leadId} />
           {conflictCheck.lockVersion !== null ? (
             <input type="hidden" name="lockVersion" value={conflictCheck.lockVersion} />
@@ -51,7 +56,8 @@ export function ConflictCheckPanel({
           <select
             name="status"
             aria-label="Status da verificação de conflito"
-            defaultValue={conflictCheck.status}
+            value={status}
+            onChange={(e) => setStatus(e.target.value as typeof status)}
             className="h-9 rounded-input border border-border-input bg-surface px-3 text-body text-text"
           >
             {CONFLICT_CHECK_STATUSES.map((s) => (
@@ -65,7 +71,8 @@ export function ConflictCheckPanel({
             placeholder="Nota (opcional)"
             rows={2}
             maxLength={2000}
-            defaultValue={conflictCheck.note ?? ""}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
             className="rounded-input border border-border-input bg-surface px-3 py-2 text-body text-text"
           />
           {state.error ? (
@@ -76,7 +83,7 @@ export function ConflictCheckPanel({
           <Button type="submit" variant="secondary" size="sm" disabled={pending}>
             {pending ? "Salvando…" : "Registrar verificação"}
           </Button>
-        </form>
+        </EditForm>
       ) : null}
     </div>
   );

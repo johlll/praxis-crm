@@ -9,24 +9,21 @@ import type { ActionResult } from "@/lib/action-result";
  * Formulário para Server Actions que devolvem `ActionResult`: mostra o erro
  * que o servidor devolveu (recusa do banco, permissão, falha de
  * carregamento) em vez de terminar em silêncio. O formulário continua
- * disponível para tentar de novo.
+ * disponível para tentar de novo (o React limpa os campos após cada envio).
  */
 export function ResultForm({
   action,
   children,
   className,
-  onSuccess,
 }: {
   action: (formData: FormData) => Promise<ActionResult>;
   children: ReactNode;
   className?: string;
-  onSuccess?: () => void;
 }) {
-  const [state, formAction] = useActionState(async (_previous: ActionResult | null, formData: FormData) => {
-    const result = await action(formData);
-    if (result.ok) onSuccess?.();
-    return result;
-  }, null);
+  const [state, formAction] = useActionState(
+    (_previous: ActionResult | null, formData: FormData) => action(formData),
+    null,
+  );
 
   return (
     <div className="flex flex-col gap-1.5">

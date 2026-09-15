@@ -30,7 +30,6 @@ decisão registrada — não comportamento incorreto do que foi entregue:
 | A5 §4 | Sem tela de configuração completa, destaque "parada há N dias", paginação horizontal do kanban | Funcionalidades do protótipo ainda não construídas |
 | A6 §9 | Sem navegação de semana, seletor sem busca, tipos fixos, Google/WhatsApp real | Escopo de fases futuras |
 | A7 §9 | Busca livre de contato, candidatos de oportunidade não persistidos, `purpose_code` só WhatsApp, sem mídia | Escopo de fases futuras / decisão registrada |
-| A4 §5.6, A5 §4, A6 §9 | `AssignLeadForm` com `<select>` não controlado | Registrado como risco estrutural, sem sintoma observado ("não falhou"). Conferido na validação em preview desta rodada (§7); só vira defeito se reproduzir |
 | A8 §8 | "Cliente desde", origem pelo primeiro handoff, atribuição (A11), `win_opportunity` reaproveitando cliente encerrado | Semântica documentada e aceita; atribuição é A11 |
 
 ## 1. Falha operacional de consulta vira "vazio", "não encontrado" ou "sem acesso"
@@ -72,7 +71,6 @@ cliente; páginas caem no `error.tsx` com "Tentar novamente".
 | 1.13 | `listContacts`, `getContactDetail`, `getDuplicateCandidateDetail`, `listContactMergeHistory`, `listPendingDuplicateCandidates`, `searchContactsByCpfCnpj` | vazio/`null` → 404 | `/contatos`, `/contatos/[id]`, `/contatos/duplicidades`, `/contatos/duplicidades/[id]`, `SensitiveField` | inventário |
 | 1.14 | `listTeamMembers`, `listPendingInvitations` | lista vazia | `/configuracoes/equipe` e seletores de responsável em 8 telas | inventário |
 | 1.15 | `listMyWorkspaces`, `getActiveWorkspaceId`, `switchActiveWorkspace`, `requireMembership` | "sem workspace"/"não é membro" → onboarding ou acesso negado | login, onboarding, troca de workspace, toda Server Action com permissão | inventário |
-
 | 1.16 | `getShellContext` (perfil do usuário) | erro ignorado → nome "Usuário" | topbar de todas as telas autenticadas | inventário |
 | 1.17 | `requireUser`, `requireUserOrRedirect`, `requireMembershipOrRedirect`, `signInAction`, `createWorkspaceAction`, `acceptInvitationAction`, `switchWorkspaceAction` | falha de rede do Auth ou da consulta de membership → redireciona para `/entrar` ou `/onboarding` | todas as páginas autenticadas, login, onboarding, convite, troca de workspace | inventário |
 | 1.18 | `requirePermissionSafe` (9 cópias divergentes, uma por módulo de actions) | só trata `AuthzError`; com 1.15 corrigido, falha de membership viraria exceção sem tratamento nas actions chamadas por componentes | todas as Server Actions com estado | A3-HANDOFF §9 (helper compartilhado proposto e nunca extraído) |
@@ -179,6 +177,32 @@ atendimento/visualizador e as projeções financeiras não foram conferidas em
 dados fictícios; nota de conflito e valores conferidos na resposta real
 recebida pelo navegador e na tela. Sem conta de QA para algum papel, a
 pendência fica aberta com o acesso exato necessário.
+
+## 5b. Formulário de edição volta a mostrar o valor anterior depois de salvar
+
+**Origem:** risco registrado em A4-HANDOFF §5.6 (e repetido em A5/A6) para
+o `AssignLeadForm`, marcado como "não falhou". **Reproduzido nesta rodada
+no ambiente hospedado:** atribuir responsável num lead fictício salvou no
+banco, mas o seletor voltou a "Sem responsável" até recarregar a página. O
+mesmo sintoma já tinha aparecido no `ConflictCheckPanel` durante a
+validação da A9 (status salvo "Sem conflito", seletor em "Não verificado").
+
+**Comportamento incorreto:** `<form action>` faz o React 19 chamar
+`form.reset()` ao fim do envio. Campos não controlados voltam aos valores da
+montagem, e `<select>` controlado também volta (o React não restaura porque
+o estado não mudou — por isso o `LeadBasicFieldsForm`, corrigido na A4 com
+campos controlados, ainda perdia a prioridade). A tela passa a mostrar um
+dado que não é o salvo.
+
+**Funções/telas:** `AssignLeadForm` e `LeadBasicFieldsForm` (prioridade) (`/leads/[id]`), `ConflictCheckPanel`
+(`/leads/[id]`), `ClientStatusForm` e `TransferClientOwnerForm`
+(`/clientes/[id]`), `ContactBasicFieldsForm` (`/contatos/[id]`). Diálogos
+que remontam a cada abertura e formulários de criação não são afetados.
+
+**Teste e critério:** teste de componente que escolhe um valor novo, envia
+com sucesso e confere que o campo continua com o valor salvo — falha antes
+nos seis. Correção: formulários de edição enviados por `onSubmit` numa
+transição (`EditForm`), sem o reset automático, com campos controlados.
 
 ## 6. Pendências externas conhecidas (fora do código)
 

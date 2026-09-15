@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -11,10 +10,6 @@ import { addPhoneAction, removePhoneAction } from "@/modules/contacts/actions";
 type Phone = { id: string; value: string; isPrimary: boolean };
 
 export function ContactPhonesList({ contactId, phones }: { contactId: string; phones: Phone[] }) {
-  // Remonta o formulário só depois de salvar: numa recusa, o valor digitado
-  // continua lá para corrigir.
-  const [addFormKey, setAddFormKey] = useState(0);
-
   return (
     <div className="flex flex-col gap-3">
       {phones.length === 0 ? (
@@ -39,12 +34,7 @@ export function ContactPhonesList({ contactId, phones }: { contactId: string; ph
         </ul>
       )}
 
-      <ResultForm
-        key={addFormKey}
-        action={addPhoneAction}
-        onSuccess={() => setAddFormKey((k) => k + 1)}
-        className="flex gap-2"
-      >
+      <ResultForm action={addPhoneAction} className="flex gap-2">
         <input type="hidden" name="contactId" value={contactId} />
         <Input name="value" placeholder="(11) 99999-9999" className="max-w-[220px]" />
         <Button type="submit" variant="secondary" size="sm">

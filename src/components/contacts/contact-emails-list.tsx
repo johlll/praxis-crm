@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -11,10 +10,6 @@ import { addEmailAction, removeEmailAction } from "@/modules/contacts/actions";
 type Email = { id: string; value: string; isPrimary: boolean };
 
 export function ContactEmailsList({ contactId, emails }: { contactId: string; emails: Email[] }) {
-  // Remonta o formulário só depois de salvar: numa recusa, o valor digitado
-  // continua lá para corrigir.
-  const [addFormKey, setAddFormKey] = useState(0);
-
   return (
     <div className="flex flex-col gap-3">
       {emails.length === 0 ? (
@@ -39,12 +34,7 @@ export function ContactEmailsList({ contactId, emails }: { contactId: string; em
         </ul>
       )}
 
-      <ResultForm
-        key={addFormKey}
-        action={addEmailAction}
-        onSuccess={() => setAddFormKey((k) => k + 1)}
-        className="flex gap-2"
-      >
+      <ResultForm action={addEmailAction} className="flex gap-2">
         <input type="hidden" name="contactId" value={contactId} />
         <Input name="value" type="email" placeholder="contato@exemplo.com" className="max-w-[280px]" />
         <Button type="submit" variant="secondary" size="sm">
