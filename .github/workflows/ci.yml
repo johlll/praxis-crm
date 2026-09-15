@@ -116,6 +116,12 @@ jobs:
       - name: Testes e2e (login, workspace, convite, troca, logout)
         run: npm run test:e2e
 
+      - name: Atualização a partir da versão anterior (numeração de propostas)
+        # "Aplicar migrations do zero" já valida a criação do banco; este
+        # passo valida a ATUALIZAÇÃO com dados emitidos pela versão anterior.
+        # Recria o banco local, por isso roda depois do e2e.
+        run: bash scripts/check-upgrade-proposal-counter.sh
+
       - name: Publicar relatório do Playwright (só se algo falhar)
         if: failure()
         uses: actions/upload-artifact@v4
