@@ -1,7 +1,9 @@
+import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import { redirect } from "next/navigation";
 
 import { createServerSupabaseClient } from "@/server/supabase/server";
 import { getActiveWorkspaceId } from "@/server/auth/workspace";
+import { DataLoadError } from "@/server/data/load-error";
 import { roleHasPermission, type Permission, type Role } from "@/lib/roles";
 
 export type { Permission, Role } from "@/lib/roles";
@@ -40,6 +42,11 @@ export async function requireUser() {
     error,
   } = await supabase.auth.getUser();
 
+  // Rede/Auth indisponível não prova que a sessão é inválida: tratar como
+  // "não autenticado" mandaria o usuário para o login por um timeout.
+  if (error && isAuthRetryableFetchError(error)) {
+    throw new DataLoadError("a sessão do usuário", error);
+  }
   if (error || !user) {
     throw new AuthzError("unauthenticated", "Sessão ausente ou inválida.");
   }
@@ -76,7 +83,7 @@ export async function requireMembership(): Promise<MembershipContext> {
   const workspaceId = await requireWorkspace();
 
   const supabase = await createServerSupabaseClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("memberships")
     .select("id, role")
     .eq("workspace_id", workspaceId)
@@ -84,6 +91,9 @@ export async function requireMembership(): Promise<MembershipContext> {
     .eq("status", "active")
     .maybeSingle();
 
+  // Falha operacional não é "não é membro" — sobe como DataLoadError, que
+  // quem trata AuthzError não captura por engano.
+  if (error) throw new DataLoadError(`a membership do workspace ${workspaceId}`, error);
   if (!data) {
     throw new AuthzError("not_a_member", "Sem membership ativa neste workspace.");
   }
@@ -112,7 +122,10 @@ export async function requirePermission(permission: Permission): Promise<Members
 export async function requireUserOrRedirect() {
   try {
     return await requireUser();
-  } catch {
+  } catch (error) {
+    // Falha operacional sobe para o error.tsx (com "Tentar novamente"); só
+    // ausência real de sessão leva ao login.
+    if (error instanceof DataLoadError) throw error;
     redirect("/entrar");
   }
 }
@@ -122,6 +135,7 @@ export async function requireMembershipOrRedirect(): Promise<MembershipContext> 
   try {
     return await requireMembership();
   } catch (error) {
+    if (error instanceof DataLoadError) throw error;
     if (error instanceof AuthzError && error.code === "no_active_workspace") {
       redirect("/onboarding");
     }

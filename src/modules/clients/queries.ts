@@ -1,4 +1,5 @@
 import { createServerSupabaseClient } from "@/server/supabase/server";
+import { DataLoadError } from "@/server/data/load-error";
 import type { Database } from "@/server/types/database";
 import type { FeeModel } from "@/modules/opportunities/queries";
 import { CLIENT_STATUSES } from "./schema";
@@ -74,9 +75,9 @@ const PAGE_SIZE = 20;
  * sem clientes continua retornando {items: [], total: 0} normalmente
  * (RPC sem erro, lista real vazia).
  */
-export class ClientsLoadError extends Error {
-  constructor(message: string) {
-    super(message);
+export class ClientsLoadError extends DataLoadError {
+  constructor(resource: string, cause?: unknown) {
+    super(resource, cause);
     this.name = "ClientsLoadError";
   }
 }
@@ -98,7 +99,7 @@ export async function listClients(
   });
 
   if (error) {
-    throw new ClientsLoadError(`Falha ao carregar clientes do workspace ${workspaceId}: ${error.message}`);
+    throw new ClientsLoadError(`os clientes do workspace ${workspaceId}`, error);
   }
 
   if (!data || data.length === 0) {
@@ -182,9 +183,9 @@ export type ClientDetail = {
  */
 const CLIENT_NOT_FOUND_CODES = new Set(["client_not_found", "insufficient_permission"]);
 
-export class ClientDetailLoadError extends Error {
-  constructor(message: string) {
-    super(message);
+export class ClientDetailLoadError extends DataLoadError {
+  constructor(resource: string, cause?: unknown) {
+    super(resource, cause);
     this.name = "ClientDetailLoadError";
   }
 }
@@ -195,7 +196,7 @@ export async function getClient(clientId: string): Promise<ClientDetail | null> 
 
   if (error) {
     if (CLIENT_NOT_FOUND_CODES.has(error.message)) return null;
-    throw new ClientDetailLoadError(`Falha ao carregar o cliente ${clientId}: ${error.message}`);
+    throw new ClientDetailLoadError(`o cliente ${clientId}`, error);
   }
   if (!data) return null;
 

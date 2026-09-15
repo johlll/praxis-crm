@@ -1,4 +1,5 @@
 import { createServerSupabaseClient } from "@/server/supabase/server";
+import { DataLoadError } from "@/server/data/load-error";
 import type { Database } from "@/server/types/database";
 
 export type ConflictCheckStatus = Database["public"]["Enums"]["conflict_check_status"];
@@ -12,9 +13,9 @@ export type ConflictCheck = {
   lockVersion: number | null;
 };
 
-export class ConflictCheckLoadError extends Error {
-  constructor(message: string) {
-    super(message);
+export class ConflictCheckLoadError extends DataLoadError {
+  constructor(resource: string, cause?: unknown) {
+    super(resource, cause);
     this.name = "ConflictCheckLoadError";
   }
 }
@@ -27,7 +28,7 @@ export async function getConflictCheck(leadId: string): Promise<ConflictCheck> {
   const { data, error } = await supabase.rpc("get_conflict_check", { p_lead_id: leadId });
 
   if (error) {
-    throw new ConflictCheckLoadError(`Falha ao carregar a verificação de conflito do lead ${leadId}: ${error.message}`);
+    throw new ConflictCheckLoadError(`a verificação de conflito do lead ${leadId}`, error);
   }
 
   const row = (data as unknown as Record<string, unknown>) ?? {};

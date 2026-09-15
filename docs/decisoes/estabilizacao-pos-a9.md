@@ -73,6 +73,33 @@ cliente; páginas caem no `error.tsx` com "Tentar novamente".
 | 1.14 | `listTeamMembers`, `listPendingInvitations` | lista vazia | `/configuracoes/equipe` e seletores de responsável em 8 telas | inventário |
 | 1.15 | `listMyWorkspaces`, `getActiveWorkspaceId`, `switchActiveWorkspace`, `requireMembership` | "sem workspace"/"não é membro" → onboarding ou acesso negado | login, onboarding, troca de workspace, toda Server Action com permissão | inventário |
 
+| 1.16 | `getShellContext` (perfil do usuário) | erro ignorado → nome "Usuário" | topbar de todas as telas autenticadas | inventário |
+| 1.17 | `requireUser`, `requireUserOrRedirect`, `requireMembershipOrRedirect`, `signInAction`, `createWorkspaceAction`, `acceptInvitationAction`, `switchWorkspaceAction` | falha de rede do Auth ou da consulta de membership → redireciona para `/entrar` ou `/onboarding` | todas as páginas autenticadas, login, onboarding, convite, troca de workspace | inventário |
+| 1.18 | `requirePermissionSafe` (9 cópias divergentes, uma por módulo de actions) | só trata `AuthzError`; com 1.15 corrigido, falha de membership viraria exceção sem tratamento nas actions chamadas por componentes | todas as Server Actions com estado | A3-HANDOFF §9 (helper compartilhado proposto e nunca extraído) |
+
+### 1b. Primeira página tratada como lista completa
+
+**Comportamento incorreto:** a tela busca só a primeira página (20 itens,
+ou o teto de 1.000 linhas do PostgREST) e usa o resultado como se fosse a
+lista inteira, sem paginação nem aviso. Acima do limite, itens reais
+somem da tela.
+
+**Cenário:** workspace/lead com mais itens que o limite da consulta.
+
+**Teste e critério:** teste unitário com a RPC devolvendo total maior que
+a página — a função de "todos" busca as páginas seguintes até o total, e
+lança erro se uma página falhar ou vier incompleta (mesma regra de
+`listAllActivities`). Tabela do pipeline com paginação navegável.
+
+| # | Onde | Limite | Efeito acima do limite | Origem |
+|---|---|---|---|---|
+| 1b.1 | Seletor de lead do "Nova atividade" em `/atividades` e `/agenda` (`listLeads` página 1) | 20 leads ativos | Não dá para criar atividade para o 21º lead em diante | inventário |
+| 1b.2 | `/pipeline?view=tabela` (`listOpportunities` página 1, sem paginação) | 20 oportunidades | Tabela para na 20ª; subtítulo chama de "abertas" um total que inclui ganhas/perdidas | inventário |
+| 1b.3 | Perfil 360 (`listOpportunities(leadId)` página 1) | 20 oportunidades do lead | Oportunidade ativa, "Ver cliente" e a lista de oportunidades ignoram as demais | inventário |
+| 1b.4 | `/conversas/[id]` (oportunidades abertas do lead, página 1) | 20 | Resolução de vínculo não oferece as demais | inventário |
+| 1b.5 | `/leads/novo` (`listContactOptions`, sem paginação) | 1.000 contatos (`max_rows` do PostgREST) | Contatos além do milésimo não aparecem no seletor | inventário |
+| 1b.6 | `/oportunidades/[id]` (atividades pendentes, `listActivities` página 1, seção sem paginação) | 20 pendentes | Pendentes além da 20ª não aparecem no painel da oportunidade | inventário |
+
 **Fora deste defeito (já corretos, só adaptados ao contrato comum):**
 `listAllActivities`, `listActivitiesPageOrThrow`, `getLastCompletedMeeting`,
 `listClients`, `getClient`, `getConflictCheck`, `listConversations`,
@@ -100,20 +127,17 @@ na tela genérica do Next.js, sem "Tentar novamente".
 `retry` (não `reset`) em todos os `error.tsx`; cobertura de limite de erro
 para todas as rotas autenticadas e para o layout.
 
-## 3. Ações da tela de equipe falham em silêncio
+## 3. Ações sem canal de erro falham em silêncio
 
-**Comportamento incorreto:** `cancelInvitationAction`,
-`updateMembershipRoleAction` e `removeMembershipAction` descartam o
-`error` do RPC e não têm canal de retorno — uma recusa real (ex.: rebaixar
-ou remover o último owner) ou uma falha operacional não mostra nada, e a
-tela parece ter aceitado. Permissão negada lança exceção crua.
-`createInvitationAction` lança exceção crua quando falta permissão.
+**Comportamento incorreto:** actions "void" descartam o `error` do RPC e
+não têm canal de retorno — uma recusa real (ex.: rebaixar ou remover o
+último owner, telefone inválido, remover o único e-mail) ou uma falha
+operacional não mostra nada, e a tela parece ter aceitado.
 
-**Função/tela:** `src/modules/team/actions.ts`,
-`src/components/team/member-row.tsx`, `pending-invitation-row.tsx` —
-`/configuracoes/equipe`.
-
-**Origem:** A3-HANDOFF §9 (registrado, nunca corrigido).
+| # | Actions | Tela | Origem |
+|---|---|---|---|
+| 3.1 | `cancelInvitationAction`, `updateMembershipRoleAction`, `removeMembershipAction` (permissão negada ainda lança exceção crua); `createInvitationAction` (exceção crua sem permissão) | `/configuracoes/equipe` (`member-row.tsx`, `pending-invitation-row.tsx`) | A3-HANDOFF §9 (registrado, nunca corrigido) |
+| 3.2 | `addPhoneAction`, `updatePhoneAction`, `removePhoneAction`, `addEmailAction`, `updateEmailAction`, `removeEmailAction`, `clearCpfCnpjAction`, `dismissDuplicateCandidateAction` | `/contatos/[id]`, `/contatos/duplicidades` | inventário (A3 corrigiu só a propagação de permissão, não o erro do RPC) |
 
 **Cenário:** RPC `remove_membership`/`update_membership_role`/
 `cancel_workspace_invitation` responde erro.

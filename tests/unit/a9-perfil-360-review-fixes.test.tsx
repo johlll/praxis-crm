@@ -40,7 +40,7 @@ vi.mock("@/components/activities/activities-section", () => ({
   ),
 }));
 
-const { listActivitiesPageOrThrow, getLastCompletedMeeting, ActivitiesLoadError, ConsultationLoadError } =
+const { listActivities, getLastCompletedMeeting, ActivitiesLoadError, ConsultationLoadError } =
   await import("@/modules/activities/queries");
 const { LeadActivitiesSection } = await import("@/components/leads/lead-activities-section");
 const { LeadTimeline } = await import("@/components/leads/lead-timeline");
@@ -102,11 +102,11 @@ beforeEach(() => {
 });
 
 describe("falha na segunda página de atividades", () => {
-  it("listActivitiesPageOrThrow joga ActivitiesLoadError em vez de devolver lista vazia", async () => {
+  it("listActivities joga ActivitiesLoadError em vez de devolver lista vazia", async () => {
     rpcMock.mockImplementation(async () => ({ data: null, error: { message: "conexão perdida (simulado)" } }));
 
     await expect(
-      listActivitiesPageOrThrow("ws-1", { leadId: "lead-1", status: "all", page: 2, pageSize: 50 }),
+      listActivities("ws-1", { leadId: "lead-1", status: "all", page: 2, pageSize: 50 }),
     ).rejects.toThrow(ActivitiesLoadError);
   });
 
@@ -116,7 +116,7 @@ describe("falha na segunda página de atividades", () => {
       error: null,
     }));
 
-    const result = await listActivitiesPageOrThrow("ws-1", { leadId: "lead-1", status: "all", page: 2, pageSize: 50 });
+    const result = await listActivities("ws-1", { leadId: "lead-1", status: "all", page: 2, pageSize: 50 });
     expect(result.hasMore).toBe(true);
     expect(result.items.map((i) => i.id)).toEqual(["a51"]);
   });

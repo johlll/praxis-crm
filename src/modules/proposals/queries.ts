@@ -1,4 +1,5 @@
 import { createServerSupabaseClient } from "@/server/supabase/server";
+import { DataLoadError } from "@/server/data/load-error";
 import type { Database } from "@/server/types/database";
 
 export type ProposalStatus = Database["public"]["Enums"]["proposal_status"];
@@ -23,9 +24,9 @@ export type ProposalListItem = {
   feeModel?: FeeModel;
 };
 
-export class ProposalsLoadError extends Error {
-  constructor(message: string) {
-    super(message);
+export class ProposalsLoadError extends DataLoadError {
+  constructor(resource: string, cause?: unknown) {
+    super(resource, cause);
     this.name = "ProposalsLoadError";
   }
 }
@@ -53,7 +54,7 @@ export async function listProposalsForLead(leadId: string): Promise<ProposalList
   const { data, error } = await supabase.rpc("list_proposals_for_lead", { p_lead_id: leadId });
 
   if (error) {
-    throw new ProposalsLoadError(`Falha ao carregar propostas do lead ${leadId}: ${error.message}`);
+    throw new ProposalsLoadError(`as propostas do lead ${leadId}`, error);
   }
 
   return ((data as unknown as Array<Record<string, unknown>> | null) ?? []).map(mapProposalRow);

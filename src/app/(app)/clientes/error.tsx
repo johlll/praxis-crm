@@ -4,7 +4,7 @@ import { useEffect } from "react";
 
 import { ErrorState } from "@/components/feedback/error-state";
 
-export default function ClientesError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+export default function ClientesError({ error, retry }: { error: Error & { digest?: string }; retry: () => void }) {
   useEffect(() => {
     console.error(error);
   }, [error]);
@@ -15,7 +15,7 @@ export default function ClientesError({ error, reset }: { error: Error & { diges
         <ErrorState
           title="Não foi possível carregar os clientes"
           description="Tente novamente em instantes. Se continuar, avise o responsável pelo sistema."
-          onRetry={reset}
+          onRetry={retry}
         />
       </div>
     </main>

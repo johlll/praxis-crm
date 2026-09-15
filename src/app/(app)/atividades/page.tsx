@@ -8,7 +8,7 @@ import { requireWorkspace } from "@/server/authz/permissions";
 import { roleHasPermission } from "@/lib/roles";
 import { listActivities } from "@/modules/activities/queries";
 import { listActivitiesFiltersSchema } from "@/modules/activities/schema";
-import { listLeads } from "@/modules/leads/queries";
+import { listAllLeads } from "@/modules/leads/queries";
 import { listTeamMembers } from "@/modules/team/queries";
 import { ActivityFilterChips } from "@/components/activities/activity-filter-chips";
 import { ActivityListTable } from "@/components/activities/activity-list-table";
@@ -44,13 +44,14 @@ export default async function AtividadesPage({ searchParams }: { searchParams: P
 
   const canEdit = roleHasPermission(user.role, "activity.edit");
 
-  const [{ items, total, pageSize, counts }, { items: leadOptions }, members] = await Promise.all([
+  const [{ items, total, pageSize, counts }, leadOptions, members] = await Promise.all([
     listActivities(workspaceId, {
       filter: filters.filter || undefined,
       status: filters.status || undefined,
       page: filters.page,
     }),
-    listLeads(workspaceId, { status: "ativo" }),
+    // Seletor do "Nova atividade": todos os leads ativos, não só a 1ª página.
+    listAllLeads(workspaceId, { status: "ativo" }),
     listTeamMembers(workspaceId, user.id),
   ]);
 

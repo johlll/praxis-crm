@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { createServerSupabaseClient } from "@/server/supabase/server";
-import { requirePermission, AuthzError, type Permission } from "@/server/authz/permissions";
+import { requirePermissionSafe } from "@/server/authz/safe";
 import { toUserMessage } from "@/lib/errors";
 import { createLeadNoteSchema } from "./schema";
 
@@ -13,25 +13,12 @@ export type LeadNoteActionState = {
   noteId?: string;
 };
 
-const PERMISSION_DENIED_MESSAGE = "Você não tem permissão para fazer isso.";
-
-async function requirePermissionSafe(
-  permission: Permission,
-): Promise<{ ctx: Awaited<ReturnType<typeof requirePermission>> } | { deniedMessage: string }> {
-  try {
-    return { ctx: await requirePermission(permission) };
-  } catch (error) {
-    if (error instanceof AuthzError) return { deniedMessage: PERMISSION_DENIED_MESSAGE };
-    throw error;
-  }
-}
-
 export async function createLeadNoteAction(
   _prevState: LeadNoteActionState,
   formData: FormData,
 ): Promise<LeadNoteActionState> {
   const guard = await requirePermissionSafe("lead_note.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = createLeadNoteSchema.safeParse({
     leadId: formData.get("leadId"),

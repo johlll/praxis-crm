@@ -11,9 +11,9 @@ import { listTeamMembers } from "@/modules/team/queries";
 import { LeadBasicFieldsForm } from "@/components/leads/lead-basic-fields-form";
 import { AssignLeadForm } from "@/components/leads/assign-lead-form";
 import { LeadStatusToggle } from "@/components/leads/lead-status-toggle";
-import { listOpportunities, getOpportunity, listPipelineStagesWithDetails } from "@/modules/opportunities/queries";
+import { listAllOpportunities, getOpportunity, listPipelineStagesWithDetails } from "@/modules/opportunities/queries";
 import { LeadOpportunitiesSection } from "@/components/pipeline/create-opportunity-form";
-import { getLastCompletedMeeting, listActivities, listActivitiesPageOrThrow } from "@/modules/activities/queries";
+import { getLastCompletedMeeting, listActivities, listAllActivities } from "@/modules/activities/queries";
 import { OpportunityDetailPanel } from "@/components/pipeline/opportunity-detail-panel";
 import { StageProgressBar } from "@/components/leads/stage-progress-bar";
 import { StageMoveControl } from "@/components/leads/stage-move-control";
@@ -63,7 +63,7 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
 
   const [
     members,
-    { items: opportunities },
+    opportunities,
     activitiesPage,
     conversationsPage,
     proposals,
@@ -72,10 +72,10 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
     lastCompletedConsultation,
   ] = await Promise.all([
     listTeamMembers(workspaceId, user.id),
-    listOpportunities(workspaceId, { leadId: id }),
+    listAllOpportunities(workspaceId, { leadId: id }),
     // Mesma consulta estrita do "carregar mais": falha sobe para o
     // error.tsx da rota em vez de virar "Nenhuma atividade ainda".
-    listActivitiesPageOrThrow(workspaceId, { leadId: id, status: "all", page: 1, pageSize: 50 }),
+    listActivities(workspaceId, { leadId: id, status: "all", page: 1, pageSize: 50 }),
     listConversations(workspaceId, { leadId: id }),
     listProposalsForLead(id),
     getConflictCheck(id),
@@ -89,7 +89,7 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
 
   // "Ver cliente" (item 1 do pedido da A8) — o vínculo de cliente da
   // oportunidade mais recente entre as já carregadas acima (não uma
-  // segunda consulta); listOpportunities() ordena created_at_desc por
+  // segunda consulta); listAllOpportunities() ordena created_at_desc por
   // padrão, então o primeiro achado já é o mais recente.
   const clientId = opportunities.find((o) => o.clientId)?.clientId ?? null;
 
@@ -103,7 +103,7 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
   const [primaryOpportunity, primaryOpportunityActivities] = primaryOpportunityItem
     ? await Promise.all([
         getOpportunity(primaryOpportunityItem.id),
-        listActivities(workspaceId, { leadId: id, opportunityId: primaryOpportunityItem.id, status: "pending" }),
+        listAllActivities(workspaceId, { leadId: id, opportunityId: primaryOpportunityItem.id, status: "pending" }),
       ])
     : [null, { items: [] }];
 

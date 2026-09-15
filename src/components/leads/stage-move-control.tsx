@@ -57,9 +57,15 @@ export function StageMoveControl({
 
   function handleConfirm() {
     if (selected === currentStageId) return;
+    setError(null);
     startTransition(async () => {
-      const pending = await checkStageRequirementsAction(opportunityId, selected);
-      const missing = pending.filter((r) => !r.filled);
+      const check = await checkStageRequirementsAction(opportunityId, selected);
+      // Sem saber os requisitos, não move: "nenhum pendente" seria suposição.
+      if (!check.ok) {
+        setError(check.error);
+        return;
+      }
+      const missing = check.requirements.filter((r) => !r.filled);
       if (missing.length > 0) {
         setAdvanceOpen(true);
         return;

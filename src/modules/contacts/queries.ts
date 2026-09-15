@@ -1,5 +1,6 @@
 import { createServerSupabaseClient } from "@/server/supabase/server";
 import { blindIndexesForSearch } from "@/server/crypto/contact-sensitive";
+import { DataLoadError } from "@/server/data/load-error";
 import type { Database } from "@/server/types/database";
 
 export type ContactType = Database["public"]["Enums"]["contact_type"];
@@ -64,7 +65,8 @@ export async function listContacts(
     query = query.in("id", ids);
   }
 
-  const { data, count } = await query;
+  const { data, count, error } = await query;
+  if (error) throw new DataLoadError(`a página ${page} de contatos do workspace ${workspaceId}`, error);
 
   const items: ContactListItem[] = (data ?? []).map((row) => ({
     id: row.id,
@@ -92,10 +94,11 @@ export async function searchContactsByCpfCnpj(
   const supabase = await createServerSupabaseClient();
   const candidates = blindIndexesForSearch(workspaceId, rawValue);
 
-  const { data } = await supabase.rpc("search_contacts_by_cpf_cnpj", {
+  const { data, error } = await supabase.rpc("search_contacts_by_cpf_cnpj", {
     p_workspace_id: workspaceId,
     p_blind_indexes_base64: candidates,
   });
+  if (error) throw new DataLoadError(`a busca de contatos por CPF/CNPJ no workspace ${workspaceId}`, error);
 
   return (data ?? []).map((row) => ({ id: row.id, name: row.name }));
 }
@@ -116,16 +119,22 @@ export type ContactDetail = {
 
 export async function getContactDetail(contactId: string): Promise<ContactDetail | null> {
   const supabase = await createServerSupabaseClient();
-  const { data: contact } = await supabase
+  const { data: contact, error: contactError } = await supabase
     .from("contacts")
     .select("id, workspace_id, name, type, city, uf, preferred_channel, created_at")
     .eq("id", contactId)
     .is("merged_into_contact_id", null)
     .maybeSingle();
 
+  if (contactError) throw new DataLoadError(`o contato ${contactId}`, contactError);
+  // Sem linha = inexistente, mesclado ou de outro workspace (RLS) — ausência legítima.
   if (!contact) return null;
 
-  const [{ data: phones }, { data: emails }, { data: hasSensitive }] = await Promise.all([
+  const [
+    { data: phones, error: phonesError },
+    { data: emails, error: emailsError },
+    { data: hasSensitive, error: sensitiveError },
+  ] = await Promise.all([
     supabase
       .from("contact_phones")
       .select("id, value_normalized, is_primary")
@@ -138,6 +147,8 @@ export async function getContactDetail(contactId: string): Promise<ContactDetail
       .order("is_primary", { ascending: false }),
     supabase.rpc("contact_has_sensitive", { p_contact_id: contactId }),
   ]);
+  const partError = phonesError ?? emailsError ?? sensitiveError;
+  if (partError) throw new DataLoadError(`os dados do contato ${contactId}`, partError);
 
   return {
     id: contact.id,
@@ -182,11 +193,12 @@ export async function getDuplicateCandidateDetail(
   candidateId: string,
 ): Promise<DuplicateCandidateDetail | null> {
   const supabase = await createServerSupabaseClient();
-  const { data: candidate } = await supabase
+  const { data: candidate, error } = await supabase
     .from("duplicate_candidates")
     .select("id, tier, signals, status, contact_a_id, contact_b_id")
     .eq("id", candidateId)
     .maybeSingle();
+  if (error) throw new DataLoadError(`o candidato a duplicidade ${candidateId}`, error);
 
   if (!candidate) return null;
 
@@ -222,7 +234,8 @@ export type ContactMergeHistoryItem = {
  */
 export async function listContactMergeHistory(contactId: string): Promise<ContactMergeHistoryItem[]> {
   const supabase = await createServerSupabaseClient();
-  const { data } = await supabase.rpc("get_contact_merge_history", { p_contact_id: contactId });
+  const { data, error } = await supabase.rpc("get_contact_merge_history", { p_contact_id: contactId });
+  if (error) throw new DataLoadError(`o histórico de mesclagens do contato ${contactId}`, error);
 
   return (data ?? []).map((row) => ({
     mergeId: row.merge_id,
@@ -241,7 +254,7 @@ export async function listPendingDuplicateCandidates(
   workspaceId: string,
 ): Promise<DuplicateCandidateItem[]> {
   const supabase = await createServerSupabaseClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("duplicate_candidates")
     .select(
       "id, tier, priority, signals, created_at, contact_a:contacts!duplicate_candidates_contact_a_id_fkey(id, name), contact_b:contacts!duplicate_candidates_contact_b_id_fkey(id, name)",
@@ -249,6 +262,7 @@ export async function listPendingDuplicateCandidates(
     .eq("workspace_id", workspaceId)
     .eq("status", "pending")
     .order("priority", { ascending: false });
+  if (error) throw new DataLoadError(`os candidatos a duplicidade do workspace ${workspaceId}`, error);
 
   return (data ?? [])
     .filter((row) => row.contact_a !== null && row.contact_b !== null)

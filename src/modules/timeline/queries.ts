@@ -1,4 +1,5 @@
 import { createServerSupabaseClient } from "@/server/supabase/server";
+import { DataLoadError } from "@/server/data/load-error";
 
 export type LeadTimelineEventType = "nota" | "atividade" | "mensagem" | "etapa" | "proposta" | "conflito";
 
@@ -16,9 +17,9 @@ const PAGE_SIZE = 30;
  * falha de consulta nunca vira timeline vazia disfarçada de "sem eventos
  * ainda" — sobe pura até error.tsx da rota.
  */
-export class LeadTimelineLoadError extends Error {
-  constructor(message: string) {
-    super(message);
+export class LeadTimelineLoadError extends DataLoadError {
+  constructor(resource: string, cause?: unknown) {
+    super(resource, cause);
     this.name = "LeadTimelineLoadError";
   }
 }
@@ -48,7 +49,7 @@ export async function getLeadTimelinePage(
   });
 
   if (error) {
-    throw new LeadTimelineLoadError(`Falha ao carregar o histórico do lead ${leadId}: ${error.message}`);
+    throw new LeadTimelineLoadError(`o histórico do lead ${leadId}`, error);
   }
   if (!data || data.length === 0) {
     return { items: [], hasMore: false };

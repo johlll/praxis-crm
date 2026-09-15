@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { createServerSupabaseClient } from "@/server/supabase/server";
-import { requirePermission, AuthzError, type Permission } from "@/server/authz/permissions";
+import { requirePermissionSafe } from "@/server/authz/safe";
 import { toUserMessage } from "@/lib/errors";
 import { assignLeadSchema, createLeadSchema, setLeadStatusSchema, updateLeadBasicFieldsSchema } from "./schema";
 
@@ -14,32 +14,12 @@ export type LeadActionState = {
   leadId?: string;
 };
 
-const PERMISSION_DENIED_MESSAGE = "Você não tem permissão para fazer isso.";
-
-/**
- * Mesmo problema já corrigido na A3 (requirePermission() lança dentro de
- * Server Action = página inteira quebra) — aqui TODA ação retorna
- * {ok, error}, mesmo as mais simples (arquivar, atribuir responsável):
- * por instrução explícita desta fase, nenhuma ação void que engula a
- * exceção sem dar retorno visível a quem clicou.
- */
-async function requirePermissionSafe(
-  permission: Permission,
-): Promise<{ ctx: Awaited<ReturnType<typeof requirePermission>> } | { deniedMessage: string }> {
-  try {
-    return { ctx: await requirePermission(permission) };
-  } catch (error) {
-    if (error instanceof AuthzError) return { deniedMessage: PERMISSION_DENIED_MESSAGE };
-    throw error;
-  }
-}
-
 export async function createLeadAction(
   _prevState: LeadActionState,
   formData: FormData,
 ): Promise<LeadActionState> {
   const guard = await requirePermissionSafe("lead.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
   const ctx = guard.ctx;
 
   const parsed = createLeadSchema.safeParse({
@@ -80,7 +60,7 @@ export async function updateLeadBasicFieldsAction(
   formData: FormData,
 ): Promise<LeadActionState> {
   const guard = await requirePermissionSafe("lead.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = updateLeadBasicFieldsSchema.safeParse({
     leadId: formData.get("leadId"),
@@ -118,7 +98,7 @@ export async function assignLeadAction(
   formData: FormData,
 ): Promise<LeadActionState> {
   const guard = await requirePermissionSafe("lead.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = assignLeadSchema.safeParse({
     leadId: formData.get("leadId"),
@@ -151,7 +131,7 @@ export async function setLeadStatusAction(
   formData: FormData,
 ): Promise<LeadActionState> {
   const guard = await requirePermissionSafe("lead.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = setLeadStatusSchema.safeParse({
     leadId: formData.get("leadId"),

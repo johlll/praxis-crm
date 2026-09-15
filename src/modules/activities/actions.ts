@@ -3,9 +3,10 @@
 import { revalidatePath } from "next/cache";
 
 import { createServerSupabaseClient } from "@/server/supabase/server";
-import { requirePermission, requireMembership, AuthzError, type Permission } from "@/server/authz/permissions";
+import { requirePermissionSafe } from "@/server/authz/safe";
+import { requireMembership } from "@/server/authz/permissions";
 import { toUserMessage } from "@/lib/errors";
-import { listActivitiesPageOrThrow, type ActivityListItem } from "./queries";
+import { listActivities, type ActivityListItem } from "./queries";
 import {
   createActivitySchema,
   updateActivitySchema,
@@ -23,19 +24,6 @@ export type ActivityActionState = {
   activityId?: string;
 };
 
-const PERMISSION_DENIED_MESSAGE = "Você não tem permissão para fazer isso.";
-
-async function requirePermissionSafe(
-  permission: Permission,
-): Promise<{ ctx: Awaited<ReturnType<typeof requirePermission>> } | { deniedMessage: string }> {
-  try {
-    return { ctx: await requirePermission(permission) };
-  } catch (error) {
-    if (error instanceof AuthzError) return { deniedMessage: PERMISSION_DENIED_MESSAGE };
-    throw error;
-  }
-}
-
 /** As telas que listam atividades variam (Central, painel da oportunidade,
  * futuramente lead) — revalida sempre as mesmas três rotas amplas, mais
  * barato e simples que rastrear qual página específica chamou a action. */
@@ -52,7 +40,7 @@ export async function createActivityAction(
   formData: FormData,
 ): Promise<ActivityActionState> {
   const guard = await requirePermissionSafe("activity.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = createActivitySchema.safeParse({
     leadId: formData.get("leadId"),
@@ -96,7 +84,7 @@ export async function updateActivityAction(
   formData: FormData,
 ): Promise<ActivityActionState> {
   const guard = await requirePermissionSafe("activity.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = updateActivitySchema.safeParse({
     activityId: formData.get("activityId"),
@@ -139,7 +127,7 @@ export async function rescheduleActivityAction(
   scope?: { leadId?: string; opportunityId?: string },
 ): Promise<ActivityActionState> {
   const guard = await requirePermissionSafe("activity.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = rescheduleActivitySchema.safeParse({ activityId, lockVersion, dueDate, dueTime });
   if (!parsed.success) {
@@ -169,7 +157,7 @@ export async function reassignActivityAction(
   scope?: { leadId?: string; opportunityId?: string },
 ): Promise<ActivityActionState> {
   const guard = await requirePermissionSafe("activity.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = reassignActivitySchema.safeParse({ activityId, lockVersion, assignedTo: assignedTo ?? "" });
   if (!parsed.success) {
@@ -197,7 +185,7 @@ export async function completeActivityAction(
   scope?: { leadId?: string; opportunityId?: string },
 ): Promise<ActivityActionState> {
   const guard = await requirePermissionSafe("activity.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = completeActivitySchema.safeParse({ activityId, lockVersion });
   if (!parsed.success) {
@@ -223,7 +211,7 @@ export async function deleteActivityAction(
   scope?: { leadId?: string; opportunityId?: string },
 ): Promise<ActivityActionState> {
   const guard = await requirePermissionSafe("activity.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = deleteActivitySchema.safeParse({ activityId });
   if (!parsed.success) {
@@ -248,7 +236,7 @@ export async function setStageAutoActivityRuleAction(
   formData: FormData,
 ): Promise<StageRuleActionState> {
   const guard = await requirePermissionSafe("activity.configure");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = setStageAutoActivityRuleSchema.safeParse({
     stageId: formData.get("stageId"),
@@ -281,7 +269,7 @@ export async function setStageAutoActivityRuleAction(
 
 export async function deleteStageAutoActivityRuleAction(stageId: string): Promise<StageRuleActionState> {
   const guard = await requirePermissionSafe("activity.configure");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = deleteStageAutoActivityRuleSchema.safeParse({ stageId });
   if (!parsed.success) {
@@ -302,10 +290,9 @@ export async function deleteStageAutoActivityRuleAction(stageId: string): Promis
 const LEAD_ACTIVITIES_PAGE_SIZE = 50;
 
 /**
- * "Carregar mais" da aba Atividades/Visão geral do Perfil 360. Usa a
- * consulta que PRESERVA o erro (listActivitiesPageOrThrow) — com
- * listActivities(), uma falha virava lista vazia + hasMore=false e o
- * botão sumia como se não houvesse mais nada.
+ * "Carregar mais" da aba Atividades/Visão geral do Perfil 360. Uma falha
+ * chega como `ok: false` (listActivities lança ActivitiesLoadError) —
+ * nunca como lista vazia + hasMore=false, que sumiria com o botão.
  */
 export async function loadMoreLeadActivitiesAction(
   leadId: string,
@@ -313,7 +300,7 @@ export async function loadMoreLeadActivitiesAction(
 ): Promise<{ ok: true; items: ActivityListItem[]; hasMore: boolean } | { ok: false; error: string }> {
   try {
     const { workspaceId } = await requireMembership();
-    const result = await listActivitiesPageOrThrow(workspaceId, {
+    const result = await listActivities(workspaceId, {
       leadId,
       status: "all",
       page,

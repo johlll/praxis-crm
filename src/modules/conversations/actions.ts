@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 
 import { createServerSupabaseClient } from "@/server/supabase/server";
-import { requirePermission, requireMembership, AuthzError, type Permission } from "@/server/authz/permissions";
+import { requirePermissionSafe } from "@/server/authz/safe";
+import { requireMembership } from "@/server/authz/permissions";
 import { toUserMessage } from "@/lib/errors";
 import { normalizeWebhookPayload } from "@/server/whatsapp/normalize-event";
 import { buildSimulatedInboundMessage, buildSimulatedStatusEvent } from "@/server/whatsapp/simulator";
@@ -27,17 +28,6 @@ import {
 
 export type ActionState = { ok: boolean; error?: string };
 
-async function requirePermissionSafe(
-  permission: Permission,
-): Promise<{ ctx: Awaited<ReturnType<typeof requirePermission>> } | { deniedMessage: string }> {
-  try {
-    return { ctx: await requirePermission(permission) };
-  } catch (error) {
-    if (error instanceof AuthzError) return { deniedMessage: "Você não tem permissão para fazer isso." };
-    throw error;
-  }
-}
-
 function revalidateConversationRoutes(conversationId?: string) {
   revalidatePath("/conversas");
   if (conversationId) revalidatePath(`/conversas/${conversationId}`);
@@ -52,7 +42,7 @@ export async function createWhatsAppChannelAction(
   formData: FormData,
 ): Promise<ActionState> {
   const guard = await requirePermissionSafe("conversation.simulate");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = createWhatsAppChannelSchema.safeParse({
     workspaceId: formData.get("workspaceId"),
@@ -91,7 +81,7 @@ export async function simulateInboundMessageAction(
   formData: FormData,
 ): Promise<SimulateActionState> {
   const guard = await requirePermissionSafe("conversation.simulate");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = simulateInboundMessageSchema.safeParse({
     channelId: formData.get("channelId"),
@@ -146,7 +136,7 @@ export async function simulateStatusEventAction(
   formData: FormData,
 ): Promise<ActionState> {
   const guard = await requirePermissionSafe("conversation.simulate");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = simulateStatusEventSchema.safeParse({
     phoneNumberId: formData.get("phoneNumberId"),
@@ -205,7 +195,7 @@ export async function sendMessageAction(
   clientDedupeKey: string,
 ): Promise<SendMessageActionResult> {
   const guard = await requirePermissionSafe("conversation.send");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = sendMessageSchema.safeParse({ conversationId, bodyText, clientDedupeKey });
   if (!parsed.success) {
@@ -248,7 +238,7 @@ export async function resolveConversationLinkAction(
   opportunityId: string | undefined,
 ): Promise<ActionState> {
   const guard = await requirePermissionSafe("conversation.link");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = resolveConversationLinkSchema.safeParse({ conversationId, contactId, leadId, opportunityId });
   if (!parsed.success) {
@@ -274,7 +264,7 @@ export async function registerContactConsentAction(
   formData: FormData,
 ): Promise<ActionState> {
   const guard = await requirePermissionSafe("contact.consent_manage");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = registerContactConsentSchema.safeParse({
     contactId: formData.get("contactId"),
@@ -328,7 +318,7 @@ export async function loadOlderMessagesAction(
 
 export async function revokeContactConsentAction(consentId: string): Promise<ActionState> {
   const guard = await requirePermissionSafe("contact.consent_manage");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = revokeContactConsentSchema.safeParse({ consentId });
   if (!parsed.success) {

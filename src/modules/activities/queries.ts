@@ -1,4 +1,5 @@
 import { createServerSupabaseClient } from "@/server/supabase/server";
+import { DataLoadError, isExpectedAbsence } from "@/server/data/load-error";
 import type { Database } from "@/server/types/database";
 import type { ACTIVITY_FILTERS } from "./schema";
 
@@ -103,18 +104,23 @@ type ListActivitiesFilters = {
 
 type ActivitiesPage = { items: ActivityListItem[]; total: number; counts: ActivityCounts };
 
+/** Mesmo teto do RPC (list_activities limita p_page_size a 100) — pedir mais
+ * faria `hasMore` mentir, porque o banco devolveria só 100. */
+const MAX_PAGE_SIZE = 100;
+
 /**
- * Chamada crua ao RPC, para uma única página — usada tanto por
- * listActivities() (que preserva o comportamento já existente de
- * devolver uma lista vazia em caso de erro, mantido para não afetar os
- * outros lugares que já dependem disso) quanto por listAllActivities()
- * (que precisa saber DE VERDADE se uma página falhou, para nunca
- * disfarçar isso de "sem itens").
+ * Erro de carregamento de atividades — subclasse do contrato comum
+ * (src/server/data/load-error.ts), mantida para quem já a referencia.
  */
-async function fetchActivitiesPage(
-  workspaceId: string,
-  filters: ListActivitiesFilters,
-): Promise<{ ok: true; page: ActivitiesPage } | { ok: false }> {
+export class ActivitiesLoadError extends DataLoadError {
+  constructor(resource: string, cause?: unknown) {
+    super(resource, cause);
+    this.name = "ActivitiesLoadError";
+  }
+}
+
+/** Uma página do RPC. Falha sempre lança — nunca vira página vazia. */
+async function fetchActivitiesPage(workspaceId: string, filters: ListActivitiesFilters): Promise<ActivitiesPage> {
   const supabase = await createServerSupabaseClient();
 
   const { data, error } = await supabase.rpc("list_activities", {
@@ -132,46 +138,36 @@ async function fetchActivitiesPage(
     p_page_size: filters.pageSize,
   });
 
-  if (error) return { ok: false };
-  if (!data || data.length === 0) return { ok: true, page: { items: [], total: 0, counts: EMPTY_COUNTS } };
+  if (error) throw new ActivitiesLoadError(`a página ${filters.page} de atividades do workspace ${workspaceId}`, error);
+  if (!data || data.length === 0) return { items: [], total: 0, counts: EMPTY_COUNTS };
 
   const row = data[0]!;
   const items = (row.items as unknown as Array<Record<string, unknown>> | null) ?? [];
 
-  return {
-    ok: true,
-    page: { items: items.map(mapActivityRow), total: row.total_count, counts: mapCounts(row.counts) },
-  };
-}
-
-export async function listActivities(
-  workspaceId: string,
-  filters: Omit<ListActivitiesFilters, "page" | "pageSize"> & { page?: number | undefined; pageSize?: number | undefined } = {},
-): Promise<{ items: ActivityListItem[]; total: number; page: number; pageSize: number; counts: ActivityCounts }> {
-  const page = Math.max(1, filters.page ?? 1);
-  const pageSize = Math.max(1, Math.min(filters.pageSize ?? 20, 200));
-
-  const result = await fetchActivitiesPage(workspaceId, { ...filters, page, pageSize });
-  if (!result.ok) {
-    return { items: [], total: 0, page, pageSize, counts: EMPTY_COUNTS };
-  }
-
-  return { ...result.page, page, pageSize };
+  return { items: items.map(mapActivityRow), total: row.total_count, counts: mapCounts(row.counts) };
 }
 
 /**
- * Erro deliberado (nunca uma lista parcial disfarçada de completa) para
- * quando listAllActivities() não consegue buscar TODAS as atividades que
- * casam com o filtro. A Agenda semanal (única chamadora) deixa isso
- * subir para o error.tsx da própria rota — ErrorState com "tentar
- * novamente", nunca a tela de "Nada agendado" (que mentiria sobre o que
- * de fato existe).
+ * Uma página de atividades. Falha lança ActivitiesLoadError — nunca lista
+ * vazia (que a tela mostraria como "nenhuma atividade") nem `hasMore: false`
+ * (que encerraria a paginação em silêncio).
  */
-export class ActivitiesLoadError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ActivitiesLoadError";
-  }
+export async function listActivities(
+  workspaceId: string,
+  filters: Omit<ListActivitiesFilters, "page" | "pageSize"> & { page?: number | undefined; pageSize?: number | undefined } = {},
+): Promise<{
+  items: ActivityListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+  counts: ActivityCounts;
+}> {
+  const page = Math.max(1, filters.page ?? 1);
+  const pageSize = Math.max(1, Math.min(filters.pageSize ?? 20, MAX_PAGE_SIZE));
+
+  const result = await fetchActivitiesPage(workspaceId, { ...filters, page, pageSize });
+  return { ...result, page, pageSize, hasMore: page * pageSize < result.total };
 }
 
 /**
@@ -189,7 +185,7 @@ export class ActivitiesLoadError extends Error {
  * trava de segurança continua em 50 páginas (não é a solução aumentar
  * esse número; é nunca fingir que uma busca incompleta terminou).
  */
-const LIST_ALL_PAGE_SIZE = 100;
+const LIST_ALL_PAGE_SIZE = MAX_PAGE_SIZE;
 const LIST_ALL_MAX_PAGES = 50;
 
 export async function listAllActivities(
@@ -202,62 +198,35 @@ export async function listAllActivities(
 
   for (let page = 1; page <= LIST_ALL_MAX_PAGES; page++) {
     const result = await fetchActivitiesPage(workspaceId, { ...filters, page, pageSize: LIST_ALL_PAGE_SIZE });
-    if (!result.ok) {
-      throw new ActivitiesLoadError(`Falha ao buscar a página ${page} de atividades (workspace ${workspaceId}).`);
-    }
 
     if (page === 1) {
-      total = result.page.total;
-      counts = result.page.counts;
+      total = result.total;
+      counts = result.counts;
     }
-    items = items.concat(result.page.items);
+    items = items.concat(result.items);
 
     if (items.length >= total) return { items, total, counts };
 
-    if (result.page.items.length === 0) {
+    if (result.items.length === 0) {
       // O total dizia que ainda faltavam itens, mas a página veio vazia —
       // inconsistência real entre total_count e as linhas devolvidas.
       // Nunca presumir "acabou" aqui: sinaliza carregamento incompleto em
       // vez de devolver uma lista menor que o total como se fosse a
       // semana inteira.
       throw new ActivitiesLoadError(
-        `Carregamento incompleto: a página ${page} veio vazia mas ${items.length}/${total} atividades ainda faltavam (workspace ${workspaceId}).`,
+        `a lista completa de atividades do workspace ${workspaceId} (página ${page} veio vazia com ${items.length}/${total})`,
       );
     }
   }
 
   throw new ActivitiesLoadError(
-    `Carregamento incompleto: ${items.length}/${total} atividades buscadas após o limite de ${LIST_ALL_MAX_PAGES} páginas (workspace ${workspaceId}).`,
+    `a lista completa de atividades do workspace ${workspaceId} (${items.length}/${total} após ${LIST_ALL_MAX_PAGES} páginas)`,
   );
 }
 
-/**
- * Uma página só, mas sem engolir erro: listActivities() devolve lista
- * vazia quando o RPC falha (comportamento antigo, mantido para as telas
- * que já dependem dele). O Perfil 360 precisa distinguir "não há mais
- * atividades" de "a busca falhou" — senão o "carregar mais" some em
- * silêncio numa falha de rede.
- */
-export async function listActivitiesPageOrThrow(
-  workspaceId: string,
-  filters: Omit<ListActivitiesFilters, "page" | "pageSize"> & { page: number; pageSize: number },
-): Promise<{ items: ActivityListItem[]; total: number; hasMore: boolean }> {
-  const page = Math.max(1, filters.page);
-  const pageSize = Math.max(1, Math.min(filters.pageSize, 100));
-  const result = await fetchActivitiesPage(workspaceId, { ...filters, page, pageSize });
-  if (!result.ok) {
-    throw new ActivitiesLoadError(`Falha ao buscar a página ${page} de atividades (workspace ${workspaceId}).`);
-  }
-  return {
-    items: result.page.items,
-    total: result.page.total,
-    hasMore: page * pageSize < result.page.total,
-  };
-}
-
-export class ConsultationLoadError extends Error {
-  constructor(message: string) {
-    super(message);
+export class ConsultationLoadError extends DataLoadError {
+  constructor(resource: string, cause?: unknown) {
+    super(resource, cause);
     this.name = "ConsultationLoadError";
   }
 }
@@ -267,19 +236,23 @@ export class ConsultationLoadError extends Error {
 export async function getLastCompletedMeeting(leadId: string): Promise<ActivityListItem | null> {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("get_last_completed_meeting", { p_lead_id: leadId });
-  if (error) {
-    throw new ConsultationLoadError(`Falha ao buscar a última consulta do lead ${leadId}: ${error.message}`);
-  }
+  if (error) throw new ConsultationLoadError(`a última consulta do lead ${leadId}`, error);
   if (!data) return null;
   return mapActivityRow(data as Record<string, unknown>);
 }
 
 export type ActivityDetail = ActivityListItem & { workspaceId: string };
 
+const ACTIVITY_ABSENCE_CODES = ["activity_not_found", "insufficient_permission"] as const;
+
 export async function getActivity(activityId: string): Promise<ActivityDetail | null> {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("get_activity", { p_activity_id: activityId });
-  if (error || !data) return null;
+  if (error) {
+    if (isExpectedAbsence(error, ACTIVITY_ABSENCE_CODES)) return null;
+    throw new ActivitiesLoadError(`a atividade ${activityId}`, error);
+  }
+  if (!data) return null;
 
   const row = data as Record<string, unknown>;
   return { workspaceId: row.workspace_id as string, ...mapActivityRow(row) };
@@ -288,7 +261,8 @@ export async function getActivity(activityId: string): Promise<ActivityDetail | 
 export async function getActivityCounts(workspaceId: string): Promise<ActivityCounts> {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("get_activity_counts", { p_workspace_id: workspaceId });
-  if (error || !data) return EMPTY_COUNTS;
+  if (error) throw new ActivitiesLoadError(`as contagens de atividades do workspace ${workspaceId}`, error);
+  if (!data) return EMPTY_COUNTS;
   return mapCounts(data);
 }
 

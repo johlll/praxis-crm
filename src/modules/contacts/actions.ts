@@ -4,9 +4,10 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { createServerSupabaseClient } from "@/server/supabase/server";
-import { requirePermission, AuthzError, type Permission } from "@/server/authz/permissions";
+import { requirePermissionSafe } from "@/server/authz/safe";
 import { encryptCpfCnpj, decryptCpfCnpj } from "@/server/crypto/contact-sensitive";
 import { toUserMessage } from "@/lib/errors";
+import type { ActionResult } from "@/lib/action-result";
 import {
   addEmailSchema,
   addPhoneSchema,
@@ -30,43 +31,6 @@ export type ContactActionState = {
   contactId?: string;
 };
 
-const PERMISSION_DENIED_MESSAGE = "Você não tem permissão para fazer isso.";
-
-/**
- * requirePermission() lança AuthzError de propósito — é o certo para
- * Server Components (interrompe o render, deixa o layout decidir o que
- * fazer). Dentro de uma Server Action isso vira uma exceção não tratada
- * que quebra a página inteira com o erro genérico do Next.js, nunca a
- * mensagem sanitizada que o resto da ação usa (achado tentando mesclar
- * como um papel sem permissão, não por leitura de código). Toda action
- * com estado tipado (useActionState) passa por aqui em vez de chamar
- * requirePermission() direto.
- */
-async function requirePermissionSafe(
-  permission: Permission,
-): Promise<{ ctx: Awaited<ReturnType<typeof requirePermission>> } | { deniedMessage: string }> {
-  try {
-    return { ctx: await requirePermission(permission) };
-  } catch (error) {
-    if (error instanceof AuthzError) return { deniedMessage: PERMISSION_DENIED_MESSAGE };
-    throw error;
-  }
-}
-
-/** Mesma ideia de requirePermissionSafe(), para as actions void (formulários
- * sem canal de erro próprio) — nunca deixa a exceção escapar sem tratar;
- * aqui não há como mostrar mensagem, então só encerra silenciosamente,
- * igual ao que essas actions já fazem quando a validação Zod falha. */
-async function requirePermissionVoid(permission: Permission): Promise<boolean> {
-  try {
-    await requirePermission(permission);
-    return true;
-  } catch (error) {
-    if (error instanceof AuthzError) return false;
-    throw error;
-  }
-}
-
 /**
  * Cria o contato. CPF/CNPJ, quando informado, é cifrado AQUI (Node) antes
  * de qualquer coisa tocar o banco — a função RPC só recebe ciphertext e
@@ -77,7 +41,7 @@ export async function createContactAction(
   formData: FormData,
 ): Promise<ContactActionState> {
   const guard = await requirePermissionSafe("contact.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
   const ctx = guard.ctx;
 
   const rawPhones = formData.getAll("phone").filter((v): v is string => typeof v === "string" && v.trim() !== "");
@@ -146,7 +110,7 @@ export async function updateContactBasicFieldsAction(
   formData: FormData,
 ): Promise<ContactActionState> {
   const guard = await requirePermissionSafe("contact.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = updateContactBasicFieldsSchema.safeParse({
     contactId: formData.get("contactId"),
@@ -177,102 +141,120 @@ export async function updateContactBasicFieldsAction(
   return { ok: true, contactId: parsed.data.contactId };
 }
 
-export async function addPhoneAction(formData: FormData): Promise<void> {
-  if (!(await requirePermissionVoid("contact.edit"))) return;
+export async function addPhoneAction(formData: FormData): Promise<ActionResult> {
+  const guard = await requirePermissionSafe("contact.edit");
+  if ("error" in guard) return { ok: false, error: guard.error };
   const parsed = addPhoneSchema.safeParse({
     contactId: formData.get("contactId"),
     value: formData.get("value"),
     isPrimary: formData.get("isPrimary") === "on",
   });
-  if (!parsed.success) return;
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
 
   const supabase = await createServerSupabaseClient();
-  await supabase.rpc("add_contact_phone", {
+  const { error } = await supabase.rpc("add_contact_phone", {
     p_contact_id: parsed.data.contactId,
     p_value_normalized: parsed.data.value,
     p_is_primary: parsed.data.isPrimary,
   });
+  if (error) return { ok: false, error: toUserMessage(error) };
 
   revalidatePath(`/contatos/${parsed.data.contactId}`);
+  return { ok: true };
 }
 
-export async function updatePhoneAction(formData: FormData): Promise<void> {
-  if (!(await requirePermissionVoid("contact.edit"))) return;
+export async function updatePhoneAction(formData: FormData): Promise<ActionResult> {
+  const guard = await requirePermissionSafe("contact.edit");
+  if ("error" in guard) return { ok: false, error: guard.error };
   const parsed = updatePhoneSchema.safeParse({
     phoneId: formData.get("phoneId"),
     value: formData.get("value"),
   });
-  if (!parsed.success) return;
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
 
   const supabase = await createServerSupabaseClient();
-  await supabase.rpc("update_contact_phone", {
+  const { error } = await supabase.rpc("update_contact_phone", {
     p_phone_id: parsed.data.phoneId,
     p_value_normalized: parsed.data.value,
   });
+  if (error) return { ok: false, error: toUserMessage(error) };
 
   const contactId = formData.get("contactId");
   if (typeof contactId === "string") revalidatePath(`/contatos/${contactId}`);
+  return { ok: true };
 }
 
-export async function removePhoneAction(formData: FormData): Promise<void> {
-  if (!(await requirePermissionVoid("contact.edit"))) return;
+export async function removePhoneAction(formData: FormData): Promise<ActionResult> {
+  const guard = await requirePermissionSafe("contact.edit");
+  if ("error" in guard) return { ok: false, error: guard.error };
   const parsed = removePhoneSchema.safeParse({ phoneId: formData.get("phoneId") });
-  if (!parsed.success) return;
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
 
   const supabase = await createServerSupabaseClient();
-  await supabase.rpc("remove_contact_phone", { p_phone_id: parsed.data.phoneId });
+  const { error } = await supabase.rpc("remove_contact_phone", { p_phone_id: parsed.data.phoneId });
+  if (error) return { ok: false, error: toUserMessage(error) };
 
   const contactId = formData.get("contactId");
   if (typeof contactId === "string") revalidatePath(`/contatos/${contactId}`);
+  return { ok: true };
 }
 
-export async function addEmailAction(formData: FormData): Promise<void> {
-  if (!(await requirePermissionVoid("contact.edit"))) return;
+export async function addEmailAction(formData: FormData): Promise<ActionResult> {
+  const guard = await requirePermissionSafe("contact.edit");
+  if ("error" in guard) return { ok: false, error: guard.error };
   const parsed = addEmailSchema.safeParse({
     contactId: formData.get("contactId"),
     value: formData.get("value"),
     isPrimary: formData.get("isPrimary") === "on",
   });
-  if (!parsed.success) return;
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
 
   const supabase = await createServerSupabaseClient();
-  await supabase.rpc("add_contact_email", {
+  const { error } = await supabase.rpc("add_contact_email", {
     p_contact_id: parsed.data.contactId,
     p_value_normalized: parsed.data.value,
     p_is_primary: parsed.data.isPrimary,
   });
+  if (error) return { ok: false, error: toUserMessage(error) };
 
   revalidatePath(`/contatos/${parsed.data.contactId}`);
+  return { ok: true };
 }
 
-export async function updateEmailAction(formData: FormData): Promise<void> {
-  if (!(await requirePermissionVoid("contact.edit"))) return;
+export async function updateEmailAction(formData: FormData): Promise<ActionResult> {
+  const guard = await requirePermissionSafe("contact.edit");
+  if ("error" in guard) return { ok: false, error: guard.error };
   const parsed = updateEmailSchema.safeParse({
     emailId: formData.get("emailId"),
     value: formData.get("value"),
   });
-  if (!parsed.success) return;
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
 
   const supabase = await createServerSupabaseClient();
-  await supabase.rpc("update_contact_email", {
+  const { error } = await supabase.rpc("update_contact_email", {
     p_email_id: parsed.data.emailId,
     p_value_normalized: parsed.data.value,
   });
+  if (error) return { ok: false, error: toUserMessage(error) };
 
   const contactId = formData.get("contactId");
   if (typeof contactId === "string") revalidatePath(`/contatos/${contactId}`);
+  return { ok: true };
 }
 
-export async function removeEmailAction(formData: FormData): Promise<void> {
-  if (!(await requirePermissionVoid("contact.edit"))) return;
+export async function removeEmailAction(formData: FormData): Promise<ActionResult> {
+  const guard = await requirePermissionSafe("contact.edit");
+  if ("error" in guard) return { ok: false, error: guard.error };
   const parsed = removeEmailSchema.safeParse({ emailId: formData.get("emailId") });
-  if (!parsed.success) return;
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
 
   const supabase = await createServerSupabaseClient();
-  await supabase.rpc("remove_contact_email", { p_email_id: parsed.data.emailId });
+  const { error } = await supabase.rpc("remove_contact_email", { p_email_id: parsed.data.emailId });
+  if (error) return { ok: false, error: toUserMessage(error) };
 
   const contactId = formData.get("contactId");
   if (typeof contactId === "string") revalidatePath(`/contatos/${contactId}`);
+  return { ok: true };
 }
 
 export async function setCpfCnpjAction(
@@ -280,7 +262,7 @@ export async function setCpfCnpjAction(
   formData: FormData,
 ): Promise<ContactActionState> {
   const guard = await requirePermissionSafe("contact.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
   const ctx = guard.ctx;
 
   const parsed = setCpfCnpjSchema.safeParse({
@@ -309,15 +291,18 @@ export async function setCpfCnpjAction(
   return { ok: true, contactId: parsed.data.contactId };
 }
 
-export async function clearCpfCnpjAction(formData: FormData): Promise<void> {
-  if (!(await requirePermissionVoid("contact.edit"))) return;
+export async function clearCpfCnpjAction(formData: FormData): Promise<ActionResult> {
+  const guard = await requirePermissionSafe("contact.edit");
+  if ("error" in guard) return { ok: false, error: guard.error };
   const parsed = clearCpfCnpjSchema.safeParse({ contactId: formData.get("contactId") });
-  if (!parsed.success) return;
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
 
   const supabase = await createServerSupabaseClient();
-  await supabase.rpc("clear_contact_cpf_cnpj", { p_contact_id: parsed.data.contactId });
+  const { error } = await supabase.rpc("clear_contact_cpf_cnpj", { p_contact_id: parsed.data.contactId });
+  if (error) return { ok: false, error: toUserMessage(error) };
 
   revalidatePath(`/contatos/${parsed.data.contactId}`);
+  return { ok: true };
 }
 
 export type RevealState = {
@@ -335,7 +320,7 @@ export type RevealState = {
  */
 export async function revealContactCpfCnpjAction(formData: FormData): Promise<RevealState> {
   const guard = await requirePermissionSafe("contact.reveal_sensitive");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = revealCpfCnpjSchema.safeParse({
     contactId: formData.get("contactId"),
@@ -361,15 +346,18 @@ export async function revealContactCpfCnpjAction(formData: FormData): Promise<Re
   return { ok: true, value: plaintext };
 }
 
-export async function dismissDuplicateCandidateAction(formData: FormData): Promise<void> {
-  if (!(await requirePermissionVoid("contact.merge"))) return;
+export async function dismissDuplicateCandidateAction(formData: FormData): Promise<ActionResult> {
+  const guard = await requirePermissionSafe("contact.merge");
+  if ("error" in guard) return { ok: false, error: guard.error };
   const parsed = dismissDuplicateCandidateSchema.safeParse({ candidateId: formData.get("candidateId") });
-  if (!parsed.success) return;
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
 
   const supabase = await createServerSupabaseClient();
-  await supabase.rpc("dismiss_duplicate_candidate", { p_candidate_id: parsed.data.candidateId });
+  const { error } = await supabase.rpc("dismiss_duplicate_candidate", { p_candidate_id: parsed.data.candidateId });
+  if (error) return { ok: false, error: toUserMessage(error) };
 
   revalidatePath("/contatos/duplicidades");
+  return { ok: true };
 }
 
 export type MergeState = {
@@ -382,7 +370,7 @@ export async function mergeContactsAction(
   formData: FormData,
 ): Promise<MergeState> {
   const guard = await requirePermissionSafe("contact.merge");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const fieldResolutions: Record<string, "a" | "b"> = {};
   for (const field of ["name", "city", "uf", "preferred_channel"] as const) {
@@ -422,7 +410,7 @@ export async function unmergeContactAction(
   formData: FormData,
 ): Promise<MergeState> {
   const guard = await requirePermissionSafe("contact.merge");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
   const parsed = unmergeContactSchema.safeParse({ mergeId: formData.get("mergeId") });
   if (!parsed.success) {
     return { ok: false, error: "Dados inválidos." };

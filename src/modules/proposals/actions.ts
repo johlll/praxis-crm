@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { createServerSupabaseClient } from "@/server/supabase/server";
-import { requirePermission, AuthzError, type Permission } from "@/server/authz/permissions";
+import { requirePermissionSafe } from "@/server/authz/safe";
 import { toUserMessage } from "@/lib/errors";
 import { createProposalSchema, sendProposalSchema, decideProposalSchema } from "./schema";
 
@@ -12,19 +12,6 @@ export type ProposalActionState = {
   error?: string;
   proposalId?: string;
 };
-
-const PERMISSION_DENIED_MESSAGE = "Você não tem permissão para fazer isso.";
-
-async function requirePermissionSafe(
-  permission: Permission,
-): Promise<{ ctx: Awaited<ReturnType<typeof requirePermission>> } | { deniedMessage: string }> {
-  try {
-    return { ctx: await requirePermission(permission) };
-  } catch (error) {
-    if (error instanceof AuthzError) return { deniedMessage: PERMISSION_DENIED_MESSAGE };
-    throw error;
-  }
-}
 
 function revalidateLeadRoutes(leadId: string) {
   revalidatePath(`/leads/${leadId}`);
@@ -36,7 +23,7 @@ export async function createProposalAction(
   formData: FormData,
 ): Promise<ProposalActionState> {
   const guard = await requirePermissionSafe("proposal.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = createProposalSchema.safeParse({
     opportunityId: formData.get("opportunityId"),
@@ -68,7 +55,7 @@ export async function sendProposalAction(
   formData: FormData,
 ): Promise<ProposalActionState> {
   const guard = await requirePermissionSafe("proposal.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = sendProposalSchema.safeParse({
     proposalId: formData.get("proposalId"),
@@ -100,7 +87,7 @@ export async function decideProposalAction(
   formData: FormData,
 ): Promise<ProposalActionState> {
   const guard = await requirePermissionSafe("proposal.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = decideProposalSchema.safeParse({
     proposalId: formData.get("proposalId"),

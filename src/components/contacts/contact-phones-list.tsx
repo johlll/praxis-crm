@@ -1,16 +1,19 @@
 "use client";
 
-import { useRef } from "react";
+import { useState } from "react";
 import { Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ResultForm } from "@/components/feedback/result-form";
 import { addPhoneAction, removePhoneAction } from "@/modules/contacts/actions";
 
 type Phone = { id: string; value: string; isPrimary: boolean };
 
 export function ContactPhonesList({ contactId, phones }: { contactId: string; phones: Phone[] }) {
-  const formRef = useRef<HTMLFormElement>(null);
+  // Remonta o formulário só depois de salvar: numa recusa, o valor digitado
+  // continua lá para corrigir.
+  const [addFormKey, setAddFormKey] = useState(0);
 
   return (
     <div className="flex flex-col gap-3">
@@ -24,24 +27,22 @@ export function ContactPhonesList({ contactId, phones }: { contactId: string; ph
                 {phone.value}
                 {phone.isPrimary ? <span className="ml-2 text-meta text-text-tertiary">principal</span> : null}
               </span>
-              <form action={removePhoneAction}>
+              <ResultForm action={removePhoneAction}>
                 <input type="hidden" name="phoneId" value={phone.id} />
                 <input type="hidden" name="contactId" value={contactId} />
                 <Button type="submit" variant="ghost" size="sm" aria-label="Remover telefone">
                   <Trash2 size={14} aria-hidden />
                 </Button>
-              </form>
+              </ResultForm>
             </li>
           ))}
         </ul>
       )}
 
-      <form
-        ref={formRef}
-        action={async (formData) => {
-          await addPhoneAction(formData);
-          formRef.current?.reset();
-        }}
+      <ResultForm
+        key={addFormKey}
+        action={addPhoneAction}
+        onSuccess={() => setAddFormKey((k) => k + 1)}
         className="flex gap-2"
       >
         <input type="hidden" name="contactId" value={contactId} />
@@ -49,7 +50,7 @@ export function ContactPhonesList({ contactId, phones }: { contactId: string; ph
         <Button type="submit" variant="secondary" size="sm">
           Adicionar
         </Button>
-      </form>
+      </ResultForm>
     </div>
   );
 }
