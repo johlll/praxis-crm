@@ -50,6 +50,7 @@ export function ConflictCheckPanel({
           ) : null}
           <select
             name="status"
+            aria-label="Status da verificação de conflito"
             defaultValue={conflictCheck.status}
             className="h-9 rounded-input border border-border-input bg-surface px-3 text-body text-text"
           >

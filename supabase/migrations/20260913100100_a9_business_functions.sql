@@ -459,13 +459,19 @@ begin
       raise exception 'stale_version';
     end if;
 
+    -- A versão precisa entrar no próprio WHERE, não só numa comparação
+    -- anterior ao UPDATE: duas chamadas concorrentes podem ler o mesmo
+    -- v_existing.lock_version, passar as duas pela checagem acima, e cada
+    -- UPDATE que filtra só por id afeta 1 linha sem nunca detectar a
+    -- outra — perdendo uma escrita silenciosamente (mesma correção já
+    -- aplicada em oportunidades/atividades/propostas desde a A4/A9).
     update public.conflict_checks
     set status = p_status,
         note = nullif(btrim(coalesce(p_note, '')), ''),
         checked_by = case when p_status = 'nao_verificado' then null else v_actor end,
         checked_at = v_checked_at,
         lock_version = lock_version + 1
-    where id = v_existing.id
+    where id = v_existing.id and lock_version = p_lock_version
     returning * into v_result;
 
     get diagnostics v_updated = row_count;
@@ -541,8 +547,15 @@ begin
     );
   end if;
 
+  -- A nota de conflito pode conter detalhe sensível sobre partes
+  -- envolvidas (mesma razão de honorários ficarem em faixa para
+  -- atendimento): só quem pode escrever a verificação
+  -- (owner/admin/manager/lawyer) lê o texto da nota; sales/viewer veem
+  -- status e data, nunca o conteúdo. Filtrado aqui, não escondido só na
+  -- interface — a nota nunca chega ao navegador desses papéis.
   return jsonb_build_object(
-    'id', v_check.id, 'status', v_check.status, 'note', v_check.note,
+    'id', v_check.id, 'status', v_check.status,
+    'note', case when v_role in ('owner', 'admin', 'manager', 'lawyer') then v_check.note else null end,
     'checked_by', v_check.checked_by, 'checked_at', v_check.checked_at, 'lock_version', v_check.lock_version
   );
 end;

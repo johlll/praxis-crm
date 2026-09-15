@@ -166,6 +166,15 @@ function SendProposalForm({ leadId, proposal }: { leadId: string; proposal: Prop
     <form action={formAction} className="flex flex-col gap-2">
       <input type="hidden" name="proposalId" value={proposal.id} />
       <input type="hidden" name="lockVersion" value={proposal.lockVersion} />
+      {/* O CRM não dispara WhatsApp/e-mail nesta fase — isso é integração
+          real (B3), fora do escopo da A9. Este formulário só registra que
+          o envio já aconteceu por fora, por qual canal, para alimentar a
+          timeline e destravar aceitar/recusar. "Enviar proposta" enganava
+          o usuário fazendo parecer que o CRM despachava a mensagem
+          (achado do review pós-CI). */}
+      <p className="text-meta text-text-tertiary">
+        Envie a proposta ao cliente pelo canal combinado e registre aqui depois — o CRM não despacha a mensagem.
+      </p>
       <div className="flex gap-3">
         {PROPOSAL_CHANNELS.map((c) => (
           <label key={c} className="flex items-center gap-1.5 text-meta text-text-secondary">
@@ -180,7 +189,7 @@ function SendProposalForm({ leadId, proposal }: { leadId: string; proposal: Prop
         </Alert>
       ) : null}
       <Button type="submit" variant="secondary" size="sm" disabled={pending}>
-        {pending ? "Enviando…" : "Enviar proposta"}
+        {pending ? "Registrando…" : "Registrar envio manual"}
       </Button>
     </form>
   );

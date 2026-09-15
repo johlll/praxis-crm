@@ -8,7 +8,7 @@
 -- chamada, nunca confia em estado deixado por um bloco anterior.
 
 begin;
-select plan(30);
+select plan(34);
 
 \set ws_um    '10000000-0000-0000-0000-000000000001'
 \set ws_dois  '10000000-0000-0000-0000-000000000002'
@@ -202,6 +202,46 @@ select throws_ok(
   'P0001', 'stale_version',
   'upsert_conflict_check com lock_version desatualizado falha (concorrência)'
 );
+
+-- A nota pode conter detalhe sensível sobre partes envolvidas: só quem
+-- pode escrever a verificação lê o texto (achado do review pós-CI —
+-- get_conflict_check() devolvia a nota para qualquer um dos 6 papéis,
+-- inclusive atendimento/visualizador, sem projeção nenhuma).
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'carla', 'role', 'authenticated')::text, true);
+select get_conflict_check(:'lead_b'::uuid) as conflict_as_lawyer \gset
+select is(
+  (:'conflict_as_lawyer'::jsonb ->> 'note'), 'nenhuma coincidência encontrada',
+  'Advogado (pode escrever) lê o texto da nota de conflito'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'elisa', 'role', 'authenticated')::text, true);
+select get_conflict_check(:'lead_b'::uuid) as conflict_as_viewer \gset
+select is(
+  (:'conflict_as_viewer'::jsonb ->> 'status'), 'sem_conflito',
+  'Visualizador lê o status da verificação de conflito normalmente'
+);
+select ok(
+  (:'conflict_as_viewer'::jsonb ->> 'note') is null,
+  'Visualizador NÃO recebe o texto da nota de conflito'
+);
+
+-- Promove elisa a sales só para este teste (mesmo padrão já usado acima
+-- para o teste de faixa de propostas) — reset ao fim.
+reset role;
+update public.memberships set role = 'sales' where workspace_id = :'ws_um'::uuid and user_id = :'elisa'::uuid;
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'elisa', 'role', 'authenticated')::text, true);
+select get_conflict_check(:'lead_b'::uuid) as conflict_as_sales \gset
+select ok(
+  (:'conflict_as_sales'::jsonb ->> 'note') is null,
+  'Atendimento NÃO recebe o texto da nota de conflito'
+);
+
+reset role;
+update public.memberships set role = 'viewer' where workspace_id = :'ws_um'::uuid and user_id = :'elisa'::uuid;
 
 -- ===================================================================
 -- 5) get_lead_timeline — ordenação determinística e paginação sem

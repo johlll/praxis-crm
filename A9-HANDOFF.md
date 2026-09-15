@@ -1,11 +1,14 @@
 # A9 — Perfil 360º do lead — Handoff
 
 **Status: PR aberta, NÃO mesclada.** Branch `feat/a9-perfil-360`,
-[PR #13](https://github.com/johlll/praxis-crm/pull/13), commit final
-`4dc8a3b` (código em `8b3cf28`, mesmo commit validado no preview — `4dc8a3b`
-só acrescenta este documento e o de decisões, CI verde de novo nele). CI
-verde e fluxo principal validado no preview com dados fictícios (§§6–7).
-**Merge não solicitado nem autorizado** — aguardando instrução.
+[PR #13](https://github.com/johlll/praxis-crm/pull/13). CI verde e fluxo
+principal (incluindo os 5 ajustes do review pós-CI) validado no preview
+com dados fictícios (§§6–7). **Merge não solicitado nem autorizado** —
+aguardando instrução. O commit final é o topo atual da branch no momento
+da leitura — ver `git log -1 feat/a9-perfil-360` em vez de um hash fixo
+aqui (um handoff que aponta pro PRÓPRIO commit que o edita vira
+referência circular a cada ajuste seguinte; preferível deixar o Git ser a
+fonte de verdade do "topo atual").
 
 ## 1. Escopo
 
@@ -37,9 +40,13 @@ Entregue nesta fase, conforme o pedido (raciocínio completo em
 - Reaproveitamento total da A5/A6 para ganho/perda/etapa/próxima ação:
   `OpportunityDetailPanel`, `WonDialog`, `LostDialog`,
   `moveOpportunityStageAction` — nenhuma lógica de negócio duplicada. Novo
-  apenas o componente visual `StageProgressBar`.
+  o componente visual `StageProgressBar` e, ao lado dele, `StageMoveControl`
+  (mudar de etapa sem sair do Perfil 360, mesma RPC/bloqueio por requisito
+  do kanban).
 - `list_conversations` ganha `p_lead_id` (parâmetro aditivo) para a aba
   Conversas.
+- Bloco "Consulta" (`ConsultationCard`) — derivado da atividade `meeting`
+  concluída mais recente da oportunidade ativa, sem tabela nova.
 
 **Fora do escopo, por decisão registrada em §1 do documento de decisões:**
 - Painel de atribuição de marketing/touchpoints — omitido inteiramente
@@ -97,9 +104,11 @@ regra de alcance.
   `ActivitiesLoadError`/`ConversationsLoadError`: falha operacional nunca
   vira estado vazio disfarçado.
 - `src/components/leads/` — `LeadProfileTabs` (troca de aba client-side,
-  sem navegação), `LeadTimeline` (filtro + "carregar mais"),
-  `LeadComposer`, `ProposalsSection`, `ConflictCheckPanel`,
-  `StageProgressBar`.
+  sem navegação), `LeadTimeline` (filtro + "carregar mais", agora indo ao
+  servidor a cada troca de filtro), `LeadComposer`, `ProposalsSection`,
+  `ConflictCheckPanel`, `StageProgressBar`, `StageMoveControl`,
+  `ConsultationCard`, `LeadActivitiesSection`/`LeadConversationsList`
+  ("carregar mais" real nas duas abas).
 - `src/lib/roles.ts` ganha `proposal.view/edit`, `conflict_check.view/edit`,
   `lead_note.edit` — mesma matriz documentada inline.
 - `error.tsx`/`loading.tsx` de `/leads` já cobrem `/leads/[id]` (Next.js
@@ -108,35 +117,45 @@ regra de alcance.
 
 ## 5. Testes
 
-- `supabase/tests/database/14_a9_perfil_360.test.sql` (30 asserções): RLS
+- `supabase/tests/database/14_a9_perfil_360.test.sql` (34 asserções): RLS
   forçada nas 3 tabelas; alcance por registro em `create_lead_note`/
   `create_proposal`/`upsert_conflict_check` (advogado dentro/fora do
   alcance); projeção financeira de proposta por papel (viewer sem
   `value_cents`, sales com `value_band`, owner com valor exato); ciclo de
   vida de proposta e concorrência (`stale_version`,
   `proposal_already_sent`, `proposal_not_sent`); `conflict_checks` restrito
-  a owner/admin/manager/lawyer na escrita, leitura ampla, nunca 404;
-  paginação de `get_lead_timeline` sem furo/repetição com 3 eventos de
-  timestamp forçadamente empatado; `list_conversations(p_lead_id)`;
+  a owner/admin/manager/lawyer na escrita, leitura ampla, nunca 404, nota
+  mascarada para sales/viewer (advogado/dono leem o texto, os outros dois
+  só status/data); paginação de `get_lead_timeline` sem furo/repetição com
+  3 eventos de timestamp forçadamente empatado; `list_conversations(p_lead_id)`;
   isolamento entre workspaces (proposta e conflito de um lead de outro
   workspace).
 - `tests/unit/a9-perfil-360-errors.test.ts` (6 casos): as 3
   `*LoadError` nunca viram estado vazio; `getConflictCheck` sem registro
   devolve "não verificado" (não é erro); payload de proposta não carrega
   `value_cents` quando o RPC não o devolveu (viewer/sales).
+- `tests/e2e/a9-lead-profile.spec.ts` (novo, 3 testes): mudar de etapa sem
+  sair do Perfil 360; registrar proposta com o texto honesto de envio
+  manual e ver o evento aparecer na timeline ao trocar o filtro para
+  "Propostas" (prova que o filtro vai ao servidor, não só à tela); nota de
+  conflito visível ao advogado que a escreveu e ausente para o
+  visualizador que abre o mesmo lead depois.
 - Suíte completa local: `npm run typecheck && npm run lint && npm test` —
   154 testes unitários, 0 falhas.
 
 ## 6. CI
 
-Verde no commit `8b3cf28` (run
-[34909524632](https://github.com/johlll/praxis-crm/actions/runs/34909524632),
-5m59s): typecheck, lint, testes unitários (154), `db:types:check`, pgTAP
-(14 arquivos incluindo `14_a9_perfil_360.test.sql`, 30/30), isolamento,
-concorrência A7, build, e2e completo.
+Ver o resultado do run mais recente da branch em
+https://github.com/johlll/praxis-crm/actions?query=branch%3Afeat%2Fa9-perfil-360
+— typecheck, lint, testes unitários (154), `db:types:check`, pgTAP (14
+arquivos incluindo `14_a9_perfil_360.test.sql`, agora 34/34), isolamento,
+concorrência A7, build, e2e completo (incluindo o arquivo novo da A9).
 
-Chegar até aqui exigiu 5 correções sucessivas, todas encontradas pelo
-próprio CI/preview, não hipotéticas:
+Duas rodadas de correção chegaram até aqui, todas encontradas por
+verificação real (CI, preview ou uma segunda leitura de código), nunca
+hipotéticas:
+
+**Rodada 1 (CI/e2e/preview iniciais), 5 correções:**
 1. `list_conversations` virou dois overloads em vez de substituir a
    assinatura antiga (`CREATE OR REPLACE` não troca aridade) —
    `db:types:check` acusou; corrigido com `DROP FUNCTION` explícito antes
@@ -150,15 +169,36 @@ próprio CI/preview, não hipotéticas:
    atividade aparecendo idêntico na lista e na linha do tempo. Todas
    corrigidas — detalhe em
    [`docs/decisoes/a9-perfil-360.md`](docs/decisoes/a9-perfil-360.md) §3.
-   Nenhuma envolveu mudar uma regra de negócio, só composição de UI.
+
+**Rodada 2 (segunda revisão de código, pós-CI-verde), 5 correções + 2
+entregas concluídas** — detalhe completo em
+[`docs/decisoes/a9-perfil-360.md`](docs/decisoes/a9-perfil-360.md) §11:
+1. Nota de conflito vazava para atendimento/visualizador — agora filtrada
+   dentro da própria RPC.
+2. `upsert_conflict_check` tinha janela de corrida real (`UPDATE` não
+   filtrava por versão) — corrigido com o mesmo padrão de
+   `send_proposal`/`decide_proposal`.
+3. "Enviar proposta" prometia um envio que o CRM não faz — renomeado para
+   "Registrar envio manual", com texto explícito.
+4. Atividades/conversas do lead descartavam o resto em silêncio (sem
+   `status: "all"`, sem paginação além da primeira página) — corrigido com
+   "carregar mais" real nas duas abas.
+5. O filtro da timeline só filtrava o que já estava carregado na tela, não
+   ia ao servidor — corrigido.
+6. Bloco "Consulta" (antes uma limitação registrada) — implementado.
+7. Mudar de etapa sem sair do Perfil 360 (antes uma limitação registrada)
+   — implementado, reaproveitando a RPC/bloqueio do kanban sem duplicar
+   regra nenhuma.
+
+Nenhuma das duas rodadas envolveu mudar uma regra de negócio — a primeira
+foi só composição de UI; a segunda foram lacunas reais de proteção/UX e
+duas entregas concluídas.
 
 ## 7. Validação em preview
 
-Aplicadas as 3 migrations novas em `praxis-crm-dev` (autorização
-explícita do usuário) e validado manualmente como advogado
-(`QA A6 Advogado`) contra
-`https://praxis-5i90mtb25-johllls-projects.vercel.app` — deployment do
-commit final:
+**Primeira rodada** (antes das correções da rodada 2), aplicadas as 3
+migrations em `praxis-crm-dev` e validado manualmente como advogado
+(`QA A6 Advogado`) contra o deployment daquele commit:
 
 - Criado lead + oportunidade fictícios ("Cliente A9 Preview QA").
 - Criada proposta (R$ 5.000, modelo fixo) → número `PROP-2026-0001`
@@ -169,13 +209,20 @@ commit final:
 - Linha do tempo mostrando os 3 eventos acima em ordem cronológica
   correta, com valor/status projetados.
 - Criada uma atividade ("Revisar contrato") — apareceu uma única vez na
-  lista (com Reagendar/Transferir/Editar/Excluir funcionais) e uma vez
-  na timeline com texto distinto (`"... — agendada"`), confirmando a
-  correção do achado #5 acima.
+  lista e uma vez na timeline com texto distinto.
 - Um lead já convertido em cliente (de dados de preview da A8) mostrado
-  para conferir que "Ver cliente" aparece uma única vez e que, com a
-  oportunidade já ganha, "Ganhou"/"Perdeu" corretamente não aparecem.
+  para conferir que "Ver cliente" aparece uma única vez.
 - Painel de atribuição de marketing confirmado AUSENTE (decisão da §1).
+
+**Segunda rodada** (depois das correções da §11 dos decisões): as
+migrations da conflict-check foram reaplicadas em `praxis-crm-dev`
+(`CREATE OR REPLACE`/edição do `UPDATE`, mesmo arquivo, sem migration
+nova) e o fluxo foi revalidado no novo deployment de preview —
+`StageMoveControl` movendo etapa sem sair da página, `ConsultationCard`
+aparecendo só depois de uma atividade `meeting` concluída, texto de
+"Registrar envio manual" no lugar de "Enviar proposta", nota de conflito
+some para o visualizador, e "carregar mais" funcionando nas abas
+Atividades e Conversas.
 
 ## 8. Limitações reais
 
@@ -184,17 +231,15 @@ commit final:
   corrigiu em `get_client()`) — pré-existente da A5, fora do escopo desta
   fase; a página de lead herda essa limitação ao reaproveitar
   `OpportunityDetailPanel`.
-- **Bloco "Consulta" do protótipo não foi implementado.** A ideia
-  original (derivá-lo da atividade `meeting` mais recente concluída,
-  registrada em `docs/decisoes/a9-perfil-360.md` §9) não chegou a virar
-  código — a atividade em si já aparece na `ActivitiesSection`/timeline,
-  mas não há um cartão de resumo dedicado. Pendência real, não uma
-  omissão silenciosa: se o escritório quiser esse resumo dedicado, é
-  uma tarefa pequena e separada.
-- `StageProgressBar` é só leitura; avançar/voltar etapa continua exigindo
-  ir à tela de Pipeline (a A9 não duplicou o drag-and-drop nem o `<select>`
-  de mover etapa do kanban dentro do Perfil 360).
 - Numeração de proposta (`PROP-<ano>-<sequencial>`) é contagem simples, não
   uma sequência atômica do banco — colisão concorrente rara falha por
   unique constraint (nunca duplica silenciosamente), aceitável para uma
   ação manual de baixo volume.
+- `listActivities()` (usada também pela carga inicial e pelo "carregar
+  mais" das abas Atividades/Visão geral) engole falha de RPC devolvendo
+  lista vazia, em vez de subir um erro distinto — comportamento herdado
+  das fases anteriores (não introduzido pela A9), documentado aqui porque
+  o "carregar mais" novo herda a mesma limitação: uma falha real de rede
+  no meio da paginação pode parecer "não há mais atividades" em vez de um
+  erro recuperável. `listConversations()`/`getLeadTimelinePage()` não têm
+  esse problema (lançam exceção de verdade).

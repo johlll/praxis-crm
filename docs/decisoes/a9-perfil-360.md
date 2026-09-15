@@ -158,7 +158,10 @@ Todo dado novo (`proposals`, `conflict_checks`, `lead_notes`) é acessado
   `activities`/`leads` — nenhuma leitura/escrita direta do cliente, tudo via
   RPC).
 - `conflict_checks`: escrita restrita a `owner/admin/manager/lawyer` (mesma
-  lista de quem pode mover oportunidade) — `sales`/`viewer` só leem.
+  lista de quem pode mover oportunidade) — `sales`/`viewer` só leem
+  `status`/`checked_at`; o texto da nota é filtrado dentro da própria RPC
+  para esses dois papéis (decisão explicitada em §11 depois do review
+  pós-CI — a versão original não distinguia nota de status na leitura).
 - `proposals`: criar/enviar/decidir segue a mesma lista de papéis com
   escrita em oportunidades (`owner/admin/manager/lawyer/sales`, alcance por
   registro); leitura do valor sempre passa pela projeção.
@@ -240,3 +243,81 @@ agenda integrada ao Google).
 - Preview: fluxo principal com dados fictícios — abrir um lead, ver as 6
   abas, criar uma anotação, criar uma proposta, registrar conflito, marcar
   como ganho.
+
+## 11. Correções do review pós-CI (antes da abertura para merge)
+
+Depois do CI verde e da validação em preview registradas no handoff (§§6–7),
+uma segunda revisão de código (fora do CI/e2e, leitura direta do que foi
+implementado) encontrou 5 problemas reais que os testes existentes não
+cobriam, mais 2 entregas do protótipo ainda pendentes que o handoff já
+registrava como limitação mas que o usuário pediu para concluir em vez de
+adiar. Nenhuma mudança de regra de negócio nova — só fechar o que a A9 já
+tinha se comprometido a entregar.
+
+1. **Nota de conflito vazava para atendimento/visualizador.**
+   `get_conflict_check()` devolvia `note` para os 6 papéis igual; como a
+   nota pode conter detalhe sensível sobre partes envolvidas (mesma razão
+   de honorários virarem faixa para atendimento em `proposal_financial_projection`),
+   a decisão passa a ser: só quem pode ESCREVER a verificação
+   (owner/admin/manager/lawyer) lê o texto — sales/viewer recebem `note:
+   null`, nunca o conteúdo. Filtrado dentro da própria RPC (nunca escondido
+   só na interface). `status`/`checked_at` continuam visíveis aos 6, como
+   já era.
+2. **`upsert_conflict_check` tinha uma janela de corrida real.** A
+   comparação `p_lock_version <> v_existing.lock_version` acontecia ANTES
+   do `UPDATE`, mas o `UPDATE` filtrava só por `id` — duas chamadas
+   concorrentes liam a mesma versão, passavam as duas pela checagem, e a
+   segunda sobrescrevia a primeira sem nunca disparar `stale_version`
+   (mesma classe de bug que a A4 já tinha corrigido para oportunidades). A
+   versão entra agora no próprio `WHERE` do `UPDATE`
+   (`where id = ... and lock_version = p_lock_version`), igual ao padrão já
+   usado em `send_proposal`/`decide_proposal` nesta mesma migration.
+3. **"Enviar proposta" prometia um envio que o CRM não faz.** A UI mostrava
+   canais (WhatsApp/e-mail) e "Enviando…" como se o sistema despachasse a
+   mensagem — na prática só grava metadado. Renomeado para "Registrar envio
+   manual", com uma frase explícita ("o CRM não despacha a mensagem")
+   acima dos checkboxes de canal. Nenhuma integração de envio real entra
+   nesta fase (isso é B3).
+4. **Atividades e conversas do lead descartavam o resto em silêncio.** A
+   busca de atividades da página não passava `status: "all"` (herdava o
+   default `pending`, escondendo tudo já concluído) e tanto atividades
+   quanto conversas só buscavam a primeira página (20/50), sem nenhuma
+   forma de chegar ao resto. Corrigido com `status: "all"` na busca e
+   paginação de verdade ("carregar mais") nas duas abas — `LeadActivitiesSection`
+   e `LeadConversationsList`, mesmo padrão de estado sincronizado durante a
+   renderização já usado em `LeadTimeline`.
+5. **O filtro da timeline só filtrava o que já estava na tela.** Trocar
+   para "Propostas" aplicava o filtro em memória sobre os ~30 eventos já
+   carregados (de qualquer tipo), então um evento real mais antigo do tipo
+   escolhido não aparecia — o servidor já aceitava `p_types`, a interface
+   nunca mandava. Corrigido: trocar de filtro agora refaz a busca no
+   servidor com o tipo escolhido (primeira página), e "carregar mais"
+   mantém esse mesmo filtro no cursor seguinte.
+
+Duas entregas concluídas nesta rodada, que antes estavam registradas como
+limitação real (não como escopo reduzido):
+
+6. **Bloco "Consulta".** Implementado como planejado em §9 — sem tabela
+   nova, `ConsultationCard` deriva da atividade `meeting` já concluída mais
+   recente da oportunidade ativa (dentre as já carregadas para a aba
+   Atividades, sem consulta adicional). Só aparece quando essa atividade
+   existe; sem isso, a ausência do bloco já é a informação. Duração e
+   modalidade continuam de fora (não existem em `activities` hoje, mesma
+   decisão original).
+7. **Mudar de etapa sem sair do Perfil 360.** `StageMoveControl` reaproveita
+   a mesma RPC e o mesmo bloqueio por requisito do kanban
+   (`move_opportunity_stage` + `checkStageRequirementsAction` +
+   `StageAdvanceDialog`, sem nenhuma duplicação de regra) atrás de um
+   `<select>` na Visão geral, visível só para quem edita oportunidades e só
+   enquanto a oportunidade está aberta. `moveOpportunityStageAction` ganhou
+   um `leadId` opcional no `FormData` só para revalidar `/leads/[id]`
+   também (o kanban não manda esse campo, então seu comportamento não
+   muda).
+
+Testes acrescentados: 4 novas asserções pgTAP (nota mascarada para
+advogado/visualizador/atendimento — `14_a9_perfil_360.test.sql`, plano
+30 → 34) e um arquivo e2e novo, `tests/e2e/a9-lead-profile.spec.ts`
+(mudar etapa sem sair do Perfil 360, texto honesto de envio de proposta,
+filtro da timeline indo ao servidor, nota de conflito nunca chegando ao
+navegador do visualizador) — o PR anterior não tinha nenhum e2e
+específico da A9, só reaproveitava os já existentes de fases anteriores.

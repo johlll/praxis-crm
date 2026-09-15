@@ -11,12 +11,12 @@ import { listTeamMembers } from "@/modules/team/queries";
 import { LeadBasicFieldsForm } from "@/components/leads/lead-basic-fields-form";
 import { AssignLeadForm } from "@/components/leads/assign-lead-form";
 import { LeadStatusToggle } from "@/components/leads/lead-status-toggle";
-import { listOpportunities, getOpportunity, listPipelineStages } from "@/modules/opportunities/queries";
+import { listOpportunities, getOpportunity, listPipelineStagesWithDetails } from "@/modules/opportunities/queries";
 import { LeadOpportunitiesSection } from "@/components/pipeline/create-opportunity-form";
 import { listActivities } from "@/modules/activities/queries";
-import { ActivitiesSection } from "@/components/activities/activities-section";
 import { OpportunityDetailPanel } from "@/components/pipeline/opportunity-detail-panel";
 import { StageProgressBar } from "@/components/leads/stage-progress-bar";
+import { StageMoveControl } from "@/components/leads/stage-move-control";
 import { listConversations } from "@/modules/conversations/queries";
 import { listProposalsForLead } from "@/modules/proposals/queries";
 import { getConflictCheck } from "@/modules/conflict-checks/queries";
@@ -25,9 +25,11 @@ import { LeadTimeline } from "@/components/leads/lead-timeline";
 import { LeadComposer } from "@/components/leads/lead-composer";
 import { ProposalsSection } from "@/components/leads/proposals-section";
 import { ConflictCheckPanel } from "@/components/leads/conflict-check-panel";
+import { ConsultationCard } from "@/components/leads/consultation-card";
+import { LeadActivitiesSection } from "@/components/leads/lead-activities-section";
+import { LeadConversationsList } from "@/components/leads/lead-conversations-list";
 import { LeadProfileTabs } from "@/components/leads/lead-profile-tabs";
 import { EmptyState } from "@/components/feedback/empty-state";
-import { Button } from "@/components/ui/button";
 
 export async function generateMetadata({
   params,
@@ -62,20 +64,24 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
   const [
     members,
     { items: opportunities },
-    { items: allActivities },
-    { items: conversations },
+    activitiesPage,
+    conversationsPage,
     proposals,
     conflictCheck,
     timeline,
   ] = await Promise.all([
     listTeamMembers(workspaceId, user.id),
     listOpportunities(workspaceId, { leadId: id }),
-    listActivities(workspaceId, { leadId: id }),
+    listActivities(workspaceId, { leadId: id, status: "all", pageSize: 50 }),
     listConversations(workspaceId, { leadId: id }),
     listProposalsForLead(id),
     getConflictCheck(id),
     getLeadTimelinePage(id),
   ]);
+  const allActivities = activitiesPage.items;
+  const activitiesHasMore = activitiesPage.page * activitiesPage.pageSize < activitiesPage.total;
+  const conversations = conversationsPage.items;
+  const conversationsHasMore = conversationsPage.page * conversationsPage.pageSize < conversationsPage.total;
 
   // "Ver cliente" (item 1 do pedido da A8) — o vínculo de cliente da
   // oportunidade mais recente entre as já carregadas acima (não uma
@@ -97,16 +103,36 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
       ])
     : [null, { items: [] }];
 
-  const stages = primaryOpportunity ? await listPipelineStages(primaryOpportunity.pipelineId) : [];
+  const stages = primaryOpportunity ? await listPipelineStagesWithDetails(primaryOpportunity.pipelineId) : [];
 
   const firstConversationId = conversations[0]?.id ?? null;
 
-  // Uma única ActivitiesSection (todas as atividades do LEAD, não só de
-  // uma oportunidade) reaproveitada em duas abas — nunca duas instâncias
-  // visíveis ao mesmo tempo (tabs são mutuamente exclusivas), então não
-  // duplica o botão "Nova atividade" nem a consulta.
+  // "Consulta" (docs/decisoes/a9-perfil-360.md §9): sem tabela nova,
+  // derivada da atividade tipo `meeting` já concluída mais recente desta
+  // oportunidade, dentre as já carregadas em `allActivities` — nenhuma
+  // duração/modalidade inventada (campos que não existem em `activities`
+  // hoje).
+  const lastCompletedConsultation = primaryOpportunityItem
+    ? allActivities
+        .filter(
+          (a) => a.opportunityId === primaryOpportunityItem.id && a.type === "meeting" && a.status === "done",
+        )
+        .sort((a, b) => new Date(b.completedAt ?? b.dueAt).getTime() - new Date(a.completedAt ?? a.dueAt).getTime())[0] ??
+      null
+    : null;
+
+  // Uma única <LeadActivitiesSection> (todas as atividades do LEAD, não
+  // só de uma oportunidade) reaproveitada em duas abas — nunca duas
+  // instâncias visíveis ao mesmo tempo (tabs são mutuamente exclusivas),
+  // então não duplica o botão "Nova atividade" nem a consulta.
   const activitiesSection = (
-    <ActivitiesSection leadId={lead.id} activities={allActivities} members={members} canEdit={canEditActivities} />
+    <LeadActivitiesSection
+      leadId={lead.id}
+      members={members}
+      canEdit={canEditActivities}
+      initialItems={allActivities}
+      initialHasMore={activitiesHasMore}
+    />
   );
 
   return (
@@ -154,6 +180,17 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
                 {primaryOpportunity ? (
                   <section className="rounded-lg border border-border bg-surface p-4">
                     <StageProgressBar stages={stages} currentStageId={primaryOpportunity.stageId} />
+                    {canEditOpportunities && primaryOpportunity.status === "open" ? (
+                      <div className="mt-3">
+                        <StageMoveControl
+                          leadId={lead.id}
+                          opportunityId={primaryOpportunity.id}
+                          lockVersion={primaryOpportunity.lockVersion}
+                          stages={stages}
+                          currentStageId={primaryOpportunity.stageId}
+                        />
+                      </div>
+                    ) : null}
                   </section>
                 ) : null}
 
@@ -168,6 +205,8 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
                     showActivities={false}
                   />
                 ) : null}
+
+                {lastCompletedConsultation ? <ConsultationCard activity={lastCompletedConsultation} /> : null}
 
                 <ConflictCheckPanel leadId={lead.id} conflictCheck={conflictCheck} canEdit={canEditConflictCheck} />
 
@@ -185,30 +224,11 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
               </div>
             }
             conversas={
-              conversations.length === 0 ? (
-                <EmptyState
-                  title="Nenhuma conversa vinculada"
-                  description="Conversas de WhatsApp ligadas a este lead aparecem aqui."
-                />
-              ) : (
-                <ul className="flex flex-col gap-3">
-                  {conversations.map((c) => (
-                    <li key={c.id} className="flex items-center gap-3 rounded-lg border border-border bg-surface p-3">
-                      <div className="flex min-w-0 flex-col gap-0.5">
-                        <span className="text-body font-semibold text-text">{c.waId}</span>
-                        {c.lastMessageText ? (
-                          <span className="truncate text-meta text-text-secondary">{c.lastMessageText}</span>
-                        ) : null}
-                      </div>
-                      <Link href={`/conversas/${c.id}`} className="ml-auto shrink-0">
-                        <Button type="button" variant="secondary" size="sm">
-                          Abrir conversa
-                        </Button>
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              )
+              <LeadConversationsList
+                leadId={lead.id}
+                initialItems={conversations}
+                initialHasMore={conversationsHasMore}
+              />
             }
             atividades={activitiesSection}
             arquivos={

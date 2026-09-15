@@ -3,11 +3,18 @@
 import { revalidatePath } from "next/cache";
 
 import { createServerSupabaseClient } from "@/server/supabase/server";
-import { requirePermission, AuthzError, type Permission } from "@/server/authz/permissions";
+import { requirePermission, requireMembership, AuthzError, type Permission } from "@/server/authz/permissions";
 import { toUserMessage } from "@/lib/errors";
 import { normalizeWebhookPayload } from "@/server/whatsapp/normalize-event";
 import { buildSimulatedInboundMessage, buildSimulatedStatusEvent } from "@/server/whatsapp/simulator";
-import { listConversationMessages, mapSendMessageResult, type MessageListItem, type MessagesCursor } from "./queries";
+import {
+  listConversationMessages,
+  listConversations,
+  mapSendMessageResult,
+  type ConversationListItem,
+  type MessageListItem,
+  type MessagesCursor,
+} from "./queries";
 import {
   createWhatsAppChannelSchema,
   simulateInboundMessageSchema,
@@ -335,4 +342,23 @@ export async function revokeContactConsentAction(consentId: string): Promise<Act
 
   revalidatePath("/conversas");
   return { ok: true };
+}
+
+/**
+ * "Carregar mais" da aba Conversas do Perfil 360 — a página só busca a
+ * primeira página (20) de `list_conversations(p_lead_id)`; sem isto o
+ * restante ficava inacessível, sem nenhuma forma de chegar até lá
+ * (achado do review pós-CI).
+ */
+export async function loadMoreLeadConversationsAction(
+  leadId: string,
+  page: number,
+): Promise<{ ok: true; items: ConversationListItem[]; hasMore: boolean } | { ok: false; error: string }> {
+  try {
+    const { workspaceId } = await requireMembership();
+    const result = await listConversations(workspaceId, { leadId, page });
+    return { ok: true, items: result.items, hasMore: page * result.pageSize < result.total };
+  } catch {
+    return { ok: false, error: "Não foi possível carregar mais conversas. Tente novamente." };
+  }
 }

@@ -119,14 +119,35 @@ export function LeadTimeline({
     setHasMore(initialHasMore);
   }
 
-  const visible = filter === "todos" ? items : items.filter((e) => e.eventType === filter);
+  // O filtro precisa ser aplicado na CONSULTA ao servidor, não só na
+  // lista já carregada: `items` é sempre a primeira página (30 eventos
+  // recentes de QUALQUER tipo), então filtrar em memória escondia
+  // eventos mais antigos de um tipo escolhido mesmo quando eles existem
+  // de verdade (achado do review pós-CI — "Propostas" podia mostrar
+  // "Nenhum evento ainda" com uma proposta real fora da primeira
+  // página). O servidor já aceita `p_types`; só faltava a interface usar.
+  function selectFilter(next: LeadTimelineEventType | "todos") {
+    setFilter(next);
+    setError(null);
+    startTransition(async () => {
+      const types = next === "todos" ? null : [next];
+      const result = await loadMoreLeadTimelineAction(leadId, types);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setItems(result.items);
+      setHasMore(result.hasMore);
+    });
+  }
 
   function loadMore() {
     const last = items[items.length - 1];
     if (!last) return;
     setError(null);
+    const types = filter === "todos" ? null : [filter];
     startTransition(async () => {
-      const result = await loadMoreLeadTimelineAction(leadId, null, { occurredAt: last.occurredAt, id: last.id });
+      const result = await loadMoreLeadTimelineAction(leadId, types, { occurredAt: last.occurredAt, id: last.id });
       if (!result.ok) {
         setError(result.error);
         return;
@@ -144,7 +165,8 @@ export function LeadTimeline({
             <button
               key={f.key}
               type="button"
-              onClick={() => setFilter(f.key)}
+              onClick={() => selectFilter(f.key)}
+              disabled={pending}
               className={`h-7 rounded-full border px-3 text-meta font-medium ${
                 filter === f.key
                   ? "border-primary bg-primary-tint text-primary"
@@ -157,11 +179,13 @@ export function LeadTimeline({
         </div>
       ) : null}
 
-      {visible.length === 0 ? (
-        <p className="py-4 text-body text-text-tertiary">Nenhum evento ainda.</p>
+      {items.length === 0 ? (
+        <p className="py-4 text-body text-text-tertiary">
+          {pending ? "Carregando…" : "Nenhum evento ainda."}
+        </p>
       ) : (
         <ul className="flex flex-col gap-0">
-          {visible.map((event) => (
+          {items.map((event) => (
             <EventRow key={`${event.eventType}-${event.id}`} event={event} members={members} />
           ))}
         </ul>

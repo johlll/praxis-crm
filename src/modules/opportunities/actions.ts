@@ -131,6 +131,13 @@ export async function moveOpportunityStageAction(
 
   revalidatePath("/pipeline");
   revalidatePath(`/oportunidades/${parsed.data.opportunityId}`);
+  // O kanban não passa `leadId` (não precisa — não existe página de lead
+  // aberta ao mesmo tempo); o controle de etapa do Perfil 360 passa, para
+  // a StageProgressBar/OpportunityDetailPanel refletirem o movimento sem
+  // precisar trocar de aba (achado do review pós-CI: mover etapa ali
+  // ficava sem revalidação própria).
+  const leadId = formData.get("leadId");
+  if (typeof leadId === "string" && leadId) revalidatePath(`/leads/${leadId}`);
   return { ok: true, opportunityId: parsed.data.opportunityId };
 }
 
