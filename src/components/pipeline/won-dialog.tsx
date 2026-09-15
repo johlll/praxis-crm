@@ -50,6 +50,10 @@ export function WonDialog({
   const [requirements, setRequirements] = useState<StageRequirementStatus[]>([]);
   const [requirementValues, setRequirementValues] = useState<Record<string, string | boolean>>({});
   const [loadingRequirements, setLoadingRequirements] = useState(true);
+  // Falha ao carregar os requisitos bloqueia o registro: sem saber o que é
+  // obrigatório, "nenhum pendente" seria uma suposição, não um fato.
+  const [requirementsError, setRequirementsError] = useState<string | null>(null);
+  const [requirementsAttempt, setRequirementsAttempt] = useState(0);
 
   // WonDialog é montado condicionalmente pelo componente pai (só existe
   // enquanto há um alvo de ganho) — cada abertura é um mount novo, então
@@ -58,21 +62,31 @@ export function WonDialog({
   // react-hooks/set-state-in-effect), mesmo padrão do StageAdvanceDialog.
   useEffect(() => {
     let cancelled = false;
-    checkWinRequirementsAction(opportunity.id).then((data) => {
+    checkWinRequirementsAction(opportunity.id).then((result) => {
       if (cancelled) return;
-      setRequirements(data);
+      setLoadingRequirements(false);
+      if (!result.ok) {
+        setRequirementsError(result.error);
+        return;
+      }
+      setRequirements(result.requirements);
       const initial: Record<string, string | boolean> = {};
-      for (const req of data) {
+      for (const req of result.requirements) {
         if (req.fieldType === "checkbox") initial[req.requirementId] = req.valueBool ?? false;
         else initial[req.requirementId] = req.valueText ?? "";
       }
       setRequirementValues(initial);
-      setLoadingRequirements(false);
     });
     return () => {
       cancelled = true;
     };
-  }, [opportunity.id]);
+  }, [opportunity.id, requirementsAttempt]);
+
+  function retryRequirements() {
+    setRequirementsError(null);
+    setLoadingRequirements(true);
+    setRequirementsAttempt((n) => n + 1);
+  }
 
   const pendingCount = requirements.filter((r) =>
     r.fieldType === "checkbox"
@@ -146,7 +160,18 @@ export function WonDialog({
             <Input id="won-signed-at" type="date" value={signedAt} onChange={(e) => setSignedAt(e.target.value)} />
           </FormField>
 
-          {loadingRequirements ? null : requirements.length > 0 ? (
+          {loadingRequirements ? (
+            <p className="text-meta text-text-tertiary">Carregando requisitos…</p>
+          ) : requirementsError ? (
+            <Alert variant="danger">
+              <AlertDescription>
+                {requirementsError}{" "}
+                <Button type="button" variant="ghost" size="sm" onClick={retryRequirements}>
+                  Tentar novamente
+                </Button>
+              </AlertDescription>
+            </Alert>
+          ) : requirements.length > 0 ? (
             <div className="flex flex-col gap-3 rounded-card border border-border-input bg-surface-subtle p-3">
               <p className="text-meta font-semibold text-text-secondary">Obrigatório para marcar como ganho</p>
               {requirements.map((req) => (
@@ -204,7 +229,11 @@ export function WonDialog({
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
             Cancelar
           </Button>
-          <Button type="button" disabled={pending || loadingRequirements || pendingCount > 0} onClick={handleSubmit}>
+          <Button
+            type="button"
+            disabled={pending || loadingRequirements || requirementsError !== null || pendingCount > 0}
+            onClick={handleSubmit}
+          >
             {pending ? "Salvando…" : "Registrar ganho"}
           </Button>
         </DialogFooter>

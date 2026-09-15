@@ -5,6 +5,7 @@ import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { ResultForm } from "@/components/feedback/result-form";
 import { SensitiveField } from "./sensitive-field";
 import { clearCpfCnpjAction, setCpfCnpjAction, type ContactActionState } from "@/modules/contacts/actions";
 
@@ -23,12 +24,12 @@ export function ContactSensitiveSection({
     return (
       <div className="flex items-center justify-between gap-3">
         <SensitiveField contactId={contactId} />
-        <form action={clearCpfCnpjAction}>
+        <ResultForm action={clearCpfCnpjAction}>
           <input type="hidden" name="contactId" value={contactId} />
           <Button type="submit" variant="ghost" size="sm">
             Remover
           </Button>
-        </form>
+        </ResultForm>
       </div>
     );
   }

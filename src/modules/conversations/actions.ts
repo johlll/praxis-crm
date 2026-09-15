@@ -3,11 +3,19 @@
 import { revalidatePath } from "next/cache";
 
 import { createServerSupabaseClient } from "@/server/supabase/server";
-import { requirePermission, AuthzError, type Permission } from "@/server/authz/permissions";
+import { requirePermissionSafe } from "@/server/authz/safe";
+import { requireMembership } from "@/server/authz/permissions";
 import { toUserMessage } from "@/lib/errors";
 import { normalizeWebhookPayload } from "@/server/whatsapp/normalize-event";
 import { buildSimulatedInboundMessage, buildSimulatedStatusEvent } from "@/server/whatsapp/simulator";
-import { listConversationMessages, mapSendMessageResult, type MessageListItem, type MessagesCursor } from "./queries";
+import {
+  listConversationMessages,
+  listConversations,
+  mapSendMessageResult,
+  type ConversationListItem,
+  type MessageListItem,
+  type MessagesCursor,
+} from "./queries";
 import {
   createWhatsAppChannelSchema,
   simulateInboundMessageSchema,
@@ -19,17 +27,6 @@ import {
 } from "./schema";
 
 export type ActionState = { ok: boolean; error?: string };
-
-async function requirePermissionSafe(
-  permission: Permission,
-): Promise<{ ctx: Awaited<ReturnType<typeof requirePermission>> } | { deniedMessage: string }> {
-  try {
-    return { ctx: await requirePermission(permission) };
-  } catch (error) {
-    if (error instanceof AuthzError) return { deniedMessage: "Você não tem permissão para fazer isso." };
-    throw error;
-  }
-}
 
 function revalidateConversationRoutes(conversationId?: string) {
   revalidatePath("/conversas");
@@ -45,7 +42,7 @@ export async function createWhatsAppChannelAction(
   formData: FormData,
 ): Promise<ActionState> {
   const guard = await requirePermissionSafe("conversation.simulate");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = createWhatsAppChannelSchema.safeParse({
     workspaceId: formData.get("workspaceId"),
@@ -84,7 +81,7 @@ export async function simulateInboundMessageAction(
   formData: FormData,
 ): Promise<SimulateActionState> {
   const guard = await requirePermissionSafe("conversation.simulate");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = simulateInboundMessageSchema.safeParse({
     channelId: formData.get("channelId"),
@@ -139,7 +136,7 @@ export async function simulateStatusEventAction(
   formData: FormData,
 ): Promise<ActionState> {
   const guard = await requirePermissionSafe("conversation.simulate");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = simulateStatusEventSchema.safeParse({
     phoneNumberId: formData.get("phoneNumberId"),
@@ -198,7 +195,7 @@ export async function sendMessageAction(
   clientDedupeKey: string,
 ): Promise<SendMessageActionResult> {
   const guard = await requirePermissionSafe("conversation.send");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = sendMessageSchema.safeParse({ conversationId, bodyText, clientDedupeKey });
   if (!parsed.success) {
@@ -241,7 +238,7 @@ export async function resolveConversationLinkAction(
   opportunityId: string | undefined,
 ): Promise<ActionState> {
   const guard = await requirePermissionSafe("conversation.link");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = resolveConversationLinkSchema.safeParse({ conversationId, contactId, leadId, opportunityId });
   if (!parsed.success) {
@@ -267,7 +264,7 @@ export async function registerContactConsentAction(
   formData: FormData,
 ): Promise<ActionState> {
   const guard = await requirePermissionSafe("contact.consent_manage");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = registerContactConsentSchema.safeParse({
     contactId: formData.get("contactId"),
@@ -321,7 +318,7 @@ export async function loadOlderMessagesAction(
 
 export async function revokeContactConsentAction(consentId: string): Promise<ActionState> {
   const guard = await requirePermissionSafe("contact.consent_manage");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = revokeContactConsentSchema.safeParse({ consentId });
   if (!parsed.success) {
@@ -335,4 +332,23 @@ export async function revokeContactConsentAction(consentId: string): Promise<Act
 
   revalidatePath("/conversas");
   return { ok: true };
+}
+
+/**
+ * "Carregar mais" da aba Conversas do Perfil 360 — a página só busca a
+ * primeira página (20) de `list_conversations(p_lead_id)`; sem isto o
+ * restante ficava inacessível, sem nenhuma forma de chegar até lá
+ * (achado do review pós-CI).
+ */
+export async function loadMoreLeadConversationsAction(
+  leadId: string,
+  page: number,
+): Promise<{ ok: true; items: ConversationListItem[]; hasMore: boolean } | { ok: false; error: string }> {
+  try {
+    const { workspaceId } = await requireMembership();
+    const result = await listConversations(workspaceId, { leadId, page });
+    return { ok: true, items: result.items, hasMore: page * result.pageSize < result.total };
+  } catch {
+    return { ok: false, error: "Não foi possível carregar mais conversas. Tente novamente." };
+  }
 }

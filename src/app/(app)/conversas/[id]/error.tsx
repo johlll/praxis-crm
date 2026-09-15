@@ -4,7 +4,7 @@ import { useEffect } from "react";
 
 import { ErrorState } from "@/components/feedback/error-state";
 
-export default function ConversaError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+export default function ConversaError({ error, retry }: { error: Error & { digest?: string }; retry: () => void }) {
   useEffect(() => {
     console.error(error);
   }, [error]);
@@ -15,7 +15,7 @@ export default function ConversaError({ error, reset }: { error: Error & { diges
         <ErrorState
           title="Não foi possível carregar esta conversa"
           description="Não deu para buscar o histórico de mensagens. Tente novamente em instantes; se continuar, avise o responsável pelo sistema."
-          onRetry={reset}
+          onRetry={retry}
         />
       </div>
     </main>

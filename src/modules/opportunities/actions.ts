@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 
 import { createServerSupabaseClient } from "@/server/supabase/server";
-import { requirePermission, AuthzError, type Permission } from "@/server/authz/permissions";
+import { requirePermissionSafe } from "@/server/authz/safe";
+import { DataLoadError, LOAD_ERROR_MESSAGE } from "@/server/data/load-error";
 import { toUserMessage } from "@/lib/errors";
 import {
   createOpportunitySchema,
@@ -33,25 +34,12 @@ export type OpportunityActionState = {
   opportunityId?: string;
 };
 
-const PERMISSION_DENIED_MESSAGE = "Você não tem permissão para fazer isso.";
-
-async function requirePermissionSafe(
-  permission: Permission,
-): Promise<{ ctx: Awaited<ReturnType<typeof requirePermission>> } | { deniedMessage: string }> {
-  try {
-    return { ctx: await requirePermission(permission) };
-  } catch (error) {
-    if (error instanceof AuthzError) return { deniedMessage: PERMISSION_DENIED_MESSAGE };
-    throw error;
-  }
-}
-
 export async function createOpportunityAction(
   _prevState: OpportunityActionState,
   formData: FormData,
 ): Promise<OpportunityActionState> {
   const guard = await requirePermissionSafe("opportunity.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = createOpportunitySchema.safeParse({
     leadId: formData.get("leadId"),
@@ -92,7 +80,7 @@ export async function moveOpportunityStageAction(
   formData: FormData,
 ): Promise<OpportunityActionState> {
   const guard = await requirePermissionSafe("opportunity.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const rawRequirementValues = formData.get("requirementValues");
   let requirementValues: unknown = [];
@@ -131,6 +119,13 @@ export async function moveOpportunityStageAction(
 
   revalidatePath("/pipeline");
   revalidatePath(`/oportunidades/${parsed.data.opportunityId}`);
+  // O kanban não passa `leadId` (não precisa — não existe página de lead
+  // aberta ao mesmo tempo); o controle de etapa do Perfil 360 passa, para
+  // a StageProgressBar/OpportunityDetailPanel refletirem o movimento sem
+  // precisar trocar de aba (achado do review pós-CI: mover etapa ali
+  // ficava sem revalidação própria).
+  const leadId = formData.get("leadId");
+  if (typeof leadId === "string" && leadId) revalidatePath(`/leads/${leadId}`);
   return { ok: true, opportunityId: parsed.data.opportunityId };
 }
 
@@ -139,7 +134,7 @@ export async function winOpportunityAction(
   formData: FormData,
 ): Promise<OpportunityActionState> {
   const guard = await requirePermissionSafe("opportunity.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const rawRequirementValues = formData.get("requirementValues");
   let requirementValues: unknown = [];
@@ -188,7 +183,7 @@ export async function loseOpportunityAction(
   formData: FormData,
 ): Promise<OpportunityActionState> {
   const guard = await requirePermissionSafe("opportunity.edit");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = loseOpportunitySchema.safeParse({
     opportunityId: formData.get("opportunityId"),
@@ -227,13 +222,34 @@ export async function loseOpportunityAction(
  * no banco; esta Server Action só evita abrir um modal desnecessário
  * quando não há nada pendente no caminho.
  */
-export async function checkStageRequirementsAction(
-  opportunityId: string,
-  toStageId: string,
-): Promise<StageRequirementStatus[]> {
+export type RequirementsResult =
+  | { ok: true; requirements: StageRequirementStatus[] }
+  | { ok: false; error: string };
+
+const OPPORTUNITY_UNAVAILABLE_MESSAGE = "Esta oportunidade não está mais disponível. Recarregue a página.";
+
+/**
+ * Lista vazia aqui significa "nenhum requisito pendente" e libera o avanço
+ * sem diálogo — por isso negação, oportunidade inacessível e falha
+ * operacional chegam ao cliente como `ok: false`, nunca como `[]`.
+ */
+async function loadRequirements(
+  load: () => Promise<StageRequirementStatus[] | null>,
+): Promise<RequirementsResult> {
   const guard = await requirePermissionSafe("opportunity.view");
-  if ("deniedMessage" in guard) return [];
-  return getStageRequirementsStatus(opportunityId, toStageId);
+  if ("error" in guard) return { ok: false, error: guard.error };
+  try {
+    const requirements = await load();
+    if (requirements === null) return { ok: false, error: OPPORTUNITY_UNAVAILABLE_MESSAGE };
+    return { ok: true, requirements };
+  } catch (error) {
+    if (error instanceof DataLoadError) return { ok: false, error: LOAD_ERROR_MESSAGE };
+    throw error;
+  }
+}
+
+export async function checkStageRequirementsAction(opportunityId: string, toStageId: string): Promise<RequirementsResult> {
+  return loadRequirements(() => getStageRequirementsStatus(opportunityId, toStageId));
 }
 
 /**
@@ -243,16 +259,21 @@ export async function checkStageRequirementsAction(
  * checagem que bloqueia de fato é a mesma regra dentro de
  * win_opportunity() no banco.
  */
-export async function checkWinRequirementsAction(opportunityId: string): Promise<StageRequirementStatus[]> {
-  const guard = await requirePermissionSafe("opportunity.view");
-  if ("deniedMessage" in guard) return [];
-  return getWinRequirementsStatus(opportunityId);
+export async function checkWinRequirementsAction(opportunityId: string): Promise<RequirementsResult> {
+  return loadRequirements(() => getWinRequirementsStatus(opportunityId));
 }
 
-export async function listLostReasonsAction(workspaceId: string): Promise<LostReasonOption[]> {
+export async function listLostReasonsAction(
+  workspaceId: string,
+): Promise<{ ok: true; reasons: LostReasonOption[] } | { ok: false; error: string }> {
   const guard = await requirePermissionSafe("opportunity.view");
-  if ("deniedMessage" in guard) return [];
-  return listLostReasons(workspaceId);
+  if ("error" in guard) return { ok: false, error: guard.error };
+  try {
+    return { ok: true, reasons: await listLostReasons(workspaceId) };
+  } catch (error) {
+    if (error instanceof DataLoadError) return { ok: false, error: LOAD_ERROR_MESSAGE };
+    throw error;
+  }
 }
 
 export type PipelineConfigActionState = { ok: boolean; error?: string };
@@ -262,7 +283,7 @@ export async function createPipelineStageAction(
   formData: FormData,
 ): Promise<PipelineConfigActionState> {
   const guard = await requirePermissionSafe("pipeline.configure");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = createPipelineStageSchema.safeParse({
     pipelineId: formData.get("pipelineId"),
@@ -295,7 +316,7 @@ export async function deletePipelineStageAction(
   formData: FormData,
 ): Promise<PipelineConfigActionState> {
   const guard = await requirePermissionSafe("pipeline.configure");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const stageId = formData.get("stageId");
   if (typeof stageId !== "string" || stageId.length === 0) {
@@ -319,7 +340,7 @@ export async function updatePipelineStageAction(
   formData: FormData,
 ): Promise<PipelineConfigActionState> {
   const guard = await requirePermissionSafe("pipeline.configure");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   // Checkbox desmarcado simplesmente não aparece no FormData — por isso a
   // presença da chave (has), não o valor (get), é o que decide true/false
@@ -362,7 +383,7 @@ export async function reorderPipelineStagesAction(
   orderedStageIds: string[],
 ): Promise<PipelineConfigActionState> {
   const guard = await requirePermissionSafe("pipeline.configure");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = reorderPipelineStagesSchema.safeParse({ pipelineId, orderedStageIds });
   if (!parsed.success) {
@@ -389,7 +410,7 @@ export async function createStageRequirementAction(
   formData: FormData,
 ): Promise<PipelineConfigActionState> {
   const guard = await requirePermissionSafe("pipeline.configure");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = createStageRequirementSchema.safeParse({
     stageId: formData.get("stageId"),
@@ -425,7 +446,7 @@ export async function updateStageRequirementAction(
   requiredForWin: boolean,
 ): Promise<PipelineConfigActionState> {
   const guard = await requirePermissionSafe("pipeline.configure");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = updateStageRequirementSchema.safeParse({ requirementId, requiredForWin });
   if (!parsed.success) {
@@ -451,7 +472,7 @@ export async function deleteStageRequirementAction(
   formData: FormData,
 ): Promise<PipelineConfigActionState> {
   const guard = await requirePermissionSafe("pipeline.configure");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = deleteStageRequirementSchema.safeParse({
     requirementId: formData.get("requirementId"),
@@ -478,7 +499,7 @@ export async function createLostReasonAction(
   formData: FormData,
 ): Promise<PipelineConfigActionState> {
   const guard = await requirePermissionSafe("pipeline.configure");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = createLostReasonSchema.safeParse({
     workspaceId: formData.get("workspaceId"),
@@ -508,7 +529,7 @@ export async function deactivateLostReasonAction(
   formData: FormData,
 ): Promise<PipelineConfigActionState> {
   const guard = await requirePermissionSafe("pipeline.configure");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = deactivateLostReasonSchema.safeParse({
     lostReasonId: formData.get("lostReasonId"),

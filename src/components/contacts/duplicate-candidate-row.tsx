@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
+import { ResultForm } from "@/components/feedback/result-form";
 import type { DuplicateCandidateItem } from "@/modules/contacts/queries";
 import { dismissDuplicateCandidateAction } from "@/modules/contacts/actions";
 import { describeSignal, TIER_LABEL } from "./duplicate-signals";
@@ -31,12 +32,12 @@ export function DuplicateCandidateRow({ candidate }: { candidate: DuplicateCandi
         <p className="text-meta text-text-tertiary">{candidate.signals.map(describeSignal).join(" · ")}</p>
       </div>
       <div className="flex shrink-0 gap-2">
-        <form action={dismissDuplicateCandidateAction}>
+        <ResultForm action={dismissDuplicateCandidateAction}>
           <input type="hidden" name="candidateId" value={candidate.id} />
           <Button type="submit" variant="ghost" size="sm">
             Descartar
           </Button>
-        </form>
+        </ResultForm>
         <Button asChild variant="secondary" size="sm">
           <Link href={`/contatos/duplicidades/${candidate.id}`}>Comparar</Link>
         </Button>

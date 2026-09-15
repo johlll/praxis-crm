@@ -6,7 +6,7 @@ import { Topbar } from "@/components/app-shell/topbar";
 import { getShellContext } from "@/modules/shell/queries";
 import { roleHasPermission } from "@/lib/roles";
 import { getConversation, listConversationMessages, listContactConsents, hasActiveWhatsAppConsent } from "@/modules/conversations/queries";
-import { listOpportunities, type OpportunityListItem } from "@/modules/opportunities/queries";
+import { listAllOpportunities, type OpportunityListItem } from "@/modules/opportunities/queries";
 import { requireWorkspace } from "@/server/authz/permissions";
 import { ConversationThread } from "@/components/conversations/conversation-thread";
 import { LinkReviewBanner } from "@/components/conversations/link-review-banner";
@@ -35,7 +35,7 @@ export default async function ConversaDetalhePage({ params }: { params: Promise<
   const [consents, openOpportunityItems] = await Promise.all([
     conversation.contactId ? listContactConsents(conversation.contactId) : Promise.resolve([]),
     conversation.leadId && !conversation.opportunityId
-      ? listOpportunities(workspaceId, { leadId: conversation.leadId, status: "open" }).then((r) => r.items)
+      ? listAllOpportunities(workspaceId, { leadId: conversation.leadId, status: "open" })
       : Promise.resolve<OpportunityListItem[]>([]),
   ]);
 

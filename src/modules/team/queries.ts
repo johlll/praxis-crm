@@ -1,4 +1,5 @@
 import { createServerSupabaseClient } from "@/server/supabase/server";
+import { DataLoadError } from "@/server/data/load-error";
 import type { Role } from "@/server/authz/permissions";
 
 export type TeamMember = {
@@ -29,7 +30,7 @@ export async function listTeamMembers(
   currentUserId: string,
 ): Promise<TeamMember[]> {
   const supabase = await createServerSupabaseClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("memberships")
     // users!memberships_user_id_fkey: memberships tem duas FKs para users
     // (user_id e invited_by) — sem o hint, o PostgREST não sabe qual das
@@ -38,6 +39,7 @@ export async function listTeamMembers(
     .eq("workspace_id", workspaceId)
     .order("created_at", { ascending: true });
 
+  if (error) throw new DataLoadError(`os membros do workspace ${workspaceId}`, error);
   if (!data) return [];
 
   return data
@@ -57,12 +59,13 @@ export async function listTeamMembers(
  * owner/admin sozinha, esta é a segunda camada, não a única. */
 export async function listPendingInvitations(workspaceId: string): Promise<PendingInvitation[]> {
   const supabase = await createServerSupabaseClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("workspace_invitations")
     .select("id, email, role, expires_at, created_at")
     .eq("workspace_id", workspaceId)
     .eq("status", "pending")
     .order("created_at", { ascending: false });
+  if (error) throw new DataLoadError(`os convites pendentes do workspace ${workspaceId}`, error);
 
   return (data ?? []).map((row) => ({
     id: row.id,

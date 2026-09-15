@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/server/supabase/server";
 import { requireUser } from "@/server/authz/permissions";
 import { switchActiveWorkspace } from "@/server/auth/workspace";
+import { DataLoadError } from "@/server/data/load-error";
 import { toUserMessage } from "@/lib/errors";
 import { createWorkspaceSchema } from "./schema";
 
@@ -48,6 +49,15 @@ export async function createWorkspaceAction(
     return { ok: false, error: toUserMessage(error) };
   }
 
-  await switchActiveWorkspace(data.id);
+  try {
+    await switchActiveWorkspace(data.id);
+  } catch (error) {
+    // O workspace já foi criado: repetir o formulário falharia por slug
+    // duplicado. O próximo login ativa o workspace automaticamente.
+    if (error instanceof DataLoadError) {
+      return { ok: false, error: "Workspace criado, mas não foi possível abri-lo agora. Entre novamente para continuar." };
+    }
+    throw error;
+  }
   redirect("/visao-geral");
 }

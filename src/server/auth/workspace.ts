@@ -1,6 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 
+import { DataLoadError } from "@/server/data/load-error";
 import { getEnv } from "@/server/env";
 import { createServerSupabaseClient } from "@/server/supabase/server";
 
@@ -71,14 +73,16 @@ export async function getActiveWorkspaceId(): Promise<string | null> {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
+    error: userError,
   } = await supabase.auth.getUser();
+  if (userError && isAuthRetryableFetchError(userError)) throw new DataLoadError("a sessão do usuário", userError);
   if (!user) return null;
 
   // A RLS de memberships é por workspace (qualquer membro vê os
   // colegas), não por dono da linha — sem o filtro por user_id aqui,
   // workspace com mais de um membro devolve mais de uma linha e
   // .maybeSingle() falha, mesmo a membership do próprio usuário existindo.
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("memberships")
     .select("workspace_id")
     .eq("workspace_id", workspaceId)
@@ -86,6 +90,9 @@ export async function getActiveWorkspaceId(): Promise<string | null> {
     .eq("status", "active")
     .maybeSingle();
 
+  // Falha na consulta não é "sem membership": tratar como tal mandaria o
+  // usuário para o onboarding ou para "sem acesso" por causa de um timeout.
+  if (error) throw new DataLoadError(`a membership do workspace ${workspaceId}`, error);
   return data ? workspaceId : null;
 }
 
@@ -105,7 +112,9 @@ export async function switchActiveWorkspace(
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
+    error: userError,
   } = await supabase.auth.getUser();
+  if (userError && isAuthRetryableFetchError(userError)) throw new DataLoadError("a sessão do usuário", userError);
   if (!user) {
     return { ok: false, error: "not_a_member" };
   }
@@ -113,7 +122,7 @@ export async function switchActiveWorkspace(
   // Mesmo motivo do getActiveWorkspaceId: sem o filtro por user_id, um
   // workspace com mais de um membro devolve mais de uma linha e
   // .maybeSingle() falha — mesmo a membership do próprio usuário existindo.
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("memberships")
     .select("workspace_id")
     .eq("workspace_id", workspaceId)
@@ -121,6 +130,7 @@ export async function switchActiveWorkspace(
     .eq("status", "active")
     .maybeSingle();
 
+  if (error) throw new DataLoadError(`a membership do workspace ${workspaceId}`, error);
   if (!data) {
     return { ok: false, error: "not_a_member" };
   }

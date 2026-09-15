@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FormField, FormLabel } from "@/components/ui/form-field";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { EditForm } from "@/components/feedback/edit-form";
 import { LEAD_PRIORITIES } from "@/modules/leads/schema";
 import { updateLeadBasicFieldsAction, type LeadActionState } from "@/modules/leads/actions";
 import type { LeadListItem } from "@/modules/leads/queries";
@@ -53,7 +54,9 @@ export function LeadBasicFieldsForm({ lead, readOnly }: { lead: LeadListItem; re
   const [priority, setPriority] = useState(lead.priority);
 
   return (
-    <form action={formAction} className="flex flex-col gap-4">
+    // EditForm: com <form action>, o React resetava o formulário ao fim do
+    // envio e o <select> de prioridade voltava à primeira opção.
+    <EditForm action={formAction} className="flex flex-col gap-4">
       <input type="hidden" name="leadId" value={lead.id} />
       <input type="hidden" name="expectedUpdatedAt" value={lead.updatedAt} />
 
@@ -127,6 +130,6 @@ export function LeadBasicFieldsForm({ lead, readOnly }: { lead: LeadListItem; re
           {pending ? "Salvando…" : "Salvar"}
         </Button>
       )}
-    </form>
+    </EditForm>
   );
 }

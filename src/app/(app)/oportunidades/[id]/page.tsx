@@ -7,7 +7,7 @@ import { getShellContext } from "@/modules/shell/queries";
 import { requireWorkspace } from "@/server/authz/permissions";
 import { roleHasPermission } from "@/lib/roles";
 import { getOpportunity } from "@/modules/opportunities/queries";
-import { listActivities } from "@/modules/activities/queries";
+import { listAllActivities } from "@/modules/activities/queries";
 import { listTeamMembers } from "@/modules/team/queries";
 import { OpportunityDetailPanel } from "@/components/pipeline/opportunity-detail-panel";
 
@@ -38,7 +38,9 @@ export default async function OportunidadeDetalhePage({ params }: { params: Prom
   const canEditActivities = roleHasPermission(user.role, "activity.edit");
 
   const [{ items: activities }, members] = await Promise.all([
-    listActivities(workspaceId, { opportunityId: id, status: "pending" }),
+    // Todas as pendentes: a seção de atividades não pagina, então a primeira
+    // página (20) esconderia as demais.
+    listAllActivities(workspaceId, { opportunityId: id, status: "pending" }),
     listTeamMembers(workspaceId, user.id),
   ]);
 

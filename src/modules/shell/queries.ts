@@ -2,6 +2,7 @@ import { cache } from "react";
 
 import { requireMembershipOrRedirect } from "@/server/authz/permissions";
 import { createServerSupabaseClient } from "@/server/supabase/server";
+import { DataLoadError } from "@/server/data/load-error";
 import { initialsOf } from "@/lib/initials";
 import { listMyWorkspaces, type WorkspaceOption } from "@/modules/workspace/queries";
 
@@ -34,11 +35,12 @@ export const getShellContext = cache(async (): Promise<ShellContext> => {
   };
 
   const supabase = await createServerSupabaseClient();
-  const { data: profile } = await supabase
+  const { data: profile, error } = await supabase
     .from("users")
     .select("full_name, email")
     .eq("id", membership.userId)
     .single();
+  if (error) throw new DataLoadError(`o perfil do usuário ${membership.userId}`, error);
 
   const fullName = profile?.full_name?.trim() || profile?.email || "Usuário";
 

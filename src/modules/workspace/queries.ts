@@ -1,4 +1,7 @@
+import { isAuthRetryableFetchError } from "@supabase/supabase-js";
+
 import { createServerSupabaseClient } from "@/server/supabase/server";
+import { DataLoadError } from "@/server/data/load-error";
 import type { Role } from "@/server/authz/permissions";
 
 export type WorkspaceOption = {
@@ -19,16 +22,19 @@ export async function listMyWorkspaces(): Promise<WorkspaceOption[]> {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
+    error: userError,
   } = await supabase.auth.getUser();
+  if (userError && isAuthRetryableFetchError(userError)) throw new DataLoadError("a sessão do usuário", userError);
   if (!user) return [];
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("memberships")
     .select("role, workspace:workspaces(id, name, slug)")
     .eq("user_id", user.id)
     .eq("status", "active")
     .order("created_at", { ascending: true });
 
+  if (error) throw new DataLoadError(`os workspaces do usuário ${user.id}`, error);
   if (!data) return [];
 
   return data

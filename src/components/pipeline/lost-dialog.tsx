@@ -37,10 +37,34 @@ export function LostDialog({
   const [followupDate, setFollowupDate] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Falha ao carregar os motivos não pode aparecer como "nenhum motivo
+  // cadastrado": o motivo é obrigatório, então o registro fica bloqueado
+  // até a lista carregar de verdade.
+  const [reasonsError, setReasonsError] = useState<string | null>(null);
+  const [reasonsLoading, setReasonsLoading] = useState(true);
+  const [reasonsAttempt, setReasonsAttempt] = useState(0);
 
   useEffect(() => {
-    listLostReasonsAction(workspaceId).then(setReasons);
-  }, [workspaceId]);
+    let cancelled = false;
+    listLostReasonsAction(workspaceId).then((result) => {
+      if (cancelled) return;
+      setReasonsLoading(false);
+      if (!result.ok) {
+        setReasonsError(result.error);
+        return;
+      }
+      setReasons(result.reasons);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId, reasonsAttempt]);
+
+  function retryReasons() {
+    setReasonsError(null);
+    setReasonsLoading(true);
+    setReasonsAttempt((n) => n + 1);
+  }
 
   async function handleSubmit() {
     if (!reasonId) return;
@@ -77,10 +101,11 @@ export function LostDialog({
               id="lost-reason"
               value={reasonId}
               onChange={(e) => setReasonId(e.target.value)}
+              disabled={reasonsLoading || reasonsError !== null}
               className="h-9 rounded-input border border-border-input bg-surface px-3 text-body text-text"
             >
               <option value="" disabled>
-                Selecione…
+                {reasonsLoading ? "Carregando…" : "Selecione…"}
               </option>
               {reasons.map((r) => (
                 <option key={r.id} value={r.id}>
@@ -88,6 +113,16 @@ export function LostDialog({
                 </option>
               ))}
             </select>
+            {reasonsError ? (
+              <Alert variant="danger">
+                <AlertDescription>
+                  {reasonsError}{" "}
+                  <Button type="button" variant="ghost" size="sm" onClick={retryReasons}>
+                    Tentar novamente
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            ) : null}
           </FormField>
           <FormField>
             <FormLabel htmlFor="lost-note">Contexto (opcional)</FormLabel>

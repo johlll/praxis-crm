@@ -4,7 +4,7 @@ import { useEffect } from "react";
 
 import { ErrorState } from "@/components/feedback/error-state";
 
-export default function ConversasError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+export default function ConversasError({ error, retry }: { error: Error & { digest?: string }; retry: () => void }) {
   useEffect(() => {
     // Só no console do navegador — nunca detalhe interno na tela (checklist).
     console.error(error);
@@ -16,7 +16,7 @@ export default function ConversasError({ error, reset }: { error: Error & { dige
         <ErrorState
           title="Não foi possível carregar as conversas"
           description="Não deu para buscar a lista de conversas. Tente novamente em instantes; se continuar, avise o responsável pelo sistema."
-          onRetry={reset}
+          onRetry={retry}
         />
       </div>
     </main>

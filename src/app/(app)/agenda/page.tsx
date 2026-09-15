@@ -6,7 +6,7 @@ import { getShellContext } from "@/modules/shell/queries";
 import { requireWorkspace } from "@/server/authz/permissions";
 import { roleHasPermission } from "@/lib/roles";
 import { listAllActivities } from "@/modules/activities/queries";
-import { listLeads } from "@/modules/leads/queries";
+import { listAllLeads } from "@/modules/leads/queries";
 import { listTeamMembers } from "@/modules/team/queries";
 import { WeekCalendar } from "@/components/activities/week-calendar";
 import { CreateActivityDialog } from "@/components/activities/create-activity-dialog";
@@ -26,9 +26,10 @@ export default async function AgendaPage() {
   const workspaceId = await requireWorkspace();
   const canEdit = roleHasPermission(user.role, "activity.edit");
 
-  const [{ items }, { items: leadOptions }, members] = await Promise.all([
+  const [{ items }, leadOptions, members] = await Promise.all([
     listAllActivities(workspaceId, { filter: "week", status: "all", sort: "due_at_asc" }),
-    listLeads(workspaceId, { status: "ativo" }),
+    // Seletor do "Nova atividade": todos os leads ativos, não só a 1ª página.
+    listAllLeads(workspaceId, { status: "ativo" }),
     listTeamMembers(workspaceId, user.id),
   ]);
 

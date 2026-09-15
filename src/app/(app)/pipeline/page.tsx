@@ -10,6 +10,11 @@ import { roleHasPermission } from "@/lib/roles";
 import { getDefaultPipeline, getPipelineBoard, listOpportunities } from "@/modules/opportunities/queries";
 import { PipelineBoard } from "@/components/pipeline/pipeline-board";
 import { OpportunityTable } from "@/components/pipeline/opportunity-table";
+import { OpportunityTablePagination } from "@/components/pipeline/opportunity-table-pagination";
+
+function countLabel(count: number, singular: string, plural: string): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
 
 export const metadata: Metadata = {
   title: "Pipeline — Praxis CRM Jurídico",
@@ -18,12 +23,13 @@ export const metadata: Metadata = {
 export default async function PipelinePage({
   searchParams,
 }: {
-  searchParams: Promise<{ view?: string }>;
+  searchParams: Promise<{ view?: string; page?: string }>;
 }) {
   const { user } = await getShellContext();
   const workspaceId = await requireWorkspace();
   const params = await searchParams;
   const view = params.view === "tabela" ? "tabela" : "kanban";
+  const page = Math.max(1, Number.parseInt(params.page ?? "1", 10) || 1);
   const canEdit = roleHasPermission(user.role, "opportunity.edit");
 
   const pipeline = await getDefaultPipeline(workspaceId);
@@ -44,14 +50,19 @@ export default async function PipelinePage({
   }
 
   const board = view === "kanban" ? await getPipelineBoard(pipeline.id) : null;
-  const table = view === "tabela" ? await listOpportunities(workspaceId, { pipelineId: pipeline.id }) : null;
-  const totalOpen = board ? board.reduce((sum, col) => sum + col.count, 0) : table?.total ?? 0;
+  // Tabela paginada: antes mostrava só a 1ª página (20) sem como avançar.
+  const table = view === "tabela" ? await listOpportunities(workspaceId, { pipelineId: pipeline.id, page }) : null;
+  // O kanban conta só as abertas; a tabela lista todos os status — o
+  // subtítulo diz qual das duas contagens está na tela.
+  const subtitle = board
+    ? countLabel(board.reduce((sum, col) => sum + col.count, 0), "oportunidade aberta", "oportunidades abertas")
+    : countLabel(table?.total ?? 0, "oportunidade", "oportunidades");
 
   return (
     <>
       <Topbar
         title="Pipeline"
-        subtitle={`${pipeline.name} · ${totalOpen} ${totalOpen === 1 ? "oportunidade aberta" : "oportunidades abertas"}`}
+        subtitle={`${pipeline.name} · ${subtitle}`}
         user={user}
       />
       <main className="flex-1 overflow-y-auto p-5">
@@ -78,7 +89,10 @@ export default async function PipelinePage({
           {board ? (
             <PipelineBoard workspaceId={workspaceId} columns={board} canEdit={canEdit} />
           ) : table ? (
-            <OpportunityTable items={table.items} />
+            <>
+              <OpportunityTable items={table.items} />
+              <OpportunityTablePagination page={table.page} total={table.total} pageSize={table.pageSize} />
+            </>
           ) : null}
         </div>
       </main>

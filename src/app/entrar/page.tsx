@@ -1,13 +1,14 @@
 import type { Metadata } from "next";
 
 import { AuthForm } from "@/components/auth/auth-form";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 export const metadata: Metadata = {
   title: "Entrar — Praxis CRM Jurídico",
 };
 
 type EntrarPageProps = {
-  searchParams: Promise<{ next?: string; email?: string }>;
+  searchParams: Promise<{ next?: string; email?: string; erro?: string }>;
 };
 
 export default async function EntrarPage({ searchParams }: EntrarPageProps) {
@@ -32,6 +33,16 @@ export default async function EntrarPage({ searchParams }: EntrarPageProps) {
             </span>
           </div>
         </div>
+
+        {params.erro === "confirmacao_invalida" ? (
+          <Alert variant="danger" className="w-full">
+            <AlertDescription>
+              O link de confirmação é inválido, expirou ou foi aberto em outro
+              navegador. Tente entrar; se o login pedir confirmação, crie a conta
+              de novo com o mesmo e-mail para receber um link novo.
+            </AlertDescription>
+          </Alert>
+        ) : null}
 
         <AuthForm {...(params.next ? { next: params.next } : {})} {...(params.email ? { defaultEmail: params.email } : {})} />
       </div>
