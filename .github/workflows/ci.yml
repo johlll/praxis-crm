@@ -66,6 +66,16 @@ jobs:
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="${PUBLISHABLE_KEY:?PUBLISHABLE_KEY vazio}" \
             node scripts/a7-concurrency-check.mjs
 
+      - name: Teste de concorrência real (numeração de propostas)
+        # Mesmo motivo do passo acima: criações simultâneas de proposta em
+        # clientes independentes — ver scripts/a9-proposal-number-concurrency-check.mjs.
+        run: |
+          RAW="$(supabase status -o env)"
+          eval "$RAW"
+          NEXT_PUBLIC_SUPABASE_URL="${API_URL:?API_URL vazio}" \
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="${PUBLISHABLE_KEY:?PUBLISHABLE_KEY vazio}" \
+            node scripts/a9-proposal-number-concurrency-check.mjs
+
       - name: Exportar credenciais do Supabase local para o build/e2e
         run: |
           # Escreve .env.local de verdade em vez de só exportar em
