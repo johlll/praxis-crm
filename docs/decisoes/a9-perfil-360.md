@@ -307,11 +307,19 @@ limitação real (não como escopo reduzido):
 
 6. **Bloco "Consulta".** Implementado como planejado em §9 — sem tabela
    nova, `ConsultationCard` deriva da atividade `meeting` já concluída mais
-   recente da oportunidade ativa (dentre as já carregadas para a aba
-   Atividades, sem consulta adicional). Só aparece quando essa atividade
-   existe; sem isso, a ausência do bloco já é a informação. Duração e
-   modalidade continuam de fora (não existem em `activities` hoje, mesma
-   decisão original).
+   recente, dentre as já carregadas para a aba Atividades, sem consulta
+   adicional. **Achado real da revalidação em preview** (não do CI, que
+   não cria uma reunião de verdade): a primeira versão filtrava por
+   `opportunityId === oportunidade ativa`, mas o único "Nova atividade"
+   alcançável a partir do Perfil 360 é o da `ActivitiesSection`
+   compartilhada — que nunca manda `opportunityId` (mesma decisão da A6
+   citada em §3: atividade do lead pendura do LEAD, nunca só da
+   oportunidade). Isso tornava o cartão inatingível na prática mesmo com
+   uma reunião de verdade concluída. Corrigido: o filtro agora é só
+   `type === "meeting" && status === "done"` no lead, sem exigir
+   `opportunityId`. Só aparece quando essa atividade existe; sem isso, a
+   ausência do bloco já é a informação. Duração e modalidade continuam de
+   fora (não existem em `activities` hoje, mesma decisão original).
 7. **Mudar de etapa sem sair do Perfil 360.** `StageMoveControl` reaproveita
    a mesma RPC e o mesmo bloqueio por requisito do kanban
    (`move_opportunity_stage` + `checkStageRequirementsAction` +

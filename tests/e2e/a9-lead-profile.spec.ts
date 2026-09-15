@@ -106,4 +106,28 @@ test.describe.serial("Perfil 360º do lead — A9", () => {
     await expect(page.getByText("Sem conflito")).toBeVisible();
     await expect(page.getByText(noteText)).toHaveCount(0);
   });
+
+  test("4. bloco Consulta aparece depois de uma reunião concluída", async ({ page }) => {
+    await login(page, SEED_USERS.ana.email);
+    await page.goto(leadUrl);
+    await page.getByRole("tab", { name: "Visão geral" }).click();
+
+    await expect(page.getByRole("heading", { name: "Consulta", exact: true })).toHaveCount(0);
+
+    const title = "Reunião de revalidação (teste e2e)";
+    await page.getByRole("button", { name: "Nova atividade" }).click();
+    await page.getByLabel("Tipo", { exact: true }).selectOption({ label: "Reunião" });
+    await page.getByLabel("Título", { exact: true }).fill(title);
+    await page.getByLabel("Data", { exact: true }).fill("2026-09-20");
+    await page.getByRole("button", { name: "Criar atividade" }).click();
+    await page.getByRole("button", { name: "Concluir" }).click();
+
+    // Achado real da revalidação em preview: o único "Nova atividade"
+    // alcançável a partir do Perfil 360 (o da ActivitiesSection
+    // compartilhada) nunca manda opportunityId — filtrar o cartão por
+    // opportunityId === oportunidade ativa o tornava inatingível na
+    // prática, mesmo com uma reunião de verdade concluída.
+    await page.getByRole("button", { name: `Concluir ${title}` }).click();
+    await expect(page.getByRole("heading", { name: "Consulta", exact: true })).toBeVisible();
+  });
 });

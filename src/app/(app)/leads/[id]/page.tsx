@@ -108,18 +108,20 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
   const firstConversationId = conversations[0]?.id ?? null;
 
   // "Consulta" (docs/decisoes/a9-perfil-360.md §9): sem tabela nova,
-  // derivada da atividade tipo `meeting` já concluída mais recente desta
-  // oportunidade, dentre as já carregadas em `allActivities` — nenhuma
-  // duração/modalidade inventada (campos que não existem em `activities`
-  // hoje).
-  const lastCompletedConsultation = primaryOpportunityItem
-    ? allActivities
-        .filter(
-          (a) => a.opportunityId === primaryOpportunityItem.id && a.type === "meeting" && a.status === "done",
-        )
-        .sort((a, b) => new Date(b.completedAt ?? b.dueAt).getTime() - new Date(a.completedAt ?? a.dueAt).getTime())[0] ??
-      null
-    : null;
+  // derivada da atividade tipo `meeting` já concluída mais recente do
+  // LEAD (não filtrada por opportunityId) — achado real da revalidação em
+  // preview: o único "Nova atividade" alcançável a partir do Perfil 360
+  // é o da ActivitiesSection compartilhada (Visão geral/Atividades), que
+  // nunca manda opportunityId (mesma decisão da A6 citada em §3: toda
+  // atividade do lead pendura do LEAD, nunca só da oportunidade) —
+  // filtrar por opportunityId tornava o cartão inatingível na prática,
+  // mesmo com uma reunião de verdade concluída. Nenhuma duração/
+  // modalidade inventada (campos que não existem em `activities` hoje).
+  const lastCompletedConsultation =
+    allActivities
+      .filter((a) => a.type === "meeting" && a.status === "done")
+      .sort((a, b) => new Date(b.completedAt ?? b.dueAt).getTime() - new Date(a.completedAt ?? a.dueAt).getTime())[0] ??
+    null;
 
   // Uma única <LeadActivitiesSection> (todas as atividades do LEAD, não
   // só de uma oportunidade) reaproveitada em duas abas — nunca duas
