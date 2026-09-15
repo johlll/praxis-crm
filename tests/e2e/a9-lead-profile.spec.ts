@@ -90,7 +90,10 @@ test.describe.serial("Perfil 360º do lead — A9", () => {
     await page.getByPlaceholder("Nota (opcional)").fill(noteText);
     await page.getByLabel("Status da verificação de conflito").selectOption({ label: "Sem conflito" });
     await page.getByRole("button", { name: "Registrar verificação" }).click();
-    await expect(page.getByText(noteText)).toBeVisible();
+    // Só o <p> exibido, não o <textarea> do próprio formulário (que
+    // continua com a nota como defaultValue) — getByText bateria nos
+    // dois.
+    await expect(page.locator("p", { hasText: noteText })).toBeVisible();
     await logout(page);
 
     // Elisa é viewer no Escritório Um (seed) — só lê, e a nota é
