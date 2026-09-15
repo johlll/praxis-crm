@@ -52,7 +52,7 @@ test.describe.serial("Perfil 360º do lead — A9", () => {
   test("2. registrar proposta com texto honesto de envio manual", async ({ page }) => {
     await login(page, SEED_USERS.ana.email);
     await page.goto(leadUrl);
-    await page.getByRole("button", { name: "Propostas" }).click();
+    await page.getByRole("tab", { name: "Propostas" }).click();
 
     await page.getByRole("button", { name: "Nova proposta" }).click();
     await page.getByLabel("Valor (R$)").fill("5000");
@@ -75,7 +75,7 @@ test.describe.serial("Perfil 360º do lead — A9", () => {
     // eventos já carregados na tela (nunca ia buscar de novo no
     // servidor), então um evento fora da primeira página sumia mesmo
     // existindo de verdade.
-    await page.getByRole("button", { name: "Visão geral" }).click();
+    await page.getByRole("tab", { name: "Visão geral" }).click();
     const timelineSection = page.locator("section", { hasText: "Linha do tempo" });
     await timelineSection.getByRole("button", { name: "Propostas", exact: true }).click();
     await expect(timelineSection.getByText(/^Proposta PROP-/)).toBeVisible();
@@ -84,7 +84,7 @@ test.describe.serial("Perfil 360º do lead — A9", () => {
   test("3. verificação de conflito: nota some para o visualizador, status continua visível", async ({ page }) => {
     await login(page, SEED_USERS.ana.email);
     await page.goto(leadUrl);
-    await page.getByRole("button", { name: "Visão geral" }).click();
+    await page.getByRole("tab", { name: "Visão geral" }).click();
 
     const noteText = "Nota confidencial de conflito (teste e2e)";
     await page.getByPlaceholder("Nota (opcional)").fill(noteText);
