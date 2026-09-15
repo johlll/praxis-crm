@@ -13,7 +13,7 @@ import { AssignLeadForm } from "@/components/leads/assign-lead-form";
 import { LeadStatusToggle } from "@/components/leads/lead-status-toggle";
 import { listOpportunities, getOpportunity, listPipelineStagesWithDetails } from "@/modules/opportunities/queries";
 import { LeadOpportunitiesSection } from "@/components/pipeline/create-opportunity-form";
-import { listActivities } from "@/modules/activities/queries";
+import { getLastCompletedMeeting, listActivities, listActivitiesPageOrThrow } from "@/modules/activities/queries";
 import { OpportunityDetailPanel } from "@/components/pipeline/opportunity-detail-panel";
 import { StageProgressBar } from "@/components/leads/stage-progress-bar";
 import { StageMoveControl } from "@/components/leads/stage-move-control";
@@ -69,17 +69,21 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
     proposals,
     conflictCheck,
     timeline,
+    lastCompletedConsultation,
   ] = await Promise.all([
     listTeamMembers(workspaceId, user.id),
     listOpportunities(workspaceId, { leadId: id }),
-    listActivities(workspaceId, { leadId: id, status: "all", pageSize: 50 }),
+    // Mesma consulta estrita do "carregar mais": falha sobe para o
+    // error.tsx da rota em vez de virar "Nenhuma atividade ainda".
+    listActivitiesPageOrThrow(workspaceId, { leadId: id, status: "all", page: 1, pageSize: 50 }),
     listConversations(workspaceId, { leadId: id }),
     listProposalsForLead(id),
     getConflictCheck(id),
     getLeadTimelinePage(id),
+    getLastCompletedMeeting(id),
   ]);
   const allActivities = activitiesPage.items;
-  const activitiesHasMore = activitiesPage.page * activitiesPage.pageSize < activitiesPage.total;
+  const activitiesHasMore = activitiesPage.hasMore;
   const conversations = conversationsPage.items;
   const conversationsHasMore = conversationsPage.page * conversationsPage.pageSize < conversationsPage.total;
 
@@ -106,22 +110,6 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
   const stages = primaryOpportunity ? await listPipelineStagesWithDetails(primaryOpportunity.pipelineId) : [];
 
   const firstConversationId = conversations[0]?.id ?? null;
-
-  // "Consulta" (docs/decisoes/a9-perfil-360.md §9): sem tabela nova,
-  // derivada da atividade tipo `meeting` já concluída mais recente do
-  // LEAD (não filtrada por opportunityId) — achado real da revalidação em
-  // preview: o único "Nova atividade" alcançável a partir do Perfil 360
-  // é o da ActivitiesSection compartilhada (Visão geral/Atividades), que
-  // nunca manda opportunityId (mesma decisão da A6 citada em §3: toda
-  // atividade do lead pendura do LEAD, nunca só da oportunidade) —
-  // filtrar por opportunityId tornava o cartão inatingível na prática,
-  // mesmo com uma reunião de verdade concluída. Nenhuma duração/
-  // modalidade inventada (campos que não existem em `activities` hoje).
-  const lastCompletedConsultation =
-    allActivities
-      .filter((a) => a.type === "meeting" && a.status === "done")
-      .sort((a, b) => new Date(b.completedAt ?? b.dueAt).getTime() - new Date(a.completedAt ?? a.dueAt).getTime())[0] ??
-    null;
 
   // Uma única <LeadActivitiesSection> (todas as atividades do LEAD, não
   // só de uma oportunidade) reaproveitada em duas abas — nunca duas

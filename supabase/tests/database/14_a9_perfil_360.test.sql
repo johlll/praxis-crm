@@ -8,7 +8,7 @@
 -- chamada, nunca confia em estado deixado por um bloco anterior.
 
 begin;
-select plan(34);
+select plan(40);
 
 \set ws_um    '10000000-0000-0000-0000-000000000001'
 \set ws_dois  '10000000-0000-0000-0000-000000000002'
@@ -282,6 +282,77 @@ select ok(
   ),
   'Nenhuma nota aparece nas duas páginas mesmo com created_at empatado'
 );
+
+-- ===================================================================
+-- 5b) get_last_completed_meeting — o cartão "Consulta" não pode depender
+--     da primeira página de atividades (50). 55 tarefas com prazo antes
+--     das reuniões empurram a reunião mais recente para fora dessa
+--     página; a função precisa achá-la mesmo assim.
+-- ===================================================================
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+select count(*) filter (where created_id is not null) as volume_created from (
+  select create_activity(:'lead_a'::uuid, 'task'::activity_type, 'Tarefa de volume ' || g, '2026-01-01'::date + g) as created_id
+  from generate_series(1, 55) g
+) t \gset
+select create_activity(:'lead_a'::uuid, 'meeting'::activity_type, 'Consulta antiga', '2026-06-01'::date) as meeting_old \gset
+select create_activity(:'lead_a'::uuid, 'meeting'::activity_type, 'Consulta recente', '2027-12-30'::date) as meeting_new \gset
+select create_activity(:'lead_a'::uuid, 'meeting'::activity_type, 'Consulta empatada', '2027-12-31'::date) as meeting_tie \gset
+reset role;
+
+-- Conclusões com instante fixo: as tarefas terminam DEPOIS das reuniões
+-- (prova que o filtro é por tipo, não só pela conclusão mais recente).
+update public.activities set status = 'done', completed_at = '2026-04-01T00:00:00Z'
+where lead_id = :'lead_a'::uuid and type = 'task';
+update public.activities set status = 'done', completed_at = '2026-02-01T00:00:00Z' where id = :'meeting_old'::uuid;
+update public.activities set status = 'done', completed_at = '2026-03-01T00:00:00Z' where id = :'meeting_new'::uuid;
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+select items from list_activities(:'ws_um'::uuid, null, :'lead_a'::uuid, null, null, 'due_at_asc', 1, 50) \gset act_pg1_
+select ok(
+  not exists(select 1 from jsonb_array_elements(:'act_pg1_items'::jsonb) e where (e ->> 'id') = :'meeting_new'),
+  'A reunião concluída mais recente está FORA da primeira página de 50 atividades'
+);
+select is(
+  get_last_completed_meeting(:'lead_a'::uuid) ->> 'id', :'meeting_new',
+  'get_last_completed_meeting acha a reunião concluída mais recente mesmo fora das primeiras 50'
+);
+reset role;
+
+-- Empate exato de completed_at: desempate determinístico por id desc.
+update public.activities set status = 'done', completed_at = '2026-03-01T00:00:00Z' where id = :'meeting_tie'::uuid;
+select id::text as tie_expected from public.activities
+where id in (:'meeting_new'::uuid, :'meeting_tie'::uuid) order by id desc limit 1 \gset
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+select is(
+  get_last_completed_meeting(:'lead_a'::uuid) ->> 'id', :'tie_expected',
+  'Empate de completed_at resolve sempre para a mesma reunião (id desc)'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'carla', 'role', 'authenticated')::text, true);
+select throws_ok(
+  format($i$ select get_last_completed_meeting(%L::uuid) $i$, :'lead_a'),
+  'P0001', 'lead_not_found',
+  'Advogado fora do alcance do lead não lê a última consulta'
+);
+select ok(
+  get_last_completed_meeting(:'lead_b'::uuid) is null,
+  'Lead sem reunião concluída devolve null (não é erro)'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'bruno', 'role', 'authenticated')::text, true);
+select throws_ok(
+  format($i$ select get_last_completed_meeting(%L::uuid) $i$, :'lead_a'),
+  'P0001', 'insufficient_permission',
+  'Owner de outro workspace não lê a última consulta de um lead que não é dele'
+);
+reset role;
 
 -- ===================================================================
 -- 6) list_conversations(p_lead_id) — filtro aditivo, sem conversas

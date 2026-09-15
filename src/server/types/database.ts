@@ -2278,6 +2278,7 @@ export type Database = {
         }[]
       }
       get_conversation: { Args: { p_conversation_id: string }; Returns: Json }
+      get_last_completed_meeting: { Args: { p_lead_id: string }; Returns: Json }
       get_lead: { Args: { p_lead_id: string }; Returns: Json }
       get_lead_timeline: {
         Args: {

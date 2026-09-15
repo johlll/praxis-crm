@@ -231,6 +231,49 @@ export async function listAllActivities(
   );
 }
 
+/**
+ * Uma página só, mas sem engolir erro: listActivities() devolve lista
+ * vazia quando o RPC falha (comportamento antigo, mantido para as telas
+ * que já dependem dele). O Perfil 360 precisa distinguir "não há mais
+ * atividades" de "a busca falhou" — senão o "carregar mais" some em
+ * silêncio numa falha de rede.
+ */
+export async function listActivitiesPageOrThrow(
+  workspaceId: string,
+  filters: Omit<ListActivitiesFilters, "page" | "pageSize"> & { page: number; pageSize: number },
+): Promise<{ items: ActivityListItem[]; total: number; hasMore: boolean }> {
+  const page = Math.max(1, filters.page);
+  const pageSize = Math.max(1, Math.min(filters.pageSize, 100));
+  const result = await fetchActivitiesPage(workspaceId, { ...filters, page, pageSize });
+  if (!result.ok) {
+    throw new ActivitiesLoadError(`Falha ao buscar a página ${page} de atividades (workspace ${workspaceId}).`);
+  }
+  return {
+    items: result.page.items,
+    total: result.page.total,
+    hasMore: page * pageSize < result.page.total,
+  };
+}
+
+export class ConsultationLoadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConsultationLoadError";
+  }
+}
+
+/** Última reunião concluída do lead, direto no banco (nunca derivada de
+ * uma página já carregada). `null` = nenhuma consulta realizada ainda. */
+export async function getLastCompletedMeeting(leadId: string): Promise<ActivityListItem | null> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("get_last_completed_meeting", { p_lead_id: leadId });
+  if (error) {
+    throw new ConsultationLoadError(`Falha ao buscar a última consulta do lead ${leadId}: ${error.message}`);
+  }
+  if (!data) return null;
+  return mapActivityRow(data as Record<string, unknown>);
+}
+
 export type ActivityDetail = ActivityListItem & { workspaceId: string };
 
 export async function getActivity(activityId: string): Promise<ActivityDetail | null> {

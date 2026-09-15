@@ -113,10 +113,17 @@ export function LeadTimeline({
   // que dispararia uma renderização em cascata) — reseta para a primeira
   // página sempre que o servidor manda dados novos, aceitável já que os
   // dados mudaram de verdade.
+  //
+  // `initialItems` é sempre a primeira página de TODOS os tipos — então o
+  // filtro volta explicitamente para "Todos" junto com ela. Manter
+  // "Propostas" selecionado sobre eventos de todos os tipos deixaria o
+  // chip e a lista mentindo um sobre o outro.
   if (initialItems !== syncedInitialItems) {
     setSyncedInitialItems(initialItems);
     setItems(initialItems);
     setHasMore(initialHasMore);
+    setFilter("todos");
+    setError(null);
   }
 
   // O filtro precisa ser aplicado na CONSULTA ao servidor, não só na
@@ -126,8 +133,11 @@ export function LeadTimeline({
   // de verdade (achado do review pós-CI — "Propostas" podia mostrar
   // "Nenhum evento ainda" com uma proposta real fora da primeira
   // página). O servidor já aceita `p_types`; só faltava a interface usar.
+  //
+  // O chip só muda DEPOIS que a busca do novo tipo dá certo: numa falha, o
+  // filtro indicado continua sendo o dos resultados que estão na tela.
   function selectFilter(next: LeadTimelineEventType | "todos") {
-    setFilter(next);
+    if (next === filter) return;
     setError(null);
     startTransition(async () => {
       const types = next === "todos" ? null : [next];
@@ -136,6 +146,7 @@ export function LeadTimeline({
         setError(result.error);
         return;
       }
+      setFilter(next);
       setItems(result.items);
       setHasMore(result.hasMore);
     });
@@ -166,6 +177,7 @@ export function LeadTimeline({
               key={f.key}
               type="button"
               onClick={() => selectFilter(f.key)}
+              aria-pressed={filter === f.key}
               disabled={pending}
               className={`h-7 rounded-full border px-3 text-meta font-medium ${
                 filter === f.key

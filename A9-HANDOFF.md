@@ -45,8 +45,10 @@ Entregue nesta fase, conforme o pedido (raciocínio completo em
   do kanban).
 - `list_conversations` ganha `p_lead_id` (parâmetro aditivo) para a aba
   Conversas.
-- Bloco "Consulta" (`ConsultationCard`) — derivado da atividade `meeting`
-  concluída mais recente da oportunidade ativa, sem tabela nova.
+- Bloco "Consulta" (`ConsultationCard`) — última atividade `meeting`
+  concluída do lead, buscada direto pela RPC
+  `get_last_completed_meeting` (sem tabela nova, sem depender da página de
+  atividades já carregada).
 
 **Fora do escopo, por decisão registrada em §1 do documento de decisões:**
 - Painel de atribuição de marketing/touchpoints — omitido inteiramente
@@ -95,6 +97,10 @@ A3 nega tudo por padrão a tabela nova.
   agregador com cursor composto, mesmo padrão de
   `list_conversation_messages` (A7).
 - `list_conversations` ganha `p_lead_id` (aditivo, default null).
+- `get_last_completed_meeting(lead_id)` (migration
+  `20260915100000_a9_last_completed_meeting.sql`) — última reunião
+  concluída do lead, ordem `completed_at desc, id desc`, `null` sem
+  consulta; mesmo gate de papel e alcance de `list_activities`.
 
 Todas reaproveitam `private.has_workspace_role` e
 `private.lead_accessible_to_role` sem nenhuma segunda implementação da
@@ -121,7 +127,7 @@ regra de alcance.
 
 ## 5. Testes
 
-- `supabase/tests/database/14_a9_perfil_360.test.sql` (34 asserções): RLS
+- `supabase/tests/database/14_a9_perfil_360.test.sql` (40 asserções): RLS
   forçada nas 3 tabelas; alcance por registro em `create_lead_note`/
   `create_proposal`/`upsert_conflict_check` (advogado dentro/fora do
   alcance); projeção financeira de proposta por papel (viewer sem
@@ -132,27 +138,36 @@ regra de alcance.
   mascarada para sales/viewer (advogado/dono leem o texto, os outros dois
   só status/data); paginação de `get_lead_timeline` sem furo/repetição com
   3 eventos de timestamp forçadamente empatado; `list_conversations(p_lead_id)`;
-  isolamento entre workspaces (proposta e conflito de um lead de outro
-  workspace).
+  `get_last_completed_meeting` achando a reunião fora das primeiras 50
+  atividades, com desempate por id, alcance e isolamento; isolamento
+  entre workspaces (proposta e conflito de um lead de outro workspace).
+- `tests/unit/a9-lead-activities-load-more-action.test.ts` e
+  `tests/unit/a9-perfil-360-review-fixes.test.tsx` (11 casos, §11.1 do
+  documento de decisões): falha na segunda página de atividades mantém
+  itens, erro e nova tentativa; última reunião vinda do RPC dedicado;
+  filtro da timeline volta para "Todos" numa revalidação e não muda numa
+  troca que falha.
 - `tests/unit/a9-perfil-360-errors.test.ts` (6 casos): as 3
   `*LoadError` nunca viram estado vazio; `getConflictCheck` sem registro
   devolve "não verificado" (não é erro); payload de proposta não carrega
   `value_cents` quando o RPC não o devolveu (viewer/sales).
-- `tests/e2e/a9-lead-profile.spec.ts` (novo, 3 testes): mudar de etapa sem
+- `tests/e2e/a9-lead-profile.spec.ts` (novo, 4 testes): mudar de etapa sem
   sair do Perfil 360; registrar proposta com o texto honesto de envio
   manual e ver o evento aparecer na timeline ao trocar o filtro para
-  "Propostas" (prova que o filtro vai ao servidor, não só à tela); nota de
-  conflito visível ao advogado que a escreveu e ausente para o
-  visualizador que abre o mesmo lead depois.
+  "Propostas"; nota de conflito visível ao advogado que a escreveu e
+  ausente da TELA do visualizador que abre o mesmo lead depois; cartão
+  "Consulta" aparecendo depois de uma reunião concluída. Precisão: o e2e
+  da nota verifica a ausência na tela — que a nota não viaja na resposta
+  ao navegador está demonstrado pelo pgTAP, não por inspeção de rede.
 - Suíte completa local: `npm run typecheck && npm run lint && npm test` —
-  154 testes unitários, 0 falhas.
+  165 testes unitários, 0 falhas.
 
 ## 6. CI
 
 Ver o resultado do run mais recente da branch em
 https://github.com/johlll/praxis-crm/actions?query=branch%3Afeat%2Fa9-perfil-360
 — typecheck, lint, testes unitários (154), `db:types:check`, pgTAP (14
-arquivos incluindo `14_a9_perfil_360.test.sql`, agora 34/34), isolamento,
+arquivos incluindo `14_a9_perfil_360.test.sql`, agora 40/40), isolamento,
 concorrência A7, build, e2e completo (incluindo o arquivo novo da A9).
 
 Duas rodadas de correção chegaram até aqui, todas encontradas por
@@ -203,6 +218,14 @@ entregas concluídas** — detalhe completo em
    de verdade no preview, não só olhando o código; o CI não pega isso
    porque nenhum e2e anterior criava uma atividade `meeting`. Corrigido e
    revalidado no deployment seguinte.
+
+**Rodada 4 (terceiro review), 3 ajustes pontuais** — detalhe em
+[`docs/decisoes/a9-perfil-360.md`](docs/decisoes/a9-perfil-360.md) §11.1:
+falha na segunda página de atividades não some mais com o "carregar
+mais"; cartão "Consulta" vindo de uma RPC dedicada em vez da página de 50
+já carregada; filtro da timeline coerente com os eventos depois de uma
+revalidação ou de uma troca que falhou. Cobertos por testes direcionados
+(unitários + pgTAP), sem repetir a validação manual inteira.
 
 Nenhuma das três rodadas envolveu mudar uma regra de negócio — a primeira
 foi só composição de UI; a segunda foram lacunas reais de proteção/UX e
@@ -256,8 +279,9 @@ usuário. Confirmado ao vivo:
 
 **Limitação desta validação**: a máscara da nota de conflito para
 sales/viewer (achado 1 da §11) foi confirmada pelo pgTAP (RPC real contra
-Postgres real, 3 papéis testados) e pelo e2e novo rodando no CI (usuário
-`elisa`, seed do CI) — mas **não** foi reconfirmada ao vivo neste ambiente
+Postgres real, 3 papéis testados — é ele que prova que a nota não sai na
+resposta) e pelo e2e novo rodando no CI (usuário `elisa`, seed do CI —
+esse só prova a ausência na tela) — mas **não** foi reconfirmada ao vivo neste ambiente
 hospedado (`praxis-crm-dev`) por falta de uma segunda credencial de teste
 (viewer/sales) nesse projeto; só a credencial de owner estava disponível.
 Quem quiser essa confirmação específica no ambiente hospedado precisa
@@ -274,11 +298,9 @@ fornecer uma credencial de papel restrito desse projeto.
   uma sequência atômica do banco — colisão concorrente rara falha por
   unique constraint (nunca duplica silenciosamente), aceitável para uma
   ação manual de baixo volume.
-- `listActivities()` (usada também pela carga inicial e pelo "carregar
-  mais" das abas Atividades/Visão geral) engole falha de RPC devolvendo
-  lista vazia, em vez de subir um erro distinto — comportamento herdado
-  das fases anteriores (não introduzido pela A9), documentado aqui porque
-  o "carregar mais" novo herda a mesma limitação: uma falha real de rede
-  no meio da paginação pode parecer "não há mais atividades" em vez de um
-  erro recuperável. `listConversations()`/`getLeadTimelinePage()` não têm
-  esse problema (lançam exceção de verdade).
+- `listActivities()` continua engolindo falha de RPC como lista vazia nas
+  telas das fases anteriores (Central, painel da oportunidade) —
+  comportamento herdado, fora do escopo. O Perfil 360 não depende mais
+  dela para a lista do lead nem para o "carregar mais" (usa
+  `listActivitiesPageOrThrow()`, §11.1 do documento de decisões); só o
+  painel da oportunidade ativa ainda a usa, para as pendentes.

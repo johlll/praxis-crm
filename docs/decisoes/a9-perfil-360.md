@@ -334,6 +334,49 @@ Testes acrescentados: 4 novas asserções pgTAP (nota mascarada para
 advogado/visualizador/atendimento — `14_a9_perfil_360.test.sql`, plano
 30 → 34) e um arquivo e2e novo, `tests/e2e/a9-lead-profile.spec.ts`
 (mudar etapa sem sair do Perfil 360, texto honesto de envio de proposta,
-filtro da timeline indo ao servidor, nota de conflito nunca chegando ao
-navegador do visualizador) — o PR anterior não tinha nenhum e2e
-específico da A9, só reaproveitava os já existentes de fases anteriores.
+filtro da timeline indo ao servidor, nota de conflito ausente da tela do
+visualizador) — o PR anterior não tinha nenhum e2e específico da A9, só
+reaproveitava os já existentes de fases anteriores. Precisão: esse e2e
+verifica a AUSÊNCIA da nota na tela do visualizador; que a nota não
+viaja na resposta ao navegador está demonstrado pelo pgTAP (a RPC
+devolve `note: null` para sales/viewer), não por inspeção de rede no e2e.
+
+### 11.1 Terceiro review — três ajustes pontuais
+
+8. **Falha na segunda página de atividades sumia com o "carregar mais".**
+   `loadMoreLeadActivitiesAction()` chamava `listActivities()`, que
+   transforma erro de RPC em lista vazia — a action respondia `ok: true,
+   hasMore: false` e o botão desaparecia como se não houvesse mais nada.
+   Nova consulta `listActivitiesPageOrThrow()` (mesmo RPC, uma página, mas
+   joga `ActivitiesLoadError`), usada pela action e também pela carga
+   inicial da página (falha sobe para o `error.tsx` da rota em vez de
+   "Nenhuma atividade ainda"). Na falha, os itens carregados continuam, o
+   erro aparece e o botão continua lá, pedindo a mesma página de novo.
+   `listActivities()` fica como estava para as outras telas.
+9. **O cartão "Consulta" só enxergava as primeiras 50 atividades.** Era
+   calculado sobre a página inicial (ordem de prazo), então uma reunião
+   concluída fora dela sumia do cartão ou dava lugar a uma mais antiga — e
+   "carregar mais" no navegador nunca recalcula algo montado no servidor.
+   Nova RPC `get_last_completed_meeting(p_lead_id)` (migration
+   `20260915100000_a9_last_completed_meeting.sql`): mesmo gate de papel e
+   alcance por registro de `list_activities`, `type = 'meeting' and status
+   = 'done'`, ordem `completed_at desc, id desc`, `null` quando não há
+   consulta. Continua sem filtrar por `opportunityId` (achado da rodada 3).
+10. **Filtro da timeline incoerente depois de uma revalidação.** Ao receber
+    uma primeira página nova (de todos os tipos) do servidor, a
+    `LeadTimeline` trocava os eventos mas mantinha, por exemplo,
+    "Propostas" selecionado. Decisão: voltar explicitamente para "Todos"
+    junto com essa página (é o que ela de fato contém), em vez de
+    disparar uma nova busca durante a sincronização. E numa troca de
+    filtro que falha, o chip só muda depois que a busca do novo tipo dá
+    certo — o filtro indicado sempre corresponde aos eventos na tela.
+
+Testes: `tests/unit/a9-lead-activities-load-more-action.test.ts` (a
+action real com o RPC falhando na página 2 → `ok: false`);
+`tests/unit/a9-perfil-360-review-fixes.test.tsx` (itens preservados +
+nova tentativa da mesma página; última reunião via RPC dedicado, `null`
+sem consulta, erro distinto; revalidação com "Propostas" ativo volta para
+"Todos"; troca que falha mantém o filtro anterior; "carregar mais"
+mantém o filtro); 6 asserções pgTAP novas (reunião fora das primeiras 50
+atividades, desempate por id, alcance do advogado, `null` sem consulta,
+isolamento entre workspaces).

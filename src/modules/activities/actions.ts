@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createServerSupabaseClient } from "@/server/supabase/server";
 import { requirePermission, requireMembership, AuthzError, type Permission } from "@/server/authz/permissions";
 import { toUserMessage } from "@/lib/errors";
-import { listActivities, type ActivityListItem } from "./queries";
+import { listActivitiesPageOrThrow, type ActivityListItem } from "./queries";
 import {
   createActivitySchema,
   updateActivitySchema,
@@ -302,10 +302,10 @@ export async function deleteStageAutoActivityRuleAction(stageId: string): Promis
 const LEAD_ACTIVITIES_PAGE_SIZE = 50;
 
 /**
- * "Carregar mais" da aba Atividades/Visão geral do Perfil 360 — a carga
- * inicial da página já busca até 200 com status "all", mas um lead pode
- * ultrapassar isso ao longo do tempo; sem paginação de verdade o restante
- * ficaria descartado em silêncio (achado do review pós-CI).
+ * "Carregar mais" da aba Atividades/Visão geral do Perfil 360. Usa a
+ * consulta que PRESERVA o erro (listActivitiesPageOrThrow) — com
+ * listActivities(), uma falha virava lista vazia + hasMore=false e o
+ * botão sumia como se não houvesse mais nada.
  */
 export async function loadMoreLeadActivitiesAction(
   leadId: string,
@@ -313,13 +313,13 @@ export async function loadMoreLeadActivitiesAction(
 ): Promise<{ ok: true; items: ActivityListItem[]; hasMore: boolean } | { ok: false; error: string }> {
   try {
     const { workspaceId } = await requireMembership();
-    const result = await listActivities(workspaceId, {
+    const result = await listActivitiesPageOrThrow(workspaceId, {
       leadId,
       status: "all",
       page,
       pageSize: LEAD_ACTIVITIES_PAGE_SIZE,
     });
-    return { ok: true, items: result.items, hasMore: page * result.pageSize < result.total };
+    return { ok: true, items: result.items, hasMore: result.hasMore };
   } catch {
     return { ok: false, error: "Não foi possível carregar mais atividades. Tente novamente." };
   }
