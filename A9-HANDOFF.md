@@ -299,11 +299,12 @@ ambiente hospedado quando aplicável.
 
 Continua em aberto:
 
-- **Validação de atendimento e visualizador em `praxis-crm-dev`** — só
-  existe credencial autorizada de owner. Acesso necessário e roteiro
-  exato em `docs/decisoes/estabilizacao-pos-a9.md` §7.1.
-- **Site URL / Redirect URLs do Auth em `praxis-crm-dev`** (A2-HANDOFF §7.5)
-  — configuração manual no painel do Supabase, não reconferida.
+- **Modelo do e-mail de confirmação no `praxis-crm-dev`** — o link padrão só
+  cria sessão se aberto até 5 minutos depois do cadastro e no mesmo
+  navegador (prazo do Supabase Auth, reproduzido no hospedado). Ajuste
+  manual no painel, com valores exatos e critério de reteste em
+  `docs/decisoes/estabilizacao-pos-a9.md` §6.2. Owner, atendimento e
+  visualizador já validados no hospedado (§7.1).
 
 ## 9. Rodada de estabilização pós-A9
 
@@ -331,3 +332,13 @@ Resumo:
   anterior validadas no CI; aplicada em `praxis-crm-dev` após dry-run.
 - **Formulários de edição** que voltavam ao valor anterior depois de salvar
   (risco registrado desde a A4, reproduzido no hospedado nesta rodada).
+- **Login** (`bd3adb5`): falha do serviço de autenticação deixou de virar
+  "E-mail ou senha incorretos"; decisão pelo código oficial do auth-js, sem
+  revelar se a conta existe. Conferido no hospedado.
+- **Confirmação de e-mail** (`057fcf9`): o link real do Supabase volta como
+  `/auth/confirm?code=` (fluxo PKCE) e a rota só aceitava `token_hash` — a
+  confirmação terminava no login sem sessão e sem aviso. Validado no
+  hospedado com cadastro e link reais (§7.2 do inventário).
+- **Site URL / Redirect URLs** (A2-HANDOFF §7.5): já corrigidos no painel;
+  reconferidos sem credencial pelo redirecionamento do próprio GoTrue.
+  Nenhum ajuste manual pendente.
