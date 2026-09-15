@@ -194,9 +194,20 @@ entregas concluídas** — detalhe completo em
    — implementado, reaproveitando a RPC/bloqueio do kanban sem duplicar
    regra nenhuma.
 
-Nenhuma das duas rodadas envolveu mudar uma regra de negócio — a primeira
+**Rodada 3 (revalidação em preview, achado ao vivo — não do CI):**
+1. O cartão "Consulta" implementado na rodada 2 filtrava por
+   `opportunityId === oportunidade ativa`, mas o único "Nova atividade"
+   alcançável a partir do Perfil 360 nunca manda `opportunityId` — o
+   cartão nunca aparecia na prática, mesmo com uma reunião de verdade
+   concluída. Só apareceu porque testei criando e concluindo a atividade
+   de verdade no preview, não só olhando o código; o CI não pega isso
+   porque nenhum e2e anterior criava uma atividade `meeting`. Corrigido e
+   revalidado no deployment seguinte.
+
+Nenhuma das três rodadas envolveu mudar uma regra de negócio — a primeira
 foi só composição de UI; a segunda foram lacunas reais de proteção/UX e
-duas entregas concluídas.
+duas entregas concluídas; a terceira foi um bug real na entrega da própria
+rodada 2, só visível testando o fluxo de ponta a ponta.
 
 ## 7. Validação em preview
 
@@ -218,20 +229,39 @@ migrations em `praxis-crm-dev` e validado manualmente como advogado
   para conferir que "Ver cliente" aparece uma única vez.
 - Painel de atribuição de marketing confirmado AUSENTE (decisão da §1).
 
-**Segunda rodada** (depois das correções da §11 dos decisões): a correção
-de `conflict_checks` entrou numa migration nova,
-`20260915090000_a9_conflict_check_fixes.sql` (`20260913100100` já estava
-aplicada em `praxis-crm-dev` — editar uma migration já aplicada quebraria
-o forward-only do plano §15, mesmo em ambiente de dev; `create or
-replace` nas duas funções, aridade sem mudança). Aplicada com
-`db:push:dry-run` primeiro (só essa migration, nenhuma exclusão) e depois
-`db:push` de verdade, autorização explícita do usuário. O fluxo foi
-revalidado no novo deployment de preview: `StageMoveControl` movendo
-etapa sem sair da página, `ConsultationCard` aparecendo só depois de uma
-atividade `meeting` concluída, texto de "Registrar envio manual" no lugar
-de "Enviar proposta", nota de conflito visível para quem a escreveu e
-ausente para o visualizador, e "carregar mais" funcionando nas abas
-Atividades e Conversas.
+**Segunda rodada** (depois das correções da §11 dos decisões, com um lead
+fictício novo — "Cliente A9 Revalidação"): a correção de `conflict_checks`
+entrou numa migration nova, `20260915090000_a9_conflict_check_fixes.sql`
+(`20260913100100` já estava aplicada em `praxis-crm-dev` — editar uma
+migration já aplicada quebraria o forward-only do plano §15, mesmo em
+ambiente de dev; `create or replace` nas duas funções, aridade sem
+mudança). Aplicada com `db:push:dry-run` primeiro (só essa migration,
+nenhuma exclusão) e depois `db:push` de verdade, autorização explícita do
+usuário. Confirmado ao vivo:
+
+- `StageMoveControl` movendo a oportunidade de "Fazer primeiro contato"
+  para "Qualificar oportunidade" sem sair da página, evento aparecendo na
+  timeline.
+- Proposta criada, "Registrar envio manual" (não mais "Enviar proposta")
+  com o texto explicando que o CRM não despacha a mensagem, aceita, e o
+  evento aparecendo na timeline ao trocar o filtro para "Propostas" (prova
+  ao vivo de que o filtro vai ao servidor).
+- Verificação de conflito registrada com nota confidencial, texto visível
+  para quem a escreveu (advogado/owner).
+- **Achado real nesta rodada, não coberto pelo CI**: o cartão "Consulta"
+  não aparecia depois de criar e concluir uma reunião de verdade — corrigido
+  e revalidado (deployment seguinte já mostrou o cartão com "Realizada" e
+  os dados corretos). Detalhe em
+  [`docs/decisoes/a9-perfil-360.md`](docs/decisoes/a9-perfil-360.md) §11.
+
+**Limitação desta validação**: a máscara da nota de conflito para
+sales/viewer (achado 1 da §11) foi confirmada pelo pgTAP (RPC real contra
+Postgres real, 3 papéis testados) e pelo e2e novo rodando no CI (usuário
+`elisa`, seed do CI) — mas **não** foi reconfirmada ao vivo neste ambiente
+hospedado (`praxis-crm-dev`) por falta de uma segunda credencial de teste
+(viewer/sales) nesse projeto; só a credencial de owner estava disponível.
+Quem quiser essa confirmação específica no ambiente hospedado precisa
+fornecer uma credencial de papel restrito desse projeto.
 
 ## 8. Limitações reais
 
