@@ -10,6 +10,7 @@ import { getRequestOrigin } from "@/server/request-origin";
 import { DataLoadError, LOAD_ERROR_MESSAGE } from "@/server/data/load-error";
 import { toUserMessage } from "@/lib/errors";
 import { signInSchema, signUpSchema } from "./schema";
+import { signInErrorMessage } from "./sign-in-errors";
 
 export type AuthActionState = {
   ok: boolean;
@@ -85,13 +86,7 @@ export async function signInAction(
   const { error } = await supabase.auth.signInWithPassword(parsed.data);
 
   if (error) {
-    // O Supabase distingue "credenciais erradas" de outros erros pelo
-    // texto — mas não repassamos o texto dele, só decidimos com base nele
-    // qual mensagem NOSSA mostrar.
-    return {
-      ok: false,
-      error: "E-mail ou senha incorretos.",
-    };
+    return { ok: false, error: signInErrorMessage(error) };
   }
 
   // Sem isso, quem já é membro de um workspace (ex.: convidado antes,
