@@ -271,7 +271,15 @@ tinha se comprometido a entregar.
    (mesma classe de bug que a A4 já tinha corrigido para oportunidades). A
    versão entra agora no próprio `WHERE` do `UPDATE`
    (`where id = ... and lock_version = p_lock_version`), igual ao padrão já
-   usado em `send_proposal`/`decide_proposal` nesta mesma migration.
+   usado em `send_proposal`/`decide_proposal`. Junto com o achado 1 acima,
+   entrou numa migration NOVA
+   (`20260915090000_a9_conflict_check_fixes.sql`) em vez de editar
+   `20260913100100_a9_business_functions.sql` — essa já estava aplicada em
+   `praxis-crm-dev` quando o achado apareceu, e o usuário corrigiu essa
+   escolha (migrations são forward-only, plano §15; editar uma migration
+   já aplicada em qualquer ambiente real quebra esse contrato mesmo que o
+   ambiente seja só de desenvolvimento). `create or replace` bastou nas
+   duas funções — a aridade não muda, só o corpo.
 3. **"Enviar proposta" prometia um envio que o CRM não faz.** A UI mostrava
    canais (WhatsApp/e-mail) e "Enviando…" como se o sistema despachasse a
    mensagem — na prática só grava metadado. Renomeado para "Registrar envio

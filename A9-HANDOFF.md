@@ -78,7 +78,7 @@ GRANT explícito necessário: `alter default privileges` já vigente desde a
 A3 nega tudo por padrão a tabela nova.
 
 ## 3. RPCs novas (`20260913100100_a9_business_functions.sql`,
-`20260913100200_a9_read_functions.sql`)
+`20260913100200_a9_read_functions.sql`, `20260915090000_a9_conflict_check_fixes.sql`)
 
 - `create_lead_note(lead_id, body)`.
 - `create_proposal`/`send_proposal`/`decide_proposal`/`get_proposal`/
@@ -86,7 +86,11 @@ A3 nega tudo por padrão a tabela nova.
   (nova, mesma política de `opportunity_financial_projection`: viewer
   nada, sales só a faixa, os demais o exato).
 - `upsert_conflict_check`/`get_conflict_check` — leitura nunca 404 (estado
-  "não verificado" é legítimo, não erro); escrita restrita por papel.
+  "não verificado" é legítimo, não erro); escrita restrita por papel;
+  nota mascarada para sales/viewer; concorrência protegida no `WHERE` do
+  `UPDATE` — as duas últimas vieram na migration de correção
+  `20260915090000`, depois de `20260913100100` já estar aplicada em
+  `praxis-crm-dev` (§11 do documento de decisões).
 - `get_lead_timeline(lead_id, types?, before?, before_id?, limit?)` —
   agregador com cursor composto, mesmo padrão de
   `list_conversation_messages` (A7).
@@ -214,14 +218,19 @@ migrations em `praxis-crm-dev` e validado manualmente como advogado
   para conferir que "Ver cliente" aparece uma única vez.
 - Painel de atribuição de marketing confirmado AUSENTE (decisão da §1).
 
-**Segunda rodada** (depois das correções da §11 dos decisões): as
-migrations da conflict-check foram reaplicadas em `praxis-crm-dev`
-(`CREATE OR REPLACE`/edição do `UPDATE`, mesmo arquivo, sem migration
-nova) e o fluxo foi revalidado no novo deployment de preview —
-`StageMoveControl` movendo etapa sem sair da página, `ConsultationCard`
-aparecendo só depois de uma atividade `meeting` concluída, texto de
-"Registrar envio manual" no lugar de "Enviar proposta", nota de conflito
-some para o visualizador, e "carregar mais" funcionando nas abas
+**Segunda rodada** (depois das correções da §11 dos decisões): a correção
+de `conflict_checks` entrou numa migration nova,
+`20260915090000_a9_conflict_check_fixes.sql` (`20260913100100` já estava
+aplicada em `praxis-crm-dev` — editar uma migration já aplicada quebraria
+o forward-only do plano §15, mesmo em ambiente de dev; `create or
+replace` nas duas funções, aridade sem mudança). Aplicada com
+`db:push:dry-run` primeiro (só essa migration, nenhuma exclusão) e depois
+`db:push` de verdade, autorização explícita do usuário. O fluxo foi
+revalidado no novo deployment de preview: `StageMoveControl` movendo
+etapa sem sair da página, `ConsultationCard` aparecendo só depois de uma
+atividade `meeting` concluída, texto de "Registrar envio manual" no lugar
+de "Enviar proposta", nota de conflito visível para quem a escreveu e
+ausente para o visualizador, e "carregar mais" funcionando nas abas
 Atividades e Conversas.
 
 ## 8. Limitações reais
