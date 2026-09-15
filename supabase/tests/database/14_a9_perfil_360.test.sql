@@ -358,6 +358,9 @@ reset role;
 -- 6) list_conversations(p_lead_id) — filtro aditivo, sem conversas
 -- ===================================================================
 
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
+
 select total_count from list_conversations(:'ws_um'::uuid, 1, 20, :'lead_b'::uuid) \gset lc9_
 select is((:'lc9_total_count')::int, 0, 'list_conversations(p_lead_id) sem conversas vinculadas devolve total 0');
 
