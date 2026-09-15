@@ -48,13 +48,13 @@ select is(
   'Contador atrasado não reaproveita número: continua depois do maior emitido (0050)'
 );
 select is(
-  (select last_value from private.proposal_number_counters where workspace_id = :'ws_um'::uuid and year = :'ano'::int),
+  (select last_value from public.proposal_number_counters where workspace_id = :'ws_um'::uuid and year = :'ano'::int),
   51,
   'Contador fica registrado no último valor alocado'
 );
 
 -- Acima de 9999 o número cresce em dígitos, sem truncar (lpad antigo cortava).
-update private.proposal_number_counters set last_value = 9999
+update public.proposal_number_counters set last_value = 9999
 where workspace_id = :'ws_um'::uuid and year = :'ano'::int;
 
 set local role authenticated;
@@ -92,7 +92,7 @@ select is(
 select is(
   (
     select count(*)::int from information_schema.role_table_grants
-    where table_schema = 'private' and table_name = 'proposal_number_counters'
+    where table_schema = 'public' and table_name = 'proposal_number_counters'
       and grantee in ('anon', 'authenticated')
   ),
   0,

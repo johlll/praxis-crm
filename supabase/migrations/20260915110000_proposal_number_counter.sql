@@ -8,7 +8,7 @@
 -- lpad(seq, 4, '0') TRUNCA sequências acima de 9999 ('10000' vira '1000'),
 -- colidindo com um número já emitido.
 --
--- Agora: um contador por (workspace, ano) em private.proposal_number_counters,
+-- Agora: um contador por (workspace, ano) em public.proposal_number_counters,
 -- alocado com INSERT ... ON CONFLICT DO UPDATE ... RETURNING. A linha do
 -- contador fica bloqueada até o fim da transação; a segunda chamada espera
 -- e recebe o valor seguinte. Lacunas são aceitas (uma criação que falha
@@ -20,19 +20,28 @@
 -- alocação nunca fica abaixo do maior número existente no banco. A unique
 -- (workspace_id, number) continua valendo.
 
-create table private.proposal_number_counters (
+create table public.proposal_number_counters (
   workspace_id uuid not null references public.workspaces (id) on delete cascade,
   year integer not null check (year between 2000 and 9999),
   last_value integer not null check (last_value >= 0),
   primary key (workspace_id, year)
 );
 
-comment on table private.proposal_number_counters is
+comment on table public.proposal_number_counters is
   'Último sequencial de proposta emitido por workspace e ano. Só acessado por private.next_proposal_sequence().';
 
--- Schema private não é exposto pelo PostgREST; ainda assim, nenhum papel da
--- API recebe acesso direto à tabela.
-revoke all on table private.proposal_number_counters from public, anon, authenticated;
+-- Mesmo padrão das tabelas de negócio (o schema private só guarda funções,
+-- por desenho — 04_security_hardening.test.sql): RLS habilitada e forçada,
+-- negação total para authenticated, acesso só pela função SECURITY DEFINER.
+alter table public.proposal_number_counters enable row level security;
+alter table public.proposal_number_counters force row level security;
+
+create policy proposal_number_counters_select_deny on public.proposal_number_counters for select to authenticated using (false);
+create policy proposal_number_counters_insert_deny on public.proposal_number_counters for insert to authenticated with check (false);
+create policy proposal_number_counters_update_deny on public.proposal_number_counters for update to authenticated using (false);
+create policy proposal_number_counters_delete_deny on public.proposal_number_counters for delete to authenticated using (false);
+
+revoke all on table public.proposal_number_counters from public, anon, authenticated;
 
 -- Maior sequencial já emitido no formato PROP-<ano>-<seq> (qualquer largura
 -- de sequencial — inclusive números acima de 9999, se existirem).
@@ -60,7 +69,7 @@ as $body$
 declare
   v_next integer;
 begin
-  insert into private.proposal_number_counters as c (workspace_id, year, last_value)
+  insert into public.proposal_number_counters as c (workspace_id, year, last_value)
   values (
     p_workspace_id,
     p_year,
@@ -78,7 +87,7 @@ revoke all on function private.next_proposal_sequence(uuid, integer) from public
 
 -- Backfill: workspaces que já emitiram propostas começam do maior número
 -- existente de cada ano. Idempotente.
-insert into private.proposal_number_counters (workspace_id, year, last_value)
+insert into public.proposal_number_counters (workspace_id, year, last_value)
 select
   p.workspace_id,
   substring(p.number from '^PROP-([0-9]{4})-[0-9]+$')::integer as year,
@@ -87,7 +96,7 @@ from public.proposals p
 where p.number ~ '^PROP-[0-9]{4}-[0-9]+$'
 group by p.workspace_id, 2
 on conflict (workspace_id, year) do update
-  set last_value = greatest(private.proposal_number_counters.last_value, excluded.last_value);
+  set last_value = greatest(public.proposal_number_counters.last_value, excluded.last_value);
 
 -- create_proposal: mesma assinatura e mesmas regras de acesso; só a
 -- numeração muda.

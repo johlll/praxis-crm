@@ -1491,6 +1491,32 @@ export type Database = {
           },
         ]
       }
+      proposal_number_counters: {
+        Row: {
+          last_value: number
+          workspace_id: string
+          year: number
+        }
+        Insert: {
+          last_value: number
+          workspace_id: string
+          year: number
+        }
+        Update: {
+          last_value?: number
+          workspace_id?: string
+          year?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "proposal_number_counters_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       proposals: {
         Row: {
           created_at: string

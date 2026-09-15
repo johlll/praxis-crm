@@ -57,7 +57,7 @@ declare
   v_changed integer;
 begin
   select last_value into v_counter
-  from private.proposal_number_counters
+  from public.proposal_number_counters
   where workspace_id = '$WS_UM'::uuid and year = v_year;
   if v_counter is distinct from 120 then
     raise exception 'contador deveria começar em 120 (maior número existente), veio %', v_counter;
