@@ -13,7 +13,7 @@ funcionalidade já entregue.
 
 **Método por defeito:** teste que falha antes da correção → correção da
 causa → revisão dos demais consumidores → teste passando → revisão do diff.
-A coluna "Evidência" é preenchida ao fim da rodada (seção 5).
+As evidências de cada defeito estão na seção 7.
 
 ## 0. Itens dos handoffs que NÃO são defeitos (ficam no cronograma)
 
@@ -208,8 +208,46 @@ transição (`EditForm`), sem o reset automático, com campos controlados.
 
 | Origem | Item | Situação |
 |---|---|---|
-| A2 §7.5 | Site URL / Redirect URLs do Auth em `praxis-crm-dev` apontando para `localhost:3000` | Configuração manual no painel do Supabase; não é alterável por migration nem pelo app. Reconferir e manter como pendência externa se continuar |
+| A2 §7.5 | Site URL / Redirect URLs do Auth em `praxis-crm-dev` apontando para `localhost:3000` | **Aberta, não reconferida nesta rodada.** Configuração manual no painel do Supabase (Authentication → URL Configuration); não é alterável por migration nem pelo app, e ler a configuração exigiria as credenciais da CLI, que não foram usadas. Valores e passos exatos continuam em A2-HANDOFF §7.5 |
 
 ## 7. Evidências
 
-Preenchido ao fim da rodada.
+Legenda de onde cada verificação rodou: **local** = `npm test`/`typecheck`/
+`lint`/`build` nesta máquina; **CI** = GitHub Actions com Supabase local
+efêmero (pgTAP, isolamento, concorrência, e2e, atualização); **rede** =
+resposta real recebida pelo navegador (payload RSC); **hospedado** =
+`praxis-crm-dev` pelo preview da Vercel ou consulta somente leitura ao banco.
+
+| Defeito | Teste que falhava antes | Correção (commit) | Depois |
+|---|---|---|---|
+| §1 falha de consulta vira vazio/nulo (1.1–1.16) | `stabilization-query-errors.test.ts`: **36 de 45 falhavam** (local), incluindo as consultas secundárias de etapas/contato | `1eaf2c7` | 45/45 local; CI verde a partir do `d49fcd1` (o run de `8c0cae4`, enviado junto, falhou no pgTAP por outro motivo — ver §4) |
+| §1.3/1.4/1.9 requisitos e motivos de perda como "nenhum pendente" | `stabilization-requirement-actions.test.ts`: **12 de 12 falhavam** (local) | `1eaf2c7` | 12/12 local. Hospedado: diálogo de ganho carrega o requisito obrigatório pendente e bloqueia o registro; diálogo de perda carrega os 5 motivos |
+| §1.17 falha de rede/membership → login ou onboarding; §1.18 helper de permissão divergente; §3 actions sem canal de erro | `stabilization-actions.test.ts`: **18 de 23 falhavam** (local) — as 5 que já passavam cobrem comportamento legítimo preservado (sessão ausente → login, sem membership → onboarding, permissão negada) | `1eaf2c7` | 23/23 local. Hospedado: telefone inválido num contato fictício mostra "Telefone inválido." e nada é salvo (antes: nenhuma resposta) |
+| §1b listas incompletas | Consultas "todos" (`listAllLeads`, `listAllOpportunities`, `listContactOptions` em blocos) testadas com 250/130/1.234 itens e página intermediária falhando. **Ressalva:** esses testes foram escritos junto com as funções novas, então não houve execução falhando antes; o defeito foi comprovado pela leitura das telas (página 1 usada como lista inteira) | `1eaf2c7` | `stabilization-volume-and-retry.test.tsx` 15/15 local. Hospedado: tabela do pipeline com subtítulo correto ("12 oportunidades"); seletor da Central com os 16 leads ativos (volume abaixo do limite, só confirma o fluxo) |
+| §2 "Tentar novamente" não refazia a busca; rotas sem limite de erro | Mesmo arquivo: **8 de 13 falhavam** (local) — `reset` em 6 arquivos, sem `(app)/error.tsx` e `error.tsx` raiz | `1eaf2c7` | 15/15 local. Falha operacional não foi induzida no hospedado (exigiria derrubar o banco compartilhado) |
+| §4 colisão de numeração e truncamento acima de 9999 | **CI vermelho** no `dcccb1a` (run 34926781096): 3 de 12 e 2 de 6 criações simultâneas falharam com `duplicate key ... proposals_workspace_id_number_key` | `8c0cae4`, `d49fcd1` (contador em `public` com RLS forçada, exigido por `04_security_hardening`) | CI verde (run 34943271823 e seguintes): 12+6 simultâneas sem erro e sem repetição; pgTAP `15_proposal_number_counter` 7/7 (contador atrasado, 10000/10001, séries por workspace, sem privilégio); atualização a partir da versão anterior com dados (`check-upgrade-proposal-counter.sh`) OK. **Hospedado:** migration aplicada após dry-run (só ela); backfill iniciou o contador em 2 (= maior emitido); proposta criada no preview recebeu `PROP-2026-0003`; `0001`/`0002` intactos, nenhum repetido |
+| §5b formulário de edição volta ao valor anterior | **Hospedado antes:** atribuição salva no banco, seletor voltava a "Sem responsável". `stabilization-form-reset.test.tsx`: **6 de 6 falhavam** (local), inclusive o `LeadBasicFieldsForm` já corrigido na A4 | `5e5ec72` | 6/6 local; CI verde (run 34971207110). **Hospedado depois:** seletor de responsável e status do conflito mostram o valor salvo logo após o envio |
+
+**Gates desta rodada (CI, run 34971207110 no `5e5ec72`):** typecheck, lint,
+unitários, `db:types:check`, pgTAP 515 em 15 arquivos, isolamento 26,
+concorrência A7, concorrência da numeração, build, e2e 54, atualização a
+partir da versão anterior. **Local:** typecheck, lint, 266 testes
+unitários e `npm run build` limpos.
+
+### 7.1 Validação de papéis no ambiente hospedado (§5)
+
+- **Owner (feito):** tela e **resposta de rede** do Perfil 360 conferidas.
+  A nota de conflito chega no payload (esperado para quem pode escrever a
+  verificação) e os valores das propostas chegam exatos (`value_cents`
+  123400 e 300000), sem faixa.
+- **Atendimento e visualizador (pendente, não realizado):** só existe
+  credencial autorizada de owner em `praxis-crm-dev`, e a mesma senha não
+  foi testada em outras contas. Para concluir: uma conta de QA com papel
+  **atendimento** e uma com papel **visualizador** no workspace
+  "Escritorio QA Praxis A3" de `praxis-crm-dev` (a conta "QA Sales Teste"
+  já existe nesse workspace; falta uma de visualizador), entregues em
+  arquivo local — não no chat. Com elas: abrir o lead fictício "Cliente A9
+  Revalidação", conferir no payload que `note` vem nulo para os dois
+  papéis, que atendimento recebe só `value_band` e visualizador não recebe
+  valor, e o mesmo na tela. Até lá, essa proteção está demonstrada só pelo
+  pgTAP (`14_a9_perfil_360`) e pelo e2e no CI.

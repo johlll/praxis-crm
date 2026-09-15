@@ -1,14 +1,12 @@
 # A9 — Perfil 360º do lead — Handoff
 
-**Status: PR aberta, NÃO mesclada.** Branch `feat/a9-perfil-360`,
-[PR #13](https://github.com/johlll/praxis-crm/pull/13). CI verde e fluxo
-principal (incluindo os 5 ajustes do review pós-CI) validado no preview
-com dados fictícios (§§6–7). **Merge não solicitado nem autorizado** —
-aguardando instrução. O commit final é o topo atual da branch no momento
-da leitura — ver `git log -1 feat/a9-perfil-360` em vez de um hash fixo
-aqui (um handoff que aponta pro PRÓPRIO commit que o edita vira
-referência circular a cada ajuste seguinte; preferível deixar o Git ser a
-fonte de verdade do "topo atual").
+**Status: PR aberta, NÃO mesclada — merge suspenso** até a revisão final da
+rodada de estabilização pós-A9 (§9). Branch `feat/a9-perfil-360`,
+[PR #13](https://github.com/johlll/praxis-crm/pull/13). CI verde; fluxos
+validados no preview com dados fictícios (§§6–7 e §9). A10 não iniciada.
+O commit final é o topo atual da branch — ver `git log -1
+feat/a9-perfil-360` em vez de um hash fixo aqui (um handoff que aponta
+para o próprio commit que o edita vira referência circular).
 
 ## 1. Escopo
 
@@ -293,18 +291,43 @@ fornecer uma credencial de papel restrito desse projeto.
 
 ## 8. Limitações reais
 
-- `getOpportunity()`/`get_opportunity()` ainda não distinguem "não
-  encontrado/sem acesso" de falha operacional (mesmo achado que a A8
-  corrigiu em `get_client()`) — pré-existente da A5, fora do escopo desta
-  fase; a página de lead herda essa limitação ao reaproveitar
-  `OpportunityDetailPanel`.
-- Numeração de proposta (`PROP-<ano>-<sequencial>`) é contagem simples, não
-  uma sequência atômica do banco — colisão concorrente rara falha por
-  unique constraint (nunca duplica silenciosamente), aceitável para uma
-  ação manual de baixo volume.
-- `listActivities()` continua engolindo falha de RPC como lista vazia nas
-  telas das fases anteriores (Central, painel da oportunidade) —
-  comportamento herdado, fora do escopo. O Perfil 360 não depende mais
-  dela para a lista do lead nem para o "carregar mais" (usa
-  `listActivitiesPageOrThrow()`, §11.1 do documento de decisões); só o
-  painel da oportunidade ativa ainda a usa, para as pendentes.
+As três limitações registradas antes (`getOpportunity()` sem distinguir
+falha de "não encontrado", numeração de proposta por contagem simples e
+`listActivities()` engolindo erro nas telas antigas) foram **resolvidas** na
+rodada de estabilização (§9), com teste que falhava antes e validação no
+ambiente hospedado quando aplicável.
+
+Continua em aberto:
+
+- **Validação de atendimento e visualizador em `praxis-crm-dev`** — só
+  existe credencial autorizada de owner. Acesso necessário e roteiro
+  exato em `docs/decisoes/estabilizacao-pos-a9.md` §7.1.
+- **Site URL / Redirect URLs do Auth em `praxis-crm-dev`** (A2-HANDOFF §7.5)
+  — configuração manual no painel do Supabase, não reconferida.
+
+## 9. Rodada de estabilização pós-A9
+
+Pedida antes do merge: encerrar os defeitos conhecidos das fases já
+implementadas. Inventário único, cenários, testes e evidências em
+[`docs/decisoes/estabilizacao-pos-a9.md`](docs/decisoes/estabilizacao-pos-a9.md).
+Resumo:
+
+- **Contrato único de erro (`DataLoadError`)** em todas as consultas: ausência
+  legítima continua `null`, lista vazia continua vazia, falha operacional
+  lança e chega à tela com "Tentar novamente". Inclui `getOpportunity`,
+  `listActivities`, requisitos de avanço/ganho (falha não vira "nenhum
+  pendente"), leads, conversas, contatos, equipe, workspace, membership e
+  sessão (falha de rede não manda para login/onboarding).
+- **`requirePermissionSafe` único** (eram 9 cópias) e **actions de equipe e
+  contatos com canal de erro** (A3-HANDOFF §9).
+- **`error.tsx` com `retry`** (o `reset` não refazia a busca) e limites de
+  erro para as rotas e o layout que não tinham.
+- **Listas completas** onde a primeira página era usada como lista inteira
+  (seletor de leads, oportunidades do lead e da conversa, pendentes da
+  oportunidade, contatos acima de 1.000) e tabela do pipeline paginada.
+- **Numeração de proposta atômica** (migration `20260915110000`): contador
+  por workspace e ano, inicializado pelos números já emitidos, sem truncar
+  acima de 9999. Concorrência real e atualização a partir da versão
+  anterior validadas no CI; aplicada em `praxis-crm-dev` após dry-run.
+- **Formulários de edição** que voltavam ao valor anterior depois de salvar
+  (risco registrado desde a A4, reproduzido no hospedado nesta rodada).
