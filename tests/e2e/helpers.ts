@@ -128,3 +128,30 @@ export async function callRpcDirect(
   const body = await res.json().catch(() => null);
   return { status: res.status(), body };
 }
+
+/**
+ * Espera o React assumir o controle do campo antes de digitar nele.
+ *
+ * Em campo controlado, preencher ANTES da hidratação é uma corrida real:
+ * o valor digitado e o valor que veio do servidor podem se misturar (o
+ * CI já produziu "texto novo" + "texto antigo" num `<textarea>` por isso).
+ * Isso é corrida do teste com a página carregando, não corrupção de dado
+ * da aplicação — o valor no banco continuava correto — mas deixa o
+ * resultado do teste dependente da velocidade do runner.
+ *
+ * A checagem usa a marca que o React deixa no próprio nó do DOM ao
+ * hidratar (`__reactFiber$…`/`__reactProps$…`): antes disso o elemento é
+ * só HTML do servidor, depois dela o React é a autoridade sobre o valor.
+ */
+export async function waitForHydration(page: Page, selector: string): Promise<void> {
+  await page.locator(selector).waitFor({ state: "visible" });
+  await page.waitForFunction(
+    (sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return false;
+      return Object.keys(el).some((k) => k.startsWith("__reactFiber$") || k.startsWith("__reactProps$"));
+    },
+    selector,
+    { timeout: 15000 },
+  );
+}

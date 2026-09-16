@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { SEED_CONTACTS, SEED_CPF_RAW, SEED_USERS } from "./fixtures";
-import { callRpcDirect, getSupabaseAccessToken, login } from "./helpers";
+import { callRpcDirect, getSupabaseAccessToken, login, waitForHydration } from "./helpers";
 
 /**
  * Jornada da A4 contra o Supabase local do CI — mesmas regras da A3:
@@ -27,6 +27,7 @@ test.describe.serial("leads — A4", () => {
     await login(page, SEED_USERS.ana.email);
 
     await page.goto("/leads/novo");
+    await waitForHydration(page, "#summary");
     await page.getByLabel("Contato").selectOption({ label: SEED_CONTACTS.carlaFerreira.name });
     await page.getByLabel("Área jurídica").fill("Trabalhista");
     await page.getByLabel("Resumo").fill("Rescisão indireta");
@@ -40,6 +41,9 @@ test.describe.serial("leads — A4", () => {
   test("2. edição básica persiste, inclusive em saves consecutivos e com resposta lenta", async ({ page }) => {
     await login(page, SEED_USERS.ana.email);
     await page.goto(leadUrl);
+    // Campo controlado: digitar antes da hidratação mistura o texto novo
+    // com o valor que veio do servidor (ver waitForHydration em helpers.ts).
+    await waitForHydration(page, "#summary");
 
     // --- salvamento simples ---
     await page.getByLabel("Resumo").fill("Rescisão indireta — audiência marcada");
