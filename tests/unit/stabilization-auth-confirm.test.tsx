@@ -5,13 +5,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * Estabilização pós-A9 — inventário §6.1 e §6.3
  * (docs/decisoes/estabilizacao-pos-a9.md).
  *
- * A rota de confirmação precisa separar três situações que terminam todas
- * fora do onboarding, mas pedem ações diferentes:
- * - o link falhou no próprio Auth (expirado/reutilizado): o e-mail NÃO foi
- *   confirmado → pedir um link novo;
- * - o Auth confirmou o e-mail e devolveu um código, mas a sessão não pôde
- *   ser aberta (outro navegador, código expirado): a conta já está
- *   confirmada → mandar entrar com a senha, nunca pedir cadastro de novo;
+ * A rota de confirmação precisa separar situações que pedem ações
+ * diferentes:
+ * - link recusado, expirado ou reutilizado (erro vindo do Auth ou falha do
+ *   verifyOtp): isso diz só que aquele link não vale mais — NÃO determina se
+ *   a conta está confirmada, porque um link já usado de uma conta confirmada
+ *   dá o mesmo erro → o aviso fala do link e oferece entrar ou pedir um link
+ *   novo;
+ * - o Auth aceitou o link e devolveu um código, mas a sessão não pôde ser
+ *   aberta (outro navegador, código expirado): aqui a confirmação já
+ *   aconteceu antes do redirecionamento, e só a sessão falhou → mandar
+ *   entrar com a senha, nunca pedir cadastro de novo;
  * - link do modelo com `token_hash` (o que passou a ser usado depois da
  *   troca do modelo de e-mail) → verifyOtp.
  */
