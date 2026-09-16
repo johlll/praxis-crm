@@ -205,25 +205,35 @@ com sucesso e confere que o campo continua com o valor salvo — falha antes
 nos seis. Correção: formulários de edição enviados por `onSubmit` numa
 transição (`EditForm`), sem o reset automático, com campos controlados.
 
-## 5c. Edição durante a hidratação corrompe o dado
+## 5c. Edição na janela anterior à hidratação
 
-**Origem:** achado ao investigar a falha de CI de §7.3, que eu havia
-registrado como "corrida do teste, sem perda de dado". Estava errado —
-reproduzido no ambiente hospedado com uma digitação real.
+**Origem:** a falha de CI de §7.3, que eu havia despachado como "corrida do
+teste, sem perda de dado".
 
-**Comportamento incorreto:** enquanto a página não hidrata, o campo é HTML
-do servidor. Se alguém digita nesse intervalo (conexão ruim, aparelho
-lento), o texto digitado fica **concatenado** ao valor que veio do
-servidor. Não é só exibição.
+**Comportamento observado (uma vez, no CI — run 35130297401):** o
+`fill` do Playwright caiu exatamente durante a hidratação e o campo Resumo
+ficou com o texto novo seguido do valor que o servidor tinha mandado
+(`"…audiência marcada" + "Rescisão indireta"`). Nessa ordem — primeiro o
+digitado, depois o do servidor — o que não é explicável por digitação
+comum no fim do texto.
 
-**Reprodução (preview, scripts presos e liberados no meio da digitação):**
+**Correção do meu próprio registro anterior:** eu havia escrito aqui que o
+caso fora reproduzido no ambiente hospedado, com o texto concatenado
+também no payload e no banco. **Aquela reprodução era inválida** e a
+conclusão foi retirada:
+- o script digitava tecla a tecla depois de clicar no campo, **sem limpar**
+  — acrescentar ao texto existente é o comportamento normal de digitação, e
+  a ordem era "valor do servidor + digitado", o oposto do artefato do CI;
+- o bloqueio de scripts que eu usava filtrava só `/_next/static/chunks/**`,
+  que **não** cobre todos os scripts servidos; a página hidratava assim
+  mesmo, então nem havia janela.
+Com o bloqueio correto (todos os `.js`), a janela existe de verdade e o
+campo permanece bloqueado nela — ver §7.4.
 
-| Onde | Valor |
-|---|---|
-| Pretendido | `QA digitado durante a hidratacao` |
-| Na tela | `QA pre-hidratacaoQA digitado durante a hidratacao` |
-| Payload do Server Action (campo `summary`) | o mesmo texto concatenado |
-| Gravado em `leads.summary` | o mesmo texto concatenado |
+**Risco:** editar antes de o React assumir o campo depende de detalhes de
+tempo do navegador e do React. Observado uma vez, em CI; não reproduzido
+no hospedado. Independentemente da frequência, a tela não deve aceitar
+edição que a aplicação ainda não é capaz de controlar.
 
 **Funções/telas:** `EditForm` e seus seis consumidores — `AssignLeadForm`,
 `LeadBasicFieldsForm`, `ConflictCheckPanel` (`/leads/[id]`),
@@ -231,19 +241,19 @@ servidor. Não é só exibição.
 `ContactBasicFieldsForm` (`/contatos/[id]`).
 
 **Correção:** o `EditForm` envolve os campos num `<fieldset disabled>` que
-já vem assim no HTML do servidor e só é liberado depois que o componente
-monta no navegador (`useSyncExternalStore`, sem efeito nem atraso fixo, sem
-depender de detalhe interno do React). Antes da hidratação não há nada
-nosso rodando no navegador, então a proteção precisa vir do próprio HTML.
-`display: contents` preserva o layout; o botão de enviar também fica
-desabilitado, o que é correto — este formulário envia por JavaScript.
+já vem assim no HTML do servidor e só é liberado quando o componente monta
+no navegador (`useSyncExternalStore`, sem efeito, sem atraso fixo e sem
+depender de marca interna do React). Antes da hidratação não há nada nosso
+rodando no navegador, então a proteção precisa vir do próprio HTML.
+`display: contents` preserva o layout, e o botão de enviar também fica
+desabilitado — este formulário envia por JavaScript de qualquer forma.
 
 **Teste e critério:** `stabilization-pre-hidratacao.test.tsx` — o HTML
-renderizado no servidor já contém `<fieldset disabled>` (2 de 4 casos
-falhavam antes), e depois de montado a edição é liberada com o valor do
-servidor preservado. E2e `leads.spec.ts` "2b": os scripts ficam presos, a
-digitação nessa janela é recusada, o campo mantém o valor do servidor e,
-liberada a hidratação, o texto digitado é salvo sem concatenação.
+renderizado no servidor contém `<fieldset disabled>` (2 de 4 casos falhavam
+antes) e, montado, libera a edição preservando o valor do servidor. E2e
+`leads.spec.ts` "2b": uma aba com JavaScript desligado (o mesmo HTML que o
+navegador tem antes de hidratar) recusa a digitação e mantém o valor do
+servidor; com JavaScript, a edição é salva exatamente como digitada.
 
 ## 6. Pendências externas conhecidas (fora do código)
 
@@ -342,7 +352,7 @@ resposta real recebida pelo navegador (payload RSC); **hospedado** =
 | §1.19 login transforma falha do serviço em "senha incorreta" | `stabilization-sign-in-errors.test.ts`: **7 de 9 falhavam** (local) — as 2 que passavam cobrem o que deve ser preservado (login certo redireciona; nenhuma mensagem revela conta) | `bd3adb5` (decisão por `AuthApiError.code`/`AuthRetryableFetchError`, nunca pelo texto) | 9/9 local; CI verde (run 35007839495). **Hospedado:** conta inexistente → "E-mail ou senha incorretos."; conta não confirmada com senha errada → a mesma mensagem; com a senha certa → "Confirme seu e-mail…" (o Auth só devolve `email_not_confirmed` depois de aceitar a senha, então nada revela a existência da conta). Falha do serviço não foi induzida no hospedado (coberta pelos testes com 503, rede e resposta ilegível) |
 | §6.1 confirmação de e-mail com link PKCE | `stabilization-auth-confirm.test.tsx`: **2 de 6 falhavam** (local) — `?code=` e o aviso em `/entrar` | `057fcf9` | 6/6 local; CI verde (run 35008591726). **Hospedado:** ver §7.2 |
 | §6.3 falha do link tratada como "conta não confirmada" | `stabilization-auth-confirm.test.tsx` reescrito: **6 de 9 falhavam** (local), depois mais 1 ao apertar o texto do aviso | `e23a500`, `914a1c9`, `f9f8ae2` | 9/9 local. **Hospedado:** link reutilizado devolve o aviso de link inválido enquanto a conta **está** confirmada — exatamente o caso que a mensagem antiga descrevia errado |
-| §5c edição durante a hidratação concatena o valor do servidor | Reproduzido no **hospedado** (tela, payload e banco com o texto concatenado) e no unitário: `stabilization-pre-hidratacao.test.tsx` **2 de 4 falhavam** | (commit abaixo) | 4/4 local + e2e "2b" no CI |
+| §5c edição na janela anterior à hidratação | Observado uma vez no **CI** (run 35130297401). Unitário `stabilization-pre-hidratacao.test.tsx`: **2 de 4 falhavam** (local). Minha primeira "reprodução" no hospedado era inválida — ver §5c | `81e6713` e ajustes do e2e até `c5ba5d9` | 4/4 local; e2e "2b" verde no CI; no preview, o HTML servido traz `<fieldset disabled>` e o campo só libera após os scripts (§7.4) |
 | §5b formulário de edição volta ao valor anterior | **Hospedado antes:** atribuição salva no banco, seletor voltava a "Sem responsável". `stabilization-form-reset.test.tsx`: **6 de 6 falhavam** (local), inclusive o `LeadBasicFieldsForm` já corrigido na A4 | `5e5ec72` | 6/6 local; CI verde (run 34971207110). **Hospedado depois:** seletor de responsável e status do conflito mostram o valor salvo logo após o envio |
 
 **Gates desta rodada (CI, run 34971207110 no `5e5ec72`):** typecheck, lint,
@@ -491,9 +501,25 @@ próprio nó ao hidratar (`__reactFiber$…`) antes de digitar
 (`waitForHydration` em `tests/e2e/helpers.ts`), usada nos dois pontos do
 `leads.spec.ts` que digitam logo após a navegação.
 
-**Desdobramento:** a suposição de que "não é perda de dado" estava errada.
-A investigação pedida em seguida reproduziu o caso no ambiente hospedado e
-mostrou o texto concatenado também no payload e no banco — virou o defeito
-§5c, corrigido no próprio formulário. Com o campo bloqueado até a
-hidratação, a espera que eu tinha acrescentado ao e2e deixou de ser
-necessária e foi removida junto com o helper.
+**Desdobramento:** despachar isso como "corrida do teste" foi apressado —
+virou o item §5c, com correção no formulário. Mas a afirmação seguinte, de
+que o caso teria sido reproduzido no hospedado com corrupção de payload e
+banco, também estava errada e foi retirada (§5c explica por quê). Com o
+campo bloqueado até a hidratação, a espera que eu tinha acrescentado ao e2e
+deixou de ser necessária e foi removida junto com o helper.
+
+### 7.4 Verificação da correção de §5c no preview
+
+- **HTML servido** (requisição direta, sem navegador interpretando):
+  `<fieldset disabled="" class="contents">` em todos os formulários de
+  edição da página do lead.
+- **Janela real, com todos os `.js` presos e cache vazio:** o campo fica
+  `disabled` durante os 6 s amostrados de 500 em 500 ms e só é liberado
+  depois que os scripts são soltos.
+- **Depois de liberar:** edição normal, `summary` no payload do Server
+  Action exatamente igual ao digitado, "Dados salvos." e o mesmo valor na
+  tela.
+- **Ressalva metodológica:** a primeira tentativa de reprodução filtrava
+  só `/_next/static/chunks/**` e não segurava todos os scripts — a página
+  hidratava e não havia janela. O diagnóstico que amostra o estado do campo
+  ao longo do tempo foi o que mostrou isso.

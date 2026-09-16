@@ -115,8 +115,7 @@ test.describe.serial("leads — A4", () => {
     // Janela anterior à hidratação, reproduzida de forma determinística: uma
     // aba com JavaScript desligado vê exatamente o HTML que o navegador tem
     // antes de o React assumir o formulário. Foi nessa janela que, no
-    // ambiente hospedado, o texto digitado ficou concatenado ao valor do
-    // servidor — na tela, no payload do Server Action e no banco
+    // CI, o texto digitado apareceu misturado ao valor do servidor
     // (inventário §5c).
     const semJs = await browser.newContext({
       storageState: await page.context().storageState(),

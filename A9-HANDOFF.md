@@ -327,10 +327,12 @@ Resumo:
   anterior validadas no CI; aplicada em `praxis-crm-dev` após dry-run.
 - **Formulários de edição** que voltavam ao valor anterior depois de salvar
   (risco registrado desde a A4, reproduzido no hospedado nesta rodada).
-- **Edição durante a hidratação** (§5c): digitar antes de a página hidratar
-  concatenava o texto ao valor do servidor — na tela, no payload e no
-  banco, reproduzido no hospedado. O `EditForm` passa a chegar do servidor
-  com os campos bloqueados, liberados quando o componente monta.
+- **Edição na janela anterior à hidratação** (§5c): o CI mostrou uma vez o
+  texto digitado misturado ao valor do servidor. O `EditForm` passa a
+  chegar do servidor com os campos bloqueados, liberados quando o
+  componente monta. Registro corrigido: a reprodução que eu havia
+  reivindicado no ambiente hospedado era inválida (o script digitava sem
+  limpar o campo e o bloqueio de scripts não segurava todos) — ver §5c.
 - **Login** (`bd3adb5`): falha do serviço de autenticação deixou de virar
   "E-mail ou senha incorretos"; decisão pelo código oficial do auth-js, sem
   revelar se a conta existe. Conferido no hospedado.
