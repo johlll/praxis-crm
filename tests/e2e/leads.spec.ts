@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { SEED_CONTACTS, SEED_CPF_RAW, SEED_USERS } from "./fixtures";
-import { callRpcDirect, getSupabaseAccessToken, login, waitForHydration } from "./helpers";
+import { callRpcDirect, getSupabaseAccessToken, login } from "./helpers";
 
 /**
  * Jornada da A4 contra o Supabase local do CI — mesmas regras da A3:
@@ -27,7 +27,6 @@ test.describe.serial("leads — A4", () => {
     await login(page, SEED_USERS.ana.email);
 
     await page.goto("/leads/novo");
-    await waitForHydration(page, "#summary");
     await page.getByLabel("Contato").selectOption({ label: SEED_CONTACTS.carlaFerreira.name });
     await page.getByLabel("Área jurídica").fill("Trabalhista");
     await page.getByLabel("Resumo").fill("Rescisão indireta");
@@ -41,10 +40,6 @@ test.describe.serial("leads — A4", () => {
   test("2. edição básica persiste, inclusive em saves consecutivos e com resposta lenta", async ({ page }) => {
     await login(page, SEED_USERS.ana.email);
     await page.goto(leadUrl);
-    // Campo controlado: digitar antes da hidratação mistura o texto novo
-    // com o valor que veio do servidor (ver waitForHydration em helpers.ts).
-    await waitForHydration(page, "#summary");
-
     // --- salvamento simples ---
     await page.getByLabel("Resumo").fill("Rescisão indireta — audiência marcada");
     await page.getByRole("button", { name: "Salvar" }).click();
@@ -109,6 +104,48 @@ test.describe.serial("leads — A4", () => {
     await page.getByRole("button", { name: "Salvar" }).click();
     await expect(page.getByText("Dados salvos.")).toBeVisible();
     await expect(page.getByLabel("Resumo")).toHaveValue("Segundo texto — editado durante a espera");
+  });
+
+  test("2b. edição bloqueada até a página hidratar — nada se mistura ao valor do servidor", async ({ page }) => {
+    await login(page, SEED_USERS.ana.email);
+
+    // Segura os scripts da aplicação: o HTML do servidor chega na hora e a
+    // hidratação só acontece quando liberarmos. É a janela em que, antes da
+    // correção, o que o usuário digitava ficava concatenado ao valor do
+    // servidor — na tela, no payload do Server Action e no banco
+    // (reproduzido no ambiente hospedado, inventário §5c).
+    let liberar: () => void = () => {};
+    const portao = new Promise<void>((resolve) => {
+      liberar = resolve;
+    });
+    await page.route("**/_next/static/chunks/**", async (route) => {
+      await portao;
+      await route.continue();
+    });
+
+    await page.goto(leadUrl, { waitUntil: "domcontentloaded" });
+    const resumo = page.getByLabel("Resumo");
+    await expect(resumo).toBeDisabled();
+    await expect(resumo).toHaveValue("Segundo texto — editado durante a espera");
+
+    // Tentativa real de digitar nessa janela: o campo recusa a edição.
+    let digitou = true;
+    await resumo.fill("texto que não deve entrar", { timeout: 2000 }).catch(() => {
+      digitou = false;
+    });
+    expect(digitou).toBe(false);
+    await expect(resumo).toHaveValue("Segundo texto — editado durante a espera");
+
+    liberar();
+    await expect(resumo).toBeEnabled();
+    await resumo.fill("Texto digitado depois de hidratar");
+    await page.getByRole("button", { name: "Salvar" }).click();
+    await expect(page.getByText("Dados salvos.")).toBeVisible();
+    await expect(resumo).toHaveValue("Texto digitado depois de hidratar");
+
+    // Nova navegação: o que ficou no banco é exatamente o texto digitado.
+    await page.goto(leadUrl);
+    await expect(page.getByLabel("Resumo")).toHaveValue("Texto digitado depois de hidratar");
   });
 
   test("3. busca e filtro no servidor encontram o lead certo", async ({ page }) => {

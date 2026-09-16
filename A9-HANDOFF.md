@@ -297,7 +297,8 @@ falha de "não encontrado", numeração de proposta por contagem simples e
 rodada de estabilização (§9), com teste que falhava antes e validação no
 ambiente hospedado quando aplicável.
 
-Continua em aberto: nada desta rodada. As pendências herdadas de Auth
+Continua em aberto: nada desta rodada (a edição durante a hidratação, §5c
+do inventário, foi corrigida e validada). As pendências herdadas de Auth
 (Site URL/Redirect URLs e provedor de e-mail) foram encerradas — ver §9.
 
 ## 9. Rodada de estabilização pós-A9
@@ -326,6 +327,10 @@ Resumo:
   anterior validadas no CI; aplicada em `praxis-crm-dev` após dry-run.
 - **Formulários de edição** que voltavam ao valor anterior depois de salvar
   (risco registrado desde a A4, reproduzido no hospedado nesta rodada).
+- **Edição durante a hidratação** (§5c): digitar antes de a página hidratar
+  concatenava o texto ao valor do servidor — na tela, no payload e no
+  banco, reproduzido no hospedado. O `EditForm` passa a chegar do servidor
+  com os campos bloqueados, liberados quando o componente monta.
 - **Login** (`bd3adb5`): falha do serviço de autenticação deixou de virar
   "E-mail ou senha incorretos"; decisão pelo código oficial do auth-js, sem
   revelar se a conta existe. Conferido no hospedado.
