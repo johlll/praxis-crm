@@ -110,8 +110,14 @@ describe("/entrar mostra o aviso certo para cada caso", () => {
     // uma conta confirmada. O aviso oferece os dois caminhos.
     expect(texto).toMatch(/j[áa] (foi )?usad|expirou|inv[áa]lid/i);
     expect(texto).toMatch(/entrar|entre/i);
-    expect(texto).toMatch(/novo|de novo/i);
     expect(texto).not.toMatch(/(conta|e-mail)[^.]{0,40}n[ãa]o (foi |est[áa] )?confirmad/i);
+    // O caminho oferecido precisa existir na tela: o formulário "Criar
+    // conta" com o mesmo e-mail reenvia a confirmação e mantém a conta
+    // (comprovado no ambiente hospedado). Não prometer "conta nova" nem
+    // uma ação que só existe fora da interface.
+    expect(texto).toMatch(/criar conta/i);
+    expect(texto).toMatch(/mantid|preservad|continua sendo/i);
+    expect(texto).not.toMatch(/crie a conta de novo|nova conta/i);
   });
 
   it("sem erro, nenhum aviso", async () => {

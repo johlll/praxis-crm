@@ -15,11 +15,15 @@ import { createServerSupabaseClient } from "@/server/supabase/server";
  *   aqui pela sessão (depende do cookie gravado no cadastro, então só vale
  *   no mesmo navegador e por pouco tempo).
  *
- * Os dois modos de falha são diferentes e não podem virar a mesma
- * mensagem: se o próprio Auth recusou o link (`?error=`), ou se o
- * `verifyOtp` falhou, o e-mail NÃO foi confirmado e é preciso um link novo;
- * se o código veio mas a sessão não pôde ser aberta, o e-mail já está
- * confirmado e basta entrar com a senha.
+ * Os modos de falha são diferentes e não podem virar a mesma mensagem:
+ * - o Auth recusou o link (`?error=`) ou o `verifyOtp` falhou: aquele link
+ *   não vale mais (expirado, já usado, consumido por outra aba). Isso NÃO
+ *   demonstra que a conta esteja sem confirmação — um link já usado de uma
+ *   conta confirmada dá o mesmo erro. Por isso a tela fala do link e
+ *   oferece os dois caminhos;
+ * - o código veio mas a sessão não pôde ser aberta: aí sim o
+ *   `/auth/v1/verify` já confirmou o e-mail antes de redirecionar, e basta
+ *   entrar com a senha.
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
