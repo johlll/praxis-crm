@@ -123,7 +123,10 @@ test.describe.serial("leads — A4", () => {
       await route.continue();
     });
 
-    await page.goto(leadUrl, { waitUntil: "domcontentloaded" });
+    // "commit": basta a resposta começar. Com os scripts presos, o
+    // DOMContentLoaded só dispararia quando eles chegassem — e é justamente
+    // esse intervalo que queremos observar.
+    await page.goto(leadUrl, { waitUntil: "commit" });
     const resumo = page.getByLabel("Resumo");
     await expect(resumo).toBeDisabled();
     await expect(resumo).toHaveValue("Segundo texto — editado durante a espera");
