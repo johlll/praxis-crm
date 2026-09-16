@@ -1,12 +1,9 @@
 # A9 — Perfil 360º do lead — Handoff
 
-**Status: PR aberta, NÃO mesclada — merge suspenso** até a revisão final da
-rodada de estabilização pós-A9 (§9). Branch `feat/a9-perfil-360`,
-[PR #13](https://github.com/johlll/praxis-crm/pull/13). CI verde; fluxos
-validados no preview com dados fictícios (§§6–7 e §9). A10 não iniciada.
-O commit final é o topo atual da branch — ver `git log -1
-feat/a9-perfil-360` em vez de um hash fixo aqui (um handoff que aponta
-para o próprio commit que o edita vira referência circular).
+**Status: mesclada em `main` e em produção.** [PR #13](https://github.com/johlll/praxis-crm/pull/13)
+mesclada por merge commit (`59a03e6`, 16/09/2026) depois da revisão final
+da rodada de estabilização pós-A9 (§9); deploy de produção conferido (§10).
+A10 não iniciada.
 
 ## 1. Escopo
 
@@ -354,3 +351,32 @@ Resumo:
   da sessão viraram três casos distintos, e o caminho oferecido é o que
   existe na tela (reenvio pelo próprio "Criar conta", preservando conta e
   senha).
+
+## 10. Merge e produção
+
+- **Merge:** PR #13 mesclada em `main` por merge commit (mesmo padrão das
+  fases anteriores) em 16/09/2026 21:47 UTC, commit `59a03e6`. Topo da
+  branch no momento do merge: `3981821`, com todos os checks obrigatórios
+  verdes (`verificar`, run 35153622809; Vercel) e sem conflitos
+  (`mergeStateStatus: CLEAN`). O merge foi feito com a condição de o topo
+  ser exatamente esse commit.
+- **Deploy:** implantação de produção do `59a03e6`
+  (`praxis-jvqdyyhaa-johllls-projects.vercel.app`), status `success` no
+  GitHub e `Ready` na Vercel, atendendo os dois domínios de produção
+  (`praxis-crm-eight.vercel.app` e `praxis-crm-johllls-projects.vercel.app`).
+- **Checagem breve em produção** (conta de QA owner, lead fictício "Cliente
+  A9 Revalidação (fictício)"):
+
+| Verificação | Resultado |
+|---|---|
+| Login | redirecionou para `/visao-geral` |
+| Perfil 360 | abriu com as seis abas: Visão geral, Conversas, Atividades, Arquivos, Propostas, Histórico |
+| Edição do resumo | salvo exatamente como digitado ("Resumo fictício conferido em produção após o merge da A9"), com "Dados salvos." |
+| Após recarregar | mesmo valor na tela; mesmo valor em `leads.summary` (consulta somente leitura) |
+| Console do navegador | nenhum erro, nenhum erro de hidratação |
+
+  Escopo deliberadamente curto: a auditoria completa, os papéis restritos
+  e os fluxos de confirmação de e-mail foram validados no preview antes do
+  merge (§9 e inventário §7) e não foram repetidos. SMTP e DNS não foram
+  alterados nesta etapa.
+
