@@ -6,10 +6,12 @@ import { describe, expect, it, vi } from "vitest";
  * Estabilização pós-A9 — inventário §5c
  * (docs/decisoes/estabilizacao-pos-a9.md).
  *
- * Reproduzido no ambiente hospedado: digitar num formulário de edição
- * enquanto a página hidrata mistura o texto digitado com o valor que veio
- * do servidor. Não é só exibição — o payload enviado e o valor gravado no
- * banco ficaram com o texto concatenado.
+ * Uma edição feita enquanto a página hidratava já apareceu misturada ao
+ * valor que veio do servidor — artefato observado uma vez no CI. A
+ * tentativa posterior de reproduzir isso no ambiente hospedado foi
+ * inválida (o script digitava sem limpar o campo e não segurava todos os
+ * scripts) e foi descartada. A proteção do formulário foi comprovada
+ * depois no preview, com o bloqueio correto (inventário §7.4).
  *
  * Proteção: enquanto o React não assume o formulário, ele não aceita
  * edição. Quem garante isso é o HTML que o servidor manda (`<fieldset

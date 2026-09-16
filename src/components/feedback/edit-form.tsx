@@ -13,17 +13,19 @@ import { startTransition, useSyncExternalStore, type ComponentProps } from "reac
  *    formulários de criação, o reset automático é o comportamento certo —
  *    use `<form action>` normal.
  *
- * 2. Enquanto a página não hidrata, o formulário não aceita edição. Editar
- *    nessa janela corrompia o dado de verdade: o texto digitado ficava
- *    concatenado ao valor que veio do servidor, ia assim no payload do
- *    Server Action e era gravado assim no banco (reproduzido no ambiente
- *    hospedado — inventário §5c). O bloqueio é um `<fieldset disabled>`
+ * 2. Enquanto a página não hidrata, o formulário não aceita edição. Uma
+ *    edição nessa janela já apareceu misturada ao valor que veio do
+ *    servidor (artefato observado uma vez no CI; uma tentativa posterior de
+ *    reproduzir no ambiente hospedado foi inválida e foi descartada —
+ *    inventário §5c). O bloqueio é um `<fieldset disabled>`
  *    que já vem no HTML do servidor e só é liberado depois que este
  *    componente monta no navegador: antes disso não há nada nosso rodando
  *    lá para proteger o campo. `display: contents` mantém o layout do
  *    formulário, e o fieldset desabilitado desabilita todos os controles
  *    dentro dele — inclusive o botão de enviar, que só funciona com o
- *    JavaScript carregado.
+ *    JavaScript carregado. Comprovado depois no preview: o HTML servido
+ *    traz o fieldset desabilitado e o campo só é liberado quando os
+ *    scripts chegam (inventário §7.4).
  */
 const assinaturaVazia = () => () => {};
 
