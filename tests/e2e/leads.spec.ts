@@ -107,6 +107,9 @@ test.describe.serial("leads — A4", () => {
   });
 
   test("2b. edição bloqueada até a página hidratar — nada se mistura ao valor do servidor", async ({ page }) => {
+    // Com os scripts presos, a página chega em partes e demora mais que o
+    // normal para completar — o teste espera por isso, não por lentidão.
+    test.setTimeout(90_000);
     await login(page, SEED_USERS.ana.email);
 
     // Segura os scripts da aplicação: o HTML do servidor chega na hora e a
@@ -128,7 +131,8 @@ test.describe.serial("leads — A4", () => {
     // esse intervalo que queremos observar.
     await page.goto(leadUrl, { waitUntil: "commit" });
     const resumo = page.getByLabel("Resumo");
-    await expect(resumo).toBeDisabled();
+    await resumo.waitFor({ state: "attached", timeout: 30_000 });
+    await expect(resumo).toBeDisabled({ timeout: 15_000 });
     await expect(resumo).toHaveValue("Segundo texto — editado durante a espera");
 
     // Tentativa real de digitar nessa janela: o campo recusa a edição.
@@ -140,7 +144,7 @@ test.describe.serial("leads — A4", () => {
     await expect(resumo).toHaveValue("Segundo texto — editado durante a espera");
 
     liberar();
-    await expect(resumo).toBeEnabled();
+    await expect(resumo).toBeEnabled({ timeout: 30_000 });
     await resumo.fill("Texto digitado depois de hidratar");
     await page.getByRole("button", { name: "Salvar" }).click();
     await expect(page.getByText("Dados salvos.")).toBeVisible();
