@@ -429,3 +429,27 @@ ou seja, o cadastro feito no preview confirma no preview.
 `viewer` aceito) e `+praxisqaconfirmamesmo0916` (confirmada no navegador
 original, sem workspace). Somadas às de §7.1, são quatro contas de QA desta
 rodada, todas confirmadas pelo fluxo oficial.
+
+### 7.3 Falha de CI investigada, não reexecutada (run 35130297401, `e23a500`)
+
+O e2e `leads — A4 / 2. edição básica` falhou uma vez: o campo Resumo ficou
+com o texto novo seguido do texto que o servidor tinha mandado
+("…audiência marcada" + "Rescisão indireta", que era o valor salvo no
+banco). Nada no commit tocava leads.
+
+**Causa:** o teste preencheu o campo antes de o React hidratar. Até a
+hidratação, o `<textarea>` é HTML do servidor; depois dela o React é a
+autoridade sobre o valor, e o preenchimento que cai no meio disso mistura
+os dois. É corrida do teste com o carregamento — o valor gravado no banco
+seguia correto, e o campo controlado (§5b) continua sendo a autoridade
+depois de hidratado.
+
+**Tratamento:** nenhuma asserção foi afrouxada e o retry do Playwright
+continua desligado. O e2e passou a esperar a marca que o React deixa no
+próprio nó ao hidratar (`__reactFiber$…`) antes de digitar
+(`waitForHydration` em `tests/e2e/helpers.ts`), usada nos dois pontos do
+`leads.spec.ts` que digitam logo após a navegação.
+
+**Limitação registrada:** uma pessoa que digite num campo controlado antes
+de a página hidratar pode ver o mesmo embaralhamento na tela. Não é perda
+de dado (o envio lê o campo já hidratado), e não foi observado fora do CI.
