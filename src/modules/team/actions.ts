@@ -4,8 +4,11 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { createServerSupabaseClient } from "@/server/supabase/server";
-import { requirePermission, requireUser } from "@/server/authz/permissions";
+import { requireUser } from "@/server/authz/permissions";
+import { requirePermissionSafe } from "@/server/authz/safe";
 import { switchActiveWorkspace } from "@/server/auth/workspace";
+import { DataLoadError } from "@/server/data/load-error";
+import type { ActionResult } from "@/lib/action-result";
 import { getRequestOrigin } from "@/server/request-origin";
 import { toUserMessage } from "@/lib/errors";
 import {
@@ -35,7 +38,9 @@ export async function createInvitationAction(
   _prevState: TeamActionState,
   formData: FormData,
 ): Promise<TeamActionState> {
-  const ctx = await requirePermission("invitation.manage");
+  const guard = await requirePermissionSafe("invitation.manage");
+  if ("error" in guard) return { ok: false, error: guard.error };
+  const { ctx } = guard;
 
   const parsed = createInvitationSchema.safeParse({
     email: formData.get("email"),
@@ -80,54 +85,65 @@ export async function createInvitationAction(
   };
 }
 
-export async function cancelInvitationAction(formData: FormData): Promise<void> {
-  await requirePermission("invitation.manage");
+const INVALID_DATA_MESSAGE = "Dados inválidos.";
+
+export async function cancelInvitationAction(formData: FormData): Promise<ActionResult> {
+  const guard = await requirePermissionSafe("invitation.manage");
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = invitationIdSchema.safeParse({
     invitationId: formData.get("invitationId"),
   });
-  if (!parsed.success) return;
+  if (!parsed.success) return { ok: false, error: INVALID_DATA_MESSAGE };
 
   const supabase = await createServerSupabaseClient();
-  await supabase.rpc("cancel_workspace_invitation", {
+  const { error } = await supabase.rpc("cancel_workspace_invitation", {
     p_invitation_id: parsed.data.invitationId,
   });
+  if (error) return { ok: false, error: toUserMessage(error) };
 
   revalidatePath("/configuracoes/equipe");
+  return { ok: true };
 }
 
-export async function updateMembershipRoleAction(formData: FormData): Promise<void> {
-  await requirePermission("membership.manage");
+export async function updateMembershipRoleAction(formData: FormData): Promise<ActionResult> {
+  const guard = await requirePermissionSafe("membership.manage");
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = updateMembershipRoleSchema.safeParse({
     membershipId: formData.get("membershipId"),
     role: formData.get("role"),
   });
-  if (!parsed.success) return;
+  if (!parsed.success) return { ok: false, error: INVALID_DATA_MESSAGE };
 
   const supabase = await createServerSupabaseClient();
-  await supabase.rpc("update_membership_role", {
+  const { error } = await supabase.rpc("update_membership_role", {
     p_membership_id: parsed.data.membershipId,
     p_new_role: parsed.data.role,
   });
+  if (error) return { ok: false, error: toUserMessage(error) };
 
   revalidatePath("/configuracoes/equipe");
+  return { ok: true };
 }
 
-export async function removeMembershipAction(formData: FormData): Promise<void> {
-  await requirePermission("membership.manage");
+export async function removeMembershipAction(formData: FormData): Promise<ActionResult> {
+  const guard = await requirePermissionSafe("membership.manage");
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = membershipIdSchema.safeParse({
     membershipId: formData.get("membershipId"),
   });
-  if (!parsed.success) return;
+  if (!parsed.success) return { ok: false, error: INVALID_DATA_MESSAGE };
 
   const supabase = await createServerSupabaseClient();
-  await supabase.rpc("remove_membership", {
+  const { error } = await supabase.rpc("remove_membership", {
     p_membership_id: parsed.data.membershipId,
   });
+  if (error) return { ok: false, error: toUserMessage(error) };
 
   revalidatePath("/configuracoes/equipe");
+  return { ok: true };
 }
 
 export type AcceptInvitationState = {
@@ -166,7 +182,14 @@ export async function acceptInvitationAction(
   // membership, mas não mexe no cookie de workspace ativo sozinho — e sem
   // cookie válido, requireMembershipOrRedirect() manda para onboarding
   // mesmo já sendo membro de verdade.
-  await switchActiveWorkspace(data.workspace_id);
+  try {
+    await switchActiveWorkspace(data.workspace_id);
+  } catch (error) {
+    if (error instanceof DataLoadError) {
+      return { ok: false, error: "Convite aceito, mas não foi possível abrir o workspace agora. Entre novamente para continuar." };
+    }
+    throw error;
+  }
 
   redirect("/visao-geral");
 }

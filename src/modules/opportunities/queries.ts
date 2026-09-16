@@ -1,4 +1,6 @@
 import { createServerSupabaseClient } from "@/server/supabase/server";
+import { collectAllPages } from "@/server/data/collect-pages";
+import { DataLoadError, isExpectedAbsence } from "@/server/data/load-error";
 import type { Database } from "@/server/types/database";
 import type { ActivityType } from "@/modules/activities/queries";
 
@@ -125,7 +127,8 @@ function mapCard(row: BoardColumnJson["cards"][number]): OpportunityCard {
 export async function getPipelineBoard(pipelineId: string): Promise<PipelineBoardColumn[]> {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("get_pipeline_board", { p_pipeline_id: pipelineId });
-  if (error || !data) return [];
+  if (error) throw new DataLoadError(`o quadro do pipeline ${pipelineId}`, error);
+  if (!data) return [];
 
   const columns = data as unknown as BoardColumnJson[];
   return columns.map((col) => ({
@@ -177,10 +180,18 @@ export type OpportunityDetail = OpportunityCard & {
   }>;
 };
 
+/** Inexistente, de outro workspace ou fora do alcance do papel — a própria
+ * RPC não distingue os três de propósito (não revela existência). */
+const OPPORTUNITY_ABSENCE_CODES = ["opportunity_not_found", "insufficient_permission"] as const;
+
 export async function getOpportunity(opportunityId: string): Promise<OpportunityDetail | null> {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("get_opportunity", { p_opportunity_id: opportunityId });
-  if (error || !data) return null;
+  if (error) {
+    if (isExpectedAbsence(error, OPPORTUNITY_ABSENCE_CODES)) return null;
+    throw new DataLoadError(`a oportunidade ${opportunityId}`, error);
+  }
+  if (!data) return null;
 
   const row = data as Record<string, unknown>;
   return {
@@ -250,16 +261,25 @@ export type StageRequirementStatus = {
   filled: boolean;
 };
 
+/**
+ * `null` = oportunidade inacessível (mesmos códigos de getOpportunity). Uma
+ * falha nunca vira lista vazia: lista vazia significa "nenhum requisito
+ * pendente" e liberaria o avanço sem o diálogo.
+ */
 export async function getStageRequirementsStatus(
   opportunityId: string,
   toStageId: string,
-): Promise<StageRequirementStatus[]> {
+): Promise<StageRequirementStatus[] | null> {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("get_stage_requirements_status", {
     p_opportunity_id: opportunityId,
     p_to_stage_id: toStageId,
   });
-  if (error || !data) return [];
+  if (error) {
+    if (isExpectedAbsence(error, OPPORTUNITY_ABSENCE_CODES)) return null;
+    throw new DataLoadError(`os requisitos de avanço da oportunidade ${opportunityId}`, error);
+  }
+  if (!data) return [];
 
   return (data as unknown[]).map((r) => {
     const item = r as Record<string, unknown>;
@@ -282,12 +302,16 @@ export async function getStageRequirementsStatus(
  * etapa do pipeline — não só o caminho percorrido, diferente de
  * getStageRequirementsStatus(). Mesmo formato de linha, reaproveitado.
  */
-export async function getWinRequirementsStatus(opportunityId: string): Promise<StageRequirementStatus[]> {
+export async function getWinRequirementsStatus(opportunityId: string): Promise<StageRequirementStatus[] | null> {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("get_win_requirements_status", {
     p_opportunity_id: opportunityId,
   });
-  if (error || !data) return [];
+  if (error) {
+    if (isExpectedAbsence(error, OPPORTUNITY_ABSENCE_CODES)) return null;
+    throw new DataLoadError(`os requisitos de ganho da oportunidade ${opportunityId}`, error);
+  }
+  if (!data) return [];
 
   return (data as unknown[]).map((r) => {
     const item = r as Record<string, unknown>;
@@ -311,35 +335,38 @@ export type LostReasonOption = { id: string; label: string };
 
 export async function listPipelines(workspaceId: string): Promise<PipelineOption[]> {
   const supabase = await createServerSupabaseClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("pipelines")
     .select("id, name, is_default")
     .eq("workspace_id", workspaceId)
     .order("is_default", { ascending: false })
     .order("name", { ascending: true });
+  if (error) throw new DataLoadError(`os pipelines do workspace ${workspaceId}`, error);
 
   return (data ?? []).map((p) => ({ id: p.id, name: p.name, isDefault: p.is_default }));
 }
 
 export async function getDefaultPipeline(workspaceId: string): Promise<PipelineOption | null> {
   const supabase = await createServerSupabaseClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("pipelines")
     .select("id, name, is_default")
     .eq("workspace_id", workspaceId)
     .eq("is_default", true)
     .maybeSingle();
+  if (error) throw new DataLoadError(`o pipeline padrão do workspace ${workspaceId}`, error);
 
   return data ? { id: data.id, name: data.name, isDefault: data.is_default } : null;
 }
 
 export async function listPipelineStages(pipelineId: string): Promise<PipelineStageOption[]> {
   const supabase = await createServerSupabaseClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("pipeline_stages")
     .select("id, pipeline_id, name, position")
     .eq("pipeline_id", pipelineId)
     .order("position", { ascending: true });
+  if (error) throw new DataLoadError(`as etapas do pipeline ${pipelineId}`, error);
 
   return (data ?? []).map((s) => ({ id: s.id, pipelineId: s.pipeline_id, name: s.name, position: s.position }));
 }
@@ -380,20 +407,24 @@ export type PipelineStageDetail = {
  */
 export async function listPipelineStagesWithDetails(pipelineId: string): Promise<PipelineStageDetail[]> {
   const supabase = await createServerSupabaseClient();
-  const { data: stages } = await supabase
+  const { data: stages, error: stagesError } = await supabase
     .from("pipeline_stages")
     .select("id, pipeline_id, name, position, color, is_won, is_lost")
     .eq("pipeline_id", pipelineId)
     .order("position", { ascending: true });
+  if (stagesError) throw new DataLoadError(`as etapas do pipeline ${pipelineId}`, stagesError);
 
   if (!stages || stages.length === 0) return [];
 
   const stageIds = stages.map((s) => s.id);
-  const { data: requirements } = await supabase
+  const { data: requirements, error: requirementsError } = await supabase
     .from("stage_requirements")
     .select("id, stage_id, label, field_type, hint, position, required_for_win")
     .in("stage_id", stageIds)
     .order("position", { ascending: true });
+  if (requirementsError) {
+    throw new DataLoadError(`os requisitos das etapas do pipeline ${pipelineId}`, requirementsError);
+  }
 
   const requirementsByStage = new Map<string, StageRequirementDetail[]>();
   for (const r of requirements ?? []) {
@@ -412,10 +443,13 @@ export async function listPipelineStagesWithDetails(pipelineId: string): Promise
   // stage_auto_activity_rules: no máximo uma linha por etapa — mesma
   // tabela de configuração não sensível de stage_requirements, SELECT
   // direto liberado por RLS.
-  const { data: autoRules } = await supabase
+  const { data: autoRules, error: autoRulesError } = await supabase
     .from("stage_auto_activity_rules")
     .select("id, stage_id, activity_type, title, due_offset_hours, assignee_rule")
     .in("stage_id", stageIds);
+  if (autoRulesError) {
+    throw new DataLoadError(`as regras de atividade automática do pipeline ${pipelineId}`, autoRulesError);
+  }
 
   const autoRuleByStage = new Map<string, StageAutoActivityRuleDetail>();
   for (const rule of autoRules ?? []) {
@@ -443,12 +477,13 @@ export async function listPipelineStagesWithDetails(pipelineId: string): Promise
 
 export async function listLostReasons(workspaceId: string): Promise<LostReasonOption[]> {
   const supabase = await createServerSupabaseClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("lost_reasons")
     .select("id, label")
     .eq("workspace_id", workspaceId)
     .eq("active", true)
     .order("position", { ascending: true });
+  if (error) throw new DataLoadError(`os motivos de perda do workspace ${workspaceId}`, error);
 
   return (data ?? []).map((r) => ({ id: r.id, label: r.label }));
 }
@@ -472,12 +507,14 @@ export async function listOpportunities(
     search?: string | undefined;
     sort?: "created_at_desc" | "created_at_asc" | undefined;
     page?: number | undefined;
+    pageSize?: number | undefined;
     leadId?: string | undefined;
   } = {},
 ): Promise<{ items: OpportunityListItem[]; total: number; page: number; pageSize: number }> {
   const supabase = await createServerSupabaseClient();
   const page = Math.max(1, filters.page ?? 1);
-  const pageSize = 20;
+  // Teto do próprio RPC (list_opportunities limita p_page_size a 100).
+  const pageSize = Math.max(1, Math.min(filters.pageSize ?? 20, 100));
 
   const { data, error } = await supabase.rpc("list_opportunities", {
     p_workspace_id: workspaceId,
@@ -491,7 +528,8 @@ export async function listOpportunities(
     ...(filters.leadId ? { p_lead_id: filters.leadId } : {}),
   });
 
-  if (error || !data || data.length === 0) {
+  if (error) throw new DataLoadError(`as oportunidades do workspace ${workspaceId}`, error);
+  if (!data || data.length === 0) {
     return { items: [], total: 0, page, pageSize };
   }
 
@@ -527,4 +565,15 @@ export async function listOpportunities(
     page,
     pageSize,
   };
+}
+
+/** Todas as oportunidades que casam com o filtro — para telas que precisam
+ * da lista inteira (Perfil 360, resolução de vínculo da conversa). */
+export async function listAllOpportunities(
+  workspaceId: string,
+  filters: Omit<NonNullable<Parameters<typeof listOpportunities>[1]>, "page" | "pageSize"> = {},
+): Promise<OpportunityListItem[]> {
+  return collectAllPages(`as oportunidades do workspace ${workspaceId}`, (page) =>
+    listOpportunities(workspaceId, { ...filters, page, pageSize: 100 }),
+  );
 }

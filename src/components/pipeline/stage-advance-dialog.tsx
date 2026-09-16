@@ -36,24 +36,36 @@ export function StageAdvanceDialog({
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    checkStageRequirementsAction(opportunityId, toStageId).then((data) => {
+    checkStageRequirementsAction(opportunityId, toStageId).then((result) => {
       if (cancelled) return;
-      setRequirements(data);
+      setLoading(false);
+      if (!result.ok) {
+        setLoadError(result.error);
+        return;
+      }
+      setRequirements(result.requirements);
       const initial: Record<string, string | boolean> = {};
-      for (const req of data) {
+      for (const req of result.requirements) {
         if (req.fieldType === "checkbox") initial[req.requirementId] = req.valueBool ?? false;
         else initial[req.requirementId] = req.valueText ?? "";
       }
       setValues(initial);
-      setLoading(false);
     });
     return () => {
       cancelled = true;
     };
-  }, [opportunityId, toStageId]);
+  }, [opportunityId, toStageId, attempt]);
+
+  function retryLoad() {
+    setLoadError(null);
+    setLoading(true);
+    setAttempt((n) => n + 1);
+  }
 
   const completedCount = requirements.filter((r) =>
     r.fieldType === "checkbox" ? values[r.requirementId] === true : String(values[r.requirementId] ?? "").trim() !== "",
@@ -88,6 +100,15 @@ export function StageAdvanceDialog({
 
         {loading ? (
           <p className="text-body text-text-tertiary">Carregando…</p>
+        ) : loadError ? (
+          <Alert variant="danger">
+            <AlertDescription>
+              {loadError}{" "}
+              <Button type="button" variant="ghost" size="sm" onClick={retryLoad}>
+                Tentar novamente
+              </Button>
+            </AlertDescription>
+          </Alert>
         ) : (
           <div className="flex flex-col gap-3">
             {requirements.map((req) => (
@@ -143,7 +164,7 @@ export function StageAdvanceDialog({
           </Button>
           <Button
             type="button"
-            disabled={loading || submitting || completedCount < requirements.length}
+            disabled={loading || loadError !== null || submitting || completedCount < requirements.length}
             onClick={handleSubmit}
           >
             {submitting ? "Salvando…" : "Salvar e avançar"}

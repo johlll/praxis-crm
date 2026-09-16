@@ -287,6 +287,60 @@ export type Database = {
           },
         ]
       }
+      conflict_checks: {
+        Row: {
+          checked_at: string | null
+          checked_by: string | null
+          created_at: string
+          id: string
+          lead_id: string
+          lock_version: number
+          note: string | null
+          status: Database["public"]["Enums"]["conflict_check_status"]
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          checked_at?: string | null
+          checked_by?: string | null
+          created_at?: string
+          id?: string
+          lead_id: string
+          lock_version?: number
+          note?: string | null
+          status?: Database["public"]["Enums"]["conflict_check_status"]
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          checked_at?: string | null
+          checked_by?: string | null
+          created_at?: string
+          id?: string
+          lead_id?: string
+          lock_version?: number
+          note?: string | null
+          status?: Database["public"]["Enums"]["conflict_check_status"]
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conflict_checks_lead_same_workspace_fkey"
+            columns: ["workspace_id", "lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "conflict_checks_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contact_consents: {
         Row: {
           accepted_text: string | null
@@ -823,6 +877,48 @@ export type Database = {
           },
           {
             foreignKeyName: "duplicate_candidates_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      lead_notes: {
+        Row: {
+          body: string
+          created_at: string
+          created_by: string
+          id: string
+          lead_id: string
+          workspace_id: string
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          created_by: string
+          id?: string
+          lead_id: string
+          workspace_id: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          created_by?: string
+          id?: string
+          lead_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lead_notes_lead_same_workspace_fkey"
+            columns: ["workspace_id", "lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "lead_notes_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
@@ -1395,6 +1491,111 @@ export type Database = {
           },
         ]
       }
+      proposal_number_counters: {
+        Row: {
+          last_value: number
+          workspace_id: string
+          year: number
+        }
+        Insert: {
+          last_value: number
+          workspace_id: string
+          year: number
+        }
+        Update: {
+          last_value?: number
+          workspace_id?: string
+          year?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "proposal_number_counters_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      proposals: {
+        Row: {
+          created_at: string
+          created_by: string
+          decided_at: string | null
+          decision_note: string | null
+          fee_model: Database["public"]["Enums"]["fee_model"]
+          id: string
+          lead_id: string
+          lock_version: number
+          number: string
+          opportunity_id: string
+          sent_at: string | null
+          sent_channels: Database["public"]["Enums"]["proposal_channel"][]
+          status: Database["public"]["Enums"]["proposal_status"]
+          updated_at: string
+          value_cents: number
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          decided_at?: string | null
+          decision_note?: string | null
+          fee_model: Database["public"]["Enums"]["fee_model"]
+          id?: string
+          lead_id: string
+          lock_version?: number
+          number: string
+          opportunity_id: string
+          sent_at?: string | null
+          sent_channels?: Database["public"]["Enums"]["proposal_channel"][]
+          status?: Database["public"]["Enums"]["proposal_status"]
+          updated_at?: string
+          value_cents: number
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          decided_at?: string | null
+          decision_note?: string | null
+          fee_model?: Database["public"]["Enums"]["fee_model"]
+          id?: string
+          lead_id?: string
+          lock_version?: number
+          number?: string
+          opportunity_id?: string
+          sent_at?: string | null
+          sent_channels?: Database["public"]["Enums"]["proposal_channel"][]
+          status?: Database["public"]["Enums"]["proposal_status"]
+          updated_at?: string
+          value_cents?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "proposals_lead_same_workspace_fkey"
+            columns: ["workspace_id", "lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "proposals_opportunity_same_workspace_fkey"
+            columns: ["workspace_id", "opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "proposals_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sensitive_data_access: {
         Row: {
           actor_user_id: string | null
@@ -1955,6 +2156,10 @@ export type Database = {
         }
         Returns: string
       }
+      create_lead_note: {
+        Args: { p_body: string; p_lead_id: string }
+        Returns: string
+      }
       create_lost_reason: {
         Args: { p_label: string; p_workspace_id: string }
         Returns: string
@@ -1977,6 +2182,14 @@ export type Database = {
           p_name: string
           p_pipeline_id: string
           p_position?: number
+        }
+        Returns: string
+      }
+      create_proposal: {
+        Args: {
+          p_fee_model: Database["public"]["Enums"]["fee_model"]
+          p_opportunity_id: string
+          p_value_cents: number
         }
         Returns: string
       }
@@ -2050,6 +2263,15 @@ export type Database = {
         Args: { p_lost_reason_id: string }
         Returns: undefined
       }
+      decide_proposal: {
+        Args: {
+          p_decision: Database["public"]["Enums"]["proposal_status"]
+          p_lock_version: number
+          p_note?: string
+          p_proposal_id: string
+        }
+        Returns: undefined
+      }
       delete_activity: { Args: { p_activity_id: string }; Returns: undefined }
       delete_pipeline_stage: {
         Args: { p_stage_id: string }
@@ -2070,6 +2292,7 @@ export type Database = {
       get_activity: { Args: { p_activity_id: string }; Returns: Json }
       get_activity_counts: { Args: { p_workspace_id: string }; Returns: Json }
       get_client: { Args: { p_client_id: string }; Returns: Json }
+      get_conflict_check: { Args: { p_lead_id: string }; Returns: Json }
       get_contact_merge_history: {
         Args: { p_contact_id: string }
         Returns: {
@@ -2081,9 +2304,24 @@ export type Database = {
         }[]
       }
       get_conversation: { Args: { p_conversation_id: string }; Returns: Json }
+      get_last_completed_meeting: { Args: { p_lead_id: string }; Returns: Json }
       get_lead: { Args: { p_lead_id: string }; Returns: Json }
+      get_lead_timeline: {
+        Args: {
+          p_before?: string
+          p_before_id?: string
+          p_lead_id: string
+          p_limit?: number
+          p_types?: string[]
+        }
+        Returns: {
+          has_more: boolean
+          items: Json
+        }[]
+      }
       get_opportunity: { Args: { p_opportunity_id: string }; Returns: Json }
       get_pipeline_board: { Args: { p_pipeline_id: string }; Returns: Json }
+      get_proposal: { Args: { p_proposal_id: string }; Returns: Json }
       get_stage_requirements_status: {
         Args: { p_opportunity_id: string; p_to_stage_id: string }
         Returns: Json
@@ -2136,7 +2374,12 @@ export type Database = {
         }[]
       }
       list_conversations: {
-        Args: { p_page?: number; p_page_size?: number; p_workspace_id: string }
+        Args: {
+          p_lead_id?: string
+          p_page?: number
+          p_page_size?: number
+          p_workspace_id: string
+        }
         Returns: {
           items: Json
           total_count: number
@@ -2176,6 +2419,7 @@ export type Database = {
           total_count: number
         }[]
       }
+      list_proposals_for_lead: { Args: { p_lead_id: string }; Returns: Json }
       lose_opportunity: {
         Args: {
           p_followup_date?: string
@@ -2326,6 +2570,14 @@ export type Database = {
           p_conversation_id: string
         }
         Returns: Json
+      }
+      send_proposal: {
+        Args: {
+          p_channels: Database["public"]["Enums"]["proposal_channel"][]
+          p_lock_version: number
+          p_proposal_id: string
+        }
+        Returns: undefined
       }
       set_contact_cpf_cnpj: {
         Args: {
@@ -2589,6 +2841,15 @@ export type Database = {
         Args: { p_required_for_win: boolean; p_requirement_id: string }
         Returns: undefined
       }
+      upsert_conflict_check: {
+        Args: {
+          p_lead_id: string
+          p_lock_version?: number
+          p_note?: string
+          p_status: Database["public"]["Enums"]["conflict_check_status"]
+        }
+        Returns: Json
+      }
       win_opportunity: {
         Args: {
           p_fee_model: Database["public"]["Enums"]["fee_model"]
@@ -2607,6 +2868,11 @@ export type Database = {
       activity_status: "pending" | "done"
       activity_type: "call" | "meeting" | "task" | "email" | "deadline"
       client_status: "ativo" | "encerrado" | "suspenso"
+      conflict_check_status:
+        | "nao_verificado"
+        | "sem_conflito"
+        | "conflito_identificado"
+        | "em_analise"
       consent_legal_basis:
         | "consentimento"
         | "legitimo_interesse"
@@ -2634,6 +2900,8 @@ export type Database = {
       message_direction: "inbound" | "outbound"
       message_status: "queued" | "sent" | "delivered" | "read" | "failed"
       opportunity_status: "open" | "won" | "lost"
+      proposal_channel: "email" | "whatsapp"
+      proposal_status: "rascunho" | "enviada" | "aceita" | "recusada"
       stage_requirement_type: "text" | "textarea" | "date" | "checkbox"
     }
     CompositeTypes: {
@@ -2767,6 +3035,12 @@ export const Constants = {
       activity_status: ["pending", "done"],
       activity_type: ["call", "meeting", "task", "email", "deadline"],
       client_status: ["ativo", "encerrado", "suspenso"],
+      conflict_check_status: [
+        "nao_verificado",
+        "sem_conflito",
+        "conflito_identificado",
+        "em_analise",
+      ],
       consent_legal_basis: [
         "consentimento",
         "legitimo_interesse",
@@ -2796,6 +3070,8 @@ export const Constants = {
       message_direction: ["inbound", "outbound"],
       message_status: ["queued", "sent", "delivered", "read", "failed"],
       opportunity_status: ["open", "won", "lost"],
+      proposal_channel: ["email", "whatsapp"],
+      proposal_status: ["rascunho", "enviada", "aceita", "recusada"],
       stage_requirement_type: ["text", "textarea", "date", "checkbox"],
     },
   },

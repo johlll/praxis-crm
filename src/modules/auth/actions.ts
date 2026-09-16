@@ -7,8 +7,10 @@ import { createServerSupabaseClient } from "@/server/supabase/server";
 import { clearActiveWorkspaceCookie, getActiveWorkspaceId, switchActiveWorkspace } from "@/server/auth/workspace";
 import { listMyWorkspaces } from "@/modules/workspace/queries";
 import { getRequestOrigin } from "@/server/request-origin";
+import { DataLoadError, LOAD_ERROR_MESSAGE } from "@/server/data/load-error";
 import { toUserMessage } from "@/lib/errors";
 import { signInSchema, signUpSchema } from "./schema";
+import { signInErrorMessage } from "./sign-in-errors";
 
 export type AuthActionState = {
   ok: boolean;
@@ -84,13 +86,7 @@ export async function signInAction(
   const { error } = await supabase.auth.signInWithPassword(parsed.data);
 
   if (error) {
-    // O Supabase distingue "credenciais erradas" de outros erros pelo
-    // texto — mas não repassamos o texto dele, só decidimos com base nele
-    // qual mensagem NOSSA mostrar.
-    return {
-      ok: false,
-      error: "E-mail ou senha incorretos.",
-    };
+    return { ok: false, error: signInErrorMessage(error) };
   }
 
   // Sem isso, quem já é membro de um workspace (ex.: convidado antes,
@@ -99,11 +95,19 @@ export async function signInAction(
   // O id vem da própria consulta de membership do usuário, nunca do
   // cliente; switchActiveWorkspace revalida contra o banco de novo antes
   // de gravar.
-  if (!(await getActiveWorkspaceId())) {
-    const [firstWorkspace] = await listMyWorkspaces();
-    if (firstWorkspace) {
-      await switchActiveWorkspace(firstWorkspace.id);
+  try {
+    if (!(await getActiveWorkspaceId())) {
+      const [firstWorkspace] = await listMyWorkspaces();
+      if (firstWorkspace) {
+        await switchActiveWorkspace(firstWorkspace.id);
+      }
     }
+  } catch (error) {
+    // Seguir sem resolver o workspace mandaria um membro de verdade para o
+    // onboarding por causa de uma falha de rede. A sessão já existe: tentar
+    // entrar de novo repete só esta resolução.
+    if (error instanceof DataLoadError) return { ok: false, error: LOAD_ERROR_MESSAGE };
+    throw error;
   }
 
   redirect(sanitizeNextPath(formData.get("next")));

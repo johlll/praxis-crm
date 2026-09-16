@@ -128,3 +128,4 @@ export async function callRpcDirect(
   const body = await res.json().catch(() => null);
   return { status: res.status(), body };
 }
+

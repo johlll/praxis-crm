@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { createServerSupabaseClient } from "@/server/supabase/server";
-import { requirePermission, AuthzError, type Permission } from "@/server/authz/permissions";
+import { requirePermissionSafe } from "@/server/authz/safe";
 import { toUserMessage } from "@/lib/errors";
 import { updateClientStatusSchema, transferClientOwnerSchema } from "./schema";
 
@@ -13,25 +13,12 @@ export type ClientActionState = {
   clientId?: string;
 };
 
-const PERMISSION_DENIED_MESSAGE = "Você não tem permissão para fazer isso.";
-
-async function requirePermissionSafe(
-  permission: Permission,
-): Promise<{ ctx: Awaited<ReturnType<typeof requirePermission>> } | { deniedMessage: string }> {
-  try {
-    return { ctx: await requirePermission(permission) };
-  } catch (error) {
-    if (error instanceof AuthzError) return { deniedMessage: PERMISSION_DENIED_MESSAGE };
-    throw error;
-  }
-}
-
 export async function updateClientStatusAction(
   _prevState: ClientActionState,
   formData: FormData,
 ): Promise<ClientActionState> {
   const guard = await requirePermissionSafe("client.manage");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = updateClientStatusSchema.safeParse({
     clientId: formData.get("clientId"),
@@ -64,7 +51,7 @@ export async function transferClientOwnerAction(
   formData: FormData,
 ): Promise<ClientActionState> {
   const guard = await requirePermissionSafe("client.manage");
-  if ("deniedMessage" in guard) return { ok: false, error: guard.deniedMessage };
+  if ("error" in guard) return { ok: false, error: guard.error };
 
   const parsed = transferClientOwnerSchema.safeParse({
     clientId: formData.get("clientId"),

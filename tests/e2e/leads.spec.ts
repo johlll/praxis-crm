@@ -40,7 +40,6 @@ test.describe.serial("leads — A4", () => {
   test("2. edição básica persiste, inclusive em saves consecutivos e com resposta lenta", async ({ page }) => {
     await login(page, SEED_USERS.ana.email);
     await page.goto(leadUrl);
-
     // --- salvamento simples ---
     await page.getByLabel("Resumo").fill("Rescisão indireta — audiência marcada");
     await page.getByRole("button", { name: "Salvar" }).click();
@@ -105,6 +104,49 @@ test.describe.serial("leads — A4", () => {
     await page.getByRole("button", { name: "Salvar" }).click();
     await expect(page.getByText("Dados salvos.")).toBeVisible();
     await expect(page.getByLabel("Resumo")).toHaveValue("Segundo texto — editado durante a espera");
+  });
+
+  test("2b. antes de a página hidratar, o formulário recusa edição — nada se mistura ao valor do servidor", async ({
+    page,
+    browser,
+  }) => {
+    await login(page, SEED_USERS.ana.email);
+
+    // Janela anterior à hidratação, reproduzida de forma determinística: uma
+    // aba com JavaScript desligado vê exatamente o HTML que o navegador tem
+    // antes de o React assumir o formulário. Foi nessa janela que, no
+    // CI, o texto digitado apareceu misturado ao valor do servidor
+    // (inventário §5c).
+    const semJs = await browser.newContext({
+      storageState: await page.context().storageState(),
+      javaScriptEnabled: false,
+    });
+    const paginaSemJs = await semJs.newPage();
+    await paginaSemJs.goto(leadUrl);
+    const resumoSemJs = paginaSemJs.getByLabel("Resumo");
+    await expect(resumoSemJs).toBeDisabled();
+    await expect(resumoSemJs).toHaveValue("Segundo texto — editado durante a espera");
+
+    // Tentativa real de digitar nessa janela: o campo recusa a edição e
+    // continua com o valor que veio do servidor.
+    let digitou = true;
+    await resumoSemJs.fill("texto que não deve entrar", { timeout: 2000 }).catch(() => {
+      digitou = false;
+    });
+    expect(digitou).toBe(false);
+    await expect(resumoSemJs).toHaveValue("Segundo texto — editado durante a espera");
+    await semJs.close();
+
+    // Com o JavaScript no ar, a edição volta a funcionar e o que foi
+    // digitado é exatamente o que fica salvo.
+    await page.goto(leadUrl);
+    await page.getByLabel("Resumo").fill("Texto digitado depois de hidratar");
+    await page.getByRole("button", { name: "Salvar" }).click();
+    await expect(page.getByText("Dados salvos.")).toBeVisible();
+    await expect(page.getByLabel("Resumo")).toHaveValue("Texto digitado depois de hidratar");
+
+    await page.goto(leadUrl);
+    await expect(page.getByLabel("Resumo")).toHaveValue("Texto digitado depois de hidratar");
   });
 
   test("3. busca e filtro no servidor encontram o lead certo", async ({ page }) => {

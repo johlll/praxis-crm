@@ -1,4 +1,5 @@
 import { createServerSupabaseClient } from "@/server/supabase/server";
+import { DataLoadError, isExpectedAbsence } from "@/server/data/load-error";
 import type { Database } from "@/server/types/database";
 
 export type MessageDirection = Database["public"]["Enums"]["message_direction"];
@@ -47,16 +48,16 @@ const PAGE_SIZE = 20;
  * erro de carregamento sobe puro até error.tsx da rota, nunca vira lista
  * vazia disfarçada de "sem conversas".
  */
-export class ConversationsLoadError extends Error {
-  constructor(message: string) {
-    super(message);
+export class ConversationsLoadError extends DataLoadError {
+  constructor(resource: string, cause?: unknown) {
+    super(resource, cause);
     this.name = "ConversationsLoadError";
   }
 }
 
 export async function listConversations(
   workspaceId: string,
-  opts: { page?: number | undefined } = {},
+  opts: { page?: number | undefined; leadId?: string | undefined } = {},
 ): Promise<{ items: ConversationListItem[]; total: number; page: number; pageSize: number }> {
   const page = Math.max(1, opts.page ?? 1);
   const supabase = await createServerSupabaseClient();
@@ -64,10 +65,11 @@ export async function listConversations(
     p_workspace_id: workspaceId,
     p_page: page,
     p_page_size: PAGE_SIZE,
+    ...(opts.leadId ? { p_lead_id: opts.leadId } : {}),
   });
 
   if (error) {
-    throw new ConversationsLoadError(`Falha ao buscar conversas do workspace ${workspaceId}: ${error.message}`);
+    throw new ConversationsLoadError(`as conversas do workspace ${workspaceId}`, error);
   }
   if (!data || data.length === 0) {
     return { items: [], total: 0, page, pageSize: PAGE_SIZE };
@@ -96,10 +98,16 @@ export type ConversationDetail = {
   createdAt: string;
 };
 
+const CONVERSATION_ABSENCE_CODES = ["conversation_not_found", "insufficient_permission"] as const;
+
 export async function getConversation(conversationId: string): Promise<ConversationDetail | null> {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("get_conversation", { p_conversation_id: conversationId });
-  if (error || !data) return null;
+  if (error) {
+    if (isExpectedAbsence(error, CONVERSATION_ABSENCE_CODES)) return null;
+    throw new ConversationsLoadError(`a conversa ${conversationId}`, error);
+  }
+  if (!data) return null;
 
   const row = data as Record<string, unknown>;
   return {
@@ -157,9 +165,9 @@ function mapMessageRow(row: Record<string, unknown>): MessageListItem {
  * subir para o error.tsx da rota, que mostra erro tratado com "tentar
  * novamente".
  */
-export class ConversationMessagesLoadError extends Error {
-  constructor(message: string) {
-    super(message);
+export class ConversationMessagesLoadError extends DataLoadError {
+  constructor(resource: string, cause?: unknown) {
+    super(resource, cause);
     this.name = "ConversationMessagesLoadError";
   }
 }
@@ -189,9 +197,7 @@ export async function listConversationMessages(
   });
 
   if (error) {
-    throw new ConversationMessagesLoadError(
-      `Falha ao buscar mensagens da conversa ${conversationId}: ${error.message}`,
-    );
+    throw new ConversationMessagesLoadError(`as mensagens da conversa ${conversationId}`, error);
   }
   if (!data || data.length === 0) {
     return { items: [], hasMore: false };
@@ -213,11 +219,12 @@ export type WhatsAppChannel = {
 
 export async function listWhatsAppChannels(workspaceId: string): Promise<WhatsAppChannel[]> {
   const supabase = await createServerSupabaseClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("whatsapp_channels")
     .select("id, label, phone_number_id, display_phone_number, is_simulator, status")
     .eq("workspace_id", workspaceId)
     .order("created_at", { ascending: true });
+  if (error) throw new ConversationsLoadError(`os canais de WhatsApp do workspace ${workspaceId}`, error);
 
   return (data ?? []).map((row) => ({
     id: row.id,
@@ -243,11 +250,14 @@ export type ContactConsent = {
 
 export async function listContactConsents(contactId: string): Promise<ContactConsent[]> {
   const supabase = await createServerSupabaseClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("contact_consents")
     .select("id, channel, legal_basis, purpose, purpose_code, granted_at, revoked_at, evidence_source, created_at")
     .eq("contact_id", contactId)
     .order("created_at", { ascending: false });
+  // Falha aqui não pode virar "sem consentimento" (bloqueio de envio sem
+  // motivo real) nem, no pior caso inverso, esconder uma revogação.
+  if (error) throw new ConversationsLoadError(`os consentimentos do contato ${contactId}`, error);
 
   return (data ?? []).map((row) => ({
     id: row.id,

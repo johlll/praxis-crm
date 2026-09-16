@@ -253,9 +253,15 @@ export function PipelineBoard({
     const fromStageId = findCardStage(card.id);
     if (!fromStageId || fromStageId === toStageId) return;
 
+    setError(null);
     startTransition(async () => {
-      const pending = await checkStageRequirementsAction(card.id, toStageId);
-      const missing = pending.filter((r) => !r.filled);
+      const check = await checkStageRequirementsAction(card.id, toStageId);
+      // Sem saber os requisitos, não move: "nenhum pendente" seria suposição.
+      if (!check.ok) {
+        setError(check.error);
+        return;
+      }
+      const missing = check.requirements.filter((r) => !r.filled);
       if (missing.length > 0) {
         setAdvanceTarget({ card, toStageId });
         return;

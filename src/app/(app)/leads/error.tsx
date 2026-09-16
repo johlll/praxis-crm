@@ -4,7 +4,7 @@ import { useEffect } from "react";
 
 import { ErrorState } from "@/components/feedback/error-state";
 
-export default function LeadsError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+export default function LeadsError({ error, retry }: { error: Error & { digest?: string }; retry: () => void }) {
   useEffect(() => {
     // Só no console do navegador — nunca detalhe interno na tela (checklist).
     console.error(error);
@@ -16,7 +16,7 @@ export default function LeadsError({ error, reset }: { error: Error & { digest?:
         <ErrorState
           title="Não foi possível carregar os leads"
           description="Tente novamente em instantes. Se continuar, avise o responsável pelo sistema."
-          onRetry={reset}
+          onRetry={retry}
         />
       </div>
     </main>
