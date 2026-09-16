@@ -102,11 +102,16 @@ describe("/entrar mostra o aviso certo para cada caso", () => {
     expect(texto).not.toMatch(/cadastr/i);
   });
 
-  it("link inválido: pede um link novo", async () => {
+  it("link inválido: fala do link, não do estado da conta", async () => {
     render(await EntrarPage({ searchParams: Promise.resolve({ erro: "link_invalido" }) }));
     const texto = screen.getByRole("alert").textContent ?? "";
-    expect(texto).toMatch(/link/i);
+    // O link ter expirado ou sido reutilizado não diz nada sobre a conta
+    // estar confirmada: a mesma resposta acontece com um link já usado de
+    // uma conta confirmada. O aviso oferece os dois caminhos.
+    expect(texto).toMatch(/j[áa] (foi )?usad|expirou|inv[áa]lid/i);
+    expect(texto).toMatch(/entrar|entre/i);
     expect(texto).toMatch(/novo|de novo/i);
+    expect(texto).not.toMatch(/(conta|e-mail)[^.]{0,40}n[ãa]o (foi |est[áa] )?confirmad/i);
   });
 
   it("sem erro, nenhum aviso", async () => {

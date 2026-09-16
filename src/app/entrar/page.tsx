@@ -17,7 +17,7 @@ type EntrarPageProps = {
  * está confirmada e basta entrar. */
 const AVISOS: Record<string, string> = {
   link_invalido:
-    "O link de confirmação é inválido ou já expirou. Crie a conta de novo com o mesmo e-mail para receber um link novo.",
+    "Este link de confirmação não vale mais: já foi usado ou expirou. Isso não diz se a sua conta está confirmada — se já estiver, é só entrar abaixo. Se o login pedir confirmação, crie a conta de novo com o mesmo e-mail para receber um link novo.",
   sessao_nao_criada:
     "Seu e-mail foi confirmado, mas não foi possível abrir a sessão por este link. Entre com seu e-mail e senha.",
 };
