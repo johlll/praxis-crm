@@ -2,14 +2,18 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * Estabilização pós-A9 — inventário §6.1 (docs/decisoes/estabilizacao-pos-a9.md).
+ * Estabilização pós-A9 — inventário §6.1 e §6.3
+ * (docs/decisoes/estabilizacao-pos-a9.md).
  *
- * O cliente do servidor usa o fluxo PKCE do @supabase/ssr (o cadastro grava o
- * cookie `code-verifier`). Com o modelo de e-mail padrão do Supabase, o link
- * de confirmação passa por `/auth/v1/verify` e volta para `/auth/confirm?code=…`
- * — não `?token_hash=…`. A rota só tratava `token_hash`, então a confirmação
- * real terminava em `/entrar?erro=confirmacao_invalida`, e a tela de login
- * ignorava esse parâmetro (falha silenciosa).
+ * A rota de confirmação precisa separar três situações que terminam todas
+ * fora do onboarding, mas pedem ações diferentes:
+ * - o link falhou no próprio Auth (expirado/reutilizado): o e-mail NÃO foi
+ *   confirmado → pedir um link novo;
+ * - o Auth confirmou o e-mail e devolveu um código, mas a sessão não pôde
+ *   ser aberta (outro navegador, código expirado): a conta já está
+ *   confirmada → mandar entrar com a senha, nunca pedir cadastro de novo;
+ * - link do modelo com `token_hash` (o que passou a ser usado depois da
+ *   troca do modelo de e-mail) → verifyOtp.
  */
 
 const state = vi.hoisted(() => ({
@@ -57,35 +61,56 @@ beforeEach(() => {
 });
 
 describe("/auth/confirm", () => {
+  it("link com token_hash (modelo atual do e-mail) cria a sessão e segue para o onboarding", async () => {
+    expect(await destinationOf("?token_hash=abc&type=email")).toBe("/onboarding");
+    expect(state.verifyOtp).toHaveBeenCalledWith({ type: "email", token_hash: "abc" });
+  });
+
   it("link do fluxo PKCE (?code=) troca o código pela sessão e segue para o onboarding", async () => {
     expect(await destinationOf("?code=codigo-pkce-1")).toBe("/onboarding");
     expect(state.exchangeCodeForSession).toHaveBeenCalledWith("codigo-pkce-1");
     expect(state.verifyOtp).not.toHaveBeenCalled();
   });
 
-  it("código recusado (expirado, outro navegador) → volta ao login com o erro", async () => {
+  it("e-mail já confirmado mas sessão não aberta → manda entrar, não pede cadastro novo", async () => {
     state.exchangeCodeForSession.mockImplementation(async () => ({ error: { message: "invalid flow state" } }));
-    expect(await destinationOf("?code=codigo-velho")).toBe("/entrar?erro=confirmacao_invalida");
+    expect(await destinationOf("?code=codigo-velho")).toBe("/entrar?erro=sessao_nao_criada");
   });
 
-  it("link com token_hash continua funcionando", async () => {
-    expect(await destinationOf("?token_hash=abc&type=signup")).toBe("/onboarding");
-    expect(state.verifyOtp).toHaveBeenCalledWith({ type: "signup", token_hash: "abc" });
+  it("o próprio Auth recusou o link (expirado/reutilizado) → pedir link novo", async () => {
+    expect(await destinationOf("?error=access_denied&error_code=otp_expired")).toBe("/entrar?erro=link_invalido");
+    expect(state.verifyOtp).not.toHaveBeenCalled();
+    expect(state.exchangeCodeForSession).not.toHaveBeenCalled();
   });
 
-  it("sem parâmetros → erro", async () => {
-    expect(await destinationOf("")).toBe("/entrar?erro=confirmacao_invalida");
+  it("token_hash recusado → link inválido (o e-mail não chegou a ser confirmado)", async () => {
+    state.verifyOtp.mockImplementation(async () => ({ error: { message: "Token has expired" } }));
+    expect(await destinationOf("?token_hash=abc&type=email")).toBe("/entrar?erro=link_invalido");
+  });
+
+  it("sem parâmetros → link inválido", async () => {
+    expect(await destinationOf("")).toBe("/entrar?erro=link_invalido");
   });
 });
 
-describe("/entrar?erro=confirmacao_invalida", () => {
-  it("mostra que o link de confirmação não funcionou", async () => {
-    render(await EntrarPage({ searchParams: Promise.resolve({ erro: "confirmacao_invalida" }) }));
-    expect(screen.getByRole("alert").textContent).toMatch(/link de confirmação/i);
+describe("/entrar mostra o aviso certo para cada caso", () => {
+  it("sessão não criada: diz que o e-mail está confirmado e pede o login", async () => {
+    render(await EntrarPage({ searchParams: Promise.resolve({ erro: "sessao_nao_criada" }) }));
+    const texto = screen.getByRole("alert").textContent ?? "";
+    expect(texto).toMatch(/confirmad/i);
+    expect(texto).toMatch(/entre/i);
+    expect(texto).not.toMatch(/cadastr/i);
+  });
+
+  it("link inválido: pede um link novo", async () => {
+    render(await EntrarPage({ searchParams: Promise.resolve({ erro: "link_invalido" }) }));
+    const texto = screen.getByRole("alert").textContent ?? "";
+    expect(texto).toMatch(/link/i);
+    expect(texto).toMatch(/novo|de novo/i);
   });
 
   it("sem erro, nenhum aviso", async () => {
     render(await EntrarPage({ searchParams: Promise.resolve({}) }));
-    expect(screen.queryByText(/link de confirmação/i)).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

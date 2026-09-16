@@ -11,6 +11,17 @@ type EntrarPageProps = {
   searchParams: Promise<{ next?: string; email?: string; erro?: string }>;
 };
 
+/** Avisos da volta do link de confirmação (`/auth/confirm`). "Link
+ * inválido" e "sessão não criada" pedem ações diferentes: no primeiro o
+ * e-mail não foi confirmado e é preciso um link novo; no segundo a conta já
+ * está confirmada e basta entrar. */
+const AVISOS: Record<string, string> = {
+  link_invalido:
+    "O link de confirmação é inválido ou já expirou. Crie a conta de novo com o mesmo e-mail para receber um link novo.",
+  sessao_nao_criada:
+    "Seu e-mail foi confirmado, mas não foi possível abrir a sessão por este link. Entre com seu e-mail e senha.",
+};
+
 export default async function EntrarPage({ searchParams }: EntrarPageProps) {
   const params = await searchParams;
 
@@ -34,13 +45,9 @@ export default async function EntrarPage({ searchParams }: EntrarPageProps) {
           </div>
         </div>
 
-        {params.erro === "confirmacao_invalida" ? (
+        {AVISOS[params.erro ?? ""] ? (
           <Alert variant="danger" className="w-full">
-            <AlertDescription>
-              O link de confirmação é inválido, expirou ou foi aberto em outro
-              navegador. Tente entrar; se o login pedir confirmação, crie a conta
-              de novo com o mesmo e-mail para receber um link novo.
-            </AlertDescription>
+            <AlertDescription>{AVISOS[params.erro ?? ""]}</AlertDescription>
           </Alert>
         ) : null}
 
