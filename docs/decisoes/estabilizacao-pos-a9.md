@@ -210,6 +210,7 @@ transição (`EditForm`), sem o reset automático, com campos controlados.
 | Origem | Item | Situação |
 |---|---|---|
 | A2 §7.5 | Site URL / Redirect URLs do Auth em `praxis-crm-dev` apontando para `localhost:3000` | **Resolvida — a configuração já tinha sido corrigida; nenhum ajuste manual necessário.** Ver §6.1 e §7.2 |
+| A2 §7 | Provedor de e-mail padrão do Supabase (limite de envio, modelos bloqueados) | **Resolvida nesta rodada, com autorização:** SMTP próprio no Resend (`mail.collios.cloud`), limite de 2 → 30 e-mails/h, modelo de confirmação personalizado. Detalhes e evidências em §7.2 |
 
 ### 6.1 Confirmação de e-mail do cadastro não funcionava com o link real
 
@@ -231,38 +232,53 @@ login com o erro; `token_hash` continua funcionando; `/entrar` mostra o
 aviso. No hospedado: cadastro pelo app, link real do e-mail aberto no mesmo
 navegador, destino e sessão acompanhados.
 
-### 6.2 Link de confirmação só funciona até 5 minutos depois do cadastro — AJUSTE MANUAL PENDENTE
+### 6.2 Confirmação de e-mail dependia do prazo curto do fluxo PKCE — RESOLVIDA
 
 **Comportamento incorreto (execução hospedada):** mesmo com §6.1 corrigido,
-o link do modelo de e-mail padrão depende do registro PKCE criado no
-cadastro. O Supabase Auth expira esse registro **5 minutos depois de
-criado**, contados do cadastro e não do clique (código-fonte oficial:
-`internal/models/flow_state.go`, `IsExpired` usa `CreatedAt` para
-`email/signup`; `defaultFlowStateExpiryDuration = 300s`, e o mínimo é
-imposto). Quem confirma depois disso — ou em outro navegador/aparelho — tem
-o e-mail confirmado pelo `/auth/v1/verify`, mas a troca do código falha e a
-pessoa cai no login sem sessão (agora com o aviso de §6.1).
+o link do modelo de e-mail padrão passava por `/auth/v1/verify` e voltava
+como `/auth/confirm?code=`, dependendo do registro PKCE criado no cadastro
+e do cookie gravado naquele navegador.
 
-**Reproduzido:** atendimento abriu o link 4 min após o cadastro → sessão
-criada; visualizador abriu 13 min após (cadastro 20:33, clique 20:46 UTC)
-→ `auth.flow_state` com código emitido e não consumido, `email_confirmed_at`
-preenchido, sem sessão.
+**Dois prazos distintos, que não podem ser confundidos:**
+- **validade do link/token do e-mail** — `mailer_otp_exp` = 3600 s (lido na
+  configuração hospedada). Foi o que expirou nos dois primeiros links de QA,
+  com `otp_expired` devolvido pelo próprio Auth. Evidência direta;
+- **validade do código PKCE** — prazo próprio do registro de fluxo. O
+  código-fonte do Supabase Auth (`internal/models/flow_state.go`,
+  `IsExpired`, com `defaultFlowStateExpiryDuration = 300 s`) conta a partir
+  da criação para `email/signup`. É a **explicação mais provável** da falha
+  do visualizador aos 13 minutos (atendimento, aos 4 minutos, funcionou),
+  **não confirmada**: não foi isolada da hipótese de o verificador do
+  navegador não bater.
 
-**Correção:** não é possível no app (o prazo é do servidor de Auth e não
-dá para ler fragmentos/verifiers de outro navegador). A correção é o
-padrão oficial do `@supabase/ssr`: o e-mail de confirmação aponta direto
-para `/auth/confirm?token_hash=…&type=email`, que a rota já trata com
-`verifyOtp` (sem PKCE, vale pelo prazo do OTP e em qualquer navegador).
-Ajuste manual no painel do `praxis-crm-dev`, só no modelo "Confirm signup":
-[Authentication → Emails → Templates](https://supabase.com/dashboard/project/rgoeppjwnltcbeqipovh/auth/templates).
-Trocar o `href` do link de `{{ .ConfirmationURL }}` por
-`{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=email`,
-mantendo assunto, texto e os demais modelos. Site URL, Redirect URLs e as
-outras configurações não mudam.
+**Correção aplicada (fora do código):** SMTP próprio (Resend) e modelo de
+confirmação apontando direto para a rota, com `token_hash` — sem PKCE, valendo
+o prazo do token e em qualquer navegador. Ver §7.2. O destino usa
+`{{ if .RedirectTo }}…{{ else }}{{ .SiteURL }}/auth/confirm{{ end }}`, para o
+cadastro feito no preview confirmar no preview, e não em produção.
 
-**Critério de conclusão:** depois do ajuste, novo cadastro de QA e link
-aberto **mais de 5 minutos depois e em navegador diferente do cadastro** →
-`/onboarding` com sessão.
+### 6.3 Falha do link tratada como "conta não confirmada"
+
+**Comportamento incorreto:** `/auth/confirm` mandava todo insucesso para a
+mesma mensagem, que pedia cadastro novo. São três coisas diferentes:
+- **falha do link** (`?error=`, ou `verifyOtp` recusado): aquele link não
+  vale mais — expirou, já foi usado, ou foi consumido por outra aba. **Não
+  demonstra** que a conta esteja sem confirmação: um link já usado de conta
+  confirmada dá exatamente o mesmo erro;
+- **estado da conta**: só o login (ou o banco) responde isso;
+- **abertura da sessão**: quando o `verify` já confirmou o e-mail e só o
+  código não virou sessão, a conta **está** confirmada e basta entrar.
+
+**Correção:** destinos separados (`erro=link_invalido` e
+`erro=sessao_nao_criada`) com textos próprios. O caminho oferecido é o que
+existe na interface — o formulário "Criar conta" com o mesmo e-mail reenvia
+a confirmação, mantém a conta e preserva a senha (comprovado no hospedado:
+o cadastro repetido de `+praxisqaatend0915` disparou e-mail novo, manteve
+`created_at` e **não** trocou a senha). Nenhuma mensagem promete ação que
+não exista na tela.
+
+**Teste:** `stabilization-auth-confirm.test.tsx` — 9 casos cobrindo os três
+desfechos, os dois formatos de link e o texto dos avisos.
 
 ## 7. Evidências
 
@@ -285,6 +301,7 @@ resposta real recebida pelo navegador (payload RSC); **hospedado** =
 | §4 colisão de numeração e truncamento acima de 9999 | **CI vermelho** no `dcccb1a` (run 34926781096): 3 de 12 e 2 de 6 criações simultâneas falharam com `duplicate key ... proposals_workspace_id_number_key` | `8c0cae4`, `d49fcd1` (contador em `public` com RLS forçada, exigido por `04_security_hardening`) | CI verde (run 34943271823 e seguintes): 12+6 simultâneas sem erro e sem repetição; pgTAP `15_proposal_number_counter` 7/7 (contador atrasado, 10000/10001, séries por workspace, sem privilégio); atualização a partir da versão anterior com dados (`check-upgrade-proposal-counter.sh`) OK. **Hospedado:** migration aplicada após dry-run (só ela); backfill iniciou o contador em 2 (= maior emitido); proposta criada no preview recebeu `PROP-2026-0003`; `0001`/`0002` intactos, nenhum repetido |
 | §1.19 login transforma falha do serviço em "senha incorreta" | `stabilization-sign-in-errors.test.ts`: **7 de 9 falhavam** (local) — as 2 que passavam cobrem o que deve ser preservado (login certo redireciona; nenhuma mensagem revela conta) | `bd3adb5` (decisão por `AuthApiError.code`/`AuthRetryableFetchError`, nunca pelo texto) | 9/9 local; CI verde (run 35007839495). **Hospedado:** conta inexistente → "E-mail ou senha incorretos."; conta não confirmada com senha errada → a mesma mensagem; com a senha certa → "Confirme seu e-mail…" (o Auth só devolve `email_not_confirmed` depois de aceitar a senha, então nada revela a existência da conta). Falha do serviço não foi induzida no hospedado (coberta pelos testes com 503, rede e resposta ilegível) |
 | §6.1 confirmação de e-mail com link PKCE | `stabilization-auth-confirm.test.tsx`: **2 de 6 falhavam** (local) — `?code=` e o aviso em `/entrar` | `057fcf9` | 6/6 local; CI verde (run 35008591726). **Hospedado:** ver §7.2 |
+| §6.3 falha do link tratada como "conta não confirmada" | `stabilization-auth-confirm.test.tsx` reescrito: **6 de 9 falhavam** (local), depois mais 1 ao apertar o texto do aviso | `e23a500`, `914a1c9`, `f9f8ae2` | 9/9 local. **Hospedado:** link reutilizado devolve o aviso de link inválido enquanto a conta **está** confirmada — exatamente o caso que a mensagem antiga descrevia errado |
 | §5b formulário de edição volta ao valor anterior | **Hospedado antes:** atribuição salva no banco, seletor voltava a "Sem responsável". `stabilization-form-reset.test.tsx`: **6 de 6 falhavam** (local), inclusive o `LeadBasicFieldsForm` já corrigido na A4 | `5e5ec72` | 6/6 local; CI verde (run 34971207110). **Hospedado depois:** seletor de responsável e status do conflito mostram o valor salvo logo após o envio |
 
 **Gates desta rodada (CI, run 34971207110 no `5e5ec72`):** typecheck, lint,
@@ -310,6 +327,9 @@ chegaram a aparecer no chat; foram trocadas pela própria sessão da conta
 (`updateUser`) e o login com a senha nova foi conferido. Refazer o cadastro
 de uma conta não confirmada **não** troca a senha — conferido. Os convites
 cujo token apareceu em log foram cancelados e recriados.
+
+**Revalidado no preview do `f9f8ae2`** (última versão desta rodada), com os
+mesmos resultados da primeira execução.
 
 **Método:** script Playwright com a sessão de cada papel no preview
 (`feat/a9-perfil-360`, deploy do `057fcf9`), lendo a tela e o corpo real de
@@ -353,31 +373,59 @@ pedido quando ele está na allow-list e para o Site URL quando não está.
 A configuração antiga (`localhost:3000`) já tinha sido corrigida no painel.
 **Nenhum ajuste manual necessário.**
 
-**Cadastro e link real (hospedado):**
-1. Cadastro de `+praxisqaatend0915` pelo formulário do preview → "Cadastro
-   criado. Confira seu e-mail…"; banco com `confirmation_sent_at` e
-   `email_confirmed_at` nulo.
-2. Primeiro link (enviado 18:31 UTC), aberto depois de 1 hora: GoTrue
-   devolveu `otp_expired`; o app levou a `/entrar` **com** o aviso novo;
-   sem sessão.
-3. Cadastro refeito → e-mail novo (19:45 UTC). O link veio no modelo
-   padrão: `…supabase.co/auth/v1/verify?token=…&type=signup&redirect_to=<preview>/auth/confirm`.
-   Aberto no mesmo navegador do cadastro:
+**Cadastro e link real — primeira rodada, com o provedor padrão:**
+1. Cadastro pelo formulário do preview → "Cadastro criado…"; banco com
+   `confirmation_sent_at` e `email_confirmed_at` nulo.
+2. Link aberto depois de 1 hora → `otp_expired` do próprio Auth; o app
+   levou a `/entrar` **com** o aviso; sem sessão.
+3. Link novo aberto 4 minutos depois do cadastro, no mesmo navegador:
    `303 /auth/v1/verify` → `307 <preview>/auth/confirm?code=…` → `200 /onboarding`
-   ("Crie o workspace do seu escritório"), com os cookies de sessão
-   `sb-…-auth-token.0/.1`. A página protegida abre com a sessão, e o
-   aceite do convite leva a `/visao-geral` no "Escritorio QA Praxis A3".
-   Isso só funciona com a correção do `057fcf9`: antes, esse mesmo
-   `?code=` caía no login sem sessão.
+   com os cookies de sessão. Só funciona com a correção do `057fcf9`.
+4. Outro cadastro, link aberto 13 minutos depois: `/auth/confirm?code=…` →
+   `/entrar` com o aviso, sem sessão, `auth.flow_state` com código emitido e
+   não consumido e `email_confirmed_at` preenchido. Causa provável em §6.2.
+5. O terceiro cadastro seguido foi recusado sem enviar e-mail (limite do
+   provedor padrão, 2/h).
 
-**Observação (não é defeito desta rodada):** o provedor de e-mail padrão do
-Supabase limita os envios. O terceiro cadastro seguido
-(`+praxisqavisual0915`) foi recusado e não enviou e-mail; o app mostra a
-mensagem genérica "Não foi possível concluir a operação. Tente novamente."
-Produção precisa de SMTP próprio (já registrado desde a A2).
+**SMTP próprio e modelo novo (autorizado nesta rodada):**
+- Resend, domínio `mail.collios.cloud` (região São Paulo), plano gratuito.
+  DNS na Vercel (`collios.cloud`; comprado na Hostinger, mas os nameservers
+  são `ns1/ns2.vercel-dns.com`). Registros adicionados: DKIM
+  (`resend._domainkey.mail`), SPF e MX (`send.mail`), DMARC
+  (`_dmarc.mail`, `p=none`). Conferidos por consulta DNS externa. O DMARC
+  tinha sido criado por engano no domínio raiz e foi movido: publiquei no
+  subdomínio, confirmei, e só então removi o do raiz — que não existia
+  antes desta rodada (listagem anterior tinha apenas ALIAS, curinga e três
+  CAA). ALIAS, curinga, CAA, SPF, DKIM e MX intactos.
+- SMTP no Supabase: `smtp.resend.com`, porta 587, usuário `resend`,
+  remetente `nao-responda@mail.collios.cloud`; senha só no painel, nunca no
+  repositório nem no chat. Limite de envio 2 → 30 e-mails/h.
+- Modelo "Confirm signup" (editável só com SMTP próprio):
+  `{{ if .RedirectTo }}{{ .RedirectTo }}{{ else }}{{ .SiteURL }}/auth/confirm{{ end }}?token_hash={{ .TokenHash }}&type=email`.
+- **Conferência independente:** os 243 campos da configuração de Auth lidos
+  antes e depois pela API de gerência; mudaram só `smtp_*`,
+  `rate_limit_email_sent` (2 → 30), o corpo do modelo de confirmação e a
+  marca de modelo personalizado. `site_url`, `uri_allow_list`,
+  `mailer_subjects_confirmation`, `mailer_otp_exp` e `mailer_autoconfirm`
+  inalterados.
 
-**Visualizador (20:33 cadastro, 20:46 clique):** mesmo formato de link e
-mesma cadeia até `/auth/confirm?code=…`, mas a troca foi recusada → `/entrar`
-com o aviso, sem sessão, e-mail confirmado. Causa em §6.2 (prazo de 5
-minutos do registro PKCE). A conta foi usada depois pelo login com senha,
-o que não substitui o teste do link — por isso §6.2 segue aberto.
+**Cenários com o modelo novo (dois cadastros de QA às 17:48 UTC, links
+abertos às 18:2x — mais de 5 minutos depois do envio e dentro da validade
+de 1 hora):** o link chegou como `<preview>/auth/confirm?token_hash=…&type=email`,
+ou seja, o cadastro feito no preview confirma no preview.
+
+| Cenário | Resultado |
+|---|---|
+| Outro navegador (contexto novo, sem nenhum dado do cadastro), 34 min depois do envio | `307 /auth/confirm` → `200 /onboarding`, com sessão; nenhum cookie PKCE presente |
+| Navegador original do cadastro | `307 /auth/confirm` → `200 /onboarding`, com sessão |
+| Link reutilizado (já consumido) | `/entrar?erro=link_invalido` com o aviso que fala do link e **não** afirma nada sobre a conta — que, neste caso, está confirmada |
+| Login com a conta confirmada | `/visao-geral` |
+| Aceite do convite | `/visao-geral` no "Escritorio QA Praxis A3", papel `viewer` ativo |
+
+
+**Contas de QA criadas para estes cenários** (fictícias, no
+"Escritorio QA Praxis A3" quando aplicável; senhas só em arquivo local):
+`+praxisqaconfirmaoutro0916` (confirmada em outro navegador, convite
+`viewer` aceito) e `+praxisqaconfirmamesmo0916` (confirmada no navegador
+original, sem workspace). Somadas às de §7.1, são quatro contas de QA desta
+rodada, todas confirmadas pelo fluxo oficial.

@@ -297,14 +297,8 @@ falha de "não encontrado", numeração de proposta por contagem simples e
 rodada de estabilização (§9), com teste que falhava antes e validação no
 ambiente hospedado quando aplicável.
 
-Continua em aberto:
-
-- **Modelo do e-mail de confirmação no `praxis-crm-dev`** — o link padrão só
-  cria sessão se aberto até 5 minutos depois do cadastro e no mesmo
-  navegador (prazo do Supabase Auth, reproduzido no hospedado). Ajuste
-  manual no painel, com valores exatos e critério de reteste em
-  `docs/decisoes/estabilizacao-pos-a9.md` §6.2. Owner, atendimento e
-  visualizador já validados no hospedado (§7.1).
+Continua em aberto: nada desta rodada. As pendências herdadas de Auth
+(Site URL/Redirect URLs e provedor de e-mail) foram encerradas — ver §9.
 
 ## 9. Rodada de estabilização pós-A9
 
@@ -340,5 +334,16 @@ Resumo:
   confirmação terminava no login sem sessão e sem aviso. Validado no
   hospedado com cadastro e link reais (§7.2 do inventário).
 - **Site URL / Redirect URLs** (A2-HANDOFF §7.5): já corrigidos no painel;
-  reconferidos sem credencial pelo redirecionamento do próprio GoTrue.
-  Nenhum ajuste manual pendente.
+  reconferidos sem credencial pelo redirecionamento do próprio GoTrue, e
+  depois pela API de gerência. Nenhum ajuste manual pendente.
+- **E-mail transacional próprio** (autorizado nesta rodada, antecipando o
+  que estava no marco B): Resend com o domínio `mail.collios.cloud`
+  (DKIM/SPF/MX/DMARC no DNS da Vercel), SMTP no `praxis-crm-dev`, limite de
+  envio de 2 para 30 por hora e modelo de confirmação apontando direto para
+  `/auth/confirm` com `token_hash`, preservando o ambiente de origem do
+  cadastro. Confirmação validada em outro navegador, no navegador original,
+  com link reutilizado, e seguida de login e aceite de convite.
+- **Mensagens da confirmação**: link inválido, estado da conta e abertura
+  da sessão viraram três casos distintos, e o caminho oferecido é o que
+  existe na tela (reenvio pelo próprio "Criar conta", preservando conta e
+  senha).
