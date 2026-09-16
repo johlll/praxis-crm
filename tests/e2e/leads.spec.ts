@@ -106,51 +106,46 @@ test.describe.serial("leads — A4", () => {
     await expect(page.getByLabel("Resumo")).toHaveValue("Segundo texto — editado durante a espera");
   });
 
-  test("2b. edição bloqueada até a página hidratar — nada se mistura ao valor do servidor", async ({ page }) => {
-    // Com os scripts presos, a página chega em partes e demora mais que o
-    // normal para completar — o teste espera por isso, não por lentidão.
-    test.setTimeout(90_000);
+  test("2b. antes de a página hidratar, o formulário recusa edição — nada se mistura ao valor do servidor", async ({
+    page,
+    browser,
+  }) => {
     await login(page, SEED_USERS.ana.email);
 
-    // Segura os scripts da aplicação: o HTML do servidor chega na hora e a
-    // hidratação só acontece quando liberarmos. É a janela em que, antes da
-    // correção, o que o usuário digitava ficava concatenado ao valor do
+    // Janela anterior à hidratação, reproduzida de forma determinística: uma
+    // aba com JavaScript desligado vê exatamente o HTML que o navegador tem
+    // antes de o React assumir o formulário. Foi nessa janela que, no
+    // ambiente hospedado, o texto digitado ficou concatenado ao valor do
     // servidor — na tela, no payload do Server Action e no banco
-    // (reproduzido no ambiente hospedado, inventário §5c).
-    let liberar: () => void = () => {};
-    const portao = new Promise<void>((resolve) => {
-      liberar = resolve;
+    // (inventário §5c).
+    const semJs = await browser.newContext({
+      storageState: await page.context().storageState(),
+      javaScriptEnabled: false,
     });
-    await page.route("**/_next/static/chunks/**", async (route) => {
-      await portao;
-      await route.continue();
-    });
+    const paginaSemJs = await semJs.newPage();
+    await paginaSemJs.goto(leadUrl);
+    const resumoSemJs = paginaSemJs.getByLabel("Resumo");
+    await expect(resumoSemJs).toBeDisabled();
+    await expect(resumoSemJs).toHaveValue("Segundo texto — editado durante a espera");
 
-    // "commit": basta a resposta começar. Com os scripts presos, o
-    // DOMContentLoaded só dispararia quando eles chegassem — e é justamente
-    // esse intervalo que queremos observar.
-    await page.goto(leadUrl, { waitUntil: "commit" });
-    const resumo = page.getByLabel("Resumo");
-    await resumo.waitFor({ state: "attached", timeout: 30_000 });
-    await expect(resumo).toBeDisabled({ timeout: 15_000 });
-    await expect(resumo).toHaveValue("Segundo texto — editado durante a espera");
-
-    // Tentativa real de digitar nessa janela: o campo recusa a edição.
+    // Tentativa real de digitar nessa janela: o campo recusa a edição e
+    // continua com o valor que veio do servidor.
     let digitou = true;
-    await resumo.fill("texto que não deve entrar", { timeout: 2000 }).catch(() => {
+    await resumoSemJs.fill("texto que não deve entrar", { timeout: 2000 }).catch(() => {
       digitou = false;
     });
     expect(digitou).toBe(false);
-    await expect(resumo).toHaveValue("Segundo texto — editado durante a espera");
+    await expect(resumoSemJs).toHaveValue("Segundo texto — editado durante a espera");
+    await semJs.close();
 
-    liberar();
-    await expect(resumo).toBeEnabled({ timeout: 30_000 });
-    await resumo.fill("Texto digitado depois de hidratar");
+    // Com o JavaScript no ar, a edição volta a funcionar e o que foi
+    // digitado é exatamente o que fica salvo.
+    await page.goto(leadUrl);
+    await page.getByLabel("Resumo").fill("Texto digitado depois de hidratar");
     await page.getByRole("button", { name: "Salvar" }).click();
     await expect(page.getByText("Dados salvos.")).toBeVisible();
-    await expect(resumo).toHaveValue("Texto digitado depois de hidratar");
+    await expect(page.getByLabel("Resumo")).toHaveValue("Texto digitado depois de hidratar");
 
-    // Nova navegação: o que ficou no banco é exatamente o texto digitado.
     await page.goto(leadUrl);
     await expect(page.getByLabel("Resumo")).toHaveValue("Texto digitado depois de hidratar");
   });
