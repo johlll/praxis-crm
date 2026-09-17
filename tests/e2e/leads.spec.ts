@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { SEED_CONTACTS, SEED_CPF_RAW, SEED_USERS } from "./fixtures";
 import { callRpcDirect, getSupabaseAccessToken, login } from "./helpers";
@@ -23,6 +23,35 @@ import { callRpcDirect, getSupabaseAccessToken, login } from "./helpers";
 test.describe.serial("leads — A4", () => {
   let leadUrl: string;
 
+  /**
+   * Clica em "Salvar" e espera a resposta DESTA gravação.
+   *
+   * Nem o alerta nem o campo servem como sinal de conclusão:
+   * "Dados salvos." é renderizado enquanto `state.ok` for verdadeiro
+   * (nada o remove depois), então continua na tela desde a gravação
+   * anterior; e o campo é controlado pelo estado local, que não depende
+   * da resposta. Esperando só por eles, o teste 2 chegava ao fim sem que
+   * nada tivesse esperado pela última gravação, e o teste 2b — que lê o
+   * HTML vindo do servidor — encontrava o texto anterior. Foi a falha do
+   * run 35279520763: o `<textarea>` servido ao 2b trouxe "Primeiro texto
+   * — resposta atrasada" nas 14 tentativas dos 5 s de espera, ou seja, a
+   * gravação não foi aplicada nem com atraso, e ainda assim o teste 2
+   * havia passado. No log do mesmo job o servidor registrou
+   * `The destination stream closed early`, compatível com a requisição
+   * interrompida no encerramento do teste — esse é o mecanismo provável,
+   * não uma causa comprovada; o que está comprovado é que nenhuma
+   * asserção do teste 2 aguardava a gravação.
+   */
+  async function salvarEEsperarGravacao(page: Page) {
+    const gravacao = page.waitForResponse(
+      (resposta) => resposta.url() === leadUrl && resposta.request().method() === "POST",
+    );
+    await page.getByRole("button", { name: "Salvar" }).click();
+    expect((await gravacao).ok()).toBe(true);
+    // O botão volta de "Salvando…" quando a ação termina de ser aplicada.
+    await expect(page.getByRole("button", { name: "Salvar" })).toBeEnabled();
+  }
+
   test("1. criação de lead com persistência, vinculado a um contato existente", async ({ page }) => {
     await login(page, SEED_USERS.ana.email);
 
@@ -42,7 +71,7 @@ test.describe.serial("leads — A4", () => {
     await page.goto(leadUrl);
     // --- salvamento simples ---
     await page.getByLabel("Resumo").fill("Rescisão indireta — audiência marcada");
-    await page.getByRole("button", { name: "Salvar" }).click();
+    await salvarEEsperarGravacao(page);
 
     // Sem page.reload(): o Server Action já revalida e reflete o dado
     // novo via re-render do Server Component (mesmo padrão de
@@ -66,8 +95,7 @@ test.describe.serial("leads — A4", () => {
     // nunca ressincroniza a partir da prop do servidor — ver o
     // comentário em lead-basic-fields-form.tsx.
     await page.getByLabel("Resumo").fill("Rescisão indireta — audiência remarcada");
-    await page.getByRole("button", { name: "Salvar" }).click();
-    await expect(page.getByText("Dados salvos.")).toBeVisible();
+    await salvarEEsperarGravacao(page);
     await expect(page.getByLabel("Resumo")).toHaveValue("Rescisão indireta — audiência remarcada");
 
     // --- resposta lenta: uma edição em andamento não pode ser perdida
@@ -99,10 +127,19 @@ test.describe.serial("leads — A4", () => {
 
     await page.unroute(leadUrl);
 
+    // O alerta da gravação anterior AINDA está aqui — é por isso que ele
+    // não pode ser o sinal de que a próxima gravação terminou.
+    await expect(page.getByText("Dados salvos.")).toBeVisible();
+
     // Confirma que esse texto (o que o usuário via na tela) é de fato o
     // que fica salvo — sem concatenação com o primeiro texto atrasado.
-    await page.getByRole("button", { name: "Salvar" }).click();
-    await expect(page.getByText("Dados salvos.")).toBeVisible();
+    await salvarEEsperarGravacao(page);
+    await expect(page.getByLabel("Resumo")).toHaveValue("Segundo texto — editado durante a espera");
+
+    // Nova leitura, direto do servidor: o que ficou gravado é esse texto.
+    // Sem isto, o teste podia terminar com a gravação em voo e o 2b, que
+    // depende deste estado, lia o texto anterior.
+    await page.goto(leadUrl);
     await expect(page.getByLabel("Resumo")).toHaveValue("Segundo texto — editado durante a espera");
   });
 
@@ -141,7 +178,7 @@ test.describe.serial("leads — A4", () => {
     // digitado é exatamente o que fica salvo.
     await page.goto(leadUrl);
     await page.getByLabel("Resumo").fill("Texto digitado depois de hidratar");
-    await page.getByRole("button", { name: "Salvar" }).click();
+    await salvarEEsperarGravacao(page);
     await expect(page.getByText("Dados salvos.")).toBeVisible();
     await expect(page.getByLabel("Resumo")).toHaveValue("Texto digitado depois de hidratar");
 
