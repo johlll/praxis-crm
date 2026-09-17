@@ -199,13 +199,34 @@ commit está registrado na PR.
     asserção enfraquecida. Nenhuma mudança no produto: o comportamento
     testado está correto.
 - `tests/unit/a9-perfil-360-review-fixes.test.tsx` "'carregar mais' mantém o
-  filtro ativo no cursor seguinte" (A9) falhou uma vez no run 35280953402,
-  num commit que só mudou este arquivo de texto: não encontrou o botão
-  "Carregar mais" (os botões do filtro ainda estavam `disabled`, ou seja, o
-  render seguinte não havia chegado). A suíte completa passa localmente
-  (312/312) e o mesmo run reexecutado ficou verde. Fica anotado como
-  instabilidade **ainda não investigada** — é de fase anterior e não foi
-  aberta nesta revisão, que se restringiu à falha do 2b.
+  filtro ativo no cursor seguinte" (A9) falhou uma vez no run 35280953402
+  (tentativa 1), num commit que só mudou um arquivo de texto. **Investigado
+  e corrigido** — mesmo padrão do 2b (o teste não esperava a condição
+  certa), com causa direta porque o próprio artefato da falha trazia a
+  árvore de acessibilidade completa:
+  - **Causa comprovada, pelo artefato da tentativa 1:** no momento da falha,
+    o DOM já mostrava "Proposta PROP-2026-0001" na lista e o filtro
+    "Propostas" com `aria-pressed="true"` — `setFilter`/`setItems`/
+    `setHasMore` já tinham aplicado. Mas o botão de carregar mais ainda
+    tinha o nome acessível **"Carregando…"** e `disabled`: o `isPending` de
+    `useTransition` ainda não tinha assentado. O teste esperava só o texto
+    da proposta (`findByText`) e clicava em seguida, buscando "Carregar
+    mais" — um nome acessível que ainda não existia naquele instante.
+  - **Mecanismo:** `setFilter`/`setItems`/`setHasMore` rodam dentro da
+    função assíncrona passada a `startTransition`; `isPending` só volta a
+    `false` quando essa função **retorna**, o que resolve a promise da
+    própria action e dispara, como microtask à parte, o `.then` que zera
+    `isPending`. Por isso os dois efeitos não chegam no mesmo commit: um com
+    o texto e o filtro já mudados, outro — logo depois — com o botão saindo
+    de "Carregando…".
+  - **Correção (`e300523`):** troca o `getByRole` síncrono por um
+    `findByRole`, que espera o nome acessível mudar para "Carregar mais" —
+    ou seja, espera `isPending` assentar. A verificação seguinte (a próxima
+    chamada usa o filtro "proposta" e o cursor de "p1") continua intocada.
+    Sem sleep, sem retry, sem asserção enfraquecida. Nenhuma mudança em
+    `LeadTimeline`: o comportamento do componente está correto.
+  - Validação: 25 execuções seguidas do arquivo isolado e a suíte completa
+    (312/312) passaram; typecheck e lint limpos.
 - Acessibilidade **conferida depois** das mudanças visuais da revisão
   (cabeçalho de colunas do funil `aria-hidden`, textos de ajuda em `title` e a
   etiqueta "Fora da equipe"): axe em `main`, WCAG A/AA, **0 violações**, sem
