@@ -238,7 +238,20 @@ describe("filtro da timeline coerente com os eventos exibidos", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Propostas" }));
     await screen.findByText("Proposta PROP-2026-0001");
-    fireEvent.click(screen.getByRole("button", { name: "Carregar mais" }));
+
+    // Não basta o texto da proposta ter aparecido: setFilter/setItems/
+    // setHasMore aplicam num commit, mas isPending só cai para false num
+    // commit SEGUINTE (o retorno da função async passada a startTransition
+    // resolve a própria promise da action, e o `.then` que zera isPending
+    // roda como microtask à parte). Achado real em CI (run 35280953402,
+    // tentativa 1): a árvore de acessibilidade no momento da falha já
+    // trazia "Proposta PROP-2026-0001" e o filtro "Propostas" com
+    // aria-pressed="true", mas o botão de carregar mais ainda tinha nome
+    // acessível "Carregando…" e disabled — o clique buscava "Carregar
+    // mais" antes desse segundo commit. findByRole espera o nome
+    // acessível mudar para "Carregar mais", ou seja, espera isPending
+    // assentar, sem sleep nem retry.
+    fireEvent.click(await screen.findByRole("button", { name: "Carregar mais" }));
 
     await waitFor(() =>
       expect(loadMoreTimelineMock).toHaveBeenLastCalledWith("lead-1", ["proposta"], { occurredAt: proposta.occurredAt, id: "p1" }),

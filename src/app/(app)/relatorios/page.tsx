@@ -5,8 +5,7 @@ export default function RelatoriosPage() {
     <PagePlaceholder
       title="Relatórios"
       subtitle="Análises do período"
-      phase="A10"
-      description="Os relatórios acompanham o dashboard e usam as mesmas consultas."
+      description="Os relatórios ainda não fazem parte de nenhuma fase planejada. Os indicadores do escritório estão na Visão geral."
     />
   );
 }

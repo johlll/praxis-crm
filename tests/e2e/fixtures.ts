@@ -49,3 +49,17 @@ export const SEED_CONTACTS = {
 } as const;
 
 export const SEED_CPF_RAW = "222.222.222-22";
+
+/**
+ * A10 — escritórios exclusivos do dashboard (supabase/seed.sql, seção
+ * "A10"), com dados comerciais gerados e marcados como demonstrativos.
+ */
+export const SEED_PAINEL = {
+  workspaceId: "10000000-0000-0000-0000-000000000010",
+  workspaceName: "Escritório Painel (seed)",
+  owner: { email: "painel.owner.seed@praxis.test", fullName: "Paula Painel (seed)" },
+  lawyer: { email: "painel.lawyer.seed@praxis.test", userId: "20000000-0000-0000-0000-000000000011" },
+  sales: { email: "painel.sales.seed@praxis.test" },
+  viewer: { email: "painel.viewer.seed@praxis.test" },
+  ownerB: { email: "painel-b.owner.seed@praxis.test" },
+} as const;

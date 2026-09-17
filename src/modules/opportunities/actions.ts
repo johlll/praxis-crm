@@ -71,6 +71,7 @@ export async function createOpportunityAction(
   }
 
   revalidatePath("/pipeline");
+  revalidatePath("/visao-geral");
   revalidatePath(`/leads/${parsed.data.leadId}`);
   return { ok: true, opportunityId: data };
 }
@@ -118,6 +119,7 @@ export async function moveOpportunityStageAction(
   }
 
   revalidatePath("/pipeline");
+  revalidatePath("/visao-geral");
   revalidatePath(`/oportunidades/${parsed.data.opportunityId}`);
   // O kanban não passa `leadId` (não precisa — não existe página de lead
   // aberta ao mesmo tempo); o controle de etapa do Perfil 360 passa, para
@@ -174,6 +176,7 @@ export async function winOpportunityAction(
   }
 
   revalidatePath("/pipeline");
+  revalidatePath("/visao-geral");
   revalidatePath(`/oportunidades/${parsed.data.opportunityId}`);
   return { ok: true, opportunityId: parsed.data.opportunityId };
 }
@@ -211,6 +214,7 @@ export async function loseOpportunityAction(
   }
 
   revalidatePath("/pipeline");
+  revalidatePath("/visao-geral");
   revalidatePath(`/oportunidades/${parsed.data.opportunityId}`);
   return { ok: true, opportunityId: parsed.data.opportunityId };
 }
@@ -307,6 +311,7 @@ export async function createPipelineStageAction(
   }
 
   revalidatePath("/pipeline");
+  revalidatePath("/visao-geral");
   revalidatePath("/configuracoes/pipelines");
   return { ok: true };
 }
@@ -331,6 +336,7 @@ export async function deletePipelineStageAction(
   }
 
   revalidatePath("/pipeline");
+  revalidatePath("/visao-geral");
   revalidatePath("/configuracoes/pipelines");
   return { ok: true };
 }
@@ -374,6 +380,7 @@ export async function updatePipelineStageAction(
   }
 
   revalidatePath("/pipeline");
+  revalidatePath("/visao-geral");
   revalidatePath("/configuracoes/pipelines");
   return { ok: true };
 }
@@ -401,6 +408,7 @@ export async function reorderPipelineStagesAction(
   }
 
   revalidatePath("/pipeline");
+  revalidatePath("/visao-geral");
   revalidatePath("/configuracoes/pipelines");
   return { ok: true };
 }
