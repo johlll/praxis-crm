@@ -179,11 +179,14 @@ commit está registrado na PR.
   primeiro. Passou no run seguinte com o mesmo código, e o teste é sensível a
   tempo (abre um contexto sem JavaScript logo depois de um salvamento). Nada
   da A10 toca esse caminho; fica anotado como instabilidade a observar.
-- A checagem de acessibilidade (axe) **não foi repetida** depois das mudanças
-  visuais da revisão (cabeçalho de colunas do funil `aria-hidden`, textos de
-  ajuda em `title` e a etiqueta "Fora da equipe"). A sessão da Vercel do
-  navegador local foi perdida durante a validação, e o preview exige esse
-  login.
+- Acessibilidade **conferida depois** das mudanças visuais da revisão
+  (cabeçalho de colunas do funil `aria-hidden`, textos de ajuda em `title` e a
+  etiqueta "Fora da equipe"): axe em `main`, WCAG A/AA, **0 violações**, sem
+  rolagem horizontal a 1440×900 nem a 400×800, 5 colunas de indicadores a
+  1440px e console sem erros. Foi no build de produção deste commit rodando
+  localmente contra o banco do `praxis-crm-dev` (mesmos dados
+  demonstrativos), não no preview da Vercel: o preview exige o token de
+  bypass da proteção, que não estava disponível nessa parte da validação.
 - Reordenar etapas não muda quais etapas cada oportunidade visitou; muda
   só a ordem de exibição e o que conta como "adiante" na taxa de avanço.
 - Fuso por escritório ainda não existe (ponto único:
