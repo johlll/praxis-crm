@@ -129,9 +129,9 @@ Resumo:
 | Verificação | Tipo | Resultado |
 |---|---|---|
 | `16_a10_dashboard.test.sql` (64 asserções): bordas de período, lead antigo com ganho, anterior, reentrada, duas oportunidades por lead, filtros, alcance do advogado, sales filtrado até uma oportunidade, viewer, isolamento, sem sessão, erros, ganho refletido, função × consultas independentes no seed (>20 leads) | teste de banco | 64/64 no `praxis-crm-dev` em transação desfeita; verde no CI |
-| Suíte pgTAP completa / isolamento | CI | 579 / 26, PASS (run 35221333610) |
-| Unitários (`a10-dashboard.test.tsx` + suíte) | teste automatizado | 306/306 |
-| e2e `dashboard.spec.ts` (blocos, HTML de sales/viewer sem `Cents`, RPC direta, filtros sem JS, ganho pelo painel, sem erro de hidratação) + suíte | CI | 60/60 (run 35221333610) |
+| Suíte pgTAP completa / isolamento | CI | 600 / 26, PASS (run 35280049612, commit `c37776a`) |
+| Unitários (`a10-dashboard.test.tsx` + suíte) | teste automatizado | 312/312 |
+| e2e `dashboard.spec.ts` (blocos, HTML de sales/viewer sem `Cents`, RPC direta, filtros sem JS, filtros com JS em aplicar/limpar/voltar/avançar, ganho pelo painel, sem erro de hidratação) + suíte | CI | 61/61 (run 35280049612) |
 | Preview, 4 papéis, 30 dias | hospedado | owner/lawyer com reais; sales só `valueBand`; viewer sem "R$"; advogado com alcance próprio (15 leads, 3 ganhas); 0 erros de console e de hidratação |
 | Preview × banco (owner, 30 dias) | hospedado + consulta só de leitura | 30 leads, 15 consultas, 15 propostas, 5 ganhas, R$ 150.000 na tela e nas consultas independentes |
 | Ganho pelo painel (owner, 7 dias) | hospedado | ganhas 2 → 3, mantido após recarregar; no banco `won`, R$ 2.500, handoff criado |
@@ -174,6 +174,16 @@ commit está registrado na PR.
   Proprietária (A10)" vira "D(". O comportamento de `initialsOf` já existia e
   não foi alterado.
 - Perdas não têm data própria, então não há "perdidas no período".
+- `tests/e2e/leads.spec.ts` "2b. antes de a página hidratar…" (A4) falhou uma
+  vez nesta rodada (run 35279520763): esperava o segundo texto salvo e leu o
+  primeiro. Passou no run seguinte com o mesmo código, e o teste é sensível a
+  tempo (abre um contexto sem JavaScript logo depois de um salvamento). Nada
+  da A10 toca esse caminho; fica anotado como instabilidade a observar.
+- A checagem de acessibilidade (axe) **não foi repetida** depois das mudanças
+  visuais da revisão (cabeçalho de colunas do funil `aria-hidden`, textos de
+  ajuda em `title` e a etiqueta "Fora da equipe"). A sessão da Vercel do
+  navegador local foi perdida durante a validação, e o preview exige esse
+  login.
 - Reordenar etapas não muda quais etapas cada oportunidade visitou; muda
   só a ordem de exibição e o que conta como "adiante" na taxa de avanço.
 - Fuso por escritório ainda não existe (ponto único:
