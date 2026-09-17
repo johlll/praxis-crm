@@ -129,9 +129,9 @@ Resumo:
 | Verificação | Tipo | Resultado |
 |---|---|---|
 | `16_a10_dashboard.test.sql` (64 asserções): bordas de período, lead antigo com ganho, anterior, reentrada, duas oportunidades por lead, filtros, alcance do advogado, sales filtrado até uma oportunidade, viewer, isolamento, sem sessão, erros, ganho refletido, função × consultas independentes no seed (>20 leads) | teste de banco | 64/64 no `praxis-crm-dev` em transação desfeita; verde no CI |
-| Suíte pgTAP completa / isolamento | CI | 600 / 26, PASS (run 35280049612, commit `c37776a`) |
+| Suíte pgTAP completa / isolamento | CI | 600 / 26, PASS (run 35280953402, commit final `502c784`) |
 | Unitários (`a10-dashboard.test.tsx` + suíte) | teste automatizado | 312/312 |
-| e2e `dashboard.spec.ts` (blocos, HTML de sales/viewer sem `Cents`, RPC direta, filtros sem JS, filtros com JS em aplicar/limpar/voltar/avançar, ganho pelo painel, sem erro de hidratação) + suíte | CI | 61/61 (run 35280049612) |
+| e2e `dashboard.spec.ts` (blocos, HTML de sales/viewer sem `Cents`, RPC direta, filtros sem JS, filtros com JS em aplicar/limpar/voltar/avançar, ganho pelo painel, sem erro de hidratação) + suíte | CI | 61/61 (run 35280953402) |
 | Preview, 4 papéis, 30 dias | hospedado | owner/lawyer com reais; sales só `valueBand`; viewer sem "R$"; advogado com alcance próprio (15 leads, 3 ganhas); 0 erros de console e de hidratação |
 | Preview × banco (owner, 30 dias) | hospedado + consulta só de leitura | 30 leads, 15 consultas, 15 propostas, 5 ganhas, R$ 150.000 na tela e nas consultas independentes |
 | Ganho pelo painel (owner, 7 dias) | hospedado | ganhas 2 → 3, mantido após recarregar; no banco `won`, R$ 2.500, handoff criado |
@@ -179,6 +179,14 @@ commit está registrado na PR.
   primeiro. Passou no run seguinte com o mesmo código, e o teste é sensível a
   tempo (abre um contexto sem JavaScript logo depois de um salvamento). Nada
   da A10 toca esse caminho; fica anotado como instabilidade a observar.
+- `tests/unit/a9-perfil-360-review-fixes.test.tsx` "'carregar mais' mantém o
+  filtro ativo no cursor seguinte" (A9) falhou uma vez no run 35280953402,
+  num commit que só mudou este arquivo de texto: não encontrou o botão
+  "Carregar mais" (os botões do filtro ainda estavam `disabled`, ou seja, o
+  render seguinte não havia chegado). A suíte completa passa localmente
+  (312/312) e o mesmo run reexecutado ficou verde. Também fica anotado como
+  instabilidade a observar — as duas são de fases anteriores e sensíveis a
+  tempo.
 - Acessibilidade **conferida depois** das mudanças visuais da revisão
   (cabeçalho de colunas do funil `aria-hidden`, textos de ajuda em `title` e a
   etiqueta "Fora da equipe"): axe em `main`, WCAG A/AA, **0 violações**, sem
