@@ -76,6 +76,9 @@ end;
 -- Lido como postgres: authenticated não tem acesso a estas tabelas (RLS).
 select p.opportunity_id as opp_id
 from public.upgrade_check_snapshot s join public.proposals p using (id)
+-- Só as propostas emitidas no passo 2 (Escritório Um): o seed também tem
+-- propostas em escritórios onde a Ana não é membro (A10).
+where p.workspace_id = '$WS_UM'::uuid
 limit 1 \gset
 
 begin;
