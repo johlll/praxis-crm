@@ -32,7 +32,8 @@ test.describe.serial("A10 — Visão geral", () => {
     await page.goto("/visao-geral");
 
     await expect(page.getByRole("note")).toContainText("Dados demonstrativos");
-    await expect(page.getByText("Leads recebidos", { exact: true })).toBeVisible();
+    // Os rótulos também aparecem no cabeçalho da tabela da equipe: o primeiro é o cartão.
+    await expect(page.getByText("Leads recebidos", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("Honorários das ganhas", { exact: true })).toBeVisible();
     await expect(page.getByText("Valor em negociação")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Oportunidades que exigem atenção" })).toBeVisible();
@@ -40,10 +41,10 @@ test.describe.serial("A10 — Visão geral", () => {
     await expect(page.getByRole("heading", { name: "Agenda de hoje" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Desempenho da equipe" })).toBeVisible();
     // Período e posição separados na interface.
-    await expect(page.getByText("No período", { exact: true })).toBeVisible();
+    await expect(page.getByText("No período", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("Agora", { exact: true }).first()).toBeVisible();
 
-    await page.getByRole("button", { name: "Agora" }).click();
+    await page.getByRole("group", { name: "Leitura do funil" }).getByRole("button", { name: "Agora" }).click();
     await expect(page.getByText("Oportunidades abertas agora, por etapa")).toBeVisible();
 
     await page.waitForLoadState("networkidle");

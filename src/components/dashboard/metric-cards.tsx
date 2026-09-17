@@ -62,7 +62,7 @@ export function PeriodKpis({ dashboard }: { dashboard: Dashboard }) {
   return (
     <div
       className={cn(
-        "grid gap-3 sm:grid-cols-2",
+        "grid gap-3 md:grid-cols-2",
         m.wonValueCents ? "lg:grid-cols-5" : "lg:grid-cols-4",
       )}
     >
@@ -122,7 +122,7 @@ export function SecondaryStrip({ dashboard }: { dashboard: Dashboard }) {
   const conversion = formatPercent(cohort.leadsWithWon, cohort.leads);
 
   return (
-    <div className="grid divide-y divide-border-subtle rounded-lg border border-border bg-surface sm:grid-cols-2 sm:divide-y-0 lg:grid-cols-4 lg:divide-x">
+    <div className="grid divide-y divide-border-subtle rounded-lg border border-border bg-surface md:grid-cols-2 md:divide-y-0 lg:grid-cols-4 lg:divide-x">
       <StripCell
         tag="Período"
         label="Conversão dos leads recebidos"

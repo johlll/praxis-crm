@@ -134,7 +134,7 @@ export function FunnelCard({ dashboard, pipelineHrefs }: { dashboard: Dashboard;
                 );
               })}
             </ol>
-            <dl className="m-0 grid grid-cols-2 gap-2 border-t border-border-subtle pt-3 sm:grid-cols-4">
+            <dl className="m-0 grid grid-cols-2 gap-2 border-t border-border-subtle pt-3 md:grid-cols-4">
               <div>
                 <dt className="text-meta text-text-tertiary">Criadas no período</dt>
                 <dd className="m-0 tabular text-body font-bold">{funnel.cohortSize}</dd>
