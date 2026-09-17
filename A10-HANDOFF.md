@@ -21,9 +21,10 @@ Branch `feat/a10-dashboard` · PR #15 (aberta, **não mesclada**). A11 não inic
 
 ## 1.1 Revisão da PR (antes do merge)
 
-Três pontos revisados a pedido. Dois eram defeitos reais, reproduzidos com
-teste antes da correção; o terceiro também. Nenhuma regra da A5 foi alterada
-e a migration anterior não foi editada — a correção está em
+Três pontos revisados a pedido. **Os três eram defeitos reais** e cada um foi
+reproduzido com teste que falha antes da correção e passa depois — nenhum
+ficou só na leitura do código. Nenhuma regra da A5 foi alterada e a migration
+anterior não foi editada: a correção está em
 `20260917110000_a10_dashboard_review.sql`.
 
 | Ponto | O que estava errado | Como foi reproduzido | Correção |
@@ -36,6 +37,23 @@ Testes acrescentados: `supabase/tests/database/17_a10_dashboard_review.test.sql`
 (21 asserções), `tests/unit/a10-dashboard-review.test.tsx` (6) e o e2e 5 de
 `tests/e2e/dashboard.spec.ts` (aplicar → limpar → voltar/avançar conferindo
 URL, seletores e indicadores a cada navegação).
+
+Evidência da reprodução, antes da correção, no `praxis-crm-dev` (transação
+desfeita), com a função da migration anterior e as mesmas fixtures do teste
+novo — uma oportunidade movida de 0 direto para 3, uma que voltou e reentrou,
+uma ganha:
+
+| Etapa | Leitura antiga (`reached`) | Passagem registrada (correto) |
+|---|---|---|
+| 0 | 3 | 3 |
+| 1 | **3** | 2 |
+| 2 | **3** | 2 |
+| 3 | 1 | 1 |
+
+Com a função antiga, 3 das 21 asserções passavam; com a migration da revisão
+aplicada na mesma transação, 21 de 21. No mesmo teste, a soma da coluna de
+leads da tabela da equipe vinha **3** contra **4** do indicador geral depois
+de `remove_membership`.
 
 ## 2. Fórmulas e decisões
 
@@ -121,9 +139,22 @@ Resumo:
 | Acessibilidade (axe, WCAG A/AA, `main`) | hospedado | 0 violações |
 | Layout 1440×900 × protótipo | hospedado | mesma estrutura (filtros, 5 cartões, faixa + alerta, funil + atenção, série + agenda, equipe, destaques); corrigido o grid em 2 colunas (`sm:` perdia para `lg:`) |
 
+### Revisão da PR — verificações próprias
+
+| Verificação | Tipo | Resultado |
+|---|---|---|
+| `17_a10_dashboard_review.test.sql` (21 asserções): etapa pulada, reentrada, reordenação de etapas, taxa ≤ 100%, consulta independente, membro removido com registros, somas × indicadores gerais | teste de banco | 3/21 com a função anterior (defeitos reproduzidos); 21/21 com a migration da revisão, no `praxis-crm-dev` em transação desfeita; verde no CI |
+| Funil no preview × consulta independente (escritório demonstrativo, 30 dias) | hospedado + consulta só de leitura | passagens 29/26/24/20/16/12/8/4 e "seguiu" 26/24/20/16/12/9/5/1 iguais na tela e na consulta escrita à parte; nenhuma taxa acima de 100% |
+| Filtros com JavaScript: aplicar período → área → responsável, limpar, voltar (2×), avançar | hospedado | a cada navegação, URL, os três seletores e "Leads recebidos" juntos (30 → 8 → 1 → 1, limpar volta a 30) |
+| O mesmo fluxo no preview **anterior** (`eb41a8b`) | hospedado | defeito reproduzido: depois de "Limpar filtros" a URL era `/visao-geral` e o indicador 30, mas os seletores continuavam em "7 dias" e "Trabalhista" |
+| Equipe com responsável fora da equipe | hospedado | `remove_membership` executado no escritório **demonstrativo** pelo fluxo real: a linha continuou na tabela com a etiqueta "Fora da equipe" e 7 leads; soma 8 + 8 + 7 + 7 = 30 = indicador geral. A membership foi recriada em seguida (4 membros ativos, mesmos papéis); nenhum lead ou atividade foi alterado |
+
 Commits: `215270c` (A10), `ddb2550` (layout, sem JavaScript e seletores do
-e2e), e o commit deste handoff (script de atualização). O CI do último commit
-está registrado na PR.
+e2e), `eb41a8b` (handoff e script de atualização), `f45afca` (revisão da PR:
+funil, equipe e filtros), `773f705` (linha da equipe no teste 16 inclui
+`is_former`) e `5addf83` (o e2e dos filtros confere os seletores contra a URL
+corrente, sem depender da contagem de entradas do histórico). O CI do último
+commit está registrado na PR.
 
 ## 5. Pendências e observações
 
@@ -131,6 +162,14 @@ está registrado na PR.
   anteriores (só acréscimos: uma coluna com padrão e três funções). Os tipos
   foram atualizados à mão, porque o gerador remoto formata diferente do
   local; o CI confirma pelo gerador local.
+- A migration da revisão (`20260917110000`) também já está aplicada no
+  `praxis-crm-dev` — `create or replace` da mesma função, sem mudança de
+  schema nem de dados. Sem ela o preview mostraria as chaves novas vazias.
+- Para validar na tela a linha "Fora da equipe", a membership da conta
+  fictícia de atendimento do escritório **demonstrativo** foi removida pelo
+  fluxo real e recriada logo depois (papéis e contagens conferidos). Ficou
+  registrado um `audit_log` de `membership.removed` nesse escritório
+  demonstrativo; nenhum escritório, conta ou permissão real foi tocado.
 - As iniciais do avatar usam a última palavra do nome, então "Demo
   Proprietária (A10)" vira "D(". O comportamento de `initialsOf` já existia e
   não foi alterado.
