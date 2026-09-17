@@ -174,19 +174,38 @@ commit está registrado na PR.
   Proprietária (A10)" vira "D(". O comportamento de `initialsOf` já existia e
   não foi alterado.
 - Perdas não têm data própria, então não há "perdidas no período".
-- `tests/e2e/leads.spec.ts` "2b. antes de a página hidratar…" (A4) falhou uma
-  vez nesta rodada (run 35279520763): esperava o segundo texto salvo e leu o
-  primeiro. Passou no run seguinte com o mesmo código, e o teste é sensível a
-  tempo (abre um contexto sem JavaScript logo depois de um salvamento). Nada
-  da A10 toca esse caminho; fica anotado como instabilidade a observar.
+- `tests/e2e/leads.spec.ts` "2b…" (A4) falhou uma vez nesta rodada (run
+  35279520763) lendo "Primeiro texto — resposta atrasada" onde esperava o
+  segundo texto. **Investigado e corrigido** — não era simples instabilidade:
+  - **Causa comprovada:** no teste 2, do qual o 2b depende, nenhuma
+    asserção aguardava a última gravação. "Dados salvos." é um `Alert`
+    renderizado enquanto `state.ok` for verdadeiro e nada o remove
+    (`lead-basic-fields-form.tsx`), então já estava na tela desde a gravação
+    anterior e a espera passava na hora; e o campo é controlado pelo estado
+    local, que por desenho não reage à resposta do servidor. O artefato da
+    execução mostra o `<textarea>` **servido** ao 2b com o texto anterior nas
+    14 tentativas dos 5 s — a gravação não foi aplicada nem com atraso — e o
+    teste 2 mesmo assim passou.
+  - **Mecanismo provável, não comprovado:** o log do mesmo job registra
+    `The destination stream closed early`, compatível com a requisição
+    interrompida no encerramento do teste. Recusa por conflito de
+    `expectedUpdatedAt` era a hipótese alternativa; a nova leitura ao fim do
+    teste 2 passa a expor qualquer uma das duas de imediato.
+  - **Correção (`a50d198`):** cada salvamento cujo efeito é conferido espera
+    a resposta daquele POST e o botão sair de "Salvando…"; ao fim do teste 2,
+    uma nova leitura da página confirma o que ficou gravado. O cenário de
+    edição durante resposta lenta continua sem esperar a resposta e a janela
+    anterior à hidratação segue igual. Sem sleep novo, sem retry, sem
+    asserção enfraquecida. Nenhuma mudança no produto: o comportamento
+    testado está correto.
 - `tests/unit/a9-perfil-360-review-fixes.test.tsx` "'carregar mais' mantém o
   filtro ativo no cursor seguinte" (A9) falhou uma vez no run 35280953402,
   num commit que só mudou este arquivo de texto: não encontrou o botão
   "Carregar mais" (os botões do filtro ainda estavam `disabled`, ou seja, o
   render seguinte não havia chegado). A suíte completa passa localmente
-  (312/312) e o mesmo run reexecutado ficou verde. Também fica anotado como
-  instabilidade a observar — as duas são de fases anteriores e sensíveis a
-  tempo.
+  (312/312) e o mesmo run reexecutado ficou verde. Fica anotado como
+  instabilidade **ainda não investigada** — é de fase anterior e não foi
+  aberta nesta revisão, que se restringiu à falha do 2b.
 - Acessibilidade **conferida depois** das mudanças visuais da revisão
   (cabeçalho de colunas do funil `aria-hidden`, textos de ajuda em `title` e a
   etiqueta "Fora da equipe"): axe em `main`, WCAG A/AA, **0 violações**, sem
