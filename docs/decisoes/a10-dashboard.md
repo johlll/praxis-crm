@@ -14,7 +14,7 @@ devolve. Este documento é a especificação que a função implementa.
 | Período | Dias de calendário no fuso do escritório, intervalos meio-abertos `[início, fim)`. Atual = `N` dias terminando hoje (inclui hoje até agora). Anterior = os `N` dias imediatamente antes, sem sobreposição. `N` ∈ {7, 30, 90}; outro valor é recusado (`invalid_period`). |
 | Variação | `(atual − anterior) / anterior`, arredondada. Anterior = 0 → "—" (sem base). |
 | Período × posição | Indicadores de período usam a data do próprio evento e têm comparação. Posições atuais (abertas, valor em negociação, atrasos, atenção, agenda de hoje, distribuição por etapa, previsão) não têm comparação: o banco não guarda o estado passado delas. A tela separa os dois blocos ("No período" / "Agora"). |
-| Filtros | Responsável **atual** do lead, "sem responsável", área jurídica do lead (igualdade exata). Valem para todos os blocos. O pipeline só escolhe o funil. |
+| Filtros | Responsável **atual** do lead, "sem responsável", área jurídica do lead (igualdade exata). Valem para todos os blocos. O pipeline só escolhe o funil. Estado na URL (formulário GET), então cada combinação tem endereço próprio e o histórico do navegador funciona; os seletores são remontados quando a URL muda (`key`), para nunca mostrarem um filtro diferente do que os números já refletem. |
 | Falha | Erro da RPC ou resposta vazia → `DashboardLoadError` → `error.tsx` com "Tentar novamente". Nunca zero nem painel vazio. |
 | Volume | Tudo agregado em SQL sobre todos os registros. Listas exibidas têm limite (atenção: 20; agenda: 50) e sempre trazem o total real ao lado. |
 
@@ -58,18 +58,32 @@ denominador são a mesma população (leads da coorte), unidade = lead.
   money roles, pela projeção de coluna da A5).
 - **No período** (avanço histórico): população = oportunidades do pipeline
   criadas no período (unidade = oportunidade; um lead com duas conta duas).
-  Para cada uma, a maior posição de etapa já ocupada: etapa atual e origem e
-  destino de cada transição registrada (a etapa de criação é a origem da
-  primeira transição). "Alcançaram" a etapa `k` = maior posição ≥ `k`; a
-  oportunidade conta **uma vez** por etapa, mesmo com reentrada. Conversão
-  entre etapas = alcançaram `k` ÷ alcançaram `k−1`. Ganhas, perdas
-  registradas (`status = lost`, na etapa em que estavam) e em andamento
-  aparecem à parte: falta de avanço **não** é perda. Coorte vazia →
-  "Indisponível".
-- Limitação registrada: as posições são as atuais; se as etapas forem
-  reordenadas, o histórico é lido na ordem nova. Perdas não têm data própria
-  (só a auditoria registra o momento), então não existe "perdidas no
-  período".
+  Cada oportunidade tem o conjunto das etapas por onde **realmente passou**:
+  a etapa atual e a origem e o destino de cada transição registrada (a etapa
+  de criação é a origem da primeira transição; sem transição, é a etapa
+  atual). Duas colunas por etapa:
+
+  | Coluna | Definição |
+  |---|---|
+  | **Passaram** (`visited`) | oportunidades da coorte com registro naquela etapa, **uma vez cada** — reentrada e várias transições não duplicam |
+  | **Seguiu** (`advanced`) | **das que passaram por aquela etapa**, quantas seguiram adiante: registraram passagem por uma etapa de posição maior, ou foram ganhas |
+
+  A taxa exibida é `advanced ÷ visited` da **própria** etapa: numerador e
+  denominador são a mesma população, então nunca passa de 100% e nunca
+  divide duas contagens independentes. Ganhas, perdas registradas
+  (`status = lost`, na etapa em que estavam) e em andamento aparecem à
+  parte: falta de avanço **não** é perda. Coorte vazia → "Indisponível".
+- **Etapa pulada não conta como passagem.** A A5 permite mover direto para
+  uma etapa adiante (`move_opportunity_stage` exige os requisitos das
+  intermediárias, mas não registra passagem por elas). A leitura é por
+  identidade de etapa, nunca por comparação de posições — comparar posições
+  inferia passagem que não aconteceu e fazia o funil parecer sempre
+  monotônico. As regras de movimentação da A5 não foram alteradas.
+- **Reordenar etapas não reescreve o histórico**: quais etapas foram
+  visitadas é fato registrado por etapa. A ordem das etapas (e, com ela, o
+  que conta como "adiante" e a ordem de exibição) é sempre a atual.
+- Limitação registrada: perdas não têm data própria (só a auditoria
+  registra o momento), então não existe "perdidas no período".
 
 ## 5. Equipe
 
@@ -83,6 +97,22 @@ denominador são a mesma população (leads da coorte), unidade = lead.
 Não há coluna "atendidas": atribuir um lead não prova atendimento, e primeira
 resposta ficou fora desta fase. Linha "Sem responsável" só aparece com algum
 número; visualizador sem nada atribuído não aparece.
+
+**Responsável que saiu do escritório.** `remove_membership` (A2) apaga a
+membership e **preserva** `assigned_to` em leads e atividades. A tabela parte
+dos membros ativos **e** dos responsáveis presentes nos registros visíveis
+sem membership ativa (marcados `is_former`, exibidos com a etiqueta "Fora da
+equipe"). Sem isso, os registros de quem saiu ficariam fora da tabela e a
+soma das colunas deixaria de bater com os indicadores gerais do período.
+Entra apenas o nome, e só de quem já está atribuído a registros dentro do
+alcance de quem consulta: nenhum acesso é devolvido, nenhuma atribuição muda
+e o alcance não é ampliado.
+
+Soma conferível, coluna por coluna: `Σ leads recebidos` = "Leads recebidos"
+do período; `Σ consultas` = "Consultas realizadas"; `Σ ganhas` =
+"Oportunidades ganhas"; `Σ atrasadas` = "Atividades atrasadas" (posição
+atual). O que não tem responsável cai na linha "Sem responsável", que
+aparece sempre que tem algum número.
 
 ## 6. Insights
 

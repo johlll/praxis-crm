@@ -53,8 +53,11 @@ function Bar({ value, max, tone }: { value: number; max: number; tone: "info" | 
 /**
  * Duas leituras separadas das etapas REAIS do pipeline escolhido:
  * - "No período": coorte das oportunidades criadas no período; cada uma
- *   conta uma vez em cada etapa que alcançou (ou ultrapassou), sem somar
- *   reentradas; ganhas e perdas registradas à parte — quem não avançou está
+ *   conta uma vez em cada etapa por onde REALMENTE passou (etapa atual e
+ *   origem/destino das transições registradas), sem somar reentradas e
+ *   sem inferir passagem por etapa pulada. A taxa ao lado é a mesma
+ *   população: das que passaram por aquela etapa, quantas seguiram
+ *   adiante. Ganhas e perdas registradas à parte — quem não avançou está
  *   "em andamento", não perdido.
  * - "Agora": distribuição atual das abertas por etapa.
  */
@@ -71,7 +74,7 @@ export function FunnelCard({ dashboard, pipelineHrefs }: { dashboard: Dashboard;
           </h2>
           <p className="m-0 text-meta text-text-muted">
             {view === "periodo"
-              ? `Oportunidades criadas nos últimos ${dashboard.period.days} dias e até onde chegaram`
+              ? `Oportunidades criadas nos últimos ${dashboard.period.days} dias e as etapas por onde passaram`
               : "Oportunidades abertas agora, por etapa"}
           </p>
         </div>
@@ -113,20 +116,38 @@ export function FunnelCard({ dashboard, pipelineHrefs }: { dashboard: Dashboard;
           </p>
         ) : (
           <>
+            <div aria-hidden className="flex items-center gap-3 text-label font-semibold tracking-[1px] text-text-tertiary uppercase">
+              <span className="w-[170px] shrink-0">Etapa</span>
+              <span className="flex-1" />
+              <span className="w-8 shrink-0 text-right">Pass.</span>
+              <span className="w-[52px] shrink-0 text-right">Seguiu</span>
+            </div>
             <ol className="m-0 flex list-none flex-col gap-2 p-0">
-              {funnel.stages.map((stage, index) => {
-                const previous = index === 0 ? funnel.cohortSize : funnel.stages[index - 1]!.reached;
-                const rate = index === 0 ? null : formatPercent(stage.reached, previous);
+              {funnel.stages.map((stage) => {
+                // Taxa de avanço da própria etapa: numerador (seguiram
+                // adiante) e denominador (passaram por ela) são o mesmo
+                // conjunto de oportunidades, então nunca passa de 100% e
+                // não compara duas contagens independentes.
+                const rate = formatPercent(stage.advanced, stage.visited);
                 return (
                   <li key={stage.stageId} className="flex items-center gap-3">
                     <span className="w-[170px] shrink-0 truncate text-small text-text-secondary" title={stage.name}>
                       {stage.name}
                     </span>
-                    <Bar value={stage.reached} max={funnel.cohortSize} tone="info" />
-                    <span className="w-8 shrink-0 text-right tabular text-body font-bold text-text">{stage.reached}</span>
+                    <Bar value={stage.visited} max={funnel.cohortSize} tone="info" />
+                    <span
+                      className="w-8 shrink-0 text-right tabular text-body font-bold text-text"
+                      title={`${stage.visited} de ${funnel.cohortSize} passaram por esta etapa`}
+                    >
+                      {stage.visited}
+                    </span>
                     <span
                       className="w-[52px] shrink-0 text-right tabular text-meta text-text-tertiary"
-                      title={rate ? "Alcançaram esta etapa, sobre as que alcançaram a anterior" : undefined}
+                      title={
+                        rate
+                          ? `${stage.advanced} das ${stage.visited} que passaram por esta etapa seguiram adiante (etapa posterior ou ganho registrado)`
+                          : undefined
+                      }
                     >
                       {rate ?? ""}
                     </span>
@@ -156,7 +177,9 @@ export function FunnelCard({ dashboard, pipelineHrefs }: { dashboard: Dashboard;
               </div>
             </dl>
             <p className="m-0 text-meta text-text-muted">
-              Cada oportunidade conta uma vez por etapa alcançada, mesmo se voltou e reentrou. Ganhas podem sair de qualquer etapa.
+              <strong className="font-semibold">Pass.</strong> = passaram por esta etapa, contando uma vez cada, mesmo se voltaram e
+              reentraram. Etapa pulada não conta como passagem. <strong className="font-semibold">Seguiu</strong> = das que passaram por
+              esta etapa, quantas seguiram adiante (etapa posterior ou ganho registrado) — a taxa é sempre sobre a mesma população.
             </p>
           </>
         )

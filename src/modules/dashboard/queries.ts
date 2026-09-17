@@ -57,15 +57,21 @@ export type FunnelStage = {
   name: string;
   position: number;
   openNow: number;
-  reached: number;
+  /** Oportunidades da coorte que passaram por esta etapa (registro efetivo, uma vez cada). */
+  visited: number;
+  /** Das que passaram por esta etapa, quantas seguiram adiante (etapa posterior ou ganho). */
+  advanced: number;
   cohortOpenHere: number;
   cohortLostHere: number;
+  cohortWonHere: number;
   valueSumCents?: number;
 };
 
 export type TeamRow = {
   userId: string | null;
   fullName: string | null;
+  /** Responsável sem membership ativa: saiu do escritório e os registros dele continuam atribuídos. */
+  isFormer: boolean;
   leadsReceived: number;
   consultationsDone: number;
   opportunitiesWon: number;
@@ -277,6 +283,7 @@ export function mapDashboard(raw: Raw): Dashboard {
     team: arr(raw.team).map((row) => ({
       userId: (row.user_id as string | null) ?? null,
       fullName: (row.full_name as string | null) ?? null,
+      isFormer: row.is_former === true,
       leadsReceived: num(row.leads_received),
       consultationsDone: num(row.consultations_done),
       opportunitiesWon: num(row.opportunities_won),
@@ -295,9 +302,11 @@ export function mapDashboard(raw: Raw): Dashboard {
             name: String(s.name),
             position: num(s.position),
             openNow: num(s.open_now),
-            reached: num(s.reached),
+            visited: num(s.visited),
+            advanced: num(s.advanced),
             cohortOpenHere: num(s.cohort_open_here),
             cohortLostHere: num(s.cohort_lost_here),
+            cohortWonHere: num(s.cohort_won_here),
             ...("value_sum_cents" in s ? { valueSumCents: num(s.value_sum_cents) } : {}),
           })),
         }

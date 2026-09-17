@@ -19,6 +19,24 @@ Branch `feat/a10-dashboard` · PR #15 (aberta, **não mesclada**). A11 não inic
 - Título do teste de confirmação corrigido sem mudar a lógica
   (`tests/unit/stabilization-auth-confirm.test.tsx`).
 
+## 1.1 Revisão da PR (antes do merge)
+
+Três pontos revisados a pedido. Dois eram defeitos reais, reproduzidos com
+teste antes da correção; o terceiro também. Nenhuma regra da A5 foi alterada
+e a migration anterior não foi editada — a correção está em
+`20260917110000_a10_dashboard_review.sql`.
+
+| Ponto | O que estava errado | Como foi reproduzido | Correção |
+|---|---|---|---|
+| **Funil** | A etapa contava como alcançada por comparação de posições (`maior posição já ocupada ≥ posição da etapa`). Como a A5 permite mover direto para uma etapa adiante, a etapa **pulada** aparecia como alcançada; e reordenar etapas (ou inserir uma no meio) mudava o histórico já registrado. A taxa dividia duas contagens independentes. | Teste de banco com uma oportunidade movida de 0 direto para 3: a função devolvia 3 passagens nas etapas 1 e 2 (o certo é 2 e 2), e o funil parecia perfeito — 100% de "conversão" em etapas por onde ninguém passou. | Contagem pelas etapas **efetivamente registradas** (etapa atual + origem e destino de cada transição), por identidade de etapa, com `distinct` para reentrada. Duas colunas: **Passaram** e **Seguiu** (das que passaram por aquela etapa, quantas seguiram adiante — etapa posterior ou ganho). Numerador ⊆ denominador: a taxa nunca passa de 100%. |
+| **Equipe** | A tabela partia só das memberships ativas, mas `remove_membership` apaga a membership e **preserva** `assigned_to`. Os registros de quem saiu desapareciam da tabela. | Teste de banco removendo um membro com lead, consulta e atrasada atribuídos: a soma da coluna de leads veio **3** contra **4** do indicador geral, e a linha da pessoa sumiu. | Entram também os responsáveis presentes nos registros visíveis sem membership ativa, marcados `is_former` (etiqueta "Fora da equipe"). Sem devolver acesso, sem mudar atribuição, sem passar do alcance de quem consulta. As quatro colunas somam os indicadores correspondentes. |
+| **Filtros** | Os seletores usavam `defaultValue`, que só vale na montagem. Em "Limpar filtros" e em voltar/avançar (navegação do cliente, mesmo componente), o seletor continuava mostrando o filtro anterior enquanto os números já eram os da URL nova. | Teste de componente: aplicar período 7 e depois receber as props de `/visao-geral` deixava o seletor em "7 dias" com os indicadores de 30 dias (`expected '7' to be '30'`). | `key` com o valor que veio da URL em cada seletor: quando a URL muda, o seletor é remontado com o valor certo. Sem JavaScript nada muda — o HTML já vem do servidor com a opção marcada. |
+
+Testes acrescentados: `supabase/tests/database/17_a10_dashboard_review.test.sql`
+(21 asserções), `tests/unit/a10-dashboard-review.test.tsx` (6) e o e2e 5 de
+`tests/e2e/dashboard.spec.ts` (aplicar → limpar → voltar/avançar conferindo
+URL, seletores e indicadores a cada navegação).
+
 ## 2. Fórmulas e decisões
 
 Especificação completa: [`docs/decisoes/a10-dashboard.md`](docs/decisoes/a10-dashboard.md).
@@ -38,12 +56,15 @@ Resumo:
   `[início, fim)` sem sobreposição; anterior com o mesmo número de dias;
   base zero → "—".
 - Posições atuais sem comparação histórica.
-- Funil: coorte das oportunidades do pipeline criadas no período; maior etapa
-  já ocupada (atual + origem/destino das transições); uma contagem por etapa
-  mesmo com reentrada; ganhas, perdas registradas e em andamento separadas;
-  nenhum "qualificado"; pipelines nunca somados entre si.
+- Funil: coorte das oportunidades do pipeline criadas no período; etapas
+  efetivamente registradas (atual + origem/destino das transições), uma
+  contagem por etapa mesmo com reentrada e sem contar etapa pulada; taxa de
+  avanço sobre a mesma população (das que passaram, quantas seguiram
+  adiante); ganhas, perdas registradas e em andamento separadas; nenhum
+  "qualificado"; pipelines nunca somados entre si.
 - Equipe: leads e ganhas pelo responsável atual do lead; consultas e atrasadas
-  pelo responsável atual da atividade; sem "atendidas".
+  pelo responsável atual da atividade; sem "atendidas"; quem saiu do
+  escritório continua na tabela, marcado "Fora da equipe".
 - Papéis: alcance por registro antes de agregar; reais, previsão, data
   prevista, probabilidade e modelo só para owner/admin/manager/lawyer; sales
   só a faixa da oportunidade individual; viewer nada.
@@ -114,7 +135,8 @@ está registrado na PR.
   Proprietária (A10)" vira "D(". O comportamento de `initialsOf` já existia e
   não foi alterado.
 - Perdas não têm data própria, então não há "perdidas no período".
-- Reordenar etapas muda a leitura do funil histórico.
+- Reordenar etapas não muda quais etapas cada oportunidade visitou; muda
+  só a ordem de exibição e o que conta como "adiante" na taxa de avanço.
 - Fuso por escritório ainda não existe (ponto único:
   `private.office_timezone`).
 - Fora da fase: origem e atribuição (A11), primeira resposta, recebidos,

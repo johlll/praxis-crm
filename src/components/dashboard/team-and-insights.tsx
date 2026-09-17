@@ -11,7 +11,8 @@ export function TeamTable({ rows, days }: { rows: TeamRow[]; days: number }) {
         </h2>
         <p className="m-0 text-meta text-text-muted">
           Leads recebidos e oportunidades ganhas: responsável atual do lead. Consultas e atrasadas: responsável atual da
-          atividade. Atribuir um lead não significa que ele foi atendido.
+          atividade. Atribuir um lead não significa que ele foi atendido. Quem saiu do escritório continua na tabela, marcado
+          como fora da equipe, porque os registros seguem atribuídos a essa pessoa.
         </p>
       </div>
       {rows.length === 0 ? (
@@ -45,7 +46,17 @@ export function TeamTable({ rows, days }: { rows: TeamRow[]; days: number }) {
                         >
                           {row.userId ? initialsOf(name) : "—"}
                         </span>
-                        {name}
+                        <span className="min-w-0">
+                          <span className="truncate">{name}</span>
+                          {row.isFormer ? (
+                            <span
+                              className="ml-1.5 rounded-pill bg-neutral-bg px-1.5 py-0.5 text-[9.5px] font-semibold tracking-[0.4px] text-text-tertiary uppercase"
+                              title="Não é mais membro do escritório; os registros continuam atribuídos a esta pessoa."
+                            >
+                              Fora da equipe
+                            </span>
+                          ) : null}
+                        </span>
                       </span>
                     </th>
                     <td className="px-3 py-2 text-right tabular">{row.leadsReceived}</td>

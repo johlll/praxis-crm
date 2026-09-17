@@ -98,7 +98,66 @@ test.describe.serial("A10 — Visão geral", () => {
     await noJs.close();
   });
 
-  test("5. ganhar uma oportunidade pelo painel reflete nos indicadores", async ({ page }) => {
+  test("5. com JavaScript: aplicar, limpar e voltar/avançar mantêm URL, seletores e indicadores juntos", async ({ page }) => {
+    await login(page, SEED_PAINEL.owner.email);
+    await page.goto("/visao-geral");
+
+    const period = page.getByLabel("Período");
+    const owner = page.getByLabel("Responsável pelo lead");
+    const area = page.getByLabel("Área jurídica");
+    const leads = () => kpiValue(page, "Leads recebidos");
+
+    await expect(period).toHaveValue("30");
+    const leads30 = await leads();
+
+    // Aplicar período, responsável e área (cada troca já navega).
+    await period.selectOption("7");
+    await expect(page).toHaveURL(/periodo=7/);
+    await expect(page.getByText("Últimos 7 dias", { exact: false }).first()).toBeVisible();
+    const leads7 = await leads();
+
+    await owner.selectOption(SEED_PAINEL.lawyer.userId);
+    await expect(page).toHaveURL(/responsavel=/);
+    await area.selectOption("Família");
+    await expect(page).toHaveURL(/area=Fam/);
+    await expect(period).toHaveValue("7");
+    await expect(owner).toHaveValue(SEED_PAINEL.lawyer.userId);
+    await expect(area).toHaveValue("Família");
+    const leadsFiltrado = await leads();
+
+    // Limpar filtros: URL, seletores e indicadores voltam juntos ao padrão.
+    await page.getByRole("link", { name: "Limpar filtros" }).click();
+    await expect(page).toHaveURL(/\/visao-geral$/);
+    await expect(period).toHaveValue("30");
+    await expect(owner).toHaveValue("");
+    await expect(area).toHaveValue("");
+    expect(await leads()).toBe(leads30);
+
+    // Voltar: volta para os três filtros aplicados.
+    await page.goBack();
+    await expect(page).toHaveURL(/area=Fam/);
+    await expect(period).toHaveValue("7");
+    await expect(owner).toHaveValue(SEED_PAINEL.lawyer.userId);
+    await expect(area).toHaveValue("Família");
+    expect(await leads()).toBe(leadsFiltrado);
+
+    // Voltar de novo: só o período.
+    await page.goBack();
+    await page.goBack();
+    await expect(page).toHaveURL(/periodo=7/);
+    await expect(period).toHaveValue("7");
+    await expect(owner).toHaveValue("");
+    await expect(area).toHaveValue("");
+    expect(await leads()).toBe(leads7);
+
+    // Avançar: os seletores acompanham de novo.
+    await page.goForward();
+    await expect(page).toHaveURL(/responsavel=/);
+    await expect(owner).toHaveValue(SEED_PAINEL.lawyer.userId);
+    await expect(area).toHaveValue("");
+  });
+
+  test("6. ganhar uma oportunidade pelo painel reflete nos indicadores", async ({ page }) => {
     const errors = watchConsole(page);
     await login(page, SEED_PAINEL.owner.email);
     await page.goto("/visao-geral?periodo=7");

@@ -167,15 +167,15 @@ select is((:'d7'::jsonb #>> '{positions,today_activities}')::int, 1,
 -- Funil: coorte = oportunidades do pipeline criadas no período.
 select is((:'d7'::jsonb #>> '{funnel,cohort_size}')::int, 2, 'Funil: duas oportunidades do mesmo lead na coorte');
 select is(
-  (select (s ->> 'reached')::int from jsonb_array_elements(:'d7'::jsonb #> '{funnel,stages}') s where (s ->> 'position')::int = 1),
+  (select (s ->> 'visited')::int from jsonb_array_elements(:'d7'::jsonb #> '{funnel,stages}') s where (s ->> 'position')::int = 1),
   2, 'Funil: etapa 1 alcançada por 2, sem contar a reentrada duas vezes'
 );
 select is(
-  (select (s ->> 'reached')::int from jsonb_array_elements(:'d7'::jsonb #> '{funnel,stages}') s where (s ->> 'position')::int = 2),
+  (select (s ->> 'visited')::int from jsonb_array_elements(:'d7'::jsonb #> '{funnel,stages}') s where (s ->> 'position')::int = 2),
   1, 'Funil: etapa 2 alcançada por 1 (a que voltou e reentrou conta uma vez)'
 );
 select is(
-  (select (s ->> 'reached')::int from jsonb_array_elements(:'d7'::jsonb #> '{funnel,stages}') s where (s ->> 'position')::int = 3),
+  (select (s ->> 'visited')::int from jsonb_array_elements(:'d7'::jsonb #> '{funnel,stages}') s where (s ->> 'position')::int = 3),
   0, 'Funil: ninguém alcançou a etapa 3'
 );
 select is(

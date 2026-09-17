@@ -118,9 +118,9 @@ function rawDashboard(role: "owner" | "sales" | "viewer"): Record<string, unknow
       cohort_lost: 1,
       cohort_open: 1,
       stages: [
-        { stage_id: "s0", name: "Fazer primeiro contato", position: 0, open_now: 0, reached: 2, cohort_open_here: 0, cohort_lost_here: 0, ...(money ? { value_sum_cents: 0 } : {}) },
-        { stage_id: "s1", name: "Qualificar oportunidade", position: 1, open_now: 0, reached: 2, cohort_open_here: 0, cohort_lost_here: 1, ...(money ? { value_sum_cents: 0 } : {}) },
-        { stage_id: "s2", name: "Verificar aderência e conflito", position: 2, open_now: 1, reached: 1, cohort_open_here: 1, cohort_lost_here: 0, ...(money ? { value_sum_cents: 1234500 } : {}) },
+        { stage_id: "s0", name: "Fazer primeiro contato", position: 0, open_now: 0, visited: 2, advanced: 2, cohort_open_here: 0, cohort_lost_here: 0, cohort_won_here: 0, ...(money ? { value_sum_cents: 0 } : {}) },
+        { stage_id: "s1", name: "Qualificar oportunidade", position: 1, open_now: 0, visited: 2, advanced: 1, cohort_open_here: 0, cohort_lost_here: 1, cohort_won_here: 0, ...(money ? { value_sum_cents: 0 } : {}) },
+        { stage_id: "s2", name: "Verificar aderência e conflito", position: 2, open_now: 1, visited: 1, advanced: 0, cohort_open_here: 1, cohort_lost_here: 0, cohort_won_here: 0, ...(money ? { value_sum_cents: 1234500 } : {}) },
       ],
     },
     insight_data: { stalled_top_stage: null, cohort_lost_top_reason: null, cohort_lost_total: 1 },

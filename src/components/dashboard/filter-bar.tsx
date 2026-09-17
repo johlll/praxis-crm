@@ -26,6 +26,14 @@ function Pill({ label, children, icon }: { label: string; children: ReactNode; i
  * antes da hidratação o botão "Aplicar" faz o envio nativo; com o
  * JavaScript carregado, trocar qualquer seletor já aplica, com navegação
  * no cliente.
+ *
+ * Cada seletor leva `key` com o valor que veio da URL. A navegação do
+ * cliente ("Limpar filtros", voltar e avançar no navegador) troca as
+ * props deste componente sem desmontá-lo, e `defaultValue` só vale na
+ * montagem — sem a `key`, o seletor continuaria mostrando a escolha
+ * anterior enquanto os indicadores já seriam os da URL nova. Trocar a
+ * `key` remonta o seletor com o valor certo. Nada disso depende de
+ * JavaScript: sem ele, o HTML já vem do servidor com a opção marcada.
  */
 export function DashboardFilterBar({
   filters,
@@ -46,7 +54,7 @@ export function DashboardFilterBar({
       {filters.pipelineId ? <input type="hidden" name="pipeline" value={filters.pipelineId} /> : null}
 
       <Pill label="Últimos" icon={<Calendar size={14} aria-hidden />}>
-        <select name="periodo" defaultValue={String(filters.periodDays)} onChange={submitOnChange} className={selectClass} aria-label="Período">
+        <select key={filters.periodDays} name="periodo" defaultValue={String(filters.periodDays)} onChange={submitOnChange} className={selectClass} aria-label="Período">
           {DASHBOARD_PERIODS.map((days) => (
             <option key={days} value={days}>
               {days} dias
@@ -56,7 +64,7 @@ export function DashboardFilterBar({
       </Pill>
 
       <Pill label="Responsável:">
-        <select name="responsavel" defaultValue={responsavel} onChange={submitOnChange} className={selectClass} aria-label="Responsável pelo lead">
+        <select key={responsavel} name="responsavel" defaultValue={responsavel} onChange={submitOnChange} className={selectClass} aria-label="Responsável pelo lead">
           <option value="">Toda a equipe</option>
           <option value={UNASSIGNED_FILTER}>Sem responsável</option>
           {members.map((member) => (
@@ -68,7 +76,7 @@ export function DashboardFilterBar({
       </Pill>
 
       <Pill label="Área jurídica:">
-        <select name="area" defaultValue={filters.legalArea ?? ""} onChange={submitOnChange} className={selectClass} aria-label="Área jurídica">
+        <select key={filters.legalArea ?? ""} name="area" defaultValue={filters.legalArea ?? ""} onChange={submitOnChange} className={selectClass} aria-label="Área jurídica">
           <option value="">todas</option>
           {filters.legalArea && !legalAreas.includes(filters.legalArea) ? (
             <option value={filters.legalArea}>{filters.legalArea}</option>
