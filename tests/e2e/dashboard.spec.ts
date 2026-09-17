@@ -107,6 +107,19 @@ test.describe.serial("A10 — Visão geral", () => {
     const area = page.getByLabel("Área jurídica");
     const leads = () => kpiValue(page, "Leads recebidos");
 
+    /**
+     * Confere os três seletores contra a URL que está na barra agora —
+     * é isso que o defeito quebrava: a navegação do cliente trocava os
+     * números sem trocar o seletor. Não depende de quantas entradas o
+     * histórico tem.
+     */
+    async function selectorsMatchUrl() {
+      const params = new URL(page.url()).searchParams;
+      await expect(period).toHaveValue(params.get("periodo") ?? "30");
+      await expect(owner).toHaveValue(params.get("responsavel") ?? "");
+      await expect(area).toHaveValue(params.get("area") ?? "");
+    }
+
     await expect(period).toHaveValue("30");
     const leads30 = await leads();
 
@@ -114,47 +127,48 @@ test.describe.serial("A10 — Visão geral", () => {
     await period.selectOption("7");
     await expect(page).toHaveURL(/periodo=7/);
     await expect(page.getByText("Últimos 7 dias", { exact: false }).first()).toBeVisible();
-    const leads7 = await leads();
+    await selectorsMatchUrl();
 
     await owner.selectOption(SEED_PAINEL.lawyer.userId);
-    await expect(page).toHaveURL(/responsavel=/);
+    await expect(page).toHaveURL(new RegExp(`responsavel=${SEED_PAINEL.lawyer.userId}`));
+    await selectorsMatchUrl();
+
     await area.selectOption("Família");
     await expect(page).toHaveURL(/area=Fam/);
-    await expect(period).toHaveValue("7");
-    await expect(owner).toHaveValue(SEED_PAINEL.lawyer.userId);
-    await expect(area).toHaveValue("Família");
+    await selectorsMatchUrl();
     const leadsFiltrado = await leads();
 
     // Limpar filtros: URL, seletores e indicadores voltam juntos ao padrão.
     await page.getByRole("link", { name: "Limpar filtros" }).click();
     await expect(page).toHaveURL(/\/visao-geral$/);
-    await expect(period).toHaveValue("30");
-    await expect(owner).toHaveValue("");
-    await expect(area).toHaveValue("");
+    await selectorsMatchUrl();
     expect(await leads()).toBe(leads30);
 
-    // Voltar: volta para os três filtros aplicados.
+    // Voltar: os três filtros de novo, com o número daquela combinação.
     await page.goBack();
     await expect(page).toHaveURL(/area=Fam/);
-    await expect(period).toHaveValue("7");
-    await expect(owner).toHaveValue(SEED_PAINEL.lawyer.userId);
-    await expect(area).toHaveValue("Família");
+    await selectorsMatchUrl();
     expect(await leads()).toBe(leadsFiltrado);
 
-    // Voltar de novo: só o período.
-    await page.goBack();
-    await page.goBack();
-    await expect(page).toHaveURL(/periodo=7/);
-    await expect(period).toHaveValue("7");
-    await expect(owner).toHaveValue("");
-    await expect(area).toHaveValue("");
-    expect(await leads()).toBe(leads7);
-
-    // Avançar: os seletores acompanham de novo.
+    // Avançar: volta ao padrão, seletores e número juntos.
     await page.goForward();
-    await expect(page).toHaveURL(/responsavel=/);
-    await expect(owner).toHaveValue(SEED_PAINEL.lawyer.userId);
-    await expect(area).toHaveValue("");
+    await expect(page).toHaveURL(/\/visao-geral$/);
+    await selectorsMatchUrl();
+    expect(await leads()).toBe(leads30);
+
+    // Percorrer o histórico para trás e para frente: a cada entrada, os
+    // seletores têm de bater com a URL daquela entrada (voltar além da
+    // primeira não muda nada, e a conferência continua valendo).
+    // Três passos para trás alcançam as três combinações aplicadas sem
+    // risco de sair da Visão geral (antes delas está o login).
+    for (let i = 0; i < 3; i += 1) {
+      await page.goBack();
+      await selectorsMatchUrl();
+    }
+    for (let i = 0; i < 3; i += 1) {
+      await page.goForward();
+      await selectorsMatchUrl();
+    }
   });
 
   test("6. ganhar uma oportunidade pelo painel reflete nos indicadores", async ({ page }) => {
