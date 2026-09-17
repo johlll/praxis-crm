@@ -30,6 +30,7 @@ export type ActivityActionState = {
 function revalidateActivityRoutes(leadId?: string, opportunityId?: string) {
   revalidatePath("/atividades");
   revalidatePath("/agenda");
+  revalidatePath("/visao-geral");
   revalidatePath("/pipeline");
   if (leadId) revalidatePath(`/leads/${leadId}`);
   if (opportunityId) revalidatePath(`/oportunidades/${opportunityId}`);

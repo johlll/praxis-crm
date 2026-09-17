@@ -1946,6 +1946,7 @@ export type Database = {
           created_at: string
           created_by: string
           id: string
+          is_demo: boolean
           name: string
           slug: string
           updated_at: string
@@ -1954,6 +1955,7 @@ export type Database = {
           created_at?: string
           created_by: string
           id?: string
+          is_demo?: boolean
           name: string
           slug: string
           updated_at?: string
@@ -1962,6 +1964,7 @@ export type Database = {
           created_at?: string
           created_by?: string
           id?: string
+          is_demo?: boolean
           name?: string
           slug?: string
           updated_at?: string
@@ -2248,6 +2251,7 @@ export type Database = {
           created_at: string
           created_by: string
           id: string
+          is_demo: boolean
           name: string
           slug: string
           updated_at: string
@@ -2304,6 +2308,17 @@ export type Database = {
         }[]
       }
       get_conversation: { Args: { p_conversation_id: string }; Returns: Json }
+      get_dashboard: {
+        Args: {
+          p_assigned_to?: string
+          p_legal_area?: string
+          p_only_unassigned?: boolean
+          p_period_days?: number
+          p_pipeline_id?: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       get_last_completed_meeting: { Args: { p_lead_id: string }; Returns: Json }
       get_lead: { Args: { p_lead_id: string }; Returns: Json }
       get_lead_timeline: {

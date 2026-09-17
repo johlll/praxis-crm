@@ -6,7 +6,8 @@ type PagePlaceholderProps = {
   title: string;
   subtitle?: string;
   /** Em qual subfase esta tela será construída, ex.: "A5". */
-  phase: string;
+  /** Omitido quando a tela não tem fase planejada. */
+  phase?: string;
   description: string;
 };
 
@@ -28,7 +29,7 @@ export async function PagePlaceholder({
       <Topbar title={title} {...(subtitle ? { subtitle } : {})} user={user} />
       <main className="flex-1 overflow-y-auto p-5">
         <EmptyState
-          title={`${title} — em construção (fase ${phase})`}
+          title={phase ? `${title} — em construção (fase ${phase})` : `${title} — em construção`}
           description={description}
         />
       </main>

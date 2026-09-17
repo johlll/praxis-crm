@@ -87,7 +87,7 @@ describe("/auth/confirm", () => {
     expect(state.exchangeCodeForSession).not.toHaveBeenCalled();
   });
 
-  it("token_hash recusado → link inválido (o e-mail não chegou a ser confirmado)", async () => {
+  it("token_hash recusado → link inválido (não determina se a conta está confirmada)", async () => {
     state.verifyOtp.mockImplementation(async () => ({ error: { message: "Token has expired" } }));
     expect(await destinationOf("?token_hash=abc&type=email")).toBe("/entrar?erro=link_invalido");
   });
