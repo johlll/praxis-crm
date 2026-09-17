@@ -190,9 +190,9 @@ select is(
 -- Equipe: responsável atual do lead (leads, ganhas) e da atividade (consultas, atrasadas).
 select is(
   (select t from jsonb_array_elements(:'d7'::jsonb -> 'team') t where t ->> 'user_id' = :'lucas'),
-  jsonb_build_object('user_id', :'lucas', 'full_name', 'Lucas Advogado (seed)', 'leads_received', 0,
-                     'consultations_done', 1, 'opportunities_won', 1, 'overdue_activities', 0),
-  'Equipe: Lucas com a consulta dele e o ganho do lead dele'
+  jsonb_build_object('user_id', :'lucas', 'full_name', 'Lucas Advogado (seed)', 'is_former', false,
+                     'leads_received', 0, 'consultations_done', 1, 'opportunities_won', 1, 'overdue_activities', 0),
+  'Equipe: Lucas com a consulta dele e o ganho do lead dele (membro ativo)'
 );
 select is(
   (select (t ->> 'overdue_activities')::int from jsonb_array_elements(:'d7'::jsonb -> 'team') t where t ->> 'user_id' = :'otavio'),
