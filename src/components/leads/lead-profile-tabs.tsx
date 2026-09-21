@@ -8,6 +8,8 @@ const TABS = [
   { key: "atividades", label: "Atividades" },
   { key: "arquivos", label: "Arquivos" },
   { key: "propostas", label: "Propostas" },
+  // A11 — origem e atribuição multitoque.
+  { key: "origem", label: "Origem" },
   { key: "historico", label: "Histórico" },
 ] as const;
 

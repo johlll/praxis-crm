@@ -103,6 +103,22 @@ jobs:
             # — nunca usada em nenhum ambiente real.
             echo "CONTACTS_ACTIVE_KEY_VERSION=1"
             echo 'CONTACTS_KEY_VERSIONS={"1":{"cipher":"EJn8xOi/LndtKMmLXhYJcdpHsV6uOlYLeyxVMDH+Gpo=","hmac":"DpvUCkbNyVHMdcdTwxa865Ho2zlg4tccndsxuVAhv2U="}}'
+            # A11 — ingestão pública. Nada aqui é segredo: Turnstile,
+            # Upstash e Inngest são substituídos por adaptadores de
+            # teste (A11_INGEST_MODE=test-adapters), que o código
+            # RECUSA em produção e preview por construção. As chaves de
+            # cifra e de HMAC são fictícias, deste job efêmero.
+            echo "SUPABASE_SECRET_KEY=${SERVICE_ROLE_KEY:-${SECRET_KEY:-sem-service-role}}"
+            echo "A11_INGEST_MODE=test-adapters"
+            echo "A11_PAYLOAD_ACTIVE_KEY_VERSION=1"
+            echo 'A11_PAYLOAD_KEY_VERSIONS={"1":{"cipher":"cHJheGlzLWExMS1wYXlsb2FkLWtleS1kZS10ZXN0ZSE="}}'
+            echo "A11_IP_HMAC_KEY=cHJheGlzLWExMS1pcC1obWFjLWtleS1kZS10ZXN0ZSE="
+            echo "TURNSTILE_SECRET_KEY=turnstile-de-teste"
+            echo "UPSTASH_REDIS_REST_URL=https://upstash.invalido.test"
+            echo "UPSTASH_REDIS_REST_TOKEN=token-de-teste"
+            echo "INNGEST_EVENT_KEY=evento-de-teste"
+            echo "INNGEST_SIGNING_KEY=assinatura-de-teste"
+            echo "CRON_SECRET=cron-secret-do-job-efemero-0001"
           } > .env.local
           echo "Conferindo .env.local (valores mascarados):"
           sed -E 's/=(.{6}).*/=\1.../' .env.local

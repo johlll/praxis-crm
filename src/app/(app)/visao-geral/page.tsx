@@ -4,6 +4,9 @@ import { FlaskConical } from "lucide-react";
 import { Topbar } from "@/components/app-shell/topbar";
 import { AttentionBanner, PeriodKpis, SecondaryStrip } from "@/components/dashboard/metric-cards";
 import { FunnelCard } from "@/components/dashboard/funnel-card";
+import { AttributionCard } from "@/components/dashboard/attribution-card";
+import { getDashboardAttribution } from "@/modules/attribution/queries";
+import { ATTRIBUTION_MODELS, NO_SOURCE_FILTER } from "@/modules/forms/schema";
 import { SeriesCard } from "@/components/dashboard/series-card";
 import { AttentionList } from "@/components/dashboard/attention-list";
 import { AgendaToday } from "@/components/dashboard/agenda-today";
@@ -48,8 +51,18 @@ export default async function VisaoGeralPage({
   const workspaceId = await requireWorkspace();
   const filters = parseDashboardFilters(await searchParams);
 
-  const [dashboard, members, selectedRaw] = await Promise.all([
+  const [dashboard, attribution, members, selectedRaw] = await Promise.all([
     getDashboard(workspaceId, filters),
+    // A11: bloco de origem. Falha de consulta vira erro tratado pelo
+    // error.tsx da rota, nunca "nenhuma origem".
+    getDashboardAttribution(workspaceId, {
+      periodDays: filters.periodDays,
+      model: filters.attributionModel,
+      source: filters.source,
+      assignedTo: filters.assignedTo,
+      onlyUnassigned: filters.onlyUnassigned,
+      legalArea: filters.legalArea,
+    }),
     listTeamMembers(workspaceId, user.id),
     filters.selectedOpportunityId ? getOpportunity(filters.selectedOpportunityId) : Promise.resolve(null),
   ]);
@@ -66,6 +79,22 @@ export default async function VisaoGeralPage({
       dashboardHref(filters, { pipelineId: p.isDefault ? null : p.id, selectedOpportunityId: null }),
     ]),
   );
+
+  // A11: modelo e origem viajam na URL, como os demais filtros — assim
+  // aplicar, limpar, voltar e avançar continuam sincronizados.
+  const modelHrefs = Object.fromEntries(
+    ATTRIBUTION_MODELS.map((model) => [
+      model,
+      dashboardHref(filters, { attributionModel: model, selectedOpportunityId: null }),
+    ]),
+  );
+  const sourceHrefs = Object.fromEntries(
+    attribution.sources.map((row) => [
+      row.source ?? NO_SOURCE_FILTER,
+      dashboardHref(filters, { source: row.source ?? NO_SOURCE_FILTER, selectedOpportunityId: null }),
+    ]),
+  );
+  const clearSourceHref = dashboardHref(filters, { source: null, selectedOpportunityId: null });
 
   // Fins de período são exclusivos (meia-noite): o último dia é o anterior a eles.
   const lastDayOf = (end: string) => new Date(Date.parse(end) - 1).toISOString();
@@ -115,6 +144,12 @@ export default async function VisaoGeralPage({
           <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
             <div className="flex min-w-0 flex-col gap-4">
               <FunnelCard dashboard={dashboard} pipelineHrefs={pipelineHrefs} />
+              <AttributionCard
+                attribution={attribution}
+                modelHrefs={modelHrefs}
+                sourceHrefs={sourceHrefs}
+                clearSourceHref={clearSourceHref}
+              />
               <SeriesCard dashboard={dashboard} />
             </div>
             <div className="flex min-w-0 flex-col gap-4">

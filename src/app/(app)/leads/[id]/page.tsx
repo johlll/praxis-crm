@@ -29,6 +29,8 @@ import { ConsultationCard } from "@/components/leads/consultation-card";
 import { LeadActivitiesSection } from "@/components/leads/lead-activities-section";
 import { LeadConversationsList } from "@/components/leads/lead-conversations-list";
 import { LeadProfileTabs } from "@/components/leads/lead-profile-tabs";
+import { AttributionPanel } from "@/components/leads/attribution-panel";
+import { getLeadAttribution } from "@/modules/attribution/queries";
 import { EmptyState } from "@/components/feedback/empty-state";
 
 export async function generateMetadata({
@@ -58,6 +60,8 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
   const canEditOpportunities = roleHasPermission(user.role, "opportunity.edit");
   const canEditActivities = roleHasPermission(user.role, "activity.edit");
   const canEditProposals = roleHasPermission(user.role, "proposal.edit");
+  // A11: corrigir vínculo de atribuição é ação sensível (owner/admin/manager).
+  const canCorrectAttribution = roleHasPermission(user.role, "attribution.correct");
   const canEditConflictCheck = roleHasPermission(user.role, "conflict_check.edit");
   const canEditLeadNotes = roleHasPermission(user.role, "lead_note.edit");
 
@@ -70,6 +74,7 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
     conflictCheck,
     timeline,
     lastCompletedConsultation,
+    attribution,
   ] = await Promise.all([
     listTeamMembers(workspaceId, user.id),
     listAllOpportunities(workspaceId, { leadId: id }),
@@ -81,6 +86,8 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
     getConflictCheck(id),
     getLeadTimelinePage(id),
     getLastCompletedMeeting(id),
+    // A11: sequência de interações e atribuição por oportunidade.
+    getLeadAttribution(id),
   ]);
   const allActivities = activitiesPage.items;
   const activitiesHasMore = activitiesPage.hasMore;
@@ -234,6 +241,16 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
                 proposals={proposals}
                 canEdit={canEditProposals}
               />
+            }
+            origem={
+              attribution ? (
+                <AttributionPanel attribution={attribution} canCorrect={canCorrectAttribution} />
+              ) : (
+                <EmptyState
+                  title="Sem dados de origem"
+                  description="Nenhuma interação foi registrada para este lead ainda."
+                />
+              )
             }
             historico={
               <LeadTimeline

@@ -1244,6 +1244,8 @@ export type Database = {
           created_at: string
           created_by: string
           fee_model: Database["public"]["Enums"]["fee_model"] | null
+      form_capture_mode: "new_intake" | "continuity"
+      form_endpoint_status: "active" | "disabled"
           forecast_date: string | null
           id: string
           lead_id: string
@@ -2308,6 +2310,43 @@ export type Database = {
         }[]
       }
       get_conversation: { Args: { p_conversation_id: string }; Returns: Json }
+      claim_outbox_batch: {
+        Args: { p_limit?: number; p_lock_seconds?: number }
+        Returns: Json
+      }
+      correct_touchpoint_demand_link: {
+        Args: {
+          p_action: Database["public"]["Enums"]["touchpoint_link_action"]
+          p_expected_current_link_id: string
+          p_opportunity_id?: string
+          p_reason?: string
+          p_touchpoint_id: string
+        }
+        Returns: Json
+      }
+      create_form_endpoint: {
+        Args: {
+          p_allowed_hostnames: string[]
+          p_answers_config?: Json
+          p_capture_mode: Database["public"]["Enums"]["form_capture_mode"]
+          p_contract_version?: number
+          p_initial_activity_due_minutes: number
+          p_initial_activity_type: Database["public"]["Enums"]["activity_type"]
+          p_legal_area: string
+          p_name: string
+          p_pipeline_id: string
+          p_public_key: string
+          p_stage_id: string
+          p_turnstile_action: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      flag_expiring_webhook_events: {
+        Args: { p_days_before?: number; p_limit?: number }
+        Returns: Json
+      }
+      flag_stuck_webhook_events: { Args: { p_limit?: number }; Returns: Json }
       get_dashboard: {
         Args: {
           p_assigned_to?: string
@@ -2319,8 +2358,21 @@ export type Database = {
         }
         Returns: Json
       }
+      get_dashboard_attribution: {
+        Args: {
+          p_assigned_to?: string
+          p_legal_area?: string
+          p_model?: string
+          p_only_unassigned?: boolean
+          p_period_days?: number
+          p_source?: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       get_last_completed_meeting: { Args: { p_lead_id: string }; Returns: Json }
       get_lead: { Args: { p_lead_id: string }; Returns: Json }
+      get_lead_attribution: { Args: { p_lead_id: string }; Returns: Json }
       get_lead_timeline: {
         Args: {
           p_before?: string
@@ -2333,6 +2385,10 @@ export type Database = {
           has_more: boolean
           items: Json
         }[]
+      }
+      get_webhook_event_payload: {
+        Args: { p_webhook_event_id: string }
+        Returns: Json
       }
       get_opportunity: { Args: { p_opportunity_id: string }; Returns: Json }
       get_pipeline_board: { Args: { p_pipeline_id: string }; Returns: Json }
@@ -2876,13 +2932,77 @@ export type Database = {
         }
         Returns: Json
       }
+      ingest_form_event: {
+        Args: {
+          p_content_hash: string
+          p_form_endpoint_id: string
+          p_occurred_at: string
+          p_payload_algorithm: string
+          p_payload_auth_tag: string
+          p_payload_ciphertext: string
+          p_payload_iv: string
+          p_payload_key_version: string
+          p_payload_sanitized: Json
+          p_public_protocol: string
+          p_retention_days?: number
+          p_source_event_id: string
+          p_stuck_after_minutes?: number
+        }
+        Returns: Json
+      }
+      list_form_endpoints: { Args: { p_workspace_id: string }; Returns: Json }
+      mark_outbox_failed: {
+        Args: { p_error_code: string; p_outbox_id: string; p_retry_in_seconds?: number }
+        Returns: undefined
+      }
+      mark_outbox_published: { Args: { p_outbox_id: string }; Returns: undefined }
+      mark_webhook_event_failed: {
+        Args: { p_error_code: string; p_webhook_event_id: string }
+        Returns: undefined
+      }
+      process_form_event: {
+        Args: { p_input: Json; p_webhook_event_id: string }
+        Returns: Json
+      }
+      purge_expired_webhook_events: { Args: { p_limit?: number }; Returns: Json }
+      resolve_form_endpoint: { Args: { p_public_key: string }; Returns: Json }
+      rotate_form_endpoint_key: {
+        Args: { p_form_endpoint_id: string; p_new_public_key: string }
+        Returns: Json
+      }
+      set_form_endpoint_status: {
+        Args: {
+          p_form_endpoint_id: string
+          p_status: Database["public"]["Enums"]["form_endpoint_status"]
+        }
+        Returns: Json
+      }
+      update_form_endpoint: {
+        Args: {
+          p_allowed_hostnames: string[]
+          p_answers_config?: Json
+          p_capture_mode: Database["public"]["Enums"]["form_capture_mode"]
+          p_form_endpoint_id: string
+          p_initial_activity_due_minutes: number
+          p_initial_activity_type: Database["public"]["Enums"]["activity_type"]
+          p_legal_area: string
+          p_name: string
+          p_pipeline_id: string
+          p_stage_id: string
+          p_turnstile_action: string
+        }
+        Returns: Json
+      }
     }
     Enums: {
       activity_assignee_rule: "unassigned" | "lead_owner"
-      activity_source: "manual" | "stage_rule" | "whatsapp_inbound"
+      activity_source: "manual" | "stage_rule" | "whatsapp_inbound" | "form_intake"
       activity_status: "pending" | "done"
       activity_type: "call" | "meeting" | "task" | "email" | "deadline"
       client_status: "ativo" | "encerrado" | "suspenso"
+      consent_decision: "granted" | "refused"
+      form_capture_mode: "new_intake" | "continuity"
+      form_endpoint_status: "active" | "disabled"
       conflict_check_status:
         | "nao_verificado"
         | "sem_conflito"
@@ -2894,7 +3014,10 @@ export type Database = {
         | "execucao_de_contrato"
         | "obrigacao_legal"
         | "outro"
-      consent_purpose: "whatsapp_atendimento" | "whatsapp_marketing"
+      consent_purpose:
+        | "whatsapp_atendimento"
+        | "whatsapp_marketing"
+        | "formulario_contato"
       contact_channel: "whatsapp" | "email" | "telefone" | "presencial"
       contact_type: "pf" | "pj"
       duplicate_status: "pending" | "merged" | "dismissed"
@@ -2915,8 +3038,23 @@ export type Database = {
       message_direction: "inbound" | "outbound"
       message_status: "queued" | "sent" | "delivered" | "read" | "failed"
       opportunity_status: "open" | "won" | "lost"
+      outbox_state:
+        | "pending"
+        | "publishing"
+        | "published"
+        | "failed"
+        | "abandoned"
       proposal_channel: "email" | "whatsapp"
       proposal_status: "rascunho" | "enviada" | "aceita" | "recusada"
+      touchpoint_link_action: "assign" | "unassign"
+      webhook_event_status:
+        | "received"
+        | "processing"
+        | "processed"
+        | "failed"
+        | "dead"
+        | "expired_unprocessed"
+        | "purged"
       stage_requirement_type: "text" | "textarea" | "date" | "checkbox"
     }
     CompositeTypes: {
@@ -3046,10 +3184,11 @@ export const Constants = {
   public: {
     Enums: {
       activity_assignee_rule: ["unassigned", "lead_owner"],
-      activity_source: ["manual", "stage_rule", "whatsapp_inbound"],
+      activity_source: ["manual", "stage_rule", "whatsapp_inbound", "form_intake"],
       activity_status: ["pending", "done"],
       activity_type: ["call", "meeting", "task", "email", "deadline"],
       client_status: ["ativo", "encerrado", "suspenso"],
+      consent_decision: ["granted", "refused"],
       conflict_check_status: [
         "nao_verificado",
         "sem_conflito",
@@ -3063,12 +3202,18 @@ export const Constants = {
         "obrigacao_legal",
         "outro",
       ],
-      consent_purpose: ["whatsapp_atendimento", "whatsapp_marketing"],
+      consent_purpose: [
+        "whatsapp_atendimento",
+        "whatsapp_marketing",
+        "formulario_contato",
+      ],
       contact_channel: ["whatsapp", "email", "telefone", "presencial"],
       contact_type: ["pf", "pj"],
       duplicate_status: ["pending", "merged", "dismissed"],
       duplicate_tier: ["strong", "review", "low"],
       fee_model: ["fixed", "contingency", "fixed_contingency"],
+      form_capture_mode: ["new_intake", "continuity"],
+      form_endpoint_status: ["active", "disabled"],
       handoff_status: ["pendente", "concluido", "falhou"],
       invitation_status: ["pending", "accepted", "cancelled", "expired"],
       lead_priority: ["baixa", "media", "alta"],
@@ -3085,8 +3230,19 @@ export const Constants = {
       message_direction: ["inbound", "outbound"],
       message_status: ["queued", "sent", "delivered", "read", "failed"],
       opportunity_status: ["open", "won", "lost"],
+      outbox_state: ["pending", "publishing", "published", "failed", "abandoned"],
       proposal_channel: ["email", "whatsapp"],
       proposal_status: ["rascunho", "enviada", "aceita", "recusada"],
+      touchpoint_link_action: ["assign", "unassign"],
+      webhook_event_status: [
+        "received",
+        "processing",
+        "processed",
+        "failed",
+        "dead",
+        "expired_unprocessed",
+        "purged",
+      ],
       stage_requirement_type: ["text", "textarea", "date", "checkbox"],
     },
   },
