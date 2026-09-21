@@ -519,8 +519,11 @@ begin
 
   -- 6. Touchpoint — append-only, com a oportunidade JÁ na origem quando
   --    ela é conhecida (é isso que torna a conversão verificável).
-  select coalesce(max(position), 0) + 1 into v_position
-  from public.touchpoints where workspace_id = v_event.workspace_id and contact_id = v_contact.id;
+  -- `position` é palavra-chave em SQL (POSITION(x IN y)): sempre
+  -- qualificada, nunca solta dentro de uma função de agregação.
+  select coalesce(max(t.position), 0) + 1 into v_position
+  from public.touchpoints t
+  where t.workspace_id = v_event.workspace_id and t.contact_id = v_contact.id;
 
   insert into public.touchpoints (
     workspace_id, contact_id, lead_id, opportunity_id, webhook_event_id,

@@ -410,6 +410,12 @@ create index continuity_references_contact_idx
 -- foi aceito, quando, em qual formulário e sob qual texto.
 -- ---------------------------------------------------------------------
 
+-- contact_consents ganha a FK composta que consent_evidence precisa
+-- referenciar por (workspace_id, id). Só um UNIQUE novo — nenhuma coluna
+-- muda, nenhum dado é reescrito.
+alter table public.contact_consents
+  add constraint contact_consents_workspace_id_id_key unique (workspace_id, id);
+
 create table public.consent_evidence (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.workspaces (id) on delete cascade,
@@ -453,12 +459,6 @@ create unique index consent_evidence_supersedes_once_idx
   on public.consent_evidence (supersedes_id) where supersedes_id is not null;
 create index consent_evidence_contact_idx
   on public.consent_evidence (workspace_id, contact_id, decided_at desc);
-
--- contact_consents ganha a FK composta que consent_evidence precisa
--- referenciar por (workspace_id, id). Só um UNIQUE novo — nenhuma coluna
--- muda, nenhum dado é reescrito.
-alter table public.contact_consents
-  add constraint contact_consents_workspace_id_id_key unique (workspace_id, id);
 
 -- touchpoints.consent_evidence_id só pode ser criado depois de
 -- consent_evidence existir.
