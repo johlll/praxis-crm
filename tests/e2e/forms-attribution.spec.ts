@@ -15,10 +15,16 @@ import { login } from "./helpers";
 test.describe.serial("A11 — formulários próprios e atribuição", () => {
   let publicKey: string;
 
+  /**
+   * O rate limit é por endpoint e por IP, com janela de um minuto. Cada
+   * teste usa o SEU IP para não gastar a cota do outro — o limite em si é
+   * exercido no teste dedicado, com um IP só dele.
+   */
   async function submit(
     request: APIRequestContext,
     key: string,
     overrides: Record<string, unknown> = {},
+    ip = "203.0.113.55",
   ) {
     const body = {
       sourceEventId: crypto.randomUUID(),
@@ -39,7 +45,7 @@ test.describe.serial("A11 — formulários próprios e atribuição", () => {
 
     return request.post(`/api/forms/${key}`, {
       data: body,
-      headers: { "x-vercel-forwarded-for": "203.0.113.55" },
+      headers: { "x-vercel-forwarded-for": ip },
       failOnStatusCode: false,
     });
   }
@@ -90,8 +96,8 @@ test.describe.serial("A11 — formulários próprios e atribuição", () => {
 
   test("3. a mesma submissão repetida não cria nada novo e responde igual", async ({ request }) => {
     const sourceEventId = crypto.randomUUID();
-    const first = await submit(request, publicKey, { sourceEventId });
-    const second = await submit(request, publicKey, { sourceEventId });
+    const first = await submit(request, publicKey, { sourceEventId }, "203.0.113.56");
+    const second = await submit(request, publicKey, { sourceEventId }, "203.0.113.56");
 
     expect(first.status()).toBe(202);
     // Mesmo status e mesmo corpo: repetição é indistinguível de novidade.
@@ -101,26 +107,42 @@ test.describe.serial("A11 — formulários próprios e atribuição", () => {
 
   test("4. mesma chave com conteúdo diferente é recusada com 409", async ({ request }) => {
     const sourceEventId = crypto.randomUUID();
-    await submit(request, publicKey, { sourceEventId });
-    const conflicting = await submit(request, publicKey, {
-      sourceEventId,
-      contact: { name: "Outra Pessoa", type: "pf", email: "outra@exemplo.test" },
-    });
+    await submit(request, publicKey, { sourceEventId }, "203.0.113.57");
+    const conflicting = await submit(
+      request,
+      publicKey,
+      { sourceEventId, contact: { name: "Outra Pessoa", type: "pf", email: "outra@exemplo.test" } },
+      "203.0.113.57",
+    );
 
     expect(conflicting.status()).toBe(409);
     expect((await conflicting.json()).error).toBe("idempotency_payload_conflict");
   });
 
   test("5. honeypot, token inválido e chave desconhecida são recusados", async ({ request }) => {
-    const honeypot = await submit(request, publicKey, { website: "http://spam.test" });
+    const honeypot = await submit(request, publicKey, { website: "http://spam.test" }, "203.0.113.58");
     expect(honeypot.status()).toBe(400);
 
-    const badToken = await submit(request, publicKey, { turnstileToken: "token-qualquer" });
+    const badToken = await submit(request, publicKey, { turnstileToken: "token-qualquer" }, "203.0.113.58");
     expect(badToken.status()).toBe(403);
 
-    const unknownKey = await submit(request, "chave-que-nao-existe-aaaaaa");
+    const unknownKey = await submit(request, "chave-que-nao-existe-aaaaaa", {}, "203.0.113.58");
     expect(unknownKey.status()).toBe(404);
     expect((await unknownKey.json()).error).toBe("form_endpoint_unavailable");
+  });
+
+  test("5b. o rate limit recusa o excesso vindo do mesmo IP", async ({ request }) => {
+    const ip = "203.0.113.59";
+    const respostas: number[] = [];
+    for (let i = 0; i < 7; i += 1) {
+      const resposta = await submit(request, publicKey, {}, ip);
+      respostas.push(resposta.status());
+    }
+    // As primeiras passam; a partir do limite da janela, a recusa é 429 —
+    // e nada depois dela é aceito.
+    expect(respostas).toContain(429);
+    expect(respostas.at(-1)).toBe(429);
+    expect(respostas.indexOf(429)).toBeGreaterThan(0);
   });
 
   test("6. a sequência de origem aparece no Perfil 360", async ({ page }) => {
@@ -192,7 +214,7 @@ test.describe.serial("A11 — formulários próprios e atribuição", () => {
 
     // Chave válida, endpoint desativado: MESMA recusa genérica de uma
     // chave inexistente — sem revelar que o formulário existe.
-    const refused = await submit(request, publicKey);
+    const refused = await submit(request, publicKey, {}, "203.0.113.60");
     expect(refused.status()).toBe(404);
     expect((await refused.json()).error).toBe("form_endpoint_unavailable");
 
@@ -213,7 +235,7 @@ test.describe.serial("A11 — formulários próprios e atribuição", () => {
     await expect(alert).toBeVisible();
 
     // A chave ANTIGA passa a receber a recusa genérica.
-    const withOldKey = await submit(request, publicKey);
+    const withOldKey = await submit(request, publicKey, {}, "203.0.113.61");
     expect(withOldKey.status()).toBe(404);
   });
 
