@@ -8,7 +8,7 @@
 -- regressão histórica inventada.
 
 begin;
-select plan(53);
+select plan(70);
 
 \set otavio '20000000-0000-0000-0000-000000000014'
 \set lucas  '20000000-0000-0000-0000-000000000011'
