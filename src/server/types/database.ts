@@ -27,6 +27,7 @@ export type Database = {
           source_conversation_message_id: string | null
           source_rule_id: string | null
           source_stage_transition_id: string | null
+          source_webhook_event_id: string | null
           status: Database["public"]["Enums"]["activity_status"]
           title: string
           type: Database["public"]["Enums"]["activity_type"]
@@ -50,6 +51,7 @@ export type Database = {
           source_conversation_message_id?: string | null
           source_rule_id?: string | null
           source_stage_transition_id?: string | null
+          source_webhook_event_id?: string | null
           status?: Database["public"]["Enums"]["activity_status"]
           title: string
           type: Database["public"]["Enums"]["activity_type"]
@@ -73,6 +75,7 @@ export type Database = {
           source_conversation_message_id?: string | null
           source_rule_id?: string | null
           source_stage_transition_id?: string | null
+          source_webhook_event_id?: string | null
           status?: Database["public"]["Enums"]["activity_status"]
           title?: string
           type?: Database["public"]["Enums"]["activity_type"]
@@ -113,6 +116,13 @@ export type Database = {
             columns: ["workspace_id", "source_stage_transition_id"]
             isOneToOne: false
             referencedRelation: "stage_transitions"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "activities_source_webhook_event_same_workspace_fkey"
+            columns: ["workspace_id", "source_webhook_event_id"]
+            isOneToOne: false
+            referencedRelation: "webhook_events"
             referencedColumns: ["workspace_id", "id"]
           },
           {
