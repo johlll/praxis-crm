@@ -397,6 +397,7 @@ select throws_ok(
   format($$insert into public.touchpoint_demand_links (workspace_id, touchpoint_id, opportunity_id, action)
            values (%L::uuid, %L::uuid, %L::uuid, 'assign')$$, :'ws', :'tp1', :'opp1'),
   '23505',
+  null,
   'Uma única RAIZ por touchpoint (índice parcial único)'
 );
 select throws_ok(
@@ -405,6 +406,7 @@ select throws_ok(
            values (%L::uuid, %L::uuid, %L::uuid, 'assign', %L::uuid)$$,
          :'ws', :'tp1', :'opp1', :'link1'),
   '23505',
+  null,
   'supersedes_id só pode ser usado UMA vez (uma ponta vigente)'
 );
 
@@ -443,7 +445,7 @@ set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
 select create_form_endpoint(
   :'ws'::uuid, 'Continuidade', :'pipeline'::uuid, :'stage0'::uuid, 'Trabalhista',
-  'call', 60, 'continuity', 'formulario', array['exemplo.test'], 'chave-continuidade-bbbb'
+  'call', 60, 'continuity', 'formulario', array['exemplo.test'], 'chave-continuidade-bbbbbb'
 );
 reset role;
 
