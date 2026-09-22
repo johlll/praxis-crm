@@ -8,7 +8,7 @@
 -- regressão histórica inventada.
 
 begin;
-select plan(52);
+select plan(53);
 
 \set otavio '20000000-0000-0000-0000-000000000014'
 \set lucas  '20000000-0000-0000-0000-000000000011'
@@ -68,14 +68,35 @@ select is(
   0, 'Funções de ingestão são SECURITY DEFINER com search_path travado'
 );
 
+-- O Supabase concede EXECUTE a anon e authenticated em toda função nova
+-- do schema public; `revoke ... from public` não retira essas concessões.
+-- As funções de ingestão, fila, payload e retenção são exclusivas do
+-- service_role (rota pública e jobs), e nenhuma função da A11 é de anon.
+select is(
+  (select count(*)::int
+   from pg_proc p
+   join pg_namespace n on n.oid = p.pronamespace
+   cross join (values ('anon'), ('authenticated')) r(role_name)
+   where n.nspname = 'public'
+     and p.proname in ('ingest_form_event','process_form_event','resolve_form_endpoint',
+                       'claim_outbox_batch','mark_outbox_published','mark_outbox_failed',
+                       'mark_webhook_event_failed','get_webhook_event_payload',
+                       'purge_expired_webhook_events','flag_stuck_webhook_events',
+                       'flag_expiring_webhook_events')
+     and has_function_privilege(r.role_name, p.oid, 'EXECUTE')),
+  0, 'anon e authenticated NÃO chamam ingestão, fila, payload nem retenção (pulariam Turnstile e rate limit)'
+);
+
 select is(
   (select count(*)::int
    from pg_proc p
    join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public'
-     and p.proname in ('ingest_form_event','process_form_event','resolve_form_endpoint')
-     and has_function_privilege('authenticated', p.oid, 'EXECUTE')),
-  0, 'authenticated NÃO pode chamar a ingestão direto (pularia Turnstile e rate limit)'
+     and p.proname in ('create_form_endpoint','update_form_endpoint','set_form_endpoint_status',
+                       'rotate_form_endpoint_key','list_form_endpoints','correct_touchpoint_demand_link',
+                       'get_lead_attribution','get_dashboard_attribution')
+     and has_function_privilege('anon', p.oid, 'EXECUTE')),
+  0, 'anon não chama nenhuma função de configuração ou atribuição'
 );
 
 -- -----------------------------------------------------------------
@@ -125,8 +146,9 @@ select is(
 
 reset role;
 \set uuid1 'aaaaaaaa-0000-4000-8000-000000000001'
-\set hash1 '\x1111111111111111111111111111111111111111111111111111111111111111'
-\set hash2 '\x2222222222222222222222222222222222222222222222222222222222222222'
+-- Hashes de 32 bytes montados em SQL: dentro de um set do psql a barra
+-- invertida seguida de x11 vira escape e o valor ficaria com 33 bytes.
+select decode(repeat('11', 32), 'hex') as hash1, decode(repeat('22', 32), 'hex') as hash2 \gset
 
 select ingest_form_event(
   :'endpoint'::uuid, :'uuid1'::uuid, :'hash1'::bytea, 'proto-aaaaaaaaaaaaaaaa',
