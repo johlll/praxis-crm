@@ -57,7 +57,9 @@ test.describe.serial("A11 — formulários próprios e atribuição", () => {
     await page.getByLabel("Domínios permitidos (separados por vírgula)").fill("localhost");
     await page.getByRole("button", { name: "Criar formulário" }).click();
 
-    const alert = page.getByText("/api/forms/", { exact: false });
+    // O endereço aparece no aviso de sucesso e também na lista de
+    // formulários logo abaixo: a chave é lida do aviso.
+    const alert = page.getByRole("alert").filter({ hasText: "Formulário criado" }).getByRole("code");
     await expect(alert).toBeVisible();
     const text = (await alert.innerText()).trim();
     publicKey = text.split("/api/forms/")[1]!.trim();
