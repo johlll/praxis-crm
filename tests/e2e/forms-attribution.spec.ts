@@ -71,9 +71,12 @@ test.describe.serial("A11 — formulários próprios e atribuição", () => {
     request,
   }) => {
     const response = await submit(request, publicKey);
-    expect(response.status()).toBe(202);
+    const raw = await response.text();
+    // Corpo no diagnóstico: se a resposta não for a esperada, o log mostra
+    // o que o servidor respondeu, sem precisar de nova execução.
+    expect(response.status(), `chave=${publicKey} corpo=${raw.slice(0, 300)}`).toBe(202);
 
-    const body = (await response.json()) as Record<string, unknown>;
+    const body = JSON.parse(raw) as Record<string, unknown>;
     // A resposta pública devolve SÓ o protocolo opaco e um estado
     // genérico — nunca id interno, contato, lead ou oportunidade.
     expect(Object.keys(body).sort()).toEqual(["protocol", "status"]);
