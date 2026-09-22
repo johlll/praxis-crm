@@ -368,9 +368,14 @@ select throws_ok(
   'Duas correções da mesma versão: a segunda recebe conflito'
 );
 
--- unassign vigente torna o touchpoint não atribuído.
+-- unassign vigente torna o touchpoint não atribuído. A leitura da ponta
+-- é feita fora da sessão: authenticated não tem acesso à tabela (de
+-- propósito; a correção só acontece pela RPC).
+reset role;
 select id as link2 from public.touchpoint_demand_links
 where touchpoint_id = :'tp1'::uuid and supersedes_id = :'link1'::uuid \gset
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
 select correct_touchpoint_demand_link(:'tp1'::uuid, :'link2'::uuid, 'unassign');
 reset role;
 
@@ -571,13 +576,15 @@ select is((select (flag_stuck_webhook_events(50) ->> 'count')::int), 0,
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'lucas', 'role', 'authenticated')::text, true);
-select is(
-  (select count(*)::int from public.touchpoints), 0,
-  'Cliente autenticado não lê touchpoints direto (deny-all)'
+-- Sem GRANT de tabela: a leitura direta é recusada (42501), não apenas
+-- filtrada para zero linhas.
+select throws_ok(
+  'select count(*) from public.touchpoints', '42501', null,
+  'Cliente autenticado não lê touchpoints direto (sem grant de tabela)'
 );
-select is(
-  (select count(*)::int from public.webhook_events), 0,
-  'Cliente autenticado não lê webhook_events direto (deny-all)'
+select throws_ok(
+  'select count(*) from public.webhook_events', '42501', null,
+  'Cliente autenticado não lê webhook_events direto (sem grant de tabela)'
 );
 reset role;
 
