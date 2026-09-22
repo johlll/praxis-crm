@@ -1,6 +1,12 @@
 import { z } from "zod";
 
-/** Validação das telas de configuração de formulário (A11). */
+import { uuidSchema } from "@/lib/uuid";
+
+/**
+ * Validação das telas de configuração de formulário (A11). Ids internos
+ * usam o formato solto de src/lib/uuid.ts, como o resto do projeto: os
+ * ids fixos do seed não têm versão RFC válida.
+ */
 
 const hostname = z
   .string()
@@ -11,8 +17,8 @@ const hostname = z
 
 export const formEndpointSchema = z.object({
   name: z.string().trim().min(1).max(120),
-  pipelineId: z.string().uuid(),
-  stageId: z.string().uuid(),
+  pipelineId: uuidSchema,
+  stageId: uuidSchema,
   legalArea: z.string().trim().min(1).max(120),
   initialActivityType: z.enum(["call", "meeting", "task", "email", "deadline"]),
   // Obrigatório de propósito: nenhum formulário real herda o prazo do
@@ -33,21 +39,21 @@ export const formEndpointSchema = z.object({
     .pipe(z.array(hostname).min(1).max(20)),
 });
 
-export const formEndpointIdSchema = z.object({ formEndpointId: z.string().uuid() });
+export const formEndpointIdSchema = z.object({ formEndpointId: uuidSchema });
 
 export const setStatusSchema = formEndpointIdSchema.extend({
   status: z.enum(["active", "disabled"]),
 });
 
 export const correctLinkSchema = z.object({
-  touchpointId: z.string().uuid(),
+  touchpointId: uuidSchema,
   // Versão que quem corrige está enxergando. Vazio = "ainda não há
   // cadeia" — o servidor recusa se a ponta vigente for outra.
-  expectedCurrentLinkId: z.string().uuid().or(z.literal("")).optional(),
+  expectedCurrentLinkId: uuidSchema.or(z.literal("")).optional(),
   action: z.enum(["assign", "unassign"]),
-  opportunityId: z.string().uuid().or(z.literal("")).optional(),
+  opportunityId: uuidSchema.or(z.literal("")).optional(),
   reason: z.string().trim().max(500).optional(),
-  leadId: z.string().uuid(),
+  leadId: uuidSchema,
 });
 
 export const ATTRIBUTION_MODELS = ["first_touch", "last_touch", "conversion"] as const;
