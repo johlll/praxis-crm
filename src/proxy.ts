@@ -25,9 +25,19 @@ import { getEnv } from "@/server/env";
  * contrário de `getSession()` (que só lê o cookie, sem confirmar que ainda
  * é válido) — é por isso que é este o método usado aqui, não o outro.
  */
-const PUBLIC_PATHS = ["/entrar", "/auth", "/convite"];
+/**
+ * Caminhos que não passam pela sessão do usuário.
+ *
+ * Além das telas de autenticação, a superfície de ingestão da A11: cada
+ * uma dessas rotas se autentica sozinha e não tem usuário logado —
+ * captação pública (chave opaca + Turnstile + rate limit), o endpoint do
+ * Inngest (assinatura do provedor) e os crons (segredo próprio no
+ * cabeçalho). Sem isto, um POST de formulário era desviado para /entrar e
+ * a captação respondia a página de login.
+ */
+const PUBLIC_PATHS = ["/entrar", "/auth", "/convite", "/api/forms", "/api/inngest", "/api/cron"];
 
-function isPublicPath(pathname: string): boolean {
+export function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 }
 
