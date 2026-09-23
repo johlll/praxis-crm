@@ -799,11 +799,20 @@ select ok(
 );
 
 -- Simula a passagem de tempo real entre o uso e a tentativa de desfazer
--- (mesma técnica de 08_a3_merge.test.sql — nunca como o app se comporta).
-alter table public.continuity_references disable trigger continuity_references_set_updated_at;
+-- (mesmo objetivo de 08_a3_merge.test.sql — nunca como o app se
+-- comporta). `ALTER TABLE ... DISABLE TRIGGER` não serve aqui: a FK
+-- deferrable de continuity_references (§8.1 do contrato) deixa eventos
+-- de gatilho PENDENTES na tabela dentro da mesma transação, e o Postgres
+-- recusa alterar a definição de gatilho enquanto há evento pendente
+-- (`cannot ALTER TABLE ... because it has pending trigger events`).
+-- `session_replication_role = replica` desliga gatilhos de ORIGEM (todo
+-- gatilho de usuário, por padrão) só para as próximas instruções da
+-- SESSÃO — sem tocar a definição do gatilho, então não colide com o
+-- evento pendente.
+set session_replication_role = replica;
 update public.continuity_references set updated_at = updated_at + interval '1 minute'
 where id = 'c1100000-0000-4000-8000-000000000021';
-alter table public.continuity_references enable trigger continuity_references_set_updated_at;
+set session_replication_role = origin;
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
@@ -852,10 +861,10 @@ select isnt(
   null, 'Fixture: a referência foi REVOGADA depois do merge'
 );
 
-alter table public.continuity_references disable trigger continuity_references_set_updated_at;
+set session_replication_role = replica;
 update public.continuity_references set updated_at = updated_at + interval '1 minute'
 where id = 'c1100000-0000-4000-8000-000000000022';
-alter table public.continuity_references enable trigger continuity_references_set_updated_at;
+set session_replication_role = origin;
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
