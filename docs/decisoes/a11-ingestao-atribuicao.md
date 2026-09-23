@@ -428,9 +428,15 @@ Duas RPCs novas fecham o ciclo:
 contact_id)` — contra `leads (workspace_id, id, contact_id)`, que ganhou
 o UNIQUE correspondente — impede uma linha apontar um `contact_id`
 diferente do dono do `lead_id` referenciado. `DEFERRABLE INITIALLY
-IMMEDIATE`: continua checada ao fim de cada instrução por padrão (erro
-imediato em uso normal e em teste), mas pode ser adiada explicitamente
-para um fluxo futuro que precise, sem enfraquecer a garantia hoje.
+DEFERRED`: checada só no COMMIT, não ao fim de cada instrução. Foi
+tentado `INITIALLY IMMEDIATE` primeiro (checagem cedo, mais rigorosa em
+teoria) e o CI comprovou que quebra `merge_contacts()` de verdade — a
+função reparenteia `leads` antes de `continuity_references`, na MESMA
+transação; com checagem imediata, o fim da instrução que move o lead já
+não encontra mais o par antigo em `leads`, enquanto
+`continuity_references` ainda aponta para ele, mesmo a transação
+terminando consistente. `INITIALLY DEFERRED` resolve exatamente o
+problema que a palavra "deferrable" do pedido original descrevia.
 
 **Finalidade validada no processamento:** `process_form_event` só honra
 uma referência cujo `purpose` seja exatamente

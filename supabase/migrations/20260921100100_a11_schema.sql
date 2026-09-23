@@ -444,17 +444,24 @@ create table public.continuity_references (
   -- Trio (não só o par workspace/lead): garante que o CONTATO da
   -- referência é o MESMO contato do lead referenciado — sem isto, nada
   -- impediria uma linha apontar contact_id=A e lead_id=(lead de B).
-  -- DEFERRABLE (compatível com merge_contacts()/unmerge_contact(), que
-  -- reparenteiam leads.contact_id e continuity_references.contact_id em
-  -- passos separados da mesma transação), mas INITIALLY IMMEDIATE: a
-  -- checagem continua acontecendo ao fim de CADA instrução por padrão
-  -- (erro imediato em uso normal e em teste, já que pgTAP roda dentro de
-  -- uma transação que só faz rollback) — só é adiada explicitamente,
-  -- com `set constraints ... deferred`, se algum fluxo futuro precisar.
+  --
+  -- DEFERRABLE INITIALLY DEFERRED — não IMMEDIATE (tentado e revertido:
+  -- quebrou merge_contacts() de verdade, comprovado pelo CI). A função
+  -- reparenteia `leads` (passo 5) e só depois `continuity_references`
+  -- (passo 8) na MESMA transação: com checagem IMEDIATA, o fim da
+  -- instrução que move o lead já não encontra mais o par antigo
+  -- (workspace, lead, contato-do-mesclado) em `leads`, enquanto
+  -- continuity_references ainda aponta para ele — violação, mesmo a
+  -- transação terminando consistente. Adiando para o COMMIT, a checagem
+  -- só roda quando as duas tabelas já convergiram. Consequência aceita:
+  -- dentro de pgTAP (que só faz `rollback`, nunca `commit`) esta
+  -- constraint específica não dispara sozinha; para testá-la de propósito
+  -- seria preciso `set constraints continuity_references_lead_contact_fkey
+  -- immediate` explicitamente antes do `rollback`.
   constraint continuity_references_lead_contact_fkey
     foreign key (workspace_id, lead_id, contact_id)
     references public.leads (workspace_id, id, contact_id) on delete cascade
-    deferrable initially immediate,
+    deferrable initially deferred,
   constraint continuity_references_opportunity_same_lead_fkey
     foreign key (workspace_id, opportunity_id, lead_id)
     references public.opportunities (workspace_id, id, lead_id) on delete cascade,

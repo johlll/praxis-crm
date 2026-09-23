@@ -79,13 +79,21 @@ Resumo:
 4. **`touchpoints.position` pode repetir depois de uma mesclagem.** Nada
    depende disso: ordenação e atribuição usam
    `(normalized_occurred_at, received_at, id)`.
-5. **FK deferrable de `continuity_references` é `INITIALLY IMMEDIATE`, não
-   `INITIALLY DEFERRED`** (achado na revisão da auditoria): a ordem real
-   de `merge_contacts()`/`unmerge_contact()` (leads reparentados antes de
-   `continuity_references`) nunca cria violação transitória, então manter
-   a checagem imediata por padrão preserva erro cedo em uso normal e em
-   pgTAP (que só faz `rollback`, nunca `commit` — checagens `INITIALLY
-   DEFERRED` nunca disparariam dentro de um teste).
+5. **FK deferrable de `continuity_references` precisou ser `INITIALLY
+   DEFERRED`, não `INITIALLY IMMEDIATE`** (achado pelo CI, não só na
+   revisão): a suposição inicial era que a ordem de
+   `merge_contacts()`/`unmerge_contact()` (leads reparentados antes de
+   `continuity_references`) nunca criaria violação transitória, então
+   `INITIALLY IMMEDIATE` foi tentado primeiro para preservar erro cedo em
+   uso normal e em pgTAP. Errado: o CI reproduziu a violação de verdade —
+   `update or delete on table "leads" violates foreign key constraint
+   "continuity_references_lead_contact_fkey"` — porque o fim da instrução
+   que reparenteia `leads` já não encontra mais o par antigo, enquanto
+   `continuity_references` ainda não foi atualizada. Corrigido para
+   `INITIALLY DEFERRED` (checagem só no commit). Consequência aceita:
+   dentro de pgTAP (que só faz `rollback`) esta constraint específica não
+   dispara sozinha — teria que ser forçada com `set constraints ...
+   immediate` dentro do próprio teste.
 6. **Permissão de emitir/revogar continuidade (`continuity.issue`) segue a
    faixa de `lead.edit`/`opportunity.edit`** (owner/admin/manager/lawyer/
    sales), não a faixa mais restrita de `attribution.correct`: mandar um
