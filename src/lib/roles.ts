@@ -122,7 +122,12 @@ export type Permission =
   // reescreve número de painel: mesma faixa de contact.merge e
   // conversation.link (owner/admin/manager).
   | "form_endpoint.manage"
-  | "attribution.correct";
+  | "attribution.correct"
+  // Emitir/revogar referência de continuidade: mesma faixa de quem edita
+  // a oportunidade (quem já pode agir na demanda pode mandar um link para
+  // o cliente continuá-la) — não a mesma faixa restrita de
+  // attribution.correct, que reescreve número de painel.
+  | "continuity.issue";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -157,6 +162,7 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "conflict_check.edit": new Set<Role>(["owner", "admin", "manager", "lawyer"]),
   "lead_note.edit": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
   "form_endpoint.manage": new Set<Role>(["owner", "admin"]),
+  "continuity.issue": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
   "attribution.correct": new Set<Role>(["owner", "admin", "manager"]),
 };
 

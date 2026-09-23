@@ -46,7 +46,7 @@ function clearConfigEnv() {
 }
 
 const { canonicalJson, contentHash, normalizePhone } = await import("@/server/ingest/canonical");
-const { businessContent, sanitizedDiagnostics, submissionSchema } = await import(
+const { businessContent, sanitizedDiagnostics, submissionSchema, workerInput } = await import(
   "@/server/ingest/submission"
 );
 const { clientIpFromHeaders } = await import("@/server/ingest/client-ip");
@@ -91,6 +91,79 @@ describe("canonicalização e hash de conteúdo", () => {
 
   it("telefone digitado de formas diferentes é o mesmo conteúdo", () => {
     expect(normalizePhone("(11) 98888-7777")).toBe(normalizePhone("11988887777"));
+  });
+
+  // Item 1 da auditoria pós-dry-run: occurredAt, o token de continuidade
+  // e o texto de consentimento aceito precisam, cada um ISOLADAMENTE,
+  // mudar o hash quando mudam — nenhum dos três entrava no hash antes.
+  it("occurredAt diferente muda o hash (precisa ser estável entre retries)", () => {
+    const a = submissionSchema.parse(VALID);
+    const b = submissionSchema.parse({ ...VALID, occurredAt: new Date(Date.now() - 60_000).toISOString() });
+    expect(contentHash(businessContent(a))).not.toEqual(contentHash(businessContent(b)));
+  });
+
+  it("token de continuidade DIFERENTE muda o hash (antes, qualquer token virava 'present')", () => {
+    const a = submissionSchema.parse({ ...VALID, continuityToken: "token-continuidade-um" });
+    const b = submissionSchema.parse({ ...VALID, continuityToken: "token-continuidade-dois" });
+    expect(contentHash(businessContent(a))).not.toEqual(contentHash(businessContent(b)));
+  });
+
+  it("token de continuidade nunca aparece em claro no conteúdo canônico", () => {
+    const submission = submissionSchema.parse({ ...VALID, continuityToken: "segredo-nao-pode-vazar" });
+    expect(JSON.stringify(businessContent(submission))).not.toContain("segredo-nao-pode-vazar");
+  });
+
+  it("texto de consentimento aceito DIFERENTE muda o hash (item 7)", () => {
+    const a = submissionSchema.parse({
+      ...VALID,
+      consent: { decision: "granted", textVersion: "v1", acceptedText: "Aceito o texto A." },
+    });
+    const b = submissionSchema.parse({
+      ...VALID,
+      consent: { decision: "granted", textVersion: "v1", acceptedText: "Aceito o texto B." },
+    });
+    expect(contentHash(businessContent(a))).not.toEqual(contentHash(businessContent(b)));
+  });
+});
+
+describe("contrato público — identidade e consentimento (itens 4 e 7)", () => {
+  it("externalIdentity não existe mais no contrato: campo é recusado (schema estrito)", () => {
+    const result = submissionSchema.safeParse({
+      ...VALID,
+      externalIdentity: { provider: "whatsapp", externalId: "alguem" },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("consentimento CONCEDIDO sem textVersion e acceptedText é recusado — nunca vira autorização sem evidência", () => {
+    expect(submissionSchema.safeParse({ ...VALID, consent: { decision: "granted" } }).success).toBe(false);
+    expect(
+      submissionSchema.safeParse({ ...VALID, consent: { decision: "granted", textVersion: "v1" } }).success,
+    ).toBe(false);
+  });
+
+  it("consentimento RECUSADO dispensa textVersion e acceptedText", () => {
+    expect(submissionSchema.safeParse({ ...VALID, consent: { decision: "refused" } }).success).toBe(true);
+  });
+
+  it("consentimento concedido com os dois campos é aceito", () => {
+    expect(
+      submissionSchema.safeParse({
+        ...VALID,
+        consent: { decision: "granted", textVersion: "v1", acceptedText: "Texto realmente apresentado." },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("workerInput calcula text_hash a partir do texto aceito (grava em consent_evidence.text_hash)", () => {
+    const submission = submissionSchema.parse({
+      ...VALID,
+      consent: { decision: "granted", textVersion: "v1", acceptedText: "Texto realmente apresentado." },
+    });
+    const input = workerInput(submission, { continuityTokenHashBase64: null, ipHmacBase64: null });
+    expect(input.consent?.text_hash).toBeTruthy();
+    // 32 bytes em base64 → 44 caracteres (com padding).
+    expect(Buffer.from(input.consent!.text_hash as string, "base64")).toHaveLength(32);
   });
 });
 
@@ -182,6 +255,7 @@ function fakeSupabase(options: {
           contract_version: 1,
           turnstile_action: "formulario",
           allowed_hostnames: ["exemplo.test"],
+          answers_config: { fields: [{ key: "motivo", label: "Motivo", type: "text", required: false }] },
         }
       : options.endpoint;
 
@@ -194,7 +268,7 @@ function fakeSupabase(options: {
       if (fn === "ingest_form_event") {
         return Promise.resolve(
           options.ingest ?? {
-            data: { protocol: "proto-abc", created: true, webhook_event_id: "evt-1" },
+            data: { protocol: "proto-abc", created: true, webhook_event_id: "evt-1", outbox_id: "outbox-1" },
             error: null,
           },
         );
@@ -235,7 +309,7 @@ describe("borda pública de ingestão", () => {
 
   it("aceita uma submissão válida e devolve só o protocolo opaco", async () => {
     const result = await handleFormSubmission("chave", request(VALID), deps());
-    expect(result).toEqual({ ok: true, protocol: "proto-abc" });
+    expect(result).toEqual({ ok: true, protocol: "proto-abc", corsOrigin: null });
     // Nada de id interno, contato, lead ou oportunidade na resposta.
     expect(JSON.stringify(result)).not.toContain("evt-1");
   });
@@ -243,12 +317,15 @@ describe("borda pública de ingestão", () => {
   it("repetição legítima devolve o MESMO formato de aceitação", async () => {
     const repeated = deps({
       supabase: fakeSupabase({
-        ingest: { data: { protocol: "proto-abc", created: false, webhook_event_id: "evt-1" }, error: null },
+        ingest: {
+          data: { protocol: "proto-abc", created: false, webhook_event_id: "evt-1", outbox_id: "outbox-1" },
+          error: null,
+        },
       }),
     });
     const result = await handleFormSubmission("chave", request(VALID), repeated);
     // Idêntico ao caso "evento novo": sem 200, sem campo a mais.
-    expect(result).toEqual({ ok: true, protocol: "proto-abc" });
+    expect(result).toEqual({ ok: true, protocol: "proto-abc", corsOrigin: null });
     expect(noopPublish).not.toHaveBeenCalled();
   });
 
@@ -259,13 +336,13 @@ describe("borda pública de ingestão", () => {
       }),
     });
     const result = await handleFormSubmission("chave", request(VALID), conflicting);
-    expect(result).toEqual({ ok: false, failure: "idempotency_payload_conflict" });
+    expect(result).toEqual({ ok: false, failure: "idempotency_payload_conflict", corsOrigin: null });
   });
 
   it("endpoint desconhecido e desativado são indistinguíveis", async () => {
     const unknown = deps({ supabase: fakeSupabase({ endpoint: null }) });
     const result = await handleFormSubmission("chave", request(VALID), unknown);
-    expect(result).toEqual({ ok: false, failure: "form_endpoint_unavailable" });
+    expect(result).toEqual({ ok: false, failure: "form_endpoint_unavailable", corsOrigin: null });
   });
 
   it("honeypot preenchido é recusado sem gravar nada", async () => {
@@ -275,7 +352,7 @@ describe("borda pública de ingestão", () => {
       request({ ...VALID, website: "http://spam" }),
       deps({ supabase: fakeSupabase({ calls }) }),
     );
-    expect(result).toEqual({ ok: false, failure: "invalid_submission" });
+    expect(result).toEqual({ ok: false, failure: "invalid_submission", corsOrigin: null });
     expect(calls.some((call) => call.fn === "ingest_form_event")).toBe(false);
   });
 
@@ -285,39 +362,81 @@ describe("borda pública de ingestão", () => {
       request({ ...VALID, campoInesperado: "x" }),
       deps(),
     );
-    expect(result).toEqual({ ok: false, failure: "invalid_submission" });
+    expect(result).toEqual({ ok: false, failure: "invalid_submission", corsOrigin: null });
   });
 
   it("corpo acima do limite é recusado antes de desserializar", async () => {
-    const huge = JSON.stringify({ ...VALID, answers: { texto: "a".repeat(40_000) } });
+    const huge = JSON.stringify({ ...VALID, answers: { motivo: "a".repeat(40_000) } });
     const result = await handleFormSubmission("chave", request(huge), deps());
-    expect(result).toEqual({ ok: false, failure: "payload_too_large" });
+    expect(result).toEqual({ ok: false, failure: "payload_too_large", corsOrigin: null });
+  });
+
+  it("resposta de campo não configurado em answers é recusada (item 6)", async () => {
+    const result = await handleFormSubmission(
+      "chave",
+      request({ ...VALID, answers: { campo_nao_configurado: "x" } }),
+      deps(),
+    );
+    expect(result).toEqual({ ok: false, failure: "invalid_submission", corsOrigin: null });
+  });
+
+  it("campo obrigatório ausente em answers é recusado (item 6)", async () => {
+    const requiredField = deps({
+      supabase: fakeSupabase({
+        endpoint: {
+          id: "endpoint-1",
+          workspace_id: "ws-1",
+          contract_version: 1,
+          turnstile_action: "formulario",
+          allowed_hostnames: ["exemplo.test"],
+          answers_config: { fields: [{ key: "motivo", label: "Motivo", type: "text", required: true }] },
+        },
+      }),
+    });
+    const result = await handleFormSubmission("chave", request({ ...VALID, answers: {} }), requiredField);
+    expect(result).toEqual({ ok: false, failure: "invalid_submission", corsOrigin: null });
+  });
+
+  it("tipo errado em answers é recusado (item 6)", async () => {
+    const result = await handleFormSubmission(
+      "chave",
+      request({ ...VALID, answers: { motivo: true } }),
+      deps(),
+    );
+    expect(result).toEqual({ ok: false, failure: "invalid_submission", corsOrigin: null });
   });
 
   it("rate limit estourado recusa antes do Turnstile", async () => {
     const limited = vi.fn(async () => ({ ok: false, scope: "ip" }) as const);
     const result = await handleFormSubmission("chave", request(VALID), deps({ rateLimit: limited as never }));
-    expect(result).toEqual({ ok: false, failure: "rate_limited" });
+    expect(result).toEqual({ ok: false, failure: "rate_limited", corsOrigin: null });
     expect(alwaysOkTurnstile).not.toHaveBeenCalled();
   });
 
   it("hostname fora da lista do endpoint é recusado", async () => {
     const wrongHost = vi.fn(async () => ({ ok: false, reason: "hostname_mismatch" }) as const);
     const result = await handleFormSubmission("chave", request(VALID), deps({ verifyTurnstile: wrongHost as never }));
-    expect(result).toEqual({ ok: false, failure: "captcha_failed" });
+    expect(result).toEqual({ ok: false, failure: "captcha_failed", corsOrigin: null });
   });
 
   it("action diferente da esperada é recusada", async () => {
     const wrongAction = vi.fn(async () => ({ ok: false, reason: "action_mismatch" }) as const);
     const result = await handleFormSubmission("chave", request(VALID), deps({ verifyTurnstile: wrongAction as never }));
-    expect(result).toEqual({ ok: false, failure: "captcha_failed" });
+    expect(result).toEqual({ ok: false, failure: "captcha_failed", corsOrigin: null });
   });
 
-  it("o Turnstile recebe a action e os hostnames DO ENDPOINT", async () => {
+  it("o Turnstile recebe a action e os hostnames DO ENDPOINT, nunca IP nem chave de idempotência do sourceEventId", async () => {
     await handleFormSubmission("chave", request(VALID), deps());
     expect(alwaysOkTurnstile).toHaveBeenCalledWith(
       expect.objectContaining({ expectedAction: "formulario", allowedHostnames: ["exemplo.test"] }),
     );
+    // Defeito corrigido: nem remoteIdentifier (HMAC do IP) nem
+    // idempotencyKey (antes = sourceEventId) são mais parte do contrato
+    // do verificador — a chave de idempotência do siteverify passou a
+    // ser derivada do PRÓPRIO TOKEN, dentro de cloudflareTurnstileVerifier.
+    const call = (alwaysOkTurnstile.mock.calls as unknown as [Record<string, unknown>][])[0]![0];
+    expect(call).not.toHaveProperty("remoteIdentifier");
+    expect(call).not.toHaveProperty("idempotencyKey");
   });
 
   it("o rate limit recebe HMAC do IP, nunca o IP", async () => {
@@ -334,20 +453,43 @@ describe("borda pública de ingestão", () => {
       body: JSON.stringify(VALID),
     });
     const result = await handleFormSubmission("chave", forged, deps());
-    expect(result).toEqual({ ok: false, failure: "invalid_submission" });
+    expect(result).toEqual({ ok: false, failure: "invalid_submission", corsOrigin: null });
   });
 
   it("versão de contrato divergente é recusada", async () => {
     const result = await handleFormSubmission("chave", request({ ...VALID, contractVersion: 99 }), deps());
-    expect(result).toEqual({ ok: false, failure: "invalid_submission" });
+    expect(result).toEqual({ ok: false, failure: "invalid_submission", corsOrigin: null });
   });
 
-  it("falha de publicação NÃO muda a resposta: o evento já está gravado", async () => {
+  it("falha de publicação NÃO muda a resposta: o evento já está gravado, mas a outbox é marcada failed", async () => {
     const failing = vi.fn(async () => {
       throw new Error("inngest fora do ar");
     });
-    const result = await handleFormSubmission("chave", request(VALID), deps({ publish: failing as never }));
-    expect(result).toEqual({ ok: true, protocol: "proto-abc" });
+    const calls: RpcCall[] = [];
+    const result = await handleFormSubmission(
+      "chave",
+      request(VALID),
+      deps({ publish: failing as never, supabase: fakeSupabase({ calls }) }),
+    );
+    expect(result).toEqual({ ok: true, protocol: "proto-abc", corsOrigin: null });
+    // Item 9: falha na publicação inicial marca a outbox como failed (via
+    // RPC), em vez de deixá-la "pending" indefinidamente.
+    const markFailed = calls.find((call) => call.fn === "mark_outbox_failed");
+    expect(markFailed?.args).toEqual({ p_outbox_id: "outbox-1", p_error_code: "initial_publish_failed" });
+    expect(calls.some((call) => call.fn === "mark_outbox_published")).toBe(false);
+  });
+
+  it("publicação inicial bem-sucedida marca a outbox como published (item 9)", async () => {
+    const calls: RpcCall[] = [];
+    const result = await handleFormSubmission(
+      "chave",
+      request(VALID),
+      deps({ supabase: fakeSupabase({ calls }) }),
+    );
+    expect(result.ok).toBe(true);
+    const markPublished = calls.find((call) => call.fn === "mark_outbox_published");
+    expect(markPublished?.args).toEqual({ p_outbox_id: "outbox-1" });
+    expect(calls.some((call) => call.fn === "mark_outbox_failed")).toBe(false);
   });
 
   it("sem configuração obrigatória, falha FECHADA e sanitizada", async () => {
@@ -359,11 +501,62 @@ describe("borda pública de ingestão", () => {
       request(VALID),
       deps({ supabase: fakeSupabase({ calls }) }),
     );
-    expect(result).toEqual({ ok: false, failure: "service_unavailable" });
+    expect(result).toEqual({ ok: false, failure: "service_unavailable", corsOrigin: null });
     // Nada foi gravado e nenhuma proteção foi pulada.
     expect(calls).toHaveLength(0);
     expect(alwaysOkTurnstile).not.toHaveBeenCalled();
     expect(alwaysOkRateLimit).not.toHaveBeenCalled();
+  });
+});
+
+describe("CORS da rota pública (item 3)", () => {
+  beforeEach(() => {
+    resetIngestConfigCache();
+    setConfigEnv();
+  });
+
+  const deps = (overrides: Partial<Parameters<typeof handleFormSubmission>[2]> = {}) => ({
+    supabase: fakeSupabase({}),
+    verifyTurnstile: alwaysOkTurnstile as never,
+    rateLimit: alwaysOkRateLimit as never,
+    publish: noopPublish as never,
+    ...overrides,
+  });
+
+  it("origem autorizada (hostname na lista do endpoint) recebe Access-Control-Allow-Origin exato", async () => {
+    const result = await handleFormSubmission(
+      "chave",
+      request(VALID, { origin: "https://exemplo.test" }),
+      deps(),
+    );
+    expect(result.corsOrigin).toBe("https://exemplo.test");
+  });
+
+  it("origem NÃO autorizada não recebe cabeçalho de CORS (nunca curinga)", async () => {
+    const result = await handleFormSubmission(
+      "chave",
+      request(VALID, { origin: "https://atacante.test" }),
+      deps(),
+    );
+    expect(result.corsOrigin).toBeNull();
+  });
+
+  it("origem autorizada continua recebendo CORS mesmo numa resposta de ERRO", async () => {
+    const result = await handleFormSubmission(
+      "chave",
+      request({ ...VALID, contractVersion: 99 }, { origin: "https://exemplo.test" }),
+      deps(),
+    );
+    expect(result).toEqual({
+      ok: false,
+      failure: "invalid_submission",
+      corsOrigin: "https://exemplo.test",
+    });
+  });
+
+  it("sem cabeçalho Origin (chamada servidor-a-servidor) não há CORS a oferecer", async () => {
+    const result = await handleFormSubmission("chave", request(VALID), deps());
+    expect(result.corsOrigin).toBeNull();
   });
 });
 

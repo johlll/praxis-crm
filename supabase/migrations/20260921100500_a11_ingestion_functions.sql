@@ -80,6 +80,7 @@ create function public.ingest_form_event(
   p_payload_key_version text,
   p_payload_sanitized jsonb,
   p_occurred_at timestamptz,
+  p_answers_config_snapshot jsonb default '{"fields": []}'::jsonb,
   p_retention_days integer default 30,
   p_stuck_after_minutes integer default 60
 )
@@ -92,6 +93,7 @@ declare
   v_endpoint public.form_endpoints;
   v_existing public.webhook_events;
   v_event public.webhook_events;
+  v_existing_outbox_id uuid;
   v_received timestamptz;
   v_normalized timestamptz;
   v_code text;
@@ -114,10 +116,12 @@ begin
     -- Mesma chave + mesmo hash: reutiliza evento e protocolo. Vale também
     -- para evento já processado, purgado e expired_unprocessed — a
     -- resposta pública é idêntica em todos (contrato §12).
+    select id into v_existing_outbox_id from public.outbox where webhook_event_id = v_existing.id;
     return jsonb_build_object(
       'protocol', v_existing.public_protocol,
       'created', false,
-      'webhook_event_id', v_existing.id
+      'webhook_event_id', v_existing.id,
+      'outbox_id', v_existing_outbox_id
     );
   end if;
 
@@ -139,13 +143,14 @@ begin
   insert into public.webhook_events (
     workspace_id, form_endpoint_id, source_event_id, content_hash, public_protocol,
     payload_ciphertext, payload_iv, payload_auth_tag, payload_algorithm, payload_key_version,
-    payload_sanitized, occurred_at, received_at, normalized_occurred_at, normalization_code,
-    expires_at, stuck_after
+    payload_sanitized, answers_config_snapshot, occurred_at, received_at, normalized_occurred_at,
+    normalization_code, expires_at, stuck_after
   )
   values (
     v_endpoint.workspace_id, p_form_endpoint_id, p_source_event_id, p_content_hash, p_public_protocol,
     p_payload_ciphertext, p_payload_iv, p_payload_auth_tag, p_payload_algorithm, p_payload_key_version,
-    p_payload_sanitized, p_occurred_at, v_received, v_normalized, v_code,
+    p_payload_sanitized, coalesce(p_answers_config_snapshot, '{"fields": []}'::jsonb),
+    p_occurred_at, v_received, v_normalized, v_code,
     v_received + make_interval(days => p_retention_days),
     v_received + make_interval(mins => p_stuck_after_minutes)
   )
@@ -167,25 +172,30 @@ begin
     if v_existing.content_hash <> p_content_hash then
       raise exception 'idempotency_payload_conflict';
     end if;
+    select id into v_existing_outbox_id from public.outbox where webhook_event_id = v_existing.id;
     return jsonb_build_object(
       'protocol', v_existing.public_protocol,
       'created', false,
-      'webhook_event_id', v_existing.id
+      'webhook_event_id', v_existing.id,
+      'outbox_id', v_existing_outbox_id
     );
   end if;
 
   -- Outbox só para evento NOVO — é o que garante que uma repetição não
   -- enfileira processamento de novo.
   insert into public.outbox (workspace_id, webhook_event_id, event_type)
-  values (v_endpoint.workspace_id, v_event.id, 'praxis/form.submission.received');
+  values (v_endpoint.workspace_id, v_event.id, 'praxis/form.submission.received')
+  returning id into v_existing_outbox_id;
 
-  -- `webhook_event_id` é devolvido para uso INTERNO (publicar no
-  -- Inngest com um identificador estável). A rota nunca o repassa para a
-  -- resposta pública — lá só vai o protocolo opaco.
+  -- `webhook_event_id` e `outbox_id` são devolvidos para uso INTERNO
+  -- (publicar no Inngest com um identificador estável e marcar a outbox
+  -- published/failed depois da publicação inicial). A rota nunca os
+  -- repassa para a resposta pública — lá só vai o protocolo opaco.
   return jsonb_build_object(
     'protocol', v_event.public_protocol,
     'created', true,
-    'webhook_event_id', v_event.id
+    'webhook_event_id', v_event.id,
+    'outbox_id', v_existing_outbox_id
   );
 end;
 $body$;
@@ -297,6 +307,21 @@ $body$;
 -- idempotentes, nunca exactly-once.
 -- ---------------------------------------------------------------------
 
+-- Única finalidade de continuity_references que process_form_event honra.
+-- Um token emitido para outra finalidade (ex.: futuro portal do cliente)
+-- nunca é aceito aqui — mesmo que o hash bata — porque "para que serve o
+-- token" é parte da garantia, não só "o token existe e não venceu".
+create function private.form_intake_continuity_purpose()
+returns text
+language sql
+immutable
+set search_path = ''
+as $body$
+  select 'form_continuity'::text;
+$body$;
+
+revoke all on function private.form_intake_continuity_purpose() from public;
+
 create function public.process_form_event(
   p_webhook_event_id uuid,
   p_input jsonb
@@ -320,8 +345,6 @@ declare
   v_phone text := nullif(btrim(p_input #>> '{contact,phone_e164}'), '');
   v_email text := nullif(lower(btrim(p_input #>> '{contact,email}')), '');
   v_name text := nullif(btrim(p_input #>> '{contact,name}'), '');
-  v_provider text := nullif(btrim(p_input #>> '{external_identity,provider}'), '');
-  v_external_id text := nullif(btrim(p_input #>> '{external_identity,external_id}'), '');
   v_token_hash bytea := decode(coalesce(p_input ->> 'continuity_token_hash', ''), 'base64');
   v_is_new_demand boolean := true;
   v_position integer;
@@ -368,28 +391,28 @@ begin
   v_creator := v_endpoint.created_by;
 
   -- 2. Identidade — ordem segura.
+  --
+  -- A ÚNICA identidade confiável que o formulário PÚBLICO aceita é uma
+  -- referência de continuidade válida: token aleatório emitido pelo
+  -- servidor, entregue fora de banda (ex.: e-mail de confirmação), e
+  -- verificado aqui só por hash. NÃO existe caminho de "identidade
+  -- externa declarada pelo navegador" nesta função — um visitante
+  -- anônimo não tem como se autodeclarar "o mesmo contato que já existe"
+  -- (contrato §8: telefone e e-mail NUNCA são identidade; e um provider/
+  -- external_id vindo do corpo da requisição seria exatamente tão
+  -- forjável quanto telefone/e-mail, só que capaz de reivindicar
+  -- QUALQUER contato do workspace, não só o próprio).
   if octet_length(v_token_hash) = 32 then
     select * into v_continuity from public.continuity_references
     where token_hash = v_token_hash
       and workspace_id = v_event.workspace_id
       and revoked_at is null
-      and expires_at > now();
+      and expires_at > now()
+      and purpose = private.form_intake_continuity_purpose();
   end if;
 
   if v_continuity.id is not null then
     select * into v_contact from public.contacts where id = v_continuity.contact_id;
-  elsif v_provider is not null and v_external_id is not null then
-    -- Serializa duas mensagens da MESMA identidade (mesmo padrão da A7),
-    -- nunca de identidades diferentes.
-    perform pg_advisory_xact_lock(
-      hashtext(v_event.workspace_id::text || ':' || v_provider || ':' || v_external_id)
-    );
-    select c.* into v_contact
-    from public.contact_identifiers i
-    join public.contacts c on c.id = i.contact_id
-    where i.workspace_id = v_event.workspace_id
-      and i.provider = v_provider
-      and i.external_id = v_external_id;
   end if;
 
   if v_contact.id is null then
@@ -403,12 +426,6 @@ begin
       v_creator
     )
     returning * into v_contact;
-
-    if v_provider is not null and v_external_id is not null then
-      insert into public.contact_identifiers (workspace_id, contact_id, provider, external_id)
-      values (v_event.workspace_id, v_contact.id, v_provider, v_external_id)
-      on conflict (workspace_id, provider, external_id) do nothing;
-    end if;
   end if;
 
   -- 3. Telefone e e-mail: normalizam e entram como sinal, nunca como
@@ -568,14 +585,14 @@ begin
   if v_is_new_demand then
     insert into public.activities (
       workspace_id, lead_id, opportunity_id, type, title, due_at, has_time,
-      source, created_by
+      source, source_webhook_event_id, created_by
     )
     values (
       v_event.workspace_id, v_lead.id, v_opportunity.id,
       v_endpoint.initial_activity_type,
       'Primeiro contato — ' || v_endpoint.name,
       v_event.received_at + make_interval(mins => v_endpoint.initial_activity_due_minutes),
-      true, 'form_intake', v_creator
+      true, 'form_intake', v_event.id, v_creator
     )
     returning id into v_activity_id;
   end if;
@@ -628,8 +645,8 @@ $body$;
 revoke all on function public.resolve_form_endpoint(text) from public;
 grant execute on function public.resolve_form_endpoint(text) to service_role;
 
-revoke all on function public.ingest_form_event(uuid, uuid, bytea, text, bytea, bytea, bytea, text, text, jsonb, timestamptz, integer, integer) from public;
-grant execute on function public.ingest_form_event(uuid, uuid, bytea, text, bytea, bytea, bytea, text, text, jsonb, timestamptz, integer, integer) to service_role;
+revoke all on function public.ingest_form_event(uuid, uuid, bytea, text, bytea, bytea, bytea, text, text, jsonb, timestamptz, jsonb, integer, integer) from public;
+grant execute on function public.ingest_form_event(uuid, uuid, bytea, text, bytea, bytea, bytea, text, text, jsonb, timestamptz, jsonb, integer, integer) to service_role;
 
 revoke all on function public.claim_outbox_batch(integer, integer) from public;
 grant execute on function public.claim_outbox_batch(integer, integer) to service_role;
@@ -672,7 +689,11 @@ as $body$
     'auth_tag', case when w.payload_auth_tag is null then null
                      else encode(w.payload_auth_tag, 'base64') end,
     'algorithm', w.payload_algorithm,
-    'key_version', w.payload_key_version
+    'key_version', w.payload_key_version,
+    -- Fotografia de answers_config no momento da ingestão: o worker
+    -- revalida `answers` contra ELA, nunca contra a configuração atual
+    -- do endpoint (item 6 da auditoria pós-dry-run).
+    'answers_config_snapshot', w.answers_config_snapshot
   )
   from public.webhook_events w
   where w.id = p_webhook_event_id;

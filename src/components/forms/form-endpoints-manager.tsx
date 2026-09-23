@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,7 @@ import {
   type FormActionState,
 } from "@/modules/forms/actions";
 import type { FormEndpoint } from "@/modules/forms/queries";
+import type { AnswerFieldDefinition, AnswerFieldType } from "@/modules/forms/schema";
 
 /**
  * Configuração dos formulários públicos (A11) — owner/admin.
@@ -28,6 +29,101 @@ const INITIAL: FormActionState = { ok: false };
 
 type StageOption = { id: string; name: string; pipelineId: string; isTerminal: boolean };
 type PipelineOption = { id: string; name: string; isDefault: boolean };
+
+type DraftField = AnswerFieldDefinition & { draftId: string };
+
+let draftFieldCounter = 0;
+function nextDraftId() {
+  draftFieldCounter += 1;
+  return `campo-${draftFieldCounter}`;
+}
+
+/**
+ * Editor da lista de campos aceitos por `answers` (A11, item 6 da
+ * auditoria pós-dry-run). Serializa em JSON num campo oculto — o
+ * servidor valida de novo com o MESMO schema (`answersConfigSchema`),
+ * nunca confia só no que a tela mandou.
+ */
+function AnswersFieldEditor() {
+  const [fields, setFields] = useState<DraftField[]>([]);
+
+  const json = useMemo(
+    () =>
+      JSON.stringify({
+        fields: fields.map(({ draftId: _draftId, ...field }) => field),
+      }),
+    [fields],
+  );
+
+  function addField() {
+    setFields((current) => [
+      ...current,
+      { draftId: nextDraftId(), key: "", label: "", type: "text", required: false },
+    ]);
+  }
+
+  function updateField(draftId: string, patch: Partial<AnswerFieldDefinition>) {
+    setFields((current) => current.map((field) => (field.draftId === draftId ? { ...field, ...patch } : field)));
+  }
+
+  function removeField(draftId: string) {
+    setFields((current) => current.filter((field) => field.draftId !== draftId));
+  }
+
+  return (
+    <FormField>
+      <FormLabel htmlFor="answers-field-editor">Campos do formulário (além de nome, e-mail e telefone)</FormLabel>
+      <div id="answers-field-editor" className="flex flex-col gap-2">
+        {fields.length === 0 ? (
+          <p className="m-0 text-meta text-text-muted">Nenhum campo extra ainda. A borda recusa qualquer campo não listado aqui.</p>
+        ) : null}
+        {fields.map((field) => (
+          <div key={field.draftId} className="flex flex-wrap items-center gap-2 rounded-input border border-border-input p-2">
+            <Input
+              aria-label="Chave do campo"
+              placeholder="chave_do_campo"
+              value={field.key}
+              onChange={(event) => updateField(field.draftId, { key: event.target.value })}
+              className="w-40"
+            />
+            <Input
+              aria-label="Rótulo do campo"
+              placeholder="Rótulo exibido"
+              value={field.label}
+              onChange={(event) => updateField(field.draftId, { label: event.target.value })}
+              className="w-48"
+            />
+            <select
+              aria-label="Tipo do campo"
+              value={field.type}
+              onChange={(event) => updateField(field.draftId, { type: event.target.value as AnswerFieldType })}
+              className="h-9 rounded-input border border-border-input bg-surface px-2 text-body"
+            >
+              <option value="text">Texto</option>
+              <option value="boolean">Sim/não</option>
+              <option value="number">Número</option>
+            </select>
+            <label className="flex items-center gap-1 text-meta text-text-secondary">
+              <input
+                type="checkbox"
+                checked={field.required}
+                onChange={(event) => updateField(field.draftId, { required: event.target.checked })}
+              />
+              Obrigatório
+            </label>
+            <Button type="button" variant="ghost" size="sm" onClick={() => removeField(field.draftId)}>
+              Remover
+            </Button>
+          </div>
+        ))}
+        <Button type="button" variant="secondary" size="sm" onClick={addField} className="self-start">
+          Adicionar campo
+        </Button>
+      </div>
+      <input type="hidden" name="answersConfigJson" value={json} />
+    </FormField>
+  );
+}
 
 function NewEndpointForm({
   pipelines,
@@ -144,6 +240,8 @@ function NewEndpointForm({
         <FormLabel htmlFor="allowedHostnames">Domínios permitidos (separados por vírgula)</FormLabel>
         <Input id="allowedHostnames" name="allowedHostnames" required placeholder="exemplo.com.br, www.exemplo.com.br" />
       </FormField>
+
+      <AnswersFieldEditor />
 
       <Button type="submit" disabled={pending} className="self-start">
         {pending ? "Criando…" : "Criar formulário"}

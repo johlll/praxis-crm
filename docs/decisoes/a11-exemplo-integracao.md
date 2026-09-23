@@ -21,6 +21,16 @@ Regras, todas exercidas pelo código abaixo:
 7. gerar UUID novo se o conteúdo mudar materialmente ou começar outra
    submissão.
 
+**Correção pós-auditoria:** `occurredAt` passou a integrar o conteúdo
+canônico que o servidor usa para o hash de idempotência (antes não
+integrava — dois envios do mesmo `source_event_id` podiam variar
+`occurredAt` livremente sem que o servidor percebesse). Na prática isso
+exige **persistir `occurredAt` junto do `source_event_id`**, calculado
+**uma única vez** por submissão e reutilizado em todo retry — exatamente
+como o próprio UUID. Calcular `occurredAt` de novo a cada tentativa (com
+`new Date().toISOString()` dentro de `enviar()`) faria um retry legítimo
+virar `409 idempotency_payload_conflict`.
+
 ```html
 <form id="contato" novalidate>
   <input name="name" required />
@@ -42,6 +52,13 @@ const ENDPOINT = "https://app.exemplo.com.br/api/forms/SUA_CHAVE_PUBLICA";
 const CONTRACT_VERSION = 1;
 const STORAGE_KEY = "praxis:form:source-event-id";
 
+// Texto REALMENTE apresentado ao visitante — precisa ser o texto exibido
+// de fato na tela, não um resumo. decision=granted sem textVersion e
+// acceptedText é recusado pelo servidor (contrato §11): consentimento
+// concedido nunca pode virar autorização sem evidência do que foi aceito.
+const TEXTO_CONSENTIMENTO_V1 =
+  "Concordo com o uso dos meus dados de contato para que o escritório entre em contato comigo sobre este assunto.";
+
 /** Conteúdo de negócio da submissão — sem token, sem honeypot. */
 function lerConteudo(form) {
   const data = new FormData(form);
@@ -54,7 +71,7 @@ function lerConteudo(form) {
     },
     answers: { motivo: String(data.get("motivo") ?? "") },
     attribution: lerAtribuicao(),
-    consent: { decision: "granted", textVersion: "v1" },
+    consent: { decision: "granted", textVersion: "v1", acceptedText: TEXTO_CONSENTIMENTO_V1 },
   };
 }
 
@@ -76,11 +93,14 @@ function lerAtribuicao() {
 }
 
 /**
- * O UUID é da SUBMISSÃO, não da tentativa. Guardado junto de uma
- * impressão do conteúdo: se o visitante editar materialmente o que
- * escreveu, começa uma submissão nova — e portanto um UUID novo.
+ * O UUID é da SUBMISSÃO, não da tentativa — e o mesmo vale agora para
+ * `occurredAt` (correção pós-auditoria: o servidor passou a integrar
+ * `occurredAt` no hash de idempotência). Os dois são calculados **uma
+ * única vez** e guardados junto de uma impressão do conteúdo: se o
+ * visitante editar materialmente o que escreveu, começa uma submissão
+ * nova — e portanto um UUID e um `occurredAt` novos.
  */
-function obterSourceEventId(conteudo) {
+function obterIdentidadeDaSubmissao(conteudo) {
   const impressao = JSON.stringify(conteudo);
   let guardado = null;
   try {
@@ -89,16 +109,19 @@ function obterSourceEventId(conteudo) {
     guardado = null;
   }
 
-  if (guardado && guardado.impressao === impressao) return guardado.id;
+  if (guardado && guardado.impressao === impressao) {
+    return { id: guardado.id, occurredAt: guardado.occurredAt };
+  }
 
   const id = crypto.randomUUID();
+  const occurredAt = new Date().toISOString();
   try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ id, impressao }));
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ id, occurredAt, impressao }));
   } catch {
-    // sessionStorage bloqueado: o UUID em memória ainda serve para os
-    // retries desta página.
+    // sessionStorage bloqueado: os dois valores em memória ainda servem
+    // para os retries desta página.
   }
-  return id;
+  return { id, occurredAt };
 }
 
 function limparSourceEventId() {
@@ -111,10 +134,13 @@ function limparSourceEventId() {
 
 async function enviar(form, { tentativa = 1 } = {}) {
   const conteudo = lerConteudo(form);
-  const sourceEventId = obterSourceEventId(conteudo);
+  const { id: sourceEventId, occurredAt } = obterIdentidadeDaSubmissao(conteudo);
 
-  // Token RENOVADO a cada tentativa — sem trocar o UUID. É exatamente por
-  // isso que o token fica fora do hash de conteúdo do servidor.
+  // Token RENOVADO a cada tentativa — sem trocar o UUID nem o
+  // occurredAt. É exatamente por isso que o token fica fora do hash de
+  // conteúdo do servidor (occurredAt, ao contrário, ENTRA no hash desde
+  // a correção — por isso precisa vir do valor persistido, nunca de um
+  // `new Date()` recalculado aqui).
   const turnstileToken = window.turnstile.getResponse();
 
   const resposta = await fetch(ENDPOINT, {
@@ -123,7 +149,7 @@ async function enviar(form, { tentativa = 1 } = {}) {
     body: JSON.stringify({
       sourceEventId,
       contractVersion: CONTRACT_VERSION,
-      occurredAt: new Date().toISOString(),
+      occurredAt,
       turnstileToken,
       website: String(new FormData(form).get("website") ?? ""),
       ...conteudo,

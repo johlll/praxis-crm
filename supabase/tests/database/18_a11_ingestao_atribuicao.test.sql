@@ -8,7 +8,7 @@
 -- regressão histórica inventada.
 
 begin;
-select plan(70);
+select plan(113);
 
 \set otavio '20000000-0000-0000-0000-000000000014'
 \set lucas  '20000000-0000-0000-0000-000000000011'
@@ -457,7 +457,7 @@ insert into public.continuity_references (
 )
 values (
   :'ws'::uuid, '\x3333333333333333333333333333333333333333333333333333333333333333'::bytea,
-  :'contact1'::uuid, :'lead1'::uuid, :'opp1'::uuid, 'retomada', now() + interval '7 days'
+  :'contact1'::uuid, :'lead1'::uuid, :'opp1'::uuid, 'form_continuity', now() + interval '7 days'
 );
 
 select ingest_form_event(
@@ -487,6 +487,44 @@ select is(
 select is(
   (select count(*)::int from public.leads where workspace_id = :'ws'::uuid),
   1, 'Continuidade não cria lead novo'
+);
+
+-- -----------------------------------------------------------------
+-- 8b) Continuidade com FINALIDADE ERRADA é recusada — degrada para
+--     captação nova, não é tratada como token inválido nem como erro:
+--     é exatamente o mesmo resultado de "sem continuidade confiável".
+-- -----------------------------------------------------------------
+
+insert into public.continuity_references (
+  workspace_id, token_hash, contact_id, lead_id, opportunity_id, purpose, expires_at
+)
+values (
+  :'ws'::uuid, decode(repeat('44', 32), 'hex'),
+  :'contact1'::uuid, :'lead1'::uuid, :'opp1'::uuid, 'outra_finalidade', now() + interval '7 days'
+);
+
+select ingest_form_event(
+  :'endpoint_cont'::uuid, 'bbbbbbbb-0000-4000-8000-000000000002'::uuid, :'hash1'::bytea,
+  'proto-continuidade-bbb', '\xde'::bytea, '\x000000000000000000000000'::bytea,
+  '\x00000000000000000000000000000000'::bytea, 'aes-256-gcm', '1', '{}'::jsonb, now()
+);
+select id as event_cont_wrong_purpose from public.webhook_events
+where source_event_id = 'bbbbbbbb-0000-4000-8000-000000000002'::uuid \gset
+
+select process_form_event(:'event_cont_wrong_purpose'::uuid, jsonb_build_object(
+  'contact', jsonb_build_object('name', 'Visitante Dois'),
+  'continuity_token_hash', encode(decode(repeat('44', 32), 'hex'), 'base64'),
+  'attribution', jsonb_build_object('channel', 'formulario', 'source', 'email')
+)) as proc_wrong_purpose \gset
+
+select is((:'proc_wrong_purpose'::jsonb ->> 'new_demand')::boolean, true,
+  'Token com finalidade diferente de form_continuity é tratado como SEM continuidade (abre demanda nova)');
+select isnt((:'proc_wrong_purpose'::jsonb ->> 'opportunity_id'), :'opp1',
+  'Não reaproveita a oportunidade encerrada de uma referência com finalidade errada');
+select is(
+  (select used_count from public.continuity_references
+   where token_hash = decode(repeat('44', 32), 'hex')),
+  0, 'Referência com finalidade errada nunca é marcada como usada'
 );
 
 -- -----------------------------------------------------------------
@@ -591,7 +629,9 @@ select throws_ok(
 reset role;
 
 -- -----------------------------------------------------------------
--- 12) Mesclagem reparenteia touchpoints
+-- 12) Mesclagem reparenteia touchpoints, continuity_references e
+--     consent_evidence — e desfazer devolve as três; alterar uma
+--     linha reparentada antes do desfazer recusa o undo inteiro.
 -- -----------------------------------------------------------------
 
 insert into public.contacts (id, workspace_id, type, name, created_by)
@@ -599,6 +639,31 @@ values ('c1100000-0000-4000-8000-000000000001', :'ws'::uuid, 'pf', 'Duplicado', 
 
 update public.touchpoints set contact_id = 'c1100000-0000-4000-8000-000000000001'
 where id = :'tp_tardio'::uuid;
+
+-- Lead do contato perdedor: exigido pela FK que garante contato e lead
+-- da MESMA cadeia numa continuity_reference.
+insert into public.leads (id, workspace_id, contact_id, legal_area, priority, created_by)
+values (
+  'c1100000-0000-4000-8000-000000000010', :'ws'::uuid, 'c1100000-0000-4000-8000-000000000001',
+  'Cível', 'media', :'otavio'
+);
+
+insert into public.continuity_references (
+  id, workspace_id, token_hash, contact_id, lead_id, purpose, expires_at
+)
+values (
+  'c1100000-0000-4000-8000-000000000020', :'ws'::uuid, decode(repeat('55', 32), 'hex'),
+  'c1100000-0000-4000-8000-000000000001', 'c1100000-0000-4000-8000-000000000010',
+  'form_continuity', now() + interval '7 days'
+);
+
+insert into public.consent_evidence (
+  id, workspace_id, contact_id, decision, purpose_code, purpose, legal_basis, channel, decided_at
+)
+values (
+  'c1100000-0000-4000-8000-000000000030', :'ws'::uuid, 'c1100000-0000-4000-8000-000000000001',
+  'granted', 'formulario_contato', 'Contato pelo site', 'consentimento', 'email', now()
+);
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
@@ -608,6 +673,361 @@ reset role;
 select is(
   (select contact_id from public.touchpoints where id = :'tp_tardio'::uuid),
   :'contact1'::uuid, 'Mesclagem reparenteia o touchpoint para o contato vencedor'
+);
+select is(
+  (select contact_id from public.continuity_references where id = 'c1100000-0000-4000-8000-000000000020'),
+  :'contact1'::uuid, 'Mesclagem reparenteia continuity_references para o contato vencedor'
+);
+select is(
+  (select contact_id from public.consent_evidence where id = 'c1100000-0000-4000-8000-000000000030'),
+  :'contact1'::uuid, 'Mesclagem reparenteia consent_evidence para o contato vencedor'
+);
+
+select id as merge1 from public.contact_merges
+where kept_contact_id = :'contact1'::uuid and merged_contact_id = 'c1100000-0000-4000-8000-000000000001'
+order by created_at desc limit 1 \gset
+
+-- Desfazer devolve as três tabelas ao contato original.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
+select unmerge_contact(:'merge1'::uuid);
+reset role;
+
+select is(
+  (select contact_id from public.continuity_references where id = 'c1100000-0000-4000-8000-000000000020'),
+  'c1100000-0000-4000-8000-000000000001'::uuid, 'Desfazer devolve continuity_references ao contato original'
+);
+select is(
+  (select contact_id from public.consent_evidence where id = 'c1100000-0000-4000-8000-000000000030'),
+  'c1100000-0000-4000-8000-000000000001'::uuid, 'Desfazer devolve consent_evidence ao contato original'
+);
+select is(
+  (select contact_id from public.touchpoints where id = :'tp_tardio'::uuid),
+  'c1100000-0000-4000-8000-000000000001'::uuid, 'Desfazer devolve touchpoints ao contato original'
+);
+
+-- Mescla de novo (o contato voltou a ficar livre) e altera uma linha
+-- reparentada (remove a referência de continuidade) ANTES do desfazer:
+-- o undo inteiro precisa recusar, não só ignorar a linha alterada.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
+select merge_contacts(:'contact1'::uuid, 'c1100000-0000-4000-8000-000000000001'::uuid);
+reset role;
+
+select id as merge2 from public.contact_merges
+where kept_contact_id = :'contact1'::uuid and merged_contact_id = 'c1100000-0000-4000-8000-000000000001'
+order by created_at desc limit 1 \gset
+
+delete from public.continuity_references where id = 'c1100000-0000-4000-8000-000000000020';
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
+select throws_ok(
+  format($$select unmerge_contact(%L::uuid)$$, :'merge2'),
+  'P0001', null,
+  'Desfazer recusa quando uma linha reparentada (continuity_references) foi removida antes do undo'
+);
+reset role;
+
+select is(
+  (select contact_id from public.consent_evidence where id = 'c1100000-0000-4000-8000-000000000030'),
+  :'contact1'::uuid, 'Undo recusado: consent_evidence continua no contato vencedor (nada é desfeito pela metade)'
+);
+
+-- -----------------------------------------------------------------
+-- 13) FKs compostas: ON DELETE SET NULL só na coluna opcional
+--     (item 8 da auditoria pós-dry-run) — workspace_id NUNCA é anulado.
+-- -----------------------------------------------------------------
+
+select isnt((select contact_consent_id from public.consent_evidence where webhook_event_id = :'event1'::uuid), null,
+  'Fixture: consent_evidence do evento 1 tem contact_consent_id preenchido');
+select (select contact_consent_id from public.consent_evidence where webhook_event_id = :'event1'::uuid) as ce_consent_id \gset
+select (select workspace_id from public.consent_evidence where webhook_event_id = :'event1'::uuid) as ce_workspace \gset
+
+delete from public.contact_consents where id = :'ce_consent_id'::uuid;
+
+select is(
+  (select contact_consent_id from public.consent_evidence where webhook_event_id = :'event1'::uuid),
+  null, 'Apagar o consentimento referenciado anula SÓ contact_consent_id em consent_evidence'
+);
+select is(
+  (select workspace_id from public.consent_evidence where webhook_event_id = :'event1'::uuid),
+  :'ce_workspace'::uuid, 'workspace_id de consent_evidence é preservado (não anulado pelo ON DELETE SET NULL)'
+);
+
+select isnt((select consent_evidence_id from public.touchpoints where id = :'tp1'::uuid), null,
+  'Fixture: touchpoint 1 tem consent_evidence_id preenchido');
+select (select consent_evidence_id from public.touchpoints where id = :'tp1'::uuid) as tp_consent_id \gset
+select (select workspace_id from public.touchpoints where id = :'tp1'::uuid) as tp_workspace \gset
+
+delete from public.consent_evidence where id = :'tp_consent_id'::uuid;
+
+select is(
+  (select consent_evidence_id from public.touchpoints where id = :'tp1'::uuid),
+  null, 'Apagar a evidência de consentimento anula SÓ consent_evidence_id em touchpoints'
+);
+select is(
+  (select workspace_id from public.touchpoints where id = :'tp1'::uuid),
+  :'tp_workspace'::uuid, 'workspace_id de touchpoints é preservado (não anulado pelo ON DELETE SET NULL)'
+);
+
+-- -----------------------------------------------------------------
+-- 14) Emissão e revogação de referência de continuidade (item 5)
+-- -----------------------------------------------------------------
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
+select throws_ok(
+  $$select issue_continuity_reference('00000000-0000-4000-8000-000000000000'::uuid)$$,
+  'lead_not_found',
+  'Lead inexistente não emite continuidade (mesma recusa de "não encontrado")'
+);
+
+select issue_continuity_reference(:'lead1'::uuid, :'opp2'::uuid, 168) as issued \gset
+reset role;
+
+select isnt(:'issued'::jsonb ->> 'token', null, 'Emissão devolve o token em claro (só nesta resposta)');
+select is(
+  (select count(*)::int from public.continuity_references
+   where lead_id = :'lead1'::uuid and opportunity_id = :'opp2'::uuid and purpose = 'form_continuity'),
+  1, 'A referência é gravada com workspace, contato, lead, oportunidade e finalidade explícitos'
+);
+select is(
+  (select octet_length(token_hash) from public.continuity_references
+   where id = (:'issued'::jsonb ->> 'id')::uuid),
+  32, 'Só o HASH (32 bytes) do token é persistido'
+);
+select is(
+  (select count(*)::int from public.continuity_references ref
+   where ref.id = (:'issued'::jsonb ->> 'id')::uuid
+     and extensions.digest(decode(translate(:'issued'::jsonb ->> 'token', '-_', '+/') ||
+           repeat('=', (4 - length(:'issued'::jsonb ->> 'token') % 4) % 4), 'base64'), 'sha256') = ref.token_hash),
+  1, 'O hash gravado é realmente o SHA-256 do token devolvido (base64url decodificado)'
+);
+
+-- Uma SEGUNDA interação com o token novo acrescenta touchpoint sem
+-- sobrescrever o primeiro (regra explícita do item 5).
+select count(*)::int as touchpoints_before from public.touchpoints where contact_id = :'contact1'::uuid \gset
+
+select ingest_form_event(
+  :'endpoint_cont'::uuid, 'bbbbbbbb-0000-4000-8000-000000000003'::uuid, :'hash1'::bytea,
+  'proto-continuidade-ccc', '\xde'::bytea, '\x000000000000000000000000'::bytea,
+  '\x00000000000000000000000000000000'::bytea, 'aes-256-gcm', '1', '{}'::jsonb, now()
+);
+select id as event_issued from public.webhook_events
+where source_event_id = 'bbbbbbbb-0000-4000-8000-000000000003'::uuid \gset
+
+select (
+  select encode(token_hash, 'base64') from public.continuity_references
+  where id = (:'issued'::jsonb ->> 'id')::uuid
+) as issued_hash_b64 \gset
+
+select process_form_event(:'event_issued'::uuid, jsonb_build_object(
+  'contact', jsonb_build_object('name', 'Visitante Um'),
+  'continuity_token_hash', :'issued_hash_b64',
+  'attribution', jsonb_build_object('channel', 'formulario', 'source', 'referral')
+)) as proc_issued \gset
+
+select is((:'proc_issued'::jsonb ->> 'new_demand')::boolean, false,
+  'Segunda interação com o token emitido acrescenta touchpoint sem abrir demanda nova');
+select is(
+  (select count(*)::int from public.touchpoints where contact_id = :'contact1'::uuid),
+  :'touchpoints_before'::int + 1,
+  'A segunda interação ACRESCENTA um touchpoint (contagem +1), nunca substitui os anteriores'
+);
+select is(
+  (select count(*)::int from public.touchpoints where id = :'tp1'::uuid),
+  1, 'O primeiro touchpoint (tp1) continua existindo, intacto, depois da segunda interação'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
+select revoke_continuity_reference((:'issued'::jsonb ->> 'id')::uuid);
+reset role;
+
+select isnt(
+  (select revoked_at from public.continuity_references where id = (:'issued'::jsonb ->> 'id')::uuid),
+  null, 'Revogação explícita marca revoked_at antes do vencimento'
+);
+
+-- -----------------------------------------------------------------
+-- 15) answers_config: validação real, não decorativa (item 6)
+-- -----------------------------------------------------------------
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
+select throws_ok(
+  format($$select create_form_endpoint(%L::uuid, 'Campos ruins', %L::uuid, %L::uuid, 'Cível', 'call', 60,
+           'new_intake', 'formulario', array['exemplo.test'], 'chave-campos-ruins-aaaaaaa',
+           '{"fields":[{"key":"Chave Maiuscula","label":"x","type":"text"}]}'::jsonb)$$,
+         :'ws', :'pipeline', :'stage0'),
+  'answers_config_invalid: bad key Chave Maiuscula',
+  'Chave de campo fora do padrão (minúsculas/números/underscore) é recusada'
+);
+select throws_ok(
+  format($$select create_form_endpoint(%L::uuid, 'Tipo ruim', %L::uuid, %L::uuid, 'Cível', 'call', 60,
+           'new_intake', 'formulario', array['exemplo.test'], 'chave-tipo-ruim-aaaaaaaaaa',
+           '{"fields":[{"key":"motivo","label":"Motivo","type":"arquivo"}]}'::jsonb)$$,
+         :'ws', :'pipeline', :'stage0'),
+  'answers_config_invalid: bad type for motivo',
+  'Tipo fora da lista fechada (text/boolean/number) é recusado'
+);
+select throws_ok(
+  format($$select create_form_endpoint(%L::uuid, 'Chave duplicada', %L::uuid, %L::uuid, 'Cível', 'call', 60,
+           'new_intake', 'formulario', array['exemplo.test'], 'chave-duplicada-aaaaaaaaaaaa',
+           '{"fields":[{"key":"motivo","label":"a","type":"text"},{"key":"motivo","label":"b","type":"text"}]}'::jsonb)$$,
+         :'ws', :'pipeline', :'stage0'),
+  'answers_config_invalid: duplicate key motivo',
+  'Duas definições com a MESMA chave são recusadas'
+);
+
+select create_form_endpoint(
+  :'ws'::uuid, 'Campos válidos', :'pipeline'::uuid, :'stage0'::uuid, 'Cível', 'call', 60,
+  'new_intake', 'formulario', array['exemplo.test'], 'chave-campos-validos-aaaaaaaa',
+  '{"fields":[{"key":"motivo","label":"Motivo","type":"text","required":true,"maxLength":500}]}'::jsonb
+);
+reset role;
+
+select is(
+  (select (answers_config -> 'fields' -> 0 ->> 'key')
+   from public.form_endpoints where workspace_id = :'ws'::uuid and name = 'Campos válidos'),
+  'motivo', 'Configuração de campos válida é aceita e persistida'
+);
+
+-- -----------------------------------------------------------------
+-- 16) get_lead_attribution: alcance por REGISTRO, não por contato
+--     (item 10 da auditoria pós-dry-run) — mesmo contato, dois leads,
+--     responsáveis diferentes.
+-- -----------------------------------------------------------------
+
+\set vitor '20000000-0000-0000-0000-000000000013'
+insert into public.memberships (workspace_id, user_id, role, status) values
+  (:'ws'::uuid, :'vitor', 'lawyer', 'active');
+
+-- lead1 passa a ter responsável explícito (lucas), para o alcance do
+-- advogado ficar inequívoco nos dois lados do teste.
+update public.leads set assigned_to = :'lucas' where id = :'lead1'::uuid;
+
+insert into public.leads (id, workspace_id, contact_id, legal_area, priority, assigned_to, created_by)
+values (
+  'c1200000-0000-4000-8000-000000000001', :'ws'::uuid, :'contact1'::uuid, 'Trabalhista', 'media', :'vitor', :'otavio'
+)
+returning id as lead2_scope \gset
+
+insert into public.opportunities (workspace_id, lead_id, pipeline_id, stage_id, created_by)
+values (:'ws'::uuid, :'lead2_scope'::uuid, :'pipeline'::uuid, :'stage0'::uuid, :'otavio')
+returning id as opp_scope \gset
+
+insert into public.touchpoints (
+  workspace_id, contact_id, lead_id, opportunity_id, received_at, normalized_occurred_at, channel, position
+)
+values (
+  :'ws'::uuid, :'contact1'::uuid, :'lead2_scope'::uuid, :'opp_scope'::uuid, now(), now(), 'formulario', 999
+)
+returning id as tp_scope \gset
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'lucas', 'role', 'authenticated')::text, true);
+select get_lead_attribution(:'lead1'::uuid) as attribution_lead1 \gset
+reset role;
+
+select is(
+  (select jsonb_array_length(:'attribution_lead1'::jsonb -> 'sequence')),
+  (select count(*)::int from public.touchpoints where lead_id = :'lead1'::uuid),
+  'A sequência de get_lead_attribution(lead1) tem exatamente os touchpoints do PRÓPRIO lead'
+);
+select is(
+  (select bool_or((elem ->> 'id') = :'tp_scope')
+   from jsonb_array_elements(:'attribution_lead1'::jsonb -> 'sequence') elem),
+  false,
+  'A sequência do lead1 NÃO inclui o touchpoint do lead2 do MESMO contato (vazamento corrigido)'
+);
+
+-- vitor é responsável pelo lead2, não pelo lead1: não enxerga lead1.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'vitor', 'role', 'authenticated')::text, true);
+select is(
+  get_lead_attribution(:'lead1'::uuid), null,
+  'Advogado sem acesso ao lead1 recebe null (mesma recusa de "não encontrado")'
+);
+select get_lead_attribution(:'lead2_scope'::uuid) as attribution_lead2 \gset
+reset role;
+
+select is(
+  (select jsonb_array_length(:'attribution_lead2'::jsonb -> 'sequence')),
+  1, 'A sequência do lead2 contém só o próprio touchpoint — nada do lead1 vaza para cá também'
+);
+
+-- -----------------------------------------------------------------
+-- 17) Outbox: publicação falha → cron reclama → republica → marca
+--     published (item 9 da auditoria pós-dry-run).
+-- -----------------------------------------------------------------
+
+select ingest_form_event(
+  :'endpoint'::uuid, 'cccccccc-0000-4000-8000-000000000001'::uuid, :'hash2'::bytea,
+  'proto-outbox-fluxo-aaaa', '\xde'::bytea, '\x000000000000000000000000'::bytea,
+  '\x00000000000000000000000000000000'::bytea, 'aes-256-gcm', '1', '{}'::jsonb, now()
+) as ing_outbox \gset
+
+select is((:'ing_outbox'::jsonb ->> 'outbox_id') is not null, true,
+  'ingest_form_event devolve outbox_id para o evento novo (uso interno)');
+
+select (:'ing_outbox'::jsonb ->> 'outbox_id') as outbox_fluxo \gset
+
+select is(
+  (select state::text from public.outbox where id = :'outbox_fluxo'::uuid),
+  'pending', 'Outbox nasce pending'
+);
+
+-- Reconciliador reclama (mesma RPC que o cron chama).
+select claim_outbox_batch(20, 120) as claimed1 \gset
+select is(
+  (select count(*)::int from jsonb_array_elements(:'claimed1'::jsonb) item
+   where (item ->> 'outbox_id') = :'outbox_fluxo'),
+  1, 'claim_outbox_batch reclama a outbox pendente'
+);
+select is(
+  (select state::text from public.outbox where id = :'outbox_fluxo'::uuid),
+  'publishing', 'Outbox reclamada fica publishing, com lock'
+);
+
+-- Publicação (simulada) FALHA: marca failed e agenda retry imediato.
+select mark_outbox_failed(:'outbox_fluxo'::uuid, 'publish_failed', 0);
+select is(
+  (select state::text from public.outbox where id = :'outbox_fluxo'::uuid),
+  'failed', 'Falha na publicação marca a outbox como failed (elegível ao reconciliador)'
+);
+
+-- O cron reclama de novo — mesma RPC, mesmo caminho de código do
+-- primeiro reclamo: republica o que falhou.
+select claim_outbox_batch(20, 120) as claimed2 \gset
+select is(
+  (select count(*)::int from jsonb_array_elements(:'claimed2'::jsonb) item
+   where (item ->> 'outbox_id') = :'outbox_fluxo'),
+  1, 'Segundo reclamo (o cron) pega a outbox que falhou — republica'
+);
+select is(
+  (select attempts from public.outbox where id = :'outbox_fluxo'::uuid),
+  2, 'Cada reclamo incrementa attempts (primeira tentativa + republicação)'
+);
+
+-- Republicação (simulada) dá certo: marca published.
+select mark_outbox_published(:'outbox_fluxo'::uuid);
+select is(
+  (select state::text from public.outbox where id = :'outbox_fluxo'::uuid),
+  'published', 'Republicação bem-sucedida marca a outbox como published'
+);
+select isnt(
+  (select published_at from public.outbox where id = :'outbox_fluxo'::uuid),
+  null, 'published_at é gravado'
+);
+
+-- Depois de published, um novo reclamo NÃO pega mais esta linha.
+select claim_outbox_batch(20, 120) as claimed3 \gset
+select is(
+  (select count(*)::int from jsonb_array_elements(:'claimed3'::jsonb) item
+   where (item ->> 'outbox_id') = :'outbox_fluxo'),
+  0, 'Outbox published não é mais elegível ao reconciliador'
 );
 
 select * from finish();

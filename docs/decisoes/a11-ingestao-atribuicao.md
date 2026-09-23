@@ -70,7 +70,7 @@ Chave idempotente:
 `unique` no banco, preservada **mesmo depois da limpeza de retenção** (a
 tombstone mantém a linha; só o conteúdo pessoal é eliminado).
 
-### Hash canônico do conteúdo
+### 2.1 Hash canônico do conteúdo
 
 `content_hash` = SHA-256 sobre a representação canônica **do conteúdo de
 negócio**:
@@ -85,6 +85,25 @@ negócio**:
 **Fora do hash** (variam entre tentativas legítimas da mesma submissão):
 token do Turnstile, IP, cabeçalhos, `User-Agent`, timestamps do servidor,
 `source_event_id` (já é a chave), honeypot.
+
+**Correção pós-auditoria (item 1):** três campos que ficavam de fora e
+deveriam estar dentro, porque são conteúdo de NEGÓCIO, não metadado de
+transporte:
+
+- **`occurredAt`** — alimenta a atribuição e o gate "nada de crédito
+  depois do ganho"; precisa ser **estável entre retries da mesma
+  submissão** (por isso o exemplo de integração em
+  `docs/decisoes/a11-exemplo-integracao.md` passou a persistir
+  `occurredAt` junto do `source_event_id`, calculado uma única vez — não
+  recalculado a cada tentativa);
+- **hash do token de continuidade** (nunca o token em claro) — tokens
+  DIFERENTES precisam produzir hashes DIFERENTES; antes, qualquer token
+  virava o mesmo literal `"present"` no conteúdo canônico;
+- **hash do texto de consentimento aceito** (`consent.acceptedText`,
+  nunca o texto em claro) — ver §11.
+
+Também **saiu** do conteúdo canônico o campo `externalIdentity`: deixou
+de existir no contrato público (ver §8).
 
 Comportamento:
 
@@ -160,6 +179,33 @@ persiste IDs explícitos. O prazo de 60 minutos corridos aparece **apenas no
 seed fictício**; nenhum formulário real herda esse valor automaticamente
 (o campo é obrigatório na criação).
 
+### `answers_config`: validação real, não decorativa (item 6 da auditoria pós-dry-run)
+
+O CHECK da tabela (`jsonb_typeof(... -> 'fields') = 'array'`) só garante
+a forma mínima — antes disso, qualquer JSON nesse formato era aceito, a
+borda não recusava campo fora da lista nem obrigatório ausente, e o
+worker não tinha contra o que revalidar. Agora:
+
+- `private.assert_answers_config()` valida de verdade na criação e na
+  edição do endpoint: chave em `[a-z0-9_]{1,60}`, sem duplicatas, rótulo
+  não vazio, tipo em `{text, boolean, number}`, `maxLength` só para
+  `text` (1–2000), no máximo 30 campos — o mesmo conjunto de regras que
+  `src/modules/forms/schema.ts` (Zod) já aplica na tela e na borda;
+- a borda pública (`handleFormSubmission`) recusa `answers` com campo não
+  configurado, obrigatório ausente ou tipo/tamanho inválido — schema
+  Zod construído dinamicamente a partir de `answers_config`;
+- `webhook_events.answers_config_snapshot` fotografa a configuração no
+  momento da ingestão; o worker revalida `answers` contra ESSA cópia,
+  nunca contra a configuração atual do endpoint — mudar os campos aceitos
+  depois de receber o evento não invalida nem reinterpreta silenciosamente
+  um evento já recebido;
+- a tela de configuração (`/configuracoes/formularios`) ganhou um editor
+  de campos (chave, rótulo, tipo, obrigatório) na criação do endpoint.
+  A edição de um endpoint existente (`update_form_endpoint`) já validava
+  no banco, mas ainda não tem UI própria para NENHUM campo — limitação
+  preexistente, não introduzida por esta correção, registrada em
+  `A11-HANDOFF.md`.
+
 ### Falha fechada sem infraestrutura
 
 Em **produção e preview**, a ausência de configuração obrigatória de
@@ -175,12 +221,26 @@ silêncio porque uma variável faltou. Somente:
 Ausência ou versão desconhecida da chave de cifra **impede a ingestão antes
 de qualquer gravação** — o payload nunca chega ao banco em claro.
 
-## 5. Turnstile, IP e rate limit
+## 5. Turnstile, IP, CORS e rate limit
 
 Além de `success`, a verificação confere:
 
 - `hostname` ∈ lista de hostnames esperados do endpoint;
 - `action` = a action esperada do endpoint.
+
+**Correção pós-auditoria (item 2):** o `remoteip` do Siteverify **não é
+mais enviado**. Ele representa um endereço IP real; a política desta
+fase não permite mandar IP — completo ou como HMAC — para nenhum
+terceiro, e um HMAC não tem utilidade nesse campo (a Cloudflare o trata
+como IP, não como identificador opaco). O campo é simplesmente omitido —
+a Cloudflare o trata como opcional. A `idempotency_key` do Siteverify
+também deixou de ser o `source_event_id` da submissão e passou a ser
+`SHA-256(token)`, calculada dentro do próprio verificador: precisa ficar
+estável só entre retries da MESMA verificação (o MESMO token); usar o
+`source_event_id` fazia dois tokens diferentes (ex.: um renovado depois
+de expirar) compartilharem a mesma chave, arriscando a Cloudflare
+devolver uma resposta cacheada da verificação anterior para um token
+novo.
 
 IP:
 
@@ -188,13 +248,33 @@ IP:
 - derivado só dos cabeçalhos confiáveis da Vercel (`x-vercel-forwarded-for`,
   com `x-forwarded-for` como fallback **apenas** fora de produção),
   normalizado;
-- usado no rate limit e no `remoteip` do siteverify apenas como
-  **HMAC-SHA256 com chave própria** (`A11_IP_HMAC_KEY`) — o IP completo
-  nunca vai para Upstash, logs, auditoria, diagnóstico ou
-  `webhook_events`.
+- usado **só no rate limit**, como **HMAC-SHA256 com chave própria**
+  (`A11_IP_HMAC_KEY`) — o IP completo nunca vai para Upstash, logs,
+  auditoria, diagnóstico ou `webhook_events`, e (desde a correção acima)
+  nem o HMAC vai para a Cloudflare.
 
 Rate limit: janela deslizante por `(endpoint, HMAC do IP)` e por
 `(endpoint)`, ambos obrigatórios em produção/preview.
+
+### 5.1 CORS estrito (item 3 da auditoria pós-dry-run)
+
+A rota não tinha CORS nenhum — sem `OPTIONS`, sem
+`Access-Control-Allow-Origin`, nenhuma origem cruzada tinha como saber se
+estava autorizada. Agora:
+
+- `OPTIONS /api/forms/[endpointKey]` resolve o endpoint só pela chave da
+  URL (sem corpo) e devolve `204` com os cabeçalhos de preflight quando o
+  `Origin` bate com um hostname de `allowed_hostnames` — a MESMA lista já
+  usada para o `hostname` do Turnstile;
+- `Access-Control-Allow-Origin` é sempre a origem **exata** recebida,
+  nunca `"*"`, sempre acompanhada de `Vary: Origin`;
+- `Access-Control-Allow-Methods: POST, OPTIONS` e
+  `Access-Control-Allow-Headers: Content-Type` no preflight;
+- os cabeçalhos acompanham toda resposta do `POST` — sucesso **e** erro —
+  desde que a origem seja autorizada: um erro de validação também
+  precisa ser legível pelo JS da origem legítima;
+- sem `Origin` (chamada servidor-a-servidor), não há CORS a oferecer —
+  CORS é mecanismo de navegador, e a ausência do cabeçalho não é recusa.
 
 ## 6. Criptografia do payload bruto
 
@@ -244,6 +324,25 @@ Rotação: documentada aqui (mesmo procedimento da A3, com script próprio),
 Depois do commit, tenta publicar no Inngest. Falha de publicação **não**
 desfaz a ingestão — o outbox já está gravado.
 
+**Correção pós-auditoria (item 9):** a tentativa de publicação inicial
+agora marca a outbox atomicamente pelo resultado — `mark_outbox_published`
+quando o `publish()` dá certo, `mark_outbox_failed` quando lança. Antes,
+nem sucesso nem falha tocavam a linha da outbox: ela ficava sempre
+`pending`, e só o filtro por `webhook_events.status` (não o próprio
+estado da outbox) impedia reconciliação redundante depois do
+processamento — correto por acidente, não por desenho. `ingest_form_event`
+passou a devolver também `outbox_id` (uso interno, nunca na resposta
+pública) para que a rota tenha o que marcar.
+
+**Alinhamento retries × dead (item 9):** `mark_webhook_event_failed()`
+marca o evento como `dead` quando `attempts + 1 >= 10`. O Inngest
+(`src/app/api/inngest/route.ts`) usa `retries: A11_INGEST_MAX_RETRIES`
+(= 9) — 1 tentativa inicial + 9 retries = exatamente as 10 execuções que
+alinham a última tentativa do Inngest com o limiar de `dead`. Antes eram
+5 retries (6 execuções): o evento nunca alcançava `attempts = 10` e
+ficava preso em `failed`, elegível ao cron mesmo depois do Inngest ter
+esgotado as próprias tentativas.
+
 ### Publicação
 
 `webhook_event_id` é o identificador estável enviado ao Inngest (`id` do
@@ -252,9 +351,12 @@ republicar o mesmo id sem duplicar efeito.
 
 ### Cron (reconciliador)
 
-Encontra outbox `pending`/`publishing` vencida, usa locking seguro
+Encontra outbox `pending`/`publishing`/`failed` vencida, usa locking seguro
 (`for update skip locked` + `next_attempt_at`), republica no Inngest,
 registra tentativa. **Nunca executa efeito comercial** — só republica.
+Fluxo completo testado (pgTAP e pela própria rota): publicação inicial
+falha → outbox marcada `failed` → cron reclama (`claim_outbox_batch`) →
+republica → marca `published`.
 
 ### Worker
 
@@ -273,18 +375,68 @@ com efeitos idempotentes**, nunca exactly-once.
 
 ## 8. Identidade, demanda e oportunidade
 
-Ordem segura de resolução:
+**Correção pós-auditoria (item 4):** a fronteira pública desta fase tem
+UMA ÚNICA identidade confiável — a referência de continuidade. Uma versão
+anterior do contrato previa um segundo caminho, "identidade externa
+confiável do mesmo workspace e provedor" (`contact_identifiers`), lido de
+um campo `externalIdentity` declarado no corpo da submissão. Esse campo
+foi **removido do contrato público** (não existe mais no schema, e o
+worker não lê mais nenhum `external_identity`): um visitante anônimo não
+tem como se autodeclarar "sou o contato X" de forma verificável — um
+`{provider, externalId}` vindo do navegador seria tão forjável quanto
+telefone/e-mail, só que capaz de reivindicar QUALQUER contato do
+workspace pelo id, não só o próprio. `contact_identifiers` continua
+existindo e sendo resolvido normalmente pelos canais que TÊM verificação
+própria (ex.: assinatura do webhook do WhatsApp na A7) — só deixou de ser
+alcançável a partir do corpo desta submissão pública.
+
+Ordem segura de resolução nesta fase:
 
 1. **referência de continuidade válida** (token opaco, guardado só por
    hash, com workspace/contato/lead/oportunidade/finalidade/validade/
-   revogação);
-2. **identidade externa confiável** do mesmo workspace e provedor
-   (`contact_identifiers`);
-3. sem identidade confiável.
+   revogação — ver §8.1);
+2. sem identidade confiável.
 
 Telefone e e-mail **normalizam**, **levantam candidato a duplicidade** e
 **nunca reutilizam o contato automaticamente** — a mesma regra da A3.
 Telefone e e-mail **não são** referências de continuidade.
+
+### 8.1 Emissão e revogação da referência de continuidade
+
+**Correção pós-auditoria (item 5):** a tabela `continuity_references`
+existia desde a implementação original, mas nada a preenchia — não havia
+como um usuário do painel realmente emitir um token de continuidade.
+Duas RPCs novas fecham o ciclo:
+
+- `issue_continuity_reference(p_lead_id, p_opportunity_id?,
+  p_validity_hours = 720)` — token de 32 bytes aleatórios
+  (`gen_random_bytes`), devolvido em claro **uma única vez** na própria
+  resposta (base64url); o banco grava só `digest(token, 'sha256')`.
+  Vínculo explícito: workspace e contato herdados do lead, lead
+  obrigatório, oportunidade opcional (precisa pertencer ao MESMO lead),
+  finalidade fixa nesta fase (`private.form_intake_continuity_purpose()`
+  = `'form_continuity'`), validade obrigatória (1–2160 horas, padrão 30
+  dias). Alcance por registro: só quem enxerga o lead (mesma regra de
+  `get_lead_attribution`) pode emitir, e a permissão de aplicação
+  (`continuity.issue`) segue a mesma faixa de `lead.edit`/
+  `opportunity.edit` — quem já age na demanda pode mandar o link.
+- `revoke_continuity_reference(p_continuity_reference_id)` — revogação
+  explícita antes do vencimento, auditada.
+
+**Consistência garantida no banco, não só na aplicação:** a FK composta
+`continuity_references_lead_contact_fkey (workspace_id, lead_id,
+contact_id)` — contra `leads (workspace_id, id, contact_id)`, que ganhou
+o UNIQUE correspondente — impede uma linha apontar um `contact_id`
+diferente do dono do `lead_id` referenciado. `DEFERRABLE INITIALLY
+IMMEDIATE`: continua checada ao fim de cada instrução por padrão (erro
+imediato em uso normal e em teste), mas pode ser adiada explicitamente
+para um fluxo futuro que precise, sem enfraquecer a garantia hoje.
+
+**Finalidade validada no processamento:** `process_form_event` só honra
+uma referência cujo `purpose` seja exatamente
+`private.form_intake_continuity_purpose()`. Um token emitido para outra
+finalidade (ex.: um futuro portal do cliente) é tratado como se não
+existisse — degrada para captação nova, nunca vira erro nem enumeração.
 
 Se a identidade confiável resolve apenas a **pessoa**:
 
@@ -381,6 +533,21 @@ concessão ou recusa, `purpose_code`, base legal, canal, versão e hash do
 texto aceito, instante, endpoint/formulário, evento, evidência mínima e —
 **apenas se a política permitir** — HMAC do IP.
 
+**Correção pós-auditoria (item 7):** três defeitos, todos corrigidos.
+
+1. `decision = 'granted'` sem `textVersion` e `acceptedText` era aceito
+   pela borda — uma marcação "concedido" sem NENHUMA evidência do que a
+   pessoa viu. O schema (`src/server/ingest/submission.ts`) agora exige
+   os dois campos sempre que `decision = 'granted'`; só `'refused'`
+   dispensa os dois.
+2. `consent_evidence.text_hash` **nunca era calculado** — o worker não
+   mandava o campo para a RPC, e a coluna ficava sempre nula, apesar do
+   schema já prever "prova de qual texto foi aceito". Agora o SHA-256 de
+   `acceptedText` é calculado na borda (`workerInput`) e gravado em
+   `text_hash`.
+3. O texto aceito (`acceptedText`) passou a integrar o hash de conteúdo
+   canônico (como SHA-256, nunca em claro) — ver §2.1.
+
 Consentimento do formulário e `whatsapp_atendimento` são **finalidades
 separadas**: uma nunca é derivada da outra. Receber um formulário não
 autoriza envio ativo por WhatsApp.
@@ -429,12 +596,22 @@ concorrentes (`for update skip locked`).
 
 ## 13. Mesclagem e desfazer
 
-`merge_contacts()`/`unmerge_contact()` são estendidas em **migration nova**
-(nunca editando a anterior) para reparentar, além do que já tratam:
-`touchpoints`, `touchpoint_demand_links`, `continuity_references` e
-`consent_evidence`. Snapshot mínimo, detecção de alteração posterior,
-reversibilidade e isolamento preservados; nada do que já era tratado
-regride.
+`merge_contacts()`/`unmerge_contact()` (`20260921100800_a11_merge_integration.sql`)
+são estendidas para reparentar, além do que já tratam: `touchpoints`,
+`continuity_references` e `consent_evidence`. **`touchpoint_demand_links`
+NÃO é reparentada** — de propósito: ela referencia `touchpoint_id`, que
+não muda na mesclagem, nunca `contact_id` diretamente; a cadeia de
+correção acompanha o touchpoint sozinha (mesmo raciocínio já usado para
+`client_handoffs` na A8). Correção de relatório: uma comunicação anterior
+inverteu essa lista (afirmou que `continuity_references` ficava de fora e
+`touchpoint_demand_links` entrava) — o código e este documento agora
+concordam, e é esta versão que vale.
+
+Snapshot mínimo, detecção de alteração posterior (item 11: testado agora
+também para `continuity_references` e `consent_evidence`, incluindo o
+caso em que uma linha reparentada é alterada antes do desfazer — o undo
+inteiro é recusado, não só a linha afetada), reversibilidade e isolamento
+preservados; nada do que já era tratado regride.
 
 ## 14. Segurança e permissões
 
@@ -449,6 +626,25 @@ regride.
 - Configuração de endpoint restrita a **owner/admin**.
 - Correção de vínculo segue a matriz de ação sensível já vigente e gera
   auditoria.
+- **Alcance por registro em `get_lead_attribution` (correção do item 10
+  da auditoria pós-dry-run):** a função já negava o lead inteiro fora do
+  alcance do papel (`private.lead_accessible_to_role`), mas a sequência
+  de touchpoints devolvida para um lead ACESSÍVEL era filtrada por
+  `contact_id`, não por `lead_id`. Um contato pode ter mais de um lead
+  (mesma pessoa, duas demandas), cada uma com responsável diferente — um
+  advogado com acesso só ao lead A recebia também os touchpoints (ids,
+  vínculo vigente, histórico com nome de quem corrigiu, evidência de
+  consentimento) do lead B do MESMO contato, mesmo sem acesso a B. A
+  `sequence` agora é escopada por `t.lead_id = v_lead.id`.
+- **FKs compostas com `ON DELETE SET NULL` (correção do item 8):**
+  `consent_evidence.contact_consent_id` e `touchpoints.consent_evidence_id`
+  são colunas de FKs COMPOSTAS `(workspace_id, coluna_opcional)`. Um
+  `ON DELETE SET NULL` sem lista de colunas anularia as DUAS colunas da
+  FK — incluindo `workspace_id`, violando o NOT NULL da coluna e, antes
+  disso, quebrando o isolamento por tenant no exato momento em que o
+  registro referenciado é apagado. As duas constraints agora usam a forma
+  `ON DELETE SET NULL (coluna_opcional)` (sintaxe do Postgres 15+), que
+  anula só a coluna certa — `workspace_id` nunca é tocado.
 
 ## 15. Fora desta fase
 

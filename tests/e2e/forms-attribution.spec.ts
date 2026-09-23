@@ -25,6 +25,7 @@ test.describe.serial("A11 — formulários próprios e atribuição", () => {
     key: string,
     overrides: Record<string, unknown> = {},
     ip = "203.0.113.55",
+    extraHeaders: Record<string, string> = {},
   ) {
     const body = {
       sourceEventId: crypto.randomUUID(),
@@ -39,13 +40,16 @@ test.describe.serial("A11 — formulários próprios e atribuição", () => {
       },
       answers: { motivo: "Rescisão indireta" },
       attribution: { channel: "formulario", source: "google", campaign: "marca" },
-      consent: { decision: "granted", textVersion: "v1" },
+      // decision=granted exige textVersion E acceptedText: o texto
+      // REALMENTE apresentado ao visitante (item 7 da auditoria
+      // pós-dry-run) — sem isso a submissão é recusada por schema.
+      consent: { decision: "granted", textVersion: "v1", acceptedText: "Concordo com o tratamento dos meus dados para contato." },
       ...overrides,
     };
 
     return request.post(`/api/forms/${key}`, {
       data: body,
-      headers: { "x-vercel-forwarded-for": ip },
+      headers: { "x-vercel-forwarded-for": ip, ...extraHeaders },
       failOnStatusCode: false,
     });
   }
@@ -61,6 +65,14 @@ test.describe.serial("A11 — formulários próprios e atribuição", () => {
     // O verificador de teste exige "localhost" na lista — mesma
     // conferência de hostname do verificador real.
     await page.getByLabel("Domínios permitidos (separados por vírgula)").fill("localhost");
+
+    // Configura o campo "motivo" (item 6 da auditoria pós-dry-run): sem
+    // isto, a borda recusaria a submissão do teste 2 por campo não
+    // configurado — a lista de campos deixou de ser decorativa.
+    await page.getByRole("button", { name: "Adicionar campo" }).click();
+    await page.getByLabel("Chave do campo").fill("motivo");
+    await page.getByLabel("Rótulo do campo").fill("Motivo do contato");
+
     await page.getByRole("button", { name: "Criar formulário" }).click();
 
     // O endereço aparece no aviso de sucesso e também na lista de
@@ -143,6 +155,57 @@ test.describe.serial("A11 — formulários próprios e atribuição", () => {
     expect(respostas).toContain(429);
     expect(respostas.at(-1)).toBe(429);
     expect(respostas.indexOf(429)).toBeGreaterThan(0);
+  });
+
+  test("5c. CORS: origem autorizada recebe Access-Control-Allow-Origin exato; origem recusada, nenhum", async ({
+    request,
+  }) => {
+    const ip = "203.0.113.62";
+
+    // Preflight de uma origem AUTORIZADA (hostname "localhost", igual ao
+    // declarado na criação do endpoint no teste 1).
+    const preflightOk = await request.fetch(`/api/forms/${publicKey}`, {
+      method: "OPTIONS",
+      headers: {
+        origin: "http://localhost",
+        "access-control-request-method": "POST",
+      },
+      failOnStatusCode: false,
+    });
+    expect(preflightOk.headers()["access-control-allow-origin"]).toBe("http://localhost");
+    expect(preflightOk.headers()["access-control-allow-methods"] ?? "").toContain("POST");
+
+    // Preflight de uma origem NÃO autorizada: nenhum cabeçalho de CORS —
+    // o navegador bloqueia o POST antes de enviá-lo.
+    const preflightRecusado = await request.fetch(`/api/forms/${publicKey}`, {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://atacante.test",
+        "access-control-request-method": "POST",
+      },
+      failOnStatusCode: false,
+    });
+    expect(preflightRecusado.headers()["access-control-allow-origin"]).toBeUndefined();
+
+    // A resposta de SUCESSO do POST também carrega o cabeçalho para a
+    // origem autorizada — não só o preflight.
+    const postOk = await submit(request, publicKey, {}, ip, { origin: "http://localhost" });
+    expect(postOk.status()).toBe(202);
+    expect(postOk.headers()["access-control-allow-origin"]).toBe("http://localhost");
+
+    // E uma resposta de ERRO (aqui, honeypot) também — origem autorizada
+    // precisa conseguir LER o erro, não só o sucesso.
+    const postErro = await submit(request, publicKey, { website: "http://spam.test" }, ip, {
+      origin: "http://localhost",
+    });
+    expect(postErro.status()).toBe(400);
+    expect(postErro.headers()["access-control-allow-origin"]).toBe("http://localhost");
+
+    // Origem não autorizada: o POST ainda é processado no servidor (CORS
+    // não é uma barreira de rede), mas sem cabeçalho — o navegador
+    // bloqueia a LEITURA da resposta pelo JS da página atacante.
+    const postRecusado = await submit(request, publicKey, {}, ip, { origin: "https://atacante.test" });
+    expect(postRecusado.headers()["access-control-allow-origin"]).toBeUndefined();
   });
 
   test("6. a sequência de origem aparece no Perfil 360", async ({ page }) => {

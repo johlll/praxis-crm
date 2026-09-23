@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 
 import { createAdminSupabaseClient } from "@/server/supabase/admin";
-import { handleFormSubmission, type PublicFailure } from "@/server/ingest/handler";
+import { handleFormSubmission, resolveEndpointForCors, type PublicFailure } from "@/server/ingest/handler";
 import { usesTestAdapters } from "@/server/ingest/config";
+import { corsPreflightHeaders, corsResponseHeaders, matchAllowedOrigin } from "@/server/ingest/cors";
 import { fakeRateLimiter, fakeTurnstileVerifier, inlineWorkerPublisher } from "@/server/ingest/test-adapters";
 import { inngestPublisher } from "@/server/ingest/publisher";
 import { upstashRateLimiter } from "@/server/ingest/rate-limit";
@@ -31,6 +32,24 @@ const STATUS: Record<PublicFailure, number> = {
   service_unavailable: 503,
 };
 
+/**
+ * Preflight de CORS (item 3 da auditoria pós-dry-run). Resolve o
+ * endpoint só pela chave da URL (sem corpo — é assim que um preflight
+ * chega) e autoriza a origem exata quando o hostname dela está entre os
+ * `allowed_hostnames` do endpoint. Sem nenhum cabeçalho de CORS para
+ * origem não autorizada: o navegador bloqueia o POST antes de enviá-lo.
+ */
+export async function OPTIONS(request: Request, { params }: { params: Promise<{ endpointKey: string }> }) {
+  const { endpointKey } = await params;
+  const supabase = createAdminSupabaseClient();
+  const endpoint = await resolveEndpointForCors(supabase, endpointKey);
+  const allowedOrigin = endpoint
+    ? matchAllowedOrigin(request.headers.get("origin"), endpoint.allowed_hostnames)
+    : null;
+
+  return new NextResponse(null, { status: 204, headers: corsPreflightHeaders(allowedOrigin) });
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ endpointKey: string }> },
@@ -55,13 +74,18 @@ export async function POST(
     });
   } catch {
     // Qualquer erro inesperado vira a MESMA resposta sanitizada: nenhum
-    // detalhe interno cruza a fronteira pública.
+    // detalhe interno cruza a fronteira pública. Sem `result`, não há
+    // endpoint resolvido e portanto nenhuma origem para autorizar.
     return NextResponse.json({ error: "service_unavailable" }, { status: 503 });
   }
 
+  // Cabeçalhos de CORS acompanham sucesso E erro, desde que a origem
+  // seja autorizada (defeito corrigido: a rota não tinha CORS nenhum).
+  const headers = corsResponseHeaders(result.corsOrigin);
+
   if (!result.ok) {
-    return NextResponse.json({ error: result.failure }, { status: STATUS[result.failure] });
+    return NextResponse.json({ error: result.failure }, { status: STATUS[result.failure], headers });
   }
 
-  return NextResponse.json({ protocol: result.protocol, status: "received" }, { status: 202 });
+  return NextResponse.json({ protocol: result.protocol, status: "received" }, { status: 202, headers });
 }

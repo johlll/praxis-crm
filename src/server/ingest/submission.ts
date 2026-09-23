@@ -1,7 +1,12 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 
 import { dddFromE164, normalizeEmail, normalizePhone, toE164BR } from "@/server/ingest/canonical";
+
+/** SHA-256 em hex — usado tanto para o hash de conteúdo quanto (não aqui) para o hash de continuidade do worker. */
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
 
 /**
  * Contrato público da submissão (A11) — validado com Zod ANTES da cifra
@@ -46,19 +51,32 @@ export const submissionSchema = z
         referrer: trimmed(600).optional(),
       })
       .default({}),
+    // `granted` sem versão/texto aceitos NUNCA é consentimento informado —
+    // é só uma marcação sem evidência do que a pessoa realmente viu. Por
+    // isso o refine abaixo: só `refused` pode dispensar os dois campos.
     consent: z
       .object({
         decision: z.enum(["granted", "refused"]),
         textVersion: trimmed(40).optional(),
         acceptedText: trimmed(4000).optional(),
       })
+      .refine(
+        (value) => value.decision !== "granted" || Boolean(value.textVersion && value.acceptedText),
+        { message: "consentimento concedido exige textVersion e acceptedText", path: ["decision"] },
+      )
       .optional(),
     // Token opaco de continuidade, quando o visitante veio de um link
-    // próprio. Telefone e e-mail NUNCA fazem esse papel.
+    // próprio (emitido por issue_continuity_reference, entregue fora de
+    // banda). Telefone e e-mail NUNCA fazem esse papel.
+    //
+    // NÃO existe (e nunca existiu de propósito) um campo de identidade
+    // declarada pelo navegador (ex.: "externalIdentity"): um visitante
+    // anônimo não tem como se autodeclarar "sou o contato X" — um valor
+    // assim seria tão forjável quanto telefone/e-mail, só que capaz de
+    // reivindicar QUALQUER contato do workspace em vez de só o próprio.
+    // A única identidade confiável desta fronteira é o token de
+    // continuidade, verificado só por hash.
     continuityToken: trimmed(128).optional(),
-    externalIdentity: z
-      .object({ provider: trimmed(40).min(1), externalId: trimmed(200).min(1) })
-      .optional(),
   })
   .strict();
 
@@ -68,9 +86,32 @@ export type Submission = z.infer<typeof submissionSchema>;
  * O que entra no hash de conteúdo: só o conteúdo de NEGÓCIO. Fora ficam
  * token do Turnstile, honeypot, IP, cabeçalhos e a própria chave
  * idempotente (contrato §2).
+ *
+ * Três campos que ENTRAM aqui e não entravam antes (defeito corrigido):
+ *
+ *  - `occurredAt`: é conteúdo de negócio — alimenta a atribuição e o
+ *    gate "nada de crédito depois do ganho". Ficando fora do hash, um
+ *    retry com a MESMA chave podia variar `occurredAt` livremente sem
+ *    disparar `idempotency_payload_conflict`, e a primeira gravação
+ *    sempre vencia em silêncio. Precisa ser ESTÁVEL entre tentativas da
+ *    mesma submissão — por isso o exemplo de integração agora persiste
+ *    `occurredAt` junto do `sourceEventId`, calculado uma única vez.
+ *
+ *  - `continuityToken`: hash SHA-256 do token, nunca o token em claro
+ *    (não pode "registrar o token em claro" no diagnóstico nem no hash
+ *    de conteúdo). Tokens DIFERENTES precisam produzir hashes de
+ *    conteúdo DIFERENTES — antes, qualquer token virava o mesmo literal
+ *    `"present"`, então trocar de token (ex.: reenviar com um link de
+ *    continuidade diferente) não mudava o hash.
+ *
+ *  - `consent.acceptedText`: SHA-256 determinístico do texto aceito, não
+ *    o texto em si (o texto pode ser longo; o hash já identifica
+ *    unicamente qual versão foi apresentada, e a decisão de
+ *    "concedido" nunca pode colar sem evidência do texto).
  */
 export function businessContent(submission: Submission) {
   return {
+    occurredAt: submission.occurredAt,
     contact: {
       name: submission.contact.name,
       type: submission.contact.type,
@@ -81,9 +122,14 @@ export function businessContent(submission: Submission) {
     },
     answers: submission.answers,
     attribution: submission.attribution,
-    consent: submission.consent ? { decision: submission.consent.decision, textVersion: submission.consent.textVersion } : undefined,
-    continuity: submission.continuityToken ? "present" : undefined,
-    externalIdentity: submission.externalIdentity,
+    consent: submission.consent
+      ? {
+          decision: submission.consent.decision,
+          textVersion: submission.consent.textVersion,
+          acceptedTextHash: submission.consent.acceptedText ? sha256Hex(submission.consent.acceptedText) : undefined,
+        }
+      : undefined,
+    continuityTokenHash: submission.continuityToken ? sha256Hex(submission.continuityToken) : undefined,
   } as const;
 }
 
@@ -114,7 +160,6 @@ export function sanitizedDiagnostics(submission: Submission) {
     has_consent: Boolean(submission.consent),
     consent_decision: submission.consent?.decision ?? null,
     has_continuity_token: Boolean(submission.continuityToken),
-    has_external_identity: Boolean(submission.externalIdentity),
     uf: submission.contact.uf?.toUpperCase() ?? null,
   };
 }
@@ -163,13 +208,17 @@ export function workerInput(
           purpose: "Contato a partir de formulário público",
           text_version: submission.consent.textVersion ?? null,
           accepted_text: submission.consent.acceptedText ?? null,
+          // SHA-256 determinístico do texto REALMENTE apresentado — é o
+          // que consent_evidence.text_hash grava. Sem isto a coluna
+          // ficava sempre nula, e "concedido" não tinha como provar QUAL
+          // texto foi aceito.
+          text_hash: submission.consent.acceptedText
+            ? Buffer.from(sha256Hex(submission.consent.acceptedText), "hex").toString("base64")
+            : null,
           evidence: { contract_version: submission.contractVersion },
         }
       : undefined,
     continuity_token_hash: extras.continuityTokenHashBase64,
-    external_identity: submission.externalIdentity
-      ? { provider: submission.externalIdentity.provider, external_id: submission.externalIdentity.externalId }
-      : undefined,
     summary: answersSummary || null,
     ip_hmac: extras.ipHmacBase64,
   };

@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { answersConfigSchema, buildAnswersSchema, EMPTY_ANSWERS_CONFIG } from "@/modules/forms/schema";
 import { contentHash } from "@/server/ingest/canonical";
+import { matchAllowedOrigin } from "@/server/ingest/cors";
 import { IngestConfigError, getIngestConfig, usesTestAdapters } from "@/server/ingest/config";
 import { clientIpFromHeaders, shouldTrustForwardedFor } from "@/server/ingest/client-ip";
 import { encryptPayload, hmacIp } from "@/server/ingest/payload-crypto";
@@ -40,8 +42,8 @@ export type PublicFailure =
   | "service_unavailable";
 
 export type IngestResult =
-  | { ok: true; protocol: string }
-  | { ok: false; failure: PublicFailure };
+  | { ok: true; protocol: string; corsOrigin: string | null }
+  | { ok: false; failure: PublicFailure; corsOrigin: string | null };
 
 export type IngestDeps = {
   supabase: SupabaseClient;
@@ -56,7 +58,23 @@ type EndpointConfig = {
   contract_version: number;
   turnstile_action: string;
   allowed_hostnames: string[];
+  answers_config: unknown;
 };
+
+/**
+ * Resolve o endpoint só pela CHAVE da URL — sem depender do corpo. Usado
+ * tanto pelo preflight (OPTIONS, que não tem corpo) quanto pelo início
+ * do POST, para que a decisão de CORS exista mesmo quando a submissão
+ * falha por outro motivo (tamanho, schema, honeypot).
+ */
+export async function resolveEndpointForCors(
+  supabase: SupabaseClient,
+  endpointKey: string,
+): Promise<EndpointConfig | null> {
+  const { data, error } = await supabase.rpc("resolve_form_endpoint", { p_public_key: endpointKey });
+  if (error || !data) return null;
+  return data as unknown as EndpointConfig;
+}
 
 export async function handleFormSubmission(
   endpointKey: string,
@@ -66,78 +84,92 @@ export async function handleFormSubmission(
   // 1. Configuração obrigatória. Sem ela (Turnstile, rate limit, Inngest,
   //    cifra), a ingestão para AQUI — antes de ler o corpo, antes de
   //    qualquer gravação. Nunca se desliga uma proteção porque a variável
-  //    faltou.
+  //    faltou. Sem configuração não há como resolver nada com segurança,
+  //    então também não há CORS a oferecer.
   try {
     getIngestConfig();
   } catch (error) {
-    if (error instanceof IngestConfigError) return { ok: false, failure: "service_unavailable" };
+    if (error instanceof IngestConfigError) return { ok: false, failure: "service_unavailable", corsOrigin: null };
     throw error;
   }
 
-  // 2. Limite de corpo, antes de desserializar.
+  // 2. Endpoint resolvido JÁ AQUI (só pela chave da URL, sem corpo): é o
+  //    que permite que TODA resposta daqui para frente — sucesso ou
+  //    qualquer recusa — carregue os cabeçalhos de CORS corretos para uma
+  //    origem autorizada, não só a resposta de sucesso.
+  const endpoint = await resolveEndpointForCors(deps.supabase, endpointKey);
+  const corsOrigin = endpoint
+    ? matchAllowedOrigin(request.headers.get("origin"), endpoint.allowed_hostnames)
+    : null;
+  if (!endpoint) return { ok: false, failure: "form_endpoint_unavailable", corsOrigin };
+
+  // 3. Limite de corpo, antes de desserializar.
   const raw = await request.text();
   if (Buffer.byteLength(raw, "utf8") > MAX_BODY_BYTES) {
-    return { ok: false, failure: "payload_too_large" };
+    return { ok: false, failure: "payload_too_large", corsOrigin };
   }
 
   let json: unknown;
   try {
     json = JSON.parse(raw);
   } catch {
-    return { ok: false, failure: "invalid_submission" };
+    return { ok: false, failure: "invalid_submission", corsOrigin };
   }
 
-  // 3. Schema estrito: campo desconhecido é recusa, não "ignora e segue".
+  // 4. Schema estrito: campo desconhecido é recusa, não "ignora e segue".
   const parsed = submissionSchema.safeParse(json);
-  if (!parsed.success) return { ok: false, failure: "invalid_submission" };
+  if (!parsed.success) return { ok: false, failure: "invalid_submission", corsOrigin };
   const submission = parsed.data;
 
-  // 4. Honeypot: preenchido = robô. Mesma recusa genérica.
+  // 5. Honeypot: preenchido = robô. Mesma recusa genérica.
   if (submission.website && submission.website.trim() !== "") {
-    return { ok: false, failure: "invalid_submission" };
+    return { ok: false, failure: "invalid_submission", corsOrigin };
   }
 
-  // 5. Endpoint. Chave inexistente, chave REVOGADA e endpoint
-  //    DESABILITADO são indistinguíveis daqui para fora.
-  const { data: endpointData, error: endpointError } = await deps.supabase.rpc("resolve_form_endpoint", {
-    p_public_key: endpointKey,
-  });
-  if (endpointError || !endpointData) return { ok: false, failure: "form_endpoint_unavailable" };
-  const endpoint = endpointData as unknown as EndpointConfig;
-
   if (endpoint.contract_version !== submission.contractVersion) {
-    return { ok: false, failure: "invalid_submission" };
+    return { ok: false, failure: "invalid_submission", corsOrigin };
+  }
+
+  // 5b. `answers` só pode conter os campos que o ENDPOINT configura:
+  //     campo desconhecido, obrigatório ausente ou tipo/tamanho errado
+  //     são recusados aqui — a borda nunca aceita e guarda "o que der".
+  const answersConfigResult = answersConfigSchema.safeParse(endpoint.answers_config ?? EMPTY_ANSWERS_CONFIG);
+  const answersConfig = answersConfigResult.success ? answersConfigResult.data : EMPTY_ANSWERS_CONFIG;
+  if (!buildAnswersSchema(answersConfig).safeParse(submission.answers).success) {
+    return { ok: false, failure: "invalid_submission", corsOrigin };
   }
 
   // 6. IP: só de cabeçalho confiável da borda, nunca do corpo. Só o HMAC
   //    sai daqui.
   const ip = clientIpFromHeaders(request.headers, { trustForwardedFor: shouldTrustForwardedFor() });
-  if (!ip.ok) return { ok: false, failure: "invalid_submission" };
+  if (!ip.ok) return { ok: false, failure: "invalid_submission", corsOrigin };
   const ipHmac = hmacIp(ip.ip);
   const ipHmacHex = ipHmac.toString("hex");
 
   // 7. Rate limit antes do Turnstile: é a proteção mais barata e a que
   //    contém a enxurrada sem gastar chamada externa.
   const limited = await deps.rateLimit({ endpointId: endpoint.id, ipHmacHex });
-  if (!limited.ok) return { ok: false, failure: "rate_limited" };
+  if (!limited.ok) return { ok: false, failure: "rate_limited", corsOrigin };
 
-  // 8. Turnstile com hostname e action conferidos (não só `success`).
-  //    `idempotency_key` = a própria chave da submissão: um retry da
-  //    mesma submissão revalida o mesmo token sem ser punido.
+  // 8. Turnstile com hostname e action conferidos (não só `success`). A
+  //    chave de idempotência do siteverify é derivada do PRÓPRIO TOKEN,
+  //    dentro do verificador — nunca do IP (que nunca é enviado à
+  //    Cloudflare, nem como HMAC) nem do sourceEventId (que ficaria
+  //    estável mesmo quando o token muda).
   const captcha = await deps.verifyTurnstile({
     token: submission.turnstileToken,
-    idempotencyKey: submission.sourceEventId,
-    remoteIdentifier: ipHmacHex,
     expectedAction: endpoint.turnstile_action,
     allowedHostnames: endpoint.allowed_hostnames,
   });
-  if (!captcha.ok) return { ok: false, failure: "captcha_failed" };
+  if (!captcha.ok) return { ok: false, failure: "captcha_failed", corsOrigin };
 
   // 9. Hash canônico do conteúdo de negócio e cifra do payload bruto.
   const hash = contentHash(businessContent(submission));
   const encrypted = encryptPayload(JSON.stringify(submission));
 
-  // 10. Transação de ingestão.
+  // 10. Transação de ingestão. `answers_config_snapshot` fotografa a
+  //     configuração vigente AGORA — é contra ELA (não contra uma edição
+  //     posterior do endpoint) que o worker revalida antes de processar.
   const { data: ingested, error: ingestError } = await deps.supabase.rpc("ingest_form_event", {
     p_form_endpoint_id: endpoint.id,
     p_source_event_id: submission.sourceEventId,
@@ -154,39 +186,52 @@ export async function handleFormSubmission(
     // também não é persistido nesta fase.
     p_payload_sanitized: sanitizedDiagnostics(submission),
     p_occurred_at: submission.occurredAt,
+    p_answers_config_snapshot: answersConfig,
   });
 
   if (ingestError) {
     if (ingestError.message?.includes("idempotency_payload_conflict")) {
-      return { ok: false, failure: "idempotency_payload_conflict" };
+      return { ok: false, failure: "idempotency_payload_conflict", corsOrigin };
     }
     if (ingestError.message?.includes("form_endpoint_unavailable")) {
-      return { ok: false, failure: "form_endpoint_unavailable" };
+      return { ok: false, failure: "form_endpoint_unavailable", corsOrigin };
     }
-    return { ok: false, failure: "service_unavailable" };
+    return { ok: false, failure: "service_unavailable", corsOrigin };
   }
 
   const result = ingested as unknown as {
     protocol: string;
     created: boolean;
     webhook_event_id: string;
+    outbox_id: string | null;
   };
 
   // 11. Publicação DEPOIS do commit. Falha aqui não desfaz nada e não
-  //     muda a resposta: a outbox já está gravada e o cron recupera.
-  if (result.created) {
+  //     muda a resposta: a outbox já está gravada e o cron recupera —
+  //     mas o RESULTADO da tentativa inicial precisa refletir na outbox
+  //     (defeito corrigido: antes, nem sucesso nem falha marcavam nada,
+  //     deixando a linha sempre "pending" até o cron reconciliar por
+  //     acaso ou o evento ser processado por outro caminho).
+  if (result.created && result.outbox_id) {
     try {
       await deps.publish({
         webhookEventId: result.webhook_event_id,
         workspaceId: endpoint.workspace_id,
       });
+      await deps.supabase.rpc("mark_outbox_published", { p_outbox_id: result.outbox_id });
     } catch {
-      // Silêncio proposital: o visitante não precisa (nem deve) saber que
-      // a fila está fora do ar — e o evento não se perdeu.
+      // Silêncio proposital para o VISITANTE: ele não precisa (nem deve)
+      // saber que a fila está fora do ar — o evento não se perdeu. Mas a
+      // outbox precisa saber, para que o cron reconcilie sem esperar o
+      // próximo lock expirar.
+      await deps.supabase.rpc("mark_outbox_failed", {
+        p_outbox_id: result.outbox_id,
+        p_error_code: "initial_publish_failed",
+      });
     }
   }
 
-  return { ok: true, protocol: result.protocol };
+  return { ok: true, protocol: result.protocol, corsOrigin };
 }
 
 export function isTestAdapterMode(): boolean {

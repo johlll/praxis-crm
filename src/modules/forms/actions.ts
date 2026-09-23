@@ -1,15 +1,27 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 
 import { createServerSupabaseClient } from "@/server/supabase/server";
 import { requirePermissionSafe } from "@/server/authz/safe";
 import { requireWorkspace } from "@/server/authz/permissions";
 import { toUserMessage } from "@/lib/errors";
 import { generateEndpointPublicKey } from "@/server/ingest/submission";
+import { uuidSchema } from "@/lib/uuid";
 import { correctLinkSchema, formEndpointIdSchema, formEndpointSchema, setStatusSchema } from "./schema";
 
 export type FormActionState = { ok: boolean; error?: string; publicKey?: string };
+
+export type ContinuityActionState = { ok: boolean; error?: string; token?: string; expiresAt?: string };
+
+const issueContinuitySchema = z.object({
+  leadId: uuidSchema,
+  opportunityId: uuidSchema.or(z.literal("")).optional(),
+  validityHours: z.coerce.number().int().min(1).max(2160).default(720),
+});
+
+const revokeContinuitySchema = z.object({ continuityReferenceId: uuidSchema });
 
 function revalidateForms() {
   revalidatePath("/configuracoes/formularios");
@@ -32,6 +44,7 @@ export async function createFormEndpointAction(
     captureMode: formData.get("captureMode"),
     turnstileAction: formData.get("turnstileAction"),
     allowedHostnames: formData.get("allowedHostnames"),
+    answersConfigJson: formData.get("answersConfigJson") ?? undefined,
   });
   if (!parsed.success) return { ok: false, error: "Confira os campos do formulário." };
 
@@ -52,6 +65,7 @@ export async function createFormEndpointAction(
     p_turnstile_action: parsed.data.turnstileAction,
     p_allowed_hostnames: parsed.data.allowedHostnames,
     p_public_key: publicKey,
+    p_answers_config: parsed.data.answersConfigJson,
   });
 
   if (error) return { ok: false, error: toUserMessage(error) };
@@ -78,6 +92,7 @@ export async function updateFormEndpointAction(
     captureMode: formData.get("captureMode"),
     turnstileAction: formData.get("turnstileAction"),
     allowedHostnames: formData.get("allowedHostnames"),
+    answersConfigJson: formData.get("answersConfigJson") ?? undefined,
   });
   if (!id.success || !parsed.success) return { ok: false, error: "Confira os campos do formulário." };
 
@@ -93,6 +108,7 @@ export async function updateFormEndpointAction(
     p_capture_mode: parsed.data.captureMode,
     p_turnstile_action: parsed.data.turnstileAction,
     p_allowed_hostnames: parsed.data.allowedHostnames,
+    p_answers_config: parsed.data.answersConfigJson,
   });
 
   if (error) return { ok: false, error: toUserMessage(error) };
@@ -191,5 +207,60 @@ export async function correctTouchpointLinkAction(
 
   revalidatePath(`/leads/${parsed.data.leadId}`);
   revalidatePath("/visao-geral");
+  return { ok: true };
+}
+
+/**
+ * Emite um token de continuidade (A11, item 5 da auditoria pós-dry-run):
+ * aleatório, gerado NO SERVIDOR pela RPC, devolvido uma única vez. O
+ * componente que chama esta action é responsável por mostrar o token ao
+ * usuário AGORA — ele nunca é recuperável depois (o banco só guarda o
+ * hash).
+ */
+export async function issueContinuityReferenceAction(
+  _prev: ContinuityActionState,
+  formData: FormData,
+): Promise<ContinuityActionState> {
+  const guard = await requirePermissionSafe("continuity.issue");
+  if ("error" in guard) return { ok: false, error: guard.error };
+
+  const parsed = issueContinuitySchema.safeParse({
+    leadId: formData.get("leadId"),
+    opportunityId: formData.get("opportunityId") ?? "",
+    validityHours: formData.get("validityHours") ?? undefined,
+  });
+  if (!parsed.success) return { ok: false, error: "Dados inválidos para gerar o link." };
+
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("issue_continuity_reference", {
+    p_lead_id: parsed.data.leadId,
+    ...(parsed.data.opportunityId ? { p_opportunity_id: parsed.data.opportunityId } : {}),
+    p_validity_hours: parsed.data.validityHours,
+  });
+
+  if (error) return { ok: false, error: toUserMessage(error) };
+
+  const result = data as unknown as { token: string; expires_at: string };
+  return { ok: true, token: result.token, expiresAt: result.expires_at };
+}
+
+export async function revokeContinuityReferenceAction(
+  _prev: ContinuityActionState,
+  formData: FormData,
+): Promise<ContinuityActionState> {
+  const guard = await requirePermissionSafe("continuity.issue");
+  if ("error" in guard) return { ok: false, error: guard.error };
+
+  const parsed = revokeContinuitySchema.safeParse({
+    continuityReferenceId: formData.get("continuityReferenceId"),
+  });
+  if (!parsed.success) return { ok: false, error: "Referência inválida." };
+
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("revoke_continuity_reference", {
+    p_continuity_reference_id: parsed.data.continuityReferenceId,
+  });
+
+  if (error) return { ok: false, error: toUserMessage(error) };
   return { ok: true };
 }

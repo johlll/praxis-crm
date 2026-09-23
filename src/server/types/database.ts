@@ -904,11 +904,11 @@ export type Database = {
             referencedColumns: ["workspace_id", "id"]
           },
           {
-            foreignKeyName: "continuity_references_lead_same_workspace_fkey"
-            columns: ["workspace_id", "lead_id"]
+            foreignKeyName: "continuity_references_lead_contact_fkey"
+            columns: ["workspace_id", "lead_id", "contact_id"]
             isOneToOne: false
             referencedRelation: "leads"
-            referencedColumns: ["workspace_id", "id"]
+            referencedColumns: ["workspace_id", "id", "contact_id"]
           },
           {
             foreignKeyName: "continuity_references_opportunity_same_lead_fkey"
@@ -2411,6 +2411,7 @@ export type Database = {
       }
       webhook_events: {
         Row: {
+          answers_config_snapshot: Json
           attempts: number
           content_hash: string
           created_at: string
@@ -2444,6 +2445,7 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          answers_config_snapshot?: Json
           attempts?: number
           content_hash: string
           created_at?: string
@@ -2477,6 +2479,7 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          answers_config_snapshot?: Json
           attempts?: number
           content_hash?: string
           created_at?: string
@@ -3103,6 +3106,7 @@ export type Database = {
       }
       ingest_form_event: {
         Args: {
+          p_answers_config_snapshot?: Json
           p_content_hash: string
           p_form_endpoint_id: string
           p_occurred_at: string
@@ -3116,6 +3120,14 @@ export type Database = {
           p_retention_days?: number
           p_source_event_id: string
           p_stuck_after_minutes?: number
+        }
+        Returns: Json
+      }
+      issue_continuity_reference: {
+        Args: {
+          p_lead_id: string
+          p_opportunity_id?: string
+          p_validity_hours?: number
         }
         Returns: Json
       }
@@ -3353,6 +3365,10 @@ export type Database = {
       revoke_contact_consent: {
         Args: { p_consent_id: string }
         Returns: undefined
+      }
+      revoke_continuity_reference: {
+        Args: { p_continuity_reference_id: string }
+        Returns: Json
       }
       rotate_form_endpoint_key: {
         Args: { p_form_endpoint_id: string; p_new_public_key: string }

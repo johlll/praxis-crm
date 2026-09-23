@@ -216,7 +216,15 @@ begin
       ), '[]'::jsonb)
       from public.touchpoints t
       left join public.webhook_events w on w.id = t.webhook_event_id
-      where t.workspace_id = v_lead.workspace_id and t.contact_id = v_lead.contact_id
+      -- Alcance por REGISTRO, não por contato: um contato pode ter mais de
+      -- um lead (mesma pessoa, duas demandas), com responsáveis
+      -- diferentes. Antes desta correção, um advogado com acesso só ao
+      -- lead A recebia aqui também os touchpoints — ids, vínculo vigente,
+      -- histórico com nome de quem corrigiu, e evidência de consentimento
+      -- — do lead B do MESMO contato, mesmo sem acesso a B. Escopar por
+      -- t.lead_id (não t.contact_id) fecha o vazamento: só entra o que
+      -- nasceu ou foi corrigido para ESTE lead.
+      where t.workspace_id = v_lead.workspace_id and t.lead_id = v_lead.id
     ),
     -- Atribuição por OPORTUNIDADE (nunca por lead: a A5 permite várias
     -- oportunidades no mesmo lead, e uma nunca empresta origem à outra).
@@ -403,6 +411,143 @@ begin
 end;
 $body$;
 
+-- ---------------------------------------------------------------------
+-- issue_continuity_reference — emissão SERVIDOR do token de continuidade
+--
+-- O token aleatório existe em claro só NESTA resposta, uma vez. O banco
+-- guarda só o hash (SHA-256, pgcrypto). Vínculo explícito e completo:
+-- workspace (implícito no lead), contato (implícito no lead), lead,
+-- oportunidade (opcional, precisa pertencer ao MESMO lead), finalidade
+-- (fixa nesta fase — ver private.form_intake_continuity_purpose()),
+-- validade (obrigatória, com teto) e revogação (revoke_continuity_
+-- reference). Alcance por registro: só quem enxerga o lead pode emitir
+-- ou revogar uma referência dele.
+-- ---------------------------------------------------------------------
+
+create function public.issue_continuity_reference(
+  p_lead_id uuid,
+  p_opportunity_id uuid default null,
+  p_validity_hours integer default 720
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $body$
+declare
+  v_actor uuid := auth.uid();
+  v_role public.membership_role;
+  v_lead public.leads;
+  v_opportunity public.opportunities;
+  v_token bytea;
+  v_token_url text;
+  v_reference public.continuity_references;
+begin
+  if v_actor is null then
+    raise exception 'authentication_required';
+  end if;
+
+  select * into v_lead from public.leads where id = p_lead_id;
+  if v_lead.id is null then
+    raise exception 'lead_not_found';
+  end if;
+
+  select role into v_role from public.memberships
+  where workspace_id = v_lead.workspace_id and user_id = v_actor and status = 'active';
+
+  -- Recurso fora do alcance responde como não encontrado, nunca como
+  -- proibido (mesma regra do resto do A11/A10): advogado sem acesso a
+  -- este lead específico não aprende que ele existe.
+  if v_role is null or not private.lead_accessible_to_role(v_role, v_lead.assigned_to, v_actor) then
+    raise exception 'lead_not_found';
+  end if;
+  if not (v_role = any(array['owner', 'admin', 'manager', 'lawyer', 'sales']::public.membership_role[])) then
+    raise exception 'insufficient_permission';
+  end if;
+
+  if p_opportunity_id is not null then
+    select * into v_opportunity from public.opportunities
+    where id = p_opportunity_id and workspace_id = v_lead.workspace_id and lead_id = v_lead.id;
+    if v_opportunity.id is null then
+      raise exception 'opportunity_not_found';
+    end if;
+  end if;
+
+  if p_validity_hours is null or p_validity_hours < 1 or p_validity_hours > 2160 then
+    raise exception 'invalid_validity';
+  end if;
+
+  v_token := extensions.gen_random_bytes(32);
+  -- base64url sem padding: o mesmo alfabeto usado em toda A11
+  -- (chave pública do endpoint, protocolo público).
+  v_token_url := rtrim(translate(encode(v_token, 'base64'), '+/', '-_'), '=');
+
+  insert into public.continuity_references (
+    workspace_id, token_hash, contact_id, lead_id, opportunity_id, purpose, expires_at, created_by
+  )
+  values (
+    v_lead.workspace_id, extensions.digest(v_token, 'sha256'), v_lead.contact_id, v_lead.id, p_opportunity_id,
+    private.form_intake_continuity_purpose(), now() + make_interval(hours => p_validity_hours), v_actor
+  )
+  returning * into v_reference;
+
+  insert into public.audit_logs (workspace_id, actor_user_id, action, resource_type, resource_id, metadata)
+  values (
+    v_lead.workspace_id, v_actor, 'continuity_reference.issued', 'lead', v_lead.id,
+    jsonb_build_object(
+      'continuity_reference_id', v_reference.id,
+      'opportunity_id', p_opportunity_id,
+      'expires_at', v_reference.expires_at
+    )
+  );
+
+  return jsonb_build_object('id', v_reference.id, 'token', v_token_url, 'expires_at', v_reference.expires_at);
+end;
+$body$;
+
+-- ---------------------------------------------------------------------
+-- revoke_continuity_reference — revogação explícita, antes do vencimento
+-- ---------------------------------------------------------------------
+
+create function public.revoke_continuity_reference(p_continuity_reference_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $body$
+declare
+  v_actor uuid := auth.uid();
+  v_role public.membership_role;
+  v_reference public.continuity_references;
+begin
+  if v_actor is null then
+    raise exception 'authentication_required';
+  end if;
+
+  select * into v_reference from public.continuity_references where id = p_continuity_reference_id for update;
+  if v_reference.id is null then
+    raise exception 'continuity_reference_not_found';
+  end if;
+
+  select role into v_role from public.memberships
+  where workspace_id = v_reference.workspace_id and user_id = v_actor and status = 'active';
+  if v_role is null or not (v_role = any(array['owner', 'admin', 'manager', 'lawyer', 'sales']::public.membership_role[])) then
+    raise exception 'insufficient_permission';
+  end if;
+
+  update public.continuity_references set revoked_at = now()
+  where id = p_continuity_reference_id and revoked_at is null;
+
+  insert into public.audit_logs (workspace_id, actor_user_id, action, resource_type, resource_id, metadata)
+  values (
+    v_reference.workspace_id, v_actor, 'continuity_reference.revoked', 'lead', v_reference.lead_id,
+    jsonb_build_object('continuity_reference_id', v_reference.id)
+  );
+
+  return jsonb_build_object('id', v_reference.id, 'revoked', true);
+end;
+$body$;
+
 revoke all on function public.correct_touchpoint_demand_link(uuid, uuid, public.touchpoint_link_action, uuid, text) from public;
 grant execute on function public.correct_touchpoint_demand_link(uuid, uuid, public.touchpoint_link_action, uuid, text) to authenticated;
 
@@ -411,3 +556,9 @@ grant execute on function public.get_lead_attribution(uuid) to authenticated;
 
 revoke all on function public.get_dashboard_attribution(uuid, integer, text, text, uuid, boolean, text) from public;
 grant execute on function public.get_dashboard_attribution(uuid, integer, text, text, uuid, boolean, text) to authenticated;
+
+revoke all on function public.issue_continuity_reference(uuid, uuid, integer) from public;
+grant execute on function public.issue_continuity_reference(uuid, uuid, integer) to authenticated;
+
+revoke all on function public.revoke_continuity_reference(uuid) from public;
+grant execute on function public.revoke_continuity_reference(uuid) to authenticated;

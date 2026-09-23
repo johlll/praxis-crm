@@ -14,7 +14,7 @@
 
 -- Exclusivas do service_role (rota pública de ingestão e jobs).
 revoke execute on function public.resolve_form_endpoint(text) from anon, authenticated;
-revoke execute on function public.ingest_form_event(uuid, uuid, bytea, text, bytea, bytea, bytea, text, text, jsonb, timestamptz, integer, integer) from anon, authenticated;
+revoke execute on function public.ingest_form_event(uuid, uuid, bytea, text, bytea, bytea, bytea, text, text, jsonb, timestamptz, jsonb, integer, integer) from anon, authenticated;
 revoke execute on function public.claim_outbox_batch(integer, integer) from anon, authenticated;
 revoke execute on function public.mark_outbox_published(uuid) from anon, authenticated;
 revoke execute on function public.mark_outbox_failed(uuid, text, integer) from anon, authenticated;
@@ -34,3 +34,5 @@ revoke execute on function public.list_form_endpoints(uuid) from anon;
 revoke execute on function public.correct_touchpoint_demand_link(uuid, uuid, public.touchpoint_link_action, uuid, text) from anon;
 revoke execute on function public.get_lead_attribution(uuid) from anon;
 revoke execute on function public.get_dashboard_attribution(uuid, integer, text, text, uuid, boolean, text) from anon;
+revoke execute on function public.issue_continuity_reference(uuid, uuid, integer) from anon;
+revoke execute on function public.revoke_continuity_reference(uuid) from anon;

@@ -30,6 +30,17 @@ export const dynamic = "force-dynamic";
 
 const client = inngestClient();
 
+// mark_webhook_event_failed() (20260921100500_a11_ingestion_functions.sql)
+// marca o evento como `dead` quando `attempts + 1 >= 10` — ou seja, na
+// DÉCIMA chamada. Cada execução do Inngest que falha chama essa função
+// uma vez, então o total de execuções (1 tentativa inicial + `retries`)
+// precisa alinhar com esse limiar: `retries: 9` = 10 execuções no total,
+// a última virando `dead` exatamente quando o Inngest desiste (defeito
+// corrigido: antes eram 5 retries/6 execuções, o evento nunca alcançava
+// `attempts = 10` e ficava preso em `failed` indefinidamente elegível ao
+// cron, mesmo depois do Inngest ter esgotado as próprias tentativas).
+export const A11_INGEST_MAX_RETRIES = 9;
+
 const processFormSubmission = client.createFunction(
   {
     id: "a11-process-form-submission",
@@ -37,7 +48,7 @@ const processFormSubmission = client.createFunction(
     // Uma execução por evento: a RPC já serializa com lock, mas limitar
     // aqui evita gerar contenção à toa quando o cron republica.
     concurrency: { limit: 5 },
-    retries: 5,
+    retries: A11_INGEST_MAX_RETRIES,
     triggers: [{ event: FORM_EVENT_NAME }],
   },
   async ({ event, step }) => {

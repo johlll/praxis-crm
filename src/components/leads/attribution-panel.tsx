@@ -5,7 +5,12 @@ import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { formatDateTime } from "@/lib/timezone";
-import { correctTouchpointLinkAction, type FormActionState } from "@/modules/forms/actions";
+import {
+  correctTouchpointLinkAction,
+  issueContinuityReferenceAction,
+  type ContinuityActionState,
+  type FormActionState,
+} from "@/modules/forms/actions";
 import type { LeadAttribution, TouchpointItem } from "@/modules/attribution/queries";
 
 /**
@@ -20,6 +25,50 @@ import type { LeadAttribution, TouchpointItem } from "@/modules/attribution/quer
  */
 
 const INITIAL: FormActionState = { ok: false };
+const CONTINUITY_INITIAL: ContinuityActionState = { ok: false };
+
+/**
+ * Botão que emite um link de continuidade (A11, item 5 da auditoria
+ * pós-dry-run): o token só existe em claro NESTA resposta — some ao sair
+ * da tela ou pedir outro. O servidor grava só o hash.
+ */
+function IssueContinuityLink({ leadId }: { leadId: string }) {
+  const [state, action, pending] = useActionState(issueContinuityReferenceAction, CONTINUITY_INITIAL);
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <p className="m-0 text-body font-semibold text-text">Link de continuidade</p>
+          <p className="m-0 text-meta text-text-muted">
+            Gera um token de uso único (válido por 30 dias) para o formulário de continuidade reconhecer este lead
+            sem usar telefone ou e-mail como identidade.
+          </p>
+        </div>
+        <form action={action}>
+          <input type="hidden" name="leadId" value={leadId} />
+          <Button type="submit" variant="secondary" size="sm" disabled={pending}>
+            {pending ? "Gerando…" : "Gerar link"}
+          </Button>
+        </form>
+      </div>
+
+      {state.error ? (
+        <Alert variant="danger">
+          <AlertDescription>{state.error}</AlertDescription>
+        </Alert>
+      ) : null}
+      {state.ok && state.token ? (
+        <Alert variant="success">
+          <AlertDescription>
+            Token (mostrado uma única vez — copie agora): <code className="break-all">{state.token}</code>
+            {state.expiresAt ? ` · válido até ${formatDateTime(state.expiresAt)}` : ""}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+    </div>
+  );
+}
 
 function Chip({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "primary" }) {
   return (
@@ -172,9 +221,13 @@ function TouchpointRow({
 export function AttributionPanel({
   attribution,
   canCorrect,
+  canIssueContinuity,
+  leadId,
 }: {
   attribution: LeadAttribution;
   canCorrect: boolean;
+  canIssueContinuity: boolean;
+  leadId: string;
 }) {
   const opportunities = attribution.opportunities.map((opportunity) => ({
     id: opportunity.opportunityId,
@@ -248,6 +301,8 @@ export function AttributionPanel({
           ))}
         </ul>
       )}
+
+      {canIssueContinuity ? <IssueContinuityLink leadId={leadId} /> : null}
     </section>
   );
 }

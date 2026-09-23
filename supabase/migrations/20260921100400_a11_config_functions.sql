@@ -45,6 +45,83 @@ $body$;
 revoke all on function private.assert_form_endpoint_destination(uuid, uuid, uuid) from public;
 
 -- ---------------------------------------------------------------------
+-- private.assert_answers_config — valida de verdade a lista de campos
+--
+-- O CHECK da tabela (jsonb_typeof(... -> 'fields') = 'array') só garante
+-- a forma mínima. Sem isto, `answers_config` era decorativo: qualquer
+-- JSON era aceito, a borda não tinha como saber quais campos existem e o
+-- worker não tinha o que revalidar. Mesmo conjunto de regras aplicado na
+-- borda (Zod, src/modules/forms/schema.ts) — aqui é o backstop do banco,
+-- para que a validação nunca dependa só da aplicação.
+-- ---------------------------------------------------------------------
+
+create function private.assert_answers_config(p_config jsonb)
+returns void
+language plpgsql
+stable
+set search_path = ''
+as $body$
+declare
+  v_field jsonb;
+  v_key text;
+  v_type text;
+  v_keys text[] := array[]::text[];
+begin
+  if jsonb_typeof(p_config -> 'fields') is distinct from 'array' then
+    raise exception 'answers_config_invalid: fields must be an array';
+  end if;
+
+  if jsonb_array_length(p_config -> 'fields') > 30 then
+    raise exception 'answers_config_invalid: too many fields';
+  end if;
+
+  for v_field in select * from jsonb_array_elements(p_config -> 'fields')
+  loop
+    if jsonb_typeof(v_field) <> 'object' then
+      raise exception 'answers_config_invalid: field must be an object';
+    end if;
+
+    v_key := v_field ->> 'key';
+    v_type := v_field ->> 'type';
+
+    if v_key is null or v_key !~ '^[a-z0-9_]{1,60}$' then
+      raise exception 'answers_config_invalid: bad key %', coalesce(v_key, '<null>');
+    end if;
+    if v_key = any(v_keys) then
+      raise exception 'answers_config_invalid: duplicate key %', v_key;
+    end if;
+    v_keys := v_keys || v_key;
+
+    if nullif(btrim(coalesce(v_field ->> 'label', '')), '') is null
+       or char_length(v_field ->> 'label') > 160 then
+      raise exception 'answers_config_invalid: bad label for %', v_key;
+    end if;
+
+    if v_type is null or v_type not in ('text', 'boolean', 'number') then
+      raise exception 'answers_config_invalid: bad type for %', v_key;
+    end if;
+
+    if v_field ? 'required' and jsonb_typeof(v_field -> 'required') <> 'boolean' then
+      raise exception 'answers_config_invalid: required must be boolean for %', v_key;
+    end if;
+
+    if v_field ? 'maxLength' then
+      if v_type <> 'text' then
+        raise exception 'answers_config_invalid: maxLength only applies to text (%)', v_key;
+      end if;
+      if jsonb_typeof(v_field -> 'maxLength') <> 'number'
+         or (v_field ->> 'maxLength')::numeric < 1
+         or (v_field ->> 'maxLength')::numeric > 2000 then
+        raise exception 'answers_config_invalid: bad maxLength for %', v_key;
+      end if;
+    end if;
+  end loop;
+end;
+$body$;
+
+revoke all on function private.assert_answers_config(jsonb) from public;
+
+-- ---------------------------------------------------------------------
 -- create_form_endpoint
 -- ---------------------------------------------------------------------
 
@@ -85,6 +162,7 @@ begin
   end if;
 
   perform private.assert_form_endpoint_destination(p_workspace_id, p_pipeline_id, p_stage_id);
+  perform private.assert_answers_config(coalesce(p_answers_config, '{"fields": []}'::jsonb));
 
   insert into public.form_endpoints (
     workspace_id, name, pipeline_id, stage_id, legal_area,
@@ -156,6 +234,9 @@ begin
   end if;
 
   perform private.assert_form_endpoint_destination(v_endpoint.workspace_id, p_pipeline_id, p_stage_id);
+  if p_answers_config is not null then
+    perform private.assert_answers_config(p_answers_config);
+  end if;
 
   update public.form_endpoints set
     name = btrim(p_name),

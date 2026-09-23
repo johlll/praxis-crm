@@ -62,6 +62,7 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
   const canEditProposals = roleHasPermission(user.role, "proposal.edit");
   // A11: corrigir vínculo de atribuição é ação sensível (owner/admin/manager).
   const canCorrectAttribution = roleHasPermission(user.role, "attribution.correct");
+  const canIssueContinuity = roleHasPermission(user.role, "continuity.issue");
   const canEditConflictCheck = roleHasPermission(user.role, "conflict_check.edit");
   const canEditLeadNotes = roleHasPermission(user.role, "lead_note.edit");
 
@@ -244,7 +245,12 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
             }
             origem={
               attribution ? (
-                <AttributionPanel attribution={attribution} canCorrect={canCorrectAttribution} />
+                <AttributionPanel
+                  attribution={attribution}
+                  canCorrect={canCorrectAttribution}
+                  canIssueContinuity={canIssueContinuity}
+                  leadId={lead.id}
+                />
               ) : (
                 <EmptyState
                   title="Sem dados de origem"

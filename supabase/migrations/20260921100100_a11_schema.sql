@@ -169,6 +169,13 @@ create table public.webhook_events (
   -- códigos). Temporário: eliminado na retenção.
   payload_sanitized jsonb,
 
+  -- Fotografia de `form_endpoints.answers_config` NO MOMENTO da ingestão.
+  -- O worker revalida `answers` contra ESTA cópia, nunca contra a
+  -- configuração atual do endpoint: alterar os campos aceitos depois de
+  -- receber o evento não pode invalidar nem reinterpretar silenciosamente
+  -- um evento já recebido.
+  answers_config_snapshot jsonb not null default '{"fields": []}'::jsonb,
+
   -- Datas (ver §3 do contrato): declarada, atribuída pelo banco,
   -- persistência e a usada em ordenação/atribuição.
   occurred_at timestamptz,
@@ -220,6 +227,41 @@ create index webhook_events_stuck_idx on public.webhook_events (stuck_after)
 
 comment on table public.webhook_events is
   'Evento público recebido por /api/forms/[endpointKey] (A11): payload bruto cifrado, chave idempotente preservada mesmo após a retenção (tombstone).';
+
+-- ---------------------------------------------------------------------
+-- activities ganha rastreabilidade própria para a atividade inicial do
+-- formulário (source = 'form_intake'). Mesmo padrão da A7 (cada origem
+-- tem a SUA coluna e só ela): sem isto, activities_source_consistency
+-- (A6/A7) recusa toda atividade inicial de captação nova, desfazendo a
+-- transação inteira. Só um ADD COLUMN + FK + índice + CHECK sobre uma
+-- tabela existente — nenhuma linha de A6/A7 é reescrita.
+-- ---------------------------------------------------------------------
+
+alter table public.activities
+  add column source_webhook_event_id uuid;
+
+alter table public.activities
+  add constraint activities_source_webhook_event_same_workspace_fkey
+  foreign key (workspace_id, source_webhook_event_id)
+  references public.webhook_events (workspace_id, id);
+
+create unique index activities_source_webhook_event_id_key
+  on public.activities (source_webhook_event_id)
+  where source_webhook_event_id is not null;
+
+alter table public.activities
+  drop constraint activities_source_consistency;
+
+alter table public.activities
+  add constraint activities_source_consistency check (
+    (source = 'manual' and source_stage_transition_id is null and source_rule_id is null and source_conversation_message_id is null and source_webhook_event_id is null) or
+    (source = 'stage_rule' and source_stage_transition_id is not null and source_conversation_message_id is null and source_webhook_event_id is null) or
+    (source = 'whatsapp_inbound' and source_conversation_message_id is not null and source_stage_transition_id is null and source_rule_id is null and source_webhook_event_id is null) or
+    (source = 'form_intake' and source_webhook_event_id is not null and source_stage_transition_id is null and source_rule_id is null and source_conversation_message_id is null)
+  );
+
+comment on constraint activities_source_consistency on public.activities is
+  'Cada source exige sua própria coluna de rastreabilidade (e só ela): stage_rule -> source_stage_transition_id; whatsapp_inbound -> source_conversation_message_id; form_intake -> source_webhook_event_id; manual -> nenhuma.';
 
 -- ---------------------------------------------------------------------
 -- outbox — garantia de que nada se perde entre o commit e o Inngest
@@ -372,6 +414,14 @@ comment on table public.touchpoint_demand_links is
 -- identidade.
 -- ---------------------------------------------------------------------
 
+-- Necessário para a FK composta abaixo: garante, NO BANCO, que o
+-- contato e o lead de uma continuity_reference pertencem à mesma cadeia
+-- (leads.contact_id == continuity_references.contact_id) — não confiar
+-- só na validação da aplicação. leads.id já é único (PK); esta
+-- constraint adicional só formaliza o trio para a FK funcionar.
+alter table public.leads
+  add constraint leads_workspace_id_id_contact_id_key unique (workspace_id, id, contact_id);
+
 create table public.continuity_references (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.workspaces (id) on delete cascade,
@@ -391,8 +441,20 @@ create table public.continuity_references (
 
   constraint continuity_references_contact_same_workspace_fkey
     foreign key (workspace_id, contact_id) references public.contacts (workspace_id, id) on delete cascade,
-  constraint continuity_references_lead_same_workspace_fkey
-    foreign key (workspace_id, lead_id) references public.leads (workspace_id, id) on delete cascade,
+  -- Trio (não só o par workspace/lead): garante que o CONTATO da
+  -- referência é o MESMO contato do lead referenciado — sem isto, nada
+  -- impediria uma linha apontar contact_id=A e lead_id=(lead de B).
+  -- DEFERRABLE (compatível com merge_contacts()/unmerge_contact(), que
+  -- reparenteiam leads.contact_id e continuity_references.contact_id em
+  -- passos separados da mesma transação), mas INITIALLY IMMEDIATE: a
+  -- checagem continua acontecendo ao fim de CADA instrução por padrão
+  -- (erro imediato em uso normal e em teste, já que pgTAP roda dentro de
+  -- uma transação que só faz rollback) — só é adiada explicitamente,
+  -- com `set constraints ... deferred`, se algum fluxo futuro precisar.
+  constraint continuity_references_lead_contact_fkey
+    foreign key (workspace_id, lead_id, contact_id)
+    references public.leads (workspace_id, id, contact_id) on delete cascade
+    deferrable initially immediate,
   constraint continuity_references_opportunity_same_lead_fkey
     foreign key (workspace_id, opportunity_id, lead_id)
     references public.opportunities (workspace_id, id, lead_id) on delete cascade,
@@ -443,8 +505,13 @@ create table public.consent_evidence (
 
   constraint consent_evidence_contact_same_workspace_fkey
     foreign key (workspace_id, contact_id) references public.contacts (workspace_id, id) on delete cascade,
+  -- ON DELETE SET NULL só na coluna OPCIONAL (contact_consent_id): uma FK
+  -- composta com SET NULL sem lista de colunas anularia workspace_id
+  -- também — quebrando o isolamento por tenant (e violando o NOT NULL da
+  -- coluna) no exato momento em que o consentimento vigente é apagado.
   constraint consent_evidence_consent_same_workspace_fkey
-    foreign key (workspace_id, contact_consent_id) references public.contact_consents (workspace_id, id) on delete set null,
+    foreign key (workspace_id, contact_consent_id) references public.contact_consents (workspace_id, id)
+    on delete set null (contact_consent_id),
   constraint consent_evidence_endpoint_same_workspace_fkey
     foreign key (workspace_id, form_endpoint_id) references public.form_endpoints (workspace_id, id) on delete restrict,
   constraint consent_evidence_event_same_workspace_fkey
@@ -461,8 +528,11 @@ create index consent_evidence_contact_idx
   on public.consent_evidence (workspace_id, contact_id, decided_at desc);
 
 -- touchpoints.consent_evidence_id só pode ser criado depois de
--- consent_evidence existir.
+-- consent_evidence existir. Mesma correção de escopo do SET NULL acima:
+-- só a coluna opcional (consent_evidence_id) é anulada — workspace_id
+-- nunca é tocado.
 alter table public.touchpoints
   add constraint touchpoints_consent_evidence_same_workspace_fkey
   foreign key (workspace_id, consent_evidence_id)
-  references public.consent_evidence (workspace_id, id) on delete set null;
+  references public.consent_evidence (workspace_id, id)
+  on delete set null (consent_evidence_id);

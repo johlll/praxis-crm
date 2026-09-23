@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { answersConfigSchema, buildAnswersSchema, EMPTY_ANSWERS_CONFIG } from "@/modules/forms/schema";
 import { decryptPayload } from "@/server/ingest/payload-crypto";
 import { submissionSchema, workerInput } from "@/server/ingest/submission";
 
@@ -35,6 +36,7 @@ type EventPayload = {
   auth_tag: string | null;
   algorithm: string | null;
   key_version: string | null;
+  answers_config_snapshot: unknown;
 };
 
 /**
@@ -99,6 +101,16 @@ export async function processWebhookEvent(
   if (!parsed.success) return { status: "failed", code: "payload_schema_invalid" };
 
   const submission = parsed.data;
+
+  // Revalida `answers` contra o SNAPSHOT gravado no evento (item 6): se o
+  // endpoint mudou de configuração depois que este evento foi recebido, é
+  // a versão ANTIGA que decide se o conteúdo já aceito continua válido —
+  // nunca a atual, silenciosamente.
+  const snapshotResult = answersConfigSchema.safeParse(event.answers_config_snapshot ?? EMPTY_ANSWERS_CONFIG);
+  const snapshotConfig = snapshotResult.success ? snapshotResult.data : EMPTY_ANSWERS_CONFIG;
+  if (!buildAnswersSchema(snapshotConfig).safeParse(submission.answers).success) {
+    return { status: "failed", code: "answers_schema_invalid" };
+  }
 
   // O hash do token de continuidade é calculado AQUI, a partir do
   // plaintext — nunca lido de uma coluna de diagnóstico (conhecer o hash
