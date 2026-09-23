@@ -199,12 +199,44 @@ worker não tinha contra o que revalidar. Agora:
   nunca contra a configuração atual do endpoint — mudar os campos aceitos
   depois de receber o evento não invalida nem reinterpreta silenciosamente
   um evento já recebido;
-- a tela de configuração (`/configuracoes/formularios`) ganhou um editor
-  de campos (chave, rótulo, tipo, obrigatório) na criação do endpoint.
-  A edição de um endpoint existente (`update_form_endpoint`) já validava
-  no banco, mas ainda não tem UI própria para NENHUM campo — limitação
-  preexistente, não introduzida por esta correção, registrada em
-  `A11-HANDOFF.md`.
+- a tela de configuração (`/configuracoes/formularios`) tem um editor de
+  campos (chave, rótulo, tipo, obrigatório) tanto na criação quanto na
+  **edição** de um endpoint existente (item 8 da auditoria pós-dry-run —
+  ver correção abaixo).
+
+**Correção pós-auditoria (segunda rodada, item 4):** um snapshot ou uma
+configuração **presente mas corrompida** (ex.: escrita direta na RPC
+`ingest_form_event`, fora da rota HTTP — algo que a borda TypeScript não
+intercepta) virava silenciosamente `{fields: []}` tanto na borda
+(`handleFormSubmission`) quanto no worker, em vez de recusar. Isso é
+diferente de "endpoint sem campo extra configurado" (que É
+legitimamente `{fields: []}`) — tratar corrupção como ausência mascarava
+o problema em vez de falhar fechado. Três camadas agora recusam,
+nenhuma delas silenciosamente:
+
+1. a borda (`handleFormSubmission`) recusa a submissão inteira
+   (`form_endpoint_misconfigured`, 503) quando `answers_config` do
+   endpoint não passa no schema, ANTES de gravar qualquer coisa;
+2. `ingest_form_event` (SQL) chama `private.assert_answers_config()` no
+   `answers_config_snapshot` recebido — defesa em profundidade contra
+   qualquer chamador que não seja a borda; nada é gravado se recusar;
+3. o worker (`processWebhookEvent`) revalida o snapshot já gravado
+   (`answers_config_snapshot`) com o MESMO schema antes de chamar
+   `process_form_event`, e devolve um código PERMANENTE e distinto
+   (`config_snapshot_invalid`) — nunca `answers_schema_invalid` (esse é
+   reservado para "resposta não bate com a configuração", um problema do
+   VISITANTE; `config_snapshot_invalid` é um problema do próprio evento
+   gravado).
+
+**Correção pós-auditoria (segunda rodada, item 8):** a edição
+(`update_form_endpoint`) já validava e persistia no banco desde a
+primeira rodada, mas não tinha UI — só a criação tinha tela. Agora
+`/configuracoes/formularios` tem um botão "Editar" por endpoint que abre
+o MESMO formulário da criação, pré-preenchido com todos os valores
+atuais (inclusive os campos extras, via o editor de `answers_config`) —
+editar qualquer outra coisa não apaga mais a configuração de campos
+existente. Testado em `tests/e2e/forms-attribution.spec.ts` (edita,
+recarrega a página, confirma persistência no banco).
 
 ### Falha fechada sem infraestrutura
 
@@ -235,12 +267,25 @@ terceiro, e um HMAC não tem utilidade nesse campo (a Cloudflare o trata
 como IP, não como identificador opaco). O campo é simplesmente omitido —
 a Cloudflare o trata como opcional. A `idempotency_key` do Siteverify
 também deixou de ser o `source_event_id` da submissão e passou a ser
-`SHA-256(token)`, calculada dentro do próprio verificador: precisa ficar
-estável só entre retries da MESMA verificação (o MESMO token); usar o
-`source_event_id` fazia dois tokens diferentes (ex.: um renovado depois
-de expirar) compartilharem a mesma chave, arriscando a Cloudflare
-devolver uma resposta cacheada da verificação anterior para um token
-novo.
+derivada do PRÓPRIO TOKEN, calculada dentro do próprio verificador:
+precisa ficar estável só entre retries da MESMA verificação (o MESMO
+token); usar o `source_event_id` fazia dois tokens diferentes (ex.: um
+renovado depois de expirar) compartilharem a mesma chave, arriscando a
+Cloudflare devolver uma resposta cacheada da verificação anterior para um
+token novo.
+
+**Correção pós-auditoria (segunda rodada, item 2):** dois defeitos na
+implementação original dessa correção. Primeiro, o valor derivado era um
+SHA-256 em hex (64 caracteres) — a documentação da Cloudflare descreve
+`idempotency_key` como um **UUID**, formato que um hash hex não tem.
+Segundo, o limite de tamanho do `turnstileToken` no schema público
+(`src/server/ingest/submission.ts`) era `4096`, um teto arbitrário maior
+que qualquer token real — o contrato oficial da Cloudflare limita o token
+a **2048 caracteres**. Corrigidos os dois:
+`cloudflareTurnstileVerifier` agora deriva um UUID (versão 4, variante RFC
+4122) determinístico a partir dos 16 primeiros bytes do SHA-256 do token —
+mesmo token sempre produz o mesmo UUID, token diferente sempre produz um
+UUID diferente — e `turnstileToken` passou a `max(2048)`.
 
 IP:
 
@@ -275,6 +320,28 @@ estava autorizada. Agora:
   precisa ser legível pelo JS da origem legítima;
 - sem `Origin` (chamada servidor-a-servidor), não há CORS a oferecer —
   CORS é mecanismo de navegador, e a ausência do cabeçalho não é recusa.
+
+**Correção pós-auditoria (segunda rodada, item 7):** dois defeitos.
+
+1. **Protocolo e porta não eram conferidos** — `matchAllowedOrigin`
+   comparava só o `hostname` do `Origin`, então `http://exemplo.test`,
+   `https://exemplo.test` e `https://exemplo.test:9999` eram TODOS
+   aceitos para um endpoint cujo `allowed_hostnames` tem só
+   `exemplo.test`. Corrigido: fora de um domínio de desenvolvimento local
+   (`localhost`, `127.0.0.1`, `::1` — onde preview e e2e genuinamente
+   variam porta), a origem só é aceita em **HTTPS**, na porta **padrão**
+   (443, implícita, nunca declarada).
+2. **`Origin` presente e não autorizado não era recusado no servidor** —
+   o POST era processado normalmente mesmo vindo de uma origem fora da
+   lista, só sem os cabeçalhos de CORS na resposta. Isso impede o JS de
+   uma página atacante de **ler** a resposta, mas não impede um cliente
+   que não é navegador (curl, um `<form>` sem `fetch`, outra origem
+   forjando o cabeçalho) de fazer o servidor **gravar o evento mesmo
+   assim** — CORS é uma proteção do navegador, não do servidor.
+   `handleFormSubmission` agora recusa (`origin_not_allowed`, HTTP 403)
+   qualquer requisição com `Origin` PRESENTE e fora da lista, ANTES de
+   ler o corpo ou gravar qualquer coisa. Sem `Origin` (chamada
+   servidor-a-servidor) continua permitida, como sempre.
 
 ## 6. Criptografia do payload bruto
 
@@ -422,6 +489,38 @@ Duas RPCs novas fecham o ciclo:
   `opportunity.edit` — quem já age na demanda pode mandar o link.
 - `revoke_continuity_reference(p_continuity_reference_id)` — revogação
   explícita antes do vencimento, auditada.
+
+**Correção pós-auditoria (segunda rodada, item 1) — hash incompatível:**
+`issue_continuity_reference` gravava `digest(v_token, 'sha256')` — o
+SHA-256 dos BYTES ALEATÓRIOS CRUS. O worker, ao receber o token de volta
+(sempre como STRING, no corpo JSON da submissão), sempre calculou
+`SHA-256(texto base64url, utf8)` — o hash do TEXTO, nunca dos bytes. As
+duas representações produzem hashes DIFERENTES para o mesmo token: toda
+referência emitida era, na prática, **inutilizável** —
+`process_form_event` nunca reconhecia o token de volta, e a "segunda
+interação" que o item 5 original prometia nunca funcionou de verdade.
+Corrigido gravando `digest(convert_to(v_token_url, 'utf8'), 'sha256')` —
+o hash do MESMO texto que o worker recebe e hasheia. O teste que
+verificava esse hash (`18_a11_ingestao_atribuicao.test.sql`, seção 14)
+recomputava o hash a partir do TOKEN REALMENTE DEVOLVIDO pela RPC, mas o
+comparava contra a coluna `token_hash` já gravada — comparar a coluna com
+ela mesma não podia detectar essa incompatibilidade; o teste foi corrigido
+para reproduzir o cálculo do lado do cliente (hash do texto, nunca lido
+do banco).
+
+**Correção pós-auditoria (segunda rodada, item 3) — alcance da
+revogação:** `revoke_continuity_reference` conferia que o ator tinha
+ALGUM papel elegível no workspace, mas nunca aplicava
+`private.lead_accessible_to_role` ao lead da própria referência — ao
+contrário de `issue_continuity_reference`, que já fazia essa checagem
+desde a primeira rodada. Um advogado sem acesso ao lead de uma
+referência conseguia revogá-la (ou teria conseguido, pela mesma lacuna,
+reemiti-la) só por ter QUALQUER papel elegível no workspace. Corrigido:
+a função agora resolve o lead da referência e aplica
+`lead_accessible_to_role` antes de checar a ação — recurso fora do
+alcance responde `continuity_reference_not_found` (nunca
+`insufficient_permission`), a mesma regra de "não encontrado" usada em
+todo o resto do A10/A11.
 
 **Consistência garantida no banco, não só na aplicação:** a FK composta
 `continuity_references_lead_contact_fkey (workspace_id, lead_id,
@@ -613,11 +712,31 @@ inverteu essa lista (afirmou que `continuity_references` ficava de fora e
 `touchpoint_demand_links` entrava) — o código e este documento agora
 concordam, e é esta versão que vale.
 
-Snapshot mínimo, detecção de alteração posterior (item 11: testado agora
-também para `continuity_references` e `consent_evidence`, incluindo o
-caso em que uma linha reparentada é alterada antes do desfazer — o undo
-inteiro é recusado, não só a linha afetada), reversibilidade e isolamento
-preservados; nada do que já era tratado regride.
+Snapshot mínimo, detecção de alteração posterior (item 11 da primeira
+rodada: testado para `continuity_references` e `consent_evidence`,
+incluindo o caso em que uma linha reparentada é alterada antes do
+desfazer — o undo inteiro é recusado, não só a linha afetada),
+reversibilidade e isolamento preservados; nada do que já era tratado
+regride.
+
+**Correção pós-auditoria (segunda rodada, item 6):** `touchpoints` e
+`consent_evidence` são append-only de verdade (nenhuma coluna muda depois
+de criadas), então a detecção "a linha ainda existe?" bastava para elas.
+`continuity_references` **não é** — `used_count`/`last_used_at` mudam a
+cada uso (`process_form_event`) e `revoked_at` muda com
+`revoke_continuity_reference` —, mas o snapshot do merge gravava
+`previous_updated_at = null` para ela (a tabela nem tinha coluna
+`updated_at`), e a detecção de conflito do undo só disparava quando
+`previous_updated_at is not null`. Resultado: **usar ou revogar uma
+referência depois do merge e antes do desfazer passava batido** — a
+linha continuava existindo, então o undo a devolvia ao contato perdedor
+sem avisar que o estado dela tinha mudado no meio do caminho.
+`continuity_references` ganhou `updated_at` (com trigger
+`private.set_updated_at()`, igual a `leads`/`clients`/etc.) e passou a
+usar o MESMO mecanismo de conflito por versão dessas tabelas — não mais
+a existência sozinha. `merge_contacts()`/`unmerge_contact()` foram
+ajustadas para capturar e comparar o `updated_at` real da linha, como já
+faziam para `leads` e `clients`.
 
 ## 14. Segurança e permissões
 
@@ -633,15 +752,40 @@ preservados; nada do que já era tratado regride.
 - Correção de vínculo segue a matriz de ação sensível já vigente e gera
   auditoria.
 - **Alcance por registro em `get_lead_attribution` (correção do item 10
-  da auditoria pós-dry-run):** a função já negava o lead inteiro fora do
-  alcance do papel (`private.lead_accessible_to_role`), mas a sequência
-  de touchpoints devolvida para um lead ACESSÍVEL era filtrada por
-  `contact_id`, não por `lead_id`. Um contato pode ter mais de um lead
-  (mesma pessoa, duas demandas), cada uma com responsável diferente — um
-  advogado com acesso só ao lead A recebia também os touchpoints (ids,
-  vínculo vigente, histórico com nome de quem corrigiu, evidência de
-  consentimento) do lead B do MESMO contato, mesmo sem acesso a B. A
-  `sequence` agora é escopada por `t.lead_id = v_lead.id`.
+  da primeira rodada, item 5 da segunda):** a função já negava o lead
+  inteiro fora do alcance do papel (`private.lead_accessible_to_role`),
+  mas a sequência de touchpoints devolvida para um lead ACESSÍVEL era
+  filtrada por `contact_id`, não por `lead_id`. Um contato pode ter mais
+  de um lead (mesma pessoa, duas demandas), cada uma com responsável
+  diferente — um advogado com acesso só ao lead A recebia também os
+  touchpoints (ids, vínculo vigente, histórico com nome de quem corrigiu,
+  evidência de consentimento) do lead B do MESMO contato, mesmo sem
+  acesso a B. A primeira correção escopou a `sequence` por
+  `t.lead_id = v_lead.id` — o lead de ORIGEM, imutável — o que fechou
+  esse vazamento mas abriu outro: `correct_touchpoint_demand_link()`
+  permite corrigir um touchpoint para a oportunidade de OUTRO lead do
+  MESMO contato (a invariante ali é só "mesmo contato", nunca "mesmo
+  lead de origem" — de propósito, é assim que uma correção entre leads
+  funciona). Depois dessa correção, o touchpoint continuava aparecendo na
+  sequência do lead de ORIGEM, vazando o id da oportunidade — e todo o
+  histórico da correção, com nome de quem corrigiu — do lead de DESTINO,
+  mesmo para quem não tem acesso a ele. Corrigido escopando pelo
+  **vínculo efetivo**: `coalesce(oportunidade_vigente.lead_id,
+  t.lead_id) = v_lead.id` — quando há oportunidade vigente, é o lead
+  DELA que decide de qual sequência o touchpoint faz parte (ele "muda de
+  lead" junto com a correção, exatamente como já muda de oportunidade);
+  sem oportunidade vigente (nunca vinculado, ou explicitamente
+  desvinculado), cai de volta no lead de origem, como sempre foi.
+- **Alcance por registro em `revoke_continuity_reference` (item 3):** a
+  função conferia o papel do ator no workspace, mas nunca aplicava
+  `private.lead_accessible_to_role` ao lead da referência — ao contrário
+  de `issue_continuity_reference`, que já fazia essa checagem desde a
+  primeira rodada. Corrigida para a mesma regra (ver §8.1): fora do
+  alcance responde como não encontrada.
+- **`Origin` presente e não autorizado recusado no servidor, protocolo e
+  porta conferidos no CORS (item 7):** ver §5.1.
+- **`answers_config`/snapshot corrompidos falham fechados em três
+  camadas — borda, `ingest_form_event` e worker (item 4):** ver §4.
 - **FKs compostas com `ON DELETE SET NULL` (correção do item 8):**
   `consent_evidence.contact_consent_id` e `touchpoints.consent_evidence_id`
   são colunas de FKs COMPOSTAS `(workspace_id, coluna_opcional)`. Um

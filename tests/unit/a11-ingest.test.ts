@@ -406,6 +406,28 @@ describe("borda pública de ingestão", () => {
     expect(result).toEqual({ ok: false, failure: "invalid_submission", corsOrigin: null });
   });
 
+  it("answers_config CORROMPIDO no endpoint nunca vira fields: [] — recusa fechada, nada é gravado (item 4)", async () => {
+    const calls: RpcCall[] = [];
+    const corrupted = deps({
+      supabase: fakeSupabase({
+        calls,
+        endpoint: {
+          id: "endpoint-1",
+          workspace_id: "ws-1",
+          contract_version: 1,
+          turnstile_action: "formulario",
+          allowed_hostnames: ["exemplo.test"],
+          // Chave em maiúscula: não passa no MESMO schema usado pela tela
+          // de configuração — corrupção, não "sem campo configurado".
+          answers_config: { fields: [{ key: "CHAVE INVALIDA", label: "x", type: "text" }] },
+        },
+      }),
+    });
+    const result = await handleFormSubmission("chave", request(VALID), corrupted);
+    expect(result).toEqual({ ok: false, failure: "form_endpoint_misconfigured", corsOrigin: null });
+    expect(calls.some((call) => call.fn === "ingest_form_event")).toBe(false);
+  });
+
   it("rate limit estourado recusa antes do Turnstile", async () => {
     const limited = vi.fn(async () => ({ ok: false, scope: "ip" }) as const);
     const result = await handleFormSubmission("chave", request(VALID), deps({ rateLimit: limited as never }));
@@ -539,6 +561,17 @@ describe("CORS da rota pública (item 3)", () => {
       deps(),
     );
     expect(result.corsOrigin).toBeNull();
+  });
+
+  it("Origin PRESENTE e não autorizado é recusado ANTES de qualquer gravação (item 7)", async () => {
+    const calls: RpcCall[] = [];
+    const result = await handleFormSubmission(
+      "chave",
+      request(VALID, { origin: "https://atacante.test" }),
+      deps({ supabase: fakeSupabase({ calls }) }),
+    );
+    expect(result).toEqual({ ok: false, failure: "origin_not_allowed", corsOrigin: null });
+    expect(calls.some((call) => call.fn === "ingest_form_event")).toBe(false);
   });
 
   it("origem autorizada continua recebendo CORS mesmo numa resposta de ERRO", async () => {

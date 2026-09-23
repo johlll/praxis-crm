@@ -438,6 +438,11 @@ create table public.continuity_references (
   used_count integer not null default 0 check (used_count >= 0),
   created_by uuid references auth.users (id) on delete set null,
   created_at timestamptz not null default now(),
+  -- Necessária para o merge/undo detectar USO ou REVOGAÇÃO depois da
+  -- mesclagem (item 6 da auditoria pós-dry-run): sem isto, o undo só
+  -- percebia a linha ter sido APAGADA, nunca alterada — revogar ou usar
+  -- a referência entre o merge e o desfazer passava batido.
+  updated_at timestamptz not null default now(),
 
   constraint continuity_references_contact_same_workspace_fkey
     foreign key (workspace_id, contact_id) references public.contacts (workspace_id, id) on delete cascade,
@@ -470,6 +475,10 @@ create table public.continuity_references (
 
 create index continuity_references_contact_idx
   on public.continuity_references (workspace_id, contact_id);
+
+create trigger continuity_references_set_updated_at
+  before update on public.continuity_references
+  for each row execute function private.set_updated_at();
 
 -- ---------------------------------------------------------------------
 -- consent_evidence — evidência append-only, versionada

@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +10,7 @@ import {
   createFormEndpointAction,
   rotateFormEndpointKeyAction,
   setFormEndpointStatusAction,
+  updateFormEndpointAction,
   type FormActionState,
 } from "@/modules/forms/actions";
 import type { FormEndpoint } from "@/modules/forms/queries";
@@ -43,9 +44,16 @@ function nextDraftId() {
  * auditoria pós-dry-run). Serializa em JSON num campo oculto — o
  * servidor valida de novo com o MESMO schema (`answersConfigSchema`),
  * nunca confia só no que a tela mandou.
+ *
+ * `initialFields` (item 8): a tela de EDIÇÃO precisa nascer com os
+ * campos que o endpoint já tem — sem isto, editar qualquer outra coisa
+ * (nome, domínios, etc.) apagaria silenciosamente a configuração de
+ * campos existente, porque o editor sempre começava vazio.
  */
-function AnswersFieldEditor() {
-  const [fields, setFields] = useState<DraftField[]>([]);
+function AnswersFieldEditor({ initialFields = [] }: { initialFields?: AnswerFieldDefinition[] | undefined }) {
+  const [fields, setFields] = useState<DraftField[]>(() =>
+    initialFields.map((field) => ({ ...field, draftId: nextDraftId() })),
+  );
 
   const json = useMemo(
     () =>
@@ -125,36 +133,61 @@ function AnswersFieldEditor() {
   );
 }
 
-function NewEndpointForm({
+/**
+ * Formulário de CRIAR e de EDITAR um endpoint — o MESMO componente (item
+ * 8 da auditoria pós-dry-run: antes só existia a metade de criar; editar
+ * não tinha tela nenhuma, só era possível mexendo direto no banco).
+ *
+ * `endpoint` presente = modo edição: todo campo nasce PREENCHIDO com o
+ * valor atual (inclusive os campos extras, via AnswersFieldEditor), e o
+ * submit chama `updateFormEndpointAction` em vez de `createFormEndpointAction`.
+ */
+function EndpointForm({
   pipelines,
   stages,
+  endpoint,
+  onSaved,
 }: {
   pipelines: PipelineOption[];
   stages: StageOption[];
+  endpoint?: FormEndpoint;
+  onSaved?: () => void;
 }) {
-  const [state, action, pending] = useActionState(createFormEndpointAction, INITIAL);
-  // `is_default` só PRÉ-SELECIONA: o endpoint grava o id explícito, para
-  // que trocar o padrão depois não mude o destino de um formulário já
-  // publicado (contrato §4).
+  const isEditing = Boolean(endpoint);
+  const [state, action, pending] = useActionState(
+    isEditing ? updateFormEndpointAction : createFormEndpointAction,
+    INITIAL,
+  );
+  // `is_default` só PRÉ-SELECIONA na criação: o endpoint grava o id
+  // explícito, para que trocar o padrão depois não mude o destino de um
+  // formulário já publicado (contrato §4). Na edição, o pipeline ATUAL
+  // do endpoint é o ponto de partida.
   const [pipelineId, setPipelineId] = useState(
-    pipelines.find((p) => p.isDefault)?.id ?? pipelines[0]?.id ?? "",
+    endpoint?.pipelineId ?? pipelines.find((p) => p.isDefault)?.id ?? pipelines[0]?.id ?? "",
   );
 
   const availableStages = stages.filter((stage) => stage.pipelineId === pipelineId && !stage.isTerminal);
 
+  useEffect(() => {
+    if (isEditing && state.ok) onSaved?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.ok]);
+
   return (
     <form action={action} className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
-      <h3 className="m-0 text-body font-bold text-text">Novo formulário</h3>
+      <h3 className="m-0 text-body font-bold text-text">{isEditing ? `Editar “${endpoint!.name}”` : "Novo formulário"}</h3>
+
+      {isEditing ? <input type="hidden" name="formEndpointId" value={endpoint!.id} /> : null}
 
       <FormField>
-        <FormLabel htmlFor="name">Nome</FormLabel>
-        <Input id="name" name="name" required maxLength={120} />
+        <FormLabel htmlFor={`name-${endpoint?.id ?? "novo"}`}>Nome</FormLabel>
+        <Input id={`name-${endpoint?.id ?? "novo"}`} name="name" required maxLength={120} defaultValue={endpoint?.name} />
       </FormField>
 
       <FormField>
-        <FormLabel htmlFor="pipelineId">Pipeline</FormLabel>
+        <FormLabel htmlFor={`pipelineId-${endpoint?.id ?? "novo"}`}>Pipeline</FormLabel>
         <select
-          id="pipelineId"
+          id={`pipelineId-${endpoint?.id ?? "novo"}`}
           name="pipelineId"
           value={pipelineId}
           onChange={(event) => setPipelineId(event.target.value)}
@@ -170,10 +203,11 @@ function NewEndpointForm({
       </FormField>
 
       <FormField>
-        <FormLabel htmlFor="stageId">Etapa inicial</FormLabel>
+        <FormLabel htmlFor={`stageId-${endpoint?.id ?? "novo"}`}>Etapa inicial</FormLabel>
         <select
-          id="stageId"
+          id={`stageId-${endpoint?.id ?? "novo"}`}
           name="stageId"
+          defaultValue={endpoint?.stageId}
           className="h-9 rounded-input border border-border-input bg-surface px-3 text-body"
         >
           {availableStages.map((stage) => (
@@ -188,15 +222,22 @@ function NewEndpointForm({
       </FormField>
 
       <FormField>
-        <FormLabel htmlFor="legalArea">Área jurídica</FormLabel>
-        <Input id="legalArea" name="legalArea" required maxLength={120} />
+        <FormLabel htmlFor={`legalArea-${endpoint?.id ?? "novo"}`}>Área jurídica</FormLabel>
+        <Input
+          id={`legalArea-${endpoint?.id ?? "novo"}`}
+          name="legalArea"
+          required
+          maxLength={120}
+          defaultValue={endpoint?.legalArea}
+        />
       </FormField>
 
       <FormField>
-        <FormLabel htmlFor="initialActivityType">Atividade inicial</FormLabel>
+        <FormLabel htmlFor={`initialActivityType-${endpoint?.id ?? "novo"}`}>Atividade inicial</FormLabel>
         <select
-          id="initialActivityType"
+          id={`initialActivityType-${endpoint?.id ?? "novo"}`}
           name="initialActivityType"
+          defaultValue={endpoint?.initialActivityType ?? "call"}
           className="h-9 rounded-input border border-border-input bg-surface px-3 text-body"
         >
           <option value="call">Ligação</option>
@@ -208,22 +249,26 @@ function NewEndpointForm({
       </FormField>
 
       <FormField>
-        <FormLabel htmlFor="initialActivityDueMinutes">Prazo da atividade inicial (minutos)</FormLabel>
+        <FormLabel htmlFor={`initialActivityDueMinutes-${endpoint?.id ?? "novo"}`}>
+          Prazo da atividade inicial (minutos)
+        </FormLabel>
         <Input
-          id="initialActivityDueMinutes"
+          id={`initialActivityDueMinutes-${endpoint?.id ?? "novo"}`}
           name="initialActivityDueMinutes"
           type="number"
           min={1}
           max={43200}
           required
+          defaultValue={endpoint?.initialActivityDueMinutes}
         />
       </FormField>
 
       <FormField>
-        <FormLabel htmlFor="captureMode">Modo de captação</FormLabel>
+        <FormLabel htmlFor={`captureMode-${endpoint?.id ?? "novo"}`}>Modo de captação</FormLabel>
         <select
-          id="captureMode"
+          id={`captureMode-${endpoint?.id ?? "novo"}`}
           name="captureMode"
+          defaultValue={endpoint?.captureMode ?? "new_intake"}
           className="h-9 rounded-input border border-border-input bg-surface px-3 text-body"
         >
           <option value="new_intake">Captação nova (sempre abre demanda)</option>
@@ -232,27 +277,48 @@ function NewEndpointForm({
       </FormField>
 
       <FormField>
-        <FormLabel htmlFor="turnstileAction">Ação do Turnstile</FormLabel>
-        <Input id="turnstileAction" name="turnstileAction" required maxLength={60} defaultValue="formulario" />
+        <FormLabel htmlFor={`turnstileAction-${endpoint?.id ?? "novo"}`}>Ação do Turnstile</FormLabel>
+        <Input
+          id={`turnstileAction-${endpoint?.id ?? "novo"}`}
+          name="turnstileAction"
+          required
+          maxLength={60}
+          defaultValue={endpoint?.turnstileAction ?? "formulario"}
+        />
       </FormField>
 
       <FormField>
-        <FormLabel htmlFor="allowedHostnames">Domínios permitidos (separados por vírgula)</FormLabel>
-        <Input id="allowedHostnames" name="allowedHostnames" required placeholder="exemplo.com.br, www.exemplo.com.br" />
+        <FormLabel htmlFor={`allowedHostnames-${endpoint?.id ?? "novo"}`}>
+          Domínios permitidos (separados por vírgula)
+        </FormLabel>
+        <Input
+          id={`allowedHostnames-${endpoint?.id ?? "novo"}`}
+          name="allowedHostnames"
+          required
+          placeholder="exemplo.com.br, www.exemplo.com.br"
+          defaultValue={endpoint?.allowedHostnames.join(", ")}
+        />
       </FormField>
 
-      <AnswersFieldEditor />
+      <AnswersFieldEditor initialFields={endpoint?.answersConfig.fields} />
 
-      <Button type="submit" disabled={pending} className="self-start">
-        {pending ? "Criando…" : "Criar formulário"}
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button type="submit" disabled={pending} className="self-start">
+          {pending ? "Salvando…" : isEditing ? "Salvar alterações" : "Criar formulário"}
+        </Button>
+        {isEditing ? (
+          <Button type="button" variant="ghost" size="sm" onClick={onSaved}>
+            Cancelar
+          </Button>
+        ) : null}
+      </div>
 
       {state.error ? (
         <Alert variant="danger">
           <AlertDescription>{state.error}</AlertDescription>
         </Alert>
       ) : null}
-      {state.ok && state.publicKey ? (
+      {!isEditing && state.ok && state.publicKey ? (
         <Alert variant="success">
           <AlertDescription>
             Formulário criado. Endereço público: <code>/api/forms/{state.publicKey}</code>
@@ -263,9 +329,31 @@ function NewEndpointForm({
   );
 }
 
-function EndpointRow({ endpoint }: { endpoint: FormEndpoint }) {
+function EndpointRow({
+  endpoint,
+  pipelines,
+  stages,
+}: {
+  endpoint: FormEndpoint;
+  pipelines: PipelineOption[];
+  stages: StageOption[];
+}) {
   const [statusState, statusAction, statusPending] = useActionState(setFormEndpointStatusAction, INITIAL);
   const [rotateState, rotateAction, rotatePending] = useActionState(rotateFormEndpointKeyAction, INITIAL);
+  const [isEditing, setIsEditing] = useState(false);
+
+  if (isEditing) {
+    return (
+      <li>
+        <EndpointForm
+          pipelines={pipelines}
+          stages={stages}
+          endpoint={endpoint}
+          onSaved={() => setIsEditing(false)}
+        />
+      </li>
+    );
+  }
 
   return (
     <li className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-4">
@@ -309,6 +397,10 @@ function EndpointRow({ endpoint }: { endpoint: FormEndpoint }) {
       </p>
 
       <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="secondary" size="sm" onClick={() => setIsEditing(true)}>
+          Editar
+        </Button>
+
         <form action={statusAction}>
           <input type="hidden" name="formEndpointId" value={endpoint.id} />
           <input type="hidden" name="status" value={endpoint.status === "active" ? "disabled" : "active"} />
@@ -362,14 +454,14 @@ export function FormEndpointsManager({
 }) {
   return (
     <div className="flex flex-col gap-4">
-      <NewEndpointForm pipelines={pipelines} stages={stages} />
+      <EndpointForm pipelines={pipelines} stages={stages} />
 
       {endpoints.length === 0 ? (
         <p className="m-0 text-body text-text-secondary">Nenhum formulário configurado ainda.</p>
       ) : (
         <ul className="m-0 flex list-none flex-col gap-3 p-0">
           {endpoints.map((endpoint) => (
-            <EndpointRow key={endpoint.id} endpoint={endpoint} />
+            <EndpointRow key={endpoint.id} endpoint={endpoint} pipelines={pipelines} stages={stages} />
           ))}
         </ul>
       )}

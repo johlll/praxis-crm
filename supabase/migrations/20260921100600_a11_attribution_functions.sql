@@ -218,13 +218,25 @@ begin
       left join public.webhook_events w on w.id = t.webhook_event_id
       -- Alcance por REGISTRO, não por contato: um contato pode ter mais de
       -- um lead (mesma pessoa, duas demandas), com responsáveis
-      -- diferentes. Antes desta correção, um advogado com acesso só ao
-      -- lead A recebia aqui também os touchpoints — ids, vínculo vigente,
-      -- histórico com nome de quem corrigiu, e evidência de consentimento
-      -- — do lead B do MESMO contato, mesmo sem acesso a B. Escopar por
-      -- t.lead_id (não t.contact_id) fecha o vazamento: só entra o que
-      -- nasceu ou foi corrigido para ESTE lead.
-      where t.workspace_id = v_lead.workspace_id and t.lead_id = v_lead.id
+      -- diferentes. Escopar só por t.lead_id (o lead de ORIGEM, imutável)
+      -- fechou o primeiro vazamento mas abriu outro (item 5 da auditoria
+      -- pós-dry-run): correct_touchpoint_demand_link() permite corrigir um
+      -- touchpoint para a oportunidade de OUTRO lead do MESMO contato — a
+      -- invariante ali é só "mesmo contato", nunca "mesmo lead de origem".
+      -- Depois dessa correção, o touchpoint continuava aparecendo aqui,
+      -- vazando para quem só tem acesso ao lead de ORIGEM o id da
+      -- oportunidade (e todo o histórico, com nome de quem corrigiu) do
+      -- lead de DESTINO, mesmo sem acesso a ele.
+      --
+      -- A exibição segue o VÍNCULO EFETIVO, não a origem: quando há
+      -- oportunidade vigente, é o lead DELA que decide de qual sequência o
+      -- touchpoint faz parte — ele "muda de lead" junto com a correção,
+      -- exatamente como já muda de oportunidade. Sem oportunidade vigente
+      -- (nunca vinculado, ou explicitamente desvinculado) não há para onde
+      -- migrar: cai de volta no lead de origem, como sempre foi.
+      left join public.opportunities eo on eo.id = private.touchpoint_effective_opportunity(t.id)
+      where t.workspace_id = v_lead.workspace_id
+        and coalesce(eo.lead_id, t.lead_id) = v_lead.id
     ),
     -- Atribuição por OPORTUNIDADE (nunca por lead: a A5 permite várias
     -- oportunidades no mesmo lead, e uma nunca empresta origem à outra).
@@ -486,7 +498,15 @@ begin
     workspace_id, token_hash, contact_id, lead_id, opportunity_id, purpose, expires_at, created_by
   )
   values (
-    v_lead.workspace_id, extensions.digest(v_token, 'sha256'), v_lead.contact_id, v_lead.id, p_opportunity_id,
+    -- Defeito corrigido (item 1 da auditoria pós-dry-run): o hash gravado
+    -- precisa ser o SHA-256 do TEXTO base64url devolvido ao cliente — a
+    -- mesma representação que o worker recebe de volta e hasheia (o
+    -- visitante manda o token como STRING, nunca como bytes brutos). Hashear
+    -- `v_token` (os bytes aleatórios crus) produzia um hash que o token
+    -- devolvido NUNCA batia: toda referência emitida era, na prática,
+    -- inutilizável — process_form_event nunca reconhecia o token de volta.
+    v_lead.workspace_id, extensions.digest(convert_to(v_token_url, 'utf8'), 'sha256'),
+    v_lead.contact_id, v_lead.id, p_opportunity_id,
     private.form_intake_continuity_purpose(), now() + make_interval(hours => p_validity_hours), v_actor
   )
   returning * into v_reference;
@@ -507,6 +527,14 @@ $body$;
 
 -- ---------------------------------------------------------------------
 -- revoke_continuity_reference — revogação explícita, antes do vencimento
+--
+-- Defeito corrigido (item 3 da auditoria pós-dry-run): faltava aplicar
+-- `private.lead_accessible_to_role` ao LEAD da própria referência — um
+-- advogado sem acesso ao lead conseguia revogar (ou, pela mesma lacuna,
+-- teria conseguido reemitir) a referência de um lead de outro
+-- responsável, só por ter QUALQUER papel elegível no workspace. Mesma
+-- regra de `issue_continuity_reference`: recurso fora do alcance
+-- responde como não encontrado, nunca como proibido.
 -- ---------------------------------------------------------------------
 
 create function public.revoke_continuity_reference(p_continuity_reference_id uuid)
@@ -519,6 +547,7 @@ declare
   v_actor uuid := auth.uid();
   v_role public.membership_role;
   v_reference public.continuity_references;
+  v_lead public.leads;
 begin
   if v_actor is null then
     raise exception 'authentication_required';
@@ -529,9 +558,19 @@ begin
     raise exception 'continuity_reference_not_found';
   end if;
 
+  select * into v_lead from public.leads where id = v_reference.lead_id;
+
   select role into v_role from public.memberships
   where workspace_id = v_reference.workspace_id and user_id = v_actor and status = 'active';
-  if v_role is null or not (v_role = any(array['owner', 'admin', 'manager', 'lawyer', 'sales']::public.membership_role[])) then
+
+  -- Alcance por registro ANTES de qualquer permissão de ação: sem acesso
+  -- ao lead da referência, a resposta é "não encontrada" — nunca revela
+  -- que a referência existe nem que pertence a outro responsável.
+  if v_role is null or v_lead.id is null
+     or not private.lead_accessible_to_role(v_role, v_lead.assigned_to, v_actor) then
+    raise exception 'continuity_reference_not_found';
+  end if;
+  if not (v_role = any(array['owner', 'admin', 'manager', 'lawyer', 'sales']::public.membership_role[])) then
     raise exception 'insufficient_permission';
   end if;
 

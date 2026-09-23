@@ -19,10 +19,21 @@
 --     a cadeia de correção acompanha o touchpoint sem reparentamento
 --     próprio (mesmo raciocínio de client_handoffs na A8).
 --
--- As três são append-only e não têm `updated_at`; o snapshot mínimo grava
--- previous_updated_at = null, e a detecção de alteração posterior do undo
--- se apoia na EXISTÊNCIA da linha, exatamente como contact_identifiers já
--- fazia desde a A3.
+-- `touchpoints` e `consent_evidence` são append-only e não têm
+-- `updated_at`; o snapshot mínimo grava previous_updated_at = null, e a
+-- detecção de alteração posterior do undo se apoia na EXISTÊNCIA da
+-- linha, exatamente como contact_identifiers já fazia desde a A3.
+--
+-- `continuity_references` é DIFERENTE (defeito corrigido — item 6 da
+-- auditoria pós-dry-run): ela É mutável depois de emitida (`used_count`,
+-- `last_used_at` por process_form_event; `revoked_at` por
+-- revoke_continuity_reference), e nada detectava USO ou REVOGAÇÃO
+-- acontecidos DEPOIS da mesclagem e ANTES do desfazer — a linha
+-- continuava existindo, então o undo a devolvia ao contato perdedor sem
+-- avisar que o estado dela tinha mudado no meio do caminho. Por isso ela
+-- ganhou `updated_at` (com trigger, igual a `leads`/`clients`/etc.) e
+-- entra no MESMO mecanismo de conflito por versão que essas tabelas já
+-- usam — não mais pela existência sozinha.
 --
 -- Limite conhecido e registrado: `touchpoints.position` é a ordem de
 -- chegada DENTRO de um contato. Depois de uma mesclagem, duas sequências
@@ -197,10 +208,10 @@ begin
   for v_row in
     update public.continuity_references set contact_id = v_kept.id
     where contact_id = v_merged.id
-    returning id
+    returning id, updated_at
   loop
     v_moved := v_moved || jsonb_build_array(
-      jsonb_build_object('table', 'continuity_references', 'id', v_row.id, 'previous_updated_at', null)
+      jsonb_build_object('table', 'continuity_references', 'id', v_row.id, 'previous_updated_at', v_row.updated_at)
     );
   end loop;
 
@@ -317,8 +328,8 @@ begin
       select true into v_row_exists from public.touchpoints where id = v_id;
       v_current_updated_at := null;
     elsif v_table = 'continuity_references' then
-      select true into v_row_exists from public.continuity_references where id = v_id;
-      v_current_updated_at := null;
+      select updated_at, true into v_current_updated_at, v_row_exists
+      from public.continuity_references where id = v_id;
     elsif v_table = 'consent_evidence' then
       select true into v_row_exists from public.consent_evidence where id = v_id;
       v_current_updated_at := null;

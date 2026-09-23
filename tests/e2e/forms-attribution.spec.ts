@@ -92,6 +92,39 @@ test.describe.serial("A11 — formulários próprios e atribuição", () => {
     expect(publicKey.length).toBeGreaterThan(20);
   });
 
+  test("1b. owner edita um formulário existente: nasce preenchido e a edição persiste depois de recarregar (item 8)", async ({
+    page,
+  }) => {
+    await login(page, SEED_PAINEL.owner.email);
+    await page.goto("/configuracoes/formularios");
+
+    const card = page.locator("li", { hasText: "Captação e2e" });
+    await card.getByRole("button", { name: "Editar" }).click();
+
+    // O formulário de edição nasce PREENCHIDO com os valores atuais —
+    // inclusive o campo extra configurado no teste 1 (defeito corrigido —
+    // item 8 da auditoria pós-dry-run: antes não existia edição nenhuma
+    // pela interface, só mexendo direto no banco).
+    await expect(card.getByLabel("Nome")).toHaveValue("Captação e2e");
+    await expect(card.getByLabel("Área jurídica")).toHaveValue("Trabalhista");
+    await expect(card.getByLabel("Ação do Turnstile")).toHaveValue("formulario");
+    await expect(card.getByLabel("Domínios permitidos (separados por vírgula)")).toHaveValue("localhost");
+    await expect(card.getByLabel("Chave do campo")).toHaveValue("motivo");
+    await expect(card.getByLabel("Rótulo do campo")).toHaveValue("Motivo do contato");
+
+    await card.getByLabel("Área jurídica").fill("Trabalhista revisado");
+    await card.getByRole("button", { name: "Salvar alterações" }).click();
+
+    // Salvar fecha a edição e volta à leitura, já com o valor novo.
+    await expect(card.getByText("Trabalhista revisado")).toBeVisible();
+    await expect(card.getByLabel("Área jurídica")).toHaveCount(0);
+
+    // Recarregar prova que a edição foi PERSISTIDA no banco — não só um
+    // estado otimista do cliente que uma nova carga da página desfaria.
+    await page.reload();
+    await expect(page.locator("li", { hasText: "Captação e2e" }).getByText("Trabalhista revisado")).toBeVisible();
+  });
+
   test("2. submissão pública materializa contato, demanda, oportunidade e atividade", async ({
     page,
     request,
@@ -209,10 +242,15 @@ test.describe.serial("A11 — formulários próprios e atribuição", () => {
     expect(postErro.status()).toBe(400);
     expect(postErro.headers()["access-control-allow-origin"]).toBe("http://localhost");
 
-    // Origem não autorizada: o POST ainda é processado no servidor (CORS
-    // não é uma barreira de rede), mas sem cabeçalho — o navegador
-    // bloqueia a LEITURA da resposta pelo JS da página atacante.
+    // Origem PRESENTE e NÃO autorizada: recusada no SERVIDOR, antes de
+    // qualquer gravação (defeito corrigido — item 7 da auditoria pós-dry-
+    // run: antes o POST era processado normalmente mesmo vindo de uma
+    // origem fora da lista, só sem cabeçalho de CORS — o que impede o JS
+    // da página atacante de LER a resposta, mas não impede um cliente que
+    // não é navegador de gravar o evento mesmo assim).
     const postRecusado = await submit(request, publicKey, {}, ip, { origin: "https://atacante.test" });
+    expect(postRecusado.status()).toBe(403);
+    expect((await postRecusado.json()).error).toBe("origin_not_allowed");
     expect(postRecusado.headers()["access-control-allow-origin"]).toBeUndefined();
   });
 

@@ -1,5 +1,6 @@
 import { createServerSupabaseClient } from "@/server/supabase/server";
 import { DataLoadError } from "@/server/data/load-error";
+import { answersConfigSchema, EMPTY_ANSWERS_CONFIG, type AnswersConfig } from "@/modules/forms/schema";
 
 /**
  * Leitura dos endpoints de formulário (A11).
@@ -24,6 +25,10 @@ export type FormEndpoint = {
   contractVersion: number;
   turnstileAction: string;
   allowedHostnames: string[];
+  // Config REAL dos campos extras (item 6/8 da auditoria pós-dry-run):
+  // valida de novo com o MESMO schema da borda — nunca confia às cegas
+  // no que veio do banco só porque list_form_endpoints é owner/admin.
+  answersConfig: AnswersConfig;
   publicKey: string | null;
   revokedKeyCount: number;
   receivedEvents: number;
@@ -60,6 +65,10 @@ export async function listFormEndpoints(workspaceId: string): Promise<FormEndpoi
     contractVersion: Number(row.contract_version ?? 1),
     turnstileAction: String(row.turnstile_action),
     allowedHostnames: Array.isArray(row.allowed_hostnames) ? (row.allowed_hostnames as string[]) : [],
+    answersConfig: (() => {
+      const parsed = answersConfigSchema.safeParse(row.answers_config);
+      return parsed.success ? parsed.data : EMPTY_ANSWERS_CONFIG;
+    })(),
     publicKey: (row.public_key as string | null) ?? null,
     revokedKeyCount: Number(row.revoked_key_count ?? 0),
     receivedEvents: Number(row.received_events ?? 0),

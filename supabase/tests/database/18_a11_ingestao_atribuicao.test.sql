@@ -8,7 +8,7 @@
 -- regressão histórica inventada.
 
 begin;
-select plan(113);
+select plan(127);
 
 \set otavio '20000000-0000-0000-0000-000000000014'
 \set lucas  '20000000-0000-0000-0000-000000000011'
@@ -735,6 +735,138 @@ select is(
 );
 
 -- -----------------------------------------------------------------
+-- 12c) continuity_references USADA ou REVOGADA depois do merge causa
+--      undo_conflict (item 6 da auditoria pós-dry-run) — antes, só a
+--      EXISTÊNCIA da linha era conferida no undo (igual a uma tabela
+--      append-only); usar (processar um evento com o token, pelo
+--      caminho real) ou revogar a referência DEPOIS da mesclagem e ANTES
+--      do desfazer passava batido, porque a linha continuava existindo.
+--
+--      now() é fixo durante toda a transação deste arquivo (mesmo motivo
+--      documentado em 08_a3_merge.test.sql): sem backdatar manualmente
+--      aqui, o updated_at gravado pela mesclagem e o gravado pela ação
+--      real seriam idênticos, mascarando o cenário que só existe de
+--      verdade entre duas requisições (transações) diferentes.
+-- -----------------------------------------------------------------
+
+-- Caso 1: USO depois do merge.
+insert into public.contacts (id, workspace_id, type, name, created_by)
+values ('c1100000-0000-4000-8000-000000000002', :'ws'::uuid, 'pf', 'Duplicado3', :'otavio');
+
+insert into public.leads (id, workspace_id, contact_id, legal_area, priority, created_by)
+values (
+  'c1100000-0000-4000-8000-000000000011', :'ws'::uuid, 'c1100000-0000-4000-8000-000000000002',
+  'Cível', 'media', :'otavio'
+);
+
+insert into public.continuity_references (
+  id, workspace_id, token_hash, contact_id, lead_id, purpose, expires_at
+)
+values (
+  'c1100000-0000-4000-8000-000000000021', :'ws'::uuid, decode(repeat('66', 32), 'hex'),
+  'c1100000-0000-4000-8000-000000000002', 'c1100000-0000-4000-8000-000000000011',
+  'form_continuity', now() + interval '7 days'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
+select merge_contacts(:'contact1'::uuid, 'c1100000-0000-4000-8000-000000000002'::uuid);
+reset role;
+
+select id as merge3 from public.contact_merges
+where kept_contact_id = :'contact1'::uuid and merged_contact_id = 'c1100000-0000-4000-8000-000000000002'
+order by created_at desc limit 1 \gset
+
+-- USA a referência DEPOIS do merge, pelo caminho REAL (process_form_event
+-- incrementa used_count/last_used_at, e o gatilho grava updated_at).
+select ingest_form_event(
+  :'endpoint_cont'::uuid, 'cccccccc-0000-4000-8000-000000000010'::uuid, :'hash1'::bytea,
+  'proto-uso-pos-merge', '\xde'::bytea, '\x000000000000000000000000'::bytea,
+  '\x00000000000000000000000000000000'::bytea, 'aes-256-gcm', '1', '{}'::jsonb, now()
+);
+select id as event_uso_pos_merge from public.webhook_events
+where source_event_id = 'cccccccc-0000-4000-8000-000000000010'::uuid \gset
+
+select process_form_event(:'event_uso_pos_merge'::uuid, jsonb_build_object(
+  'contact', jsonb_build_object('name', 'Visitante Duplicado3'),
+  'continuity_token_hash', encode(decode(repeat('66', 32), 'hex'), 'base64'),
+  'attribution', jsonb_build_object('channel', 'formulario', 'source', 'email')
+));
+
+select ok(
+  (select used_count > 0 from public.continuity_references where id = 'c1100000-0000-4000-8000-000000000021'),
+  'Fixture: a referência foi USADA depois do merge (used_count > 0)'
+);
+
+-- Simula a passagem de tempo real entre o uso e a tentativa de desfazer
+-- (mesma técnica de 08_a3_merge.test.sql — nunca como o app se comporta).
+alter table public.continuity_references disable trigger continuity_references_set_updated_at;
+update public.continuity_references set updated_at = updated_at + interval '1 minute'
+where id = 'c1100000-0000-4000-8000-000000000021';
+alter table public.continuity_references enable trigger continuity_references_set_updated_at;
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
+select throws_ok(
+  format($$select unmerge_contact(%L::uuid)$$, :'merge3'),
+  'P0001', null,
+  'Desfazer recusa quando a referência de continuidade foi USADA depois da mesclagem'
+);
+reset role;
+
+-- Caso 2: REVOGAÇÃO depois do merge.
+insert into public.contacts (id, workspace_id, type, name, created_by)
+values ('c1100000-0000-4000-8000-000000000003', :'ws'::uuid, 'pf', 'Duplicado4', :'otavio');
+
+insert into public.leads (id, workspace_id, contact_id, legal_area, priority, created_by)
+values (
+  'c1100000-0000-4000-8000-000000000012', :'ws'::uuid, 'c1100000-0000-4000-8000-000000000003',
+  'Cível', 'media', :'otavio'
+);
+
+insert into public.continuity_references (
+  id, workspace_id, token_hash, contact_id, lead_id, purpose, expires_at
+)
+values (
+  'c1100000-0000-4000-8000-000000000022', :'ws'::uuid, decode(repeat('77', 32), 'hex'),
+  'c1100000-0000-4000-8000-000000000003', 'c1100000-0000-4000-8000-000000000012',
+  'form_continuity', now() + interval '7 days'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
+select merge_contacts(:'contact1'::uuid, 'c1100000-0000-4000-8000-000000000003'::uuid);
+reset role;
+
+select id as merge4 from public.contact_merges
+where kept_contact_id = :'contact1'::uuid and merged_contact_id = 'c1100000-0000-4000-8000-000000000003'
+order by created_at desc limit 1 \gset
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
+select revoke_continuity_reference('c1100000-0000-4000-8000-000000000022'::uuid);
+reset role;
+
+select isnt(
+  (select revoked_at from public.continuity_references where id = 'c1100000-0000-4000-8000-000000000022'),
+  null, 'Fixture: a referência foi REVOGADA depois do merge'
+);
+
+alter table public.continuity_references disable trigger continuity_references_set_updated_at;
+update public.continuity_references set updated_at = updated_at + interval '1 minute'
+where id = 'c1100000-0000-4000-8000-000000000022';
+alter table public.continuity_references enable trigger continuity_references_set_updated_at;
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
+select throws_ok(
+  format($$select unmerge_contact(%L::uuid)$$, :'merge4'),
+  'P0001', null,
+  'Desfazer recusa quando a referência de continuidade foi REVOGADA depois da mesclagem'
+);
+reset role;
+
+-- -----------------------------------------------------------------
 -- 13) FKs compostas: ON DELETE SET NULL só na coluna opcional
 --     (item 8 da auditoria pós-dry-run) — workspace_id NUNCA é anulado.
 -- -----------------------------------------------------------------
@@ -800,13 +932,18 @@ select is(
 select is(
   (select count(*)::int from public.continuity_references ref
    where ref.id = (:'issued'::jsonb ->> 'id')::uuid
-     and extensions.digest(decode(translate(:'issued'::jsonb ->> 'token', '-_', '+/') ||
-           repeat('=', (4 - length(:'issued'::jsonb ->> 'token') % 4) % 4), 'base64'), 'sha256') = ref.token_hash),
-  1, 'O hash gravado é realmente o SHA-256 do token devolvido (base64url decodificado)'
+     and extensions.digest(convert_to(:'issued'::jsonb ->> 'token', 'utf8'), 'sha256') = ref.token_hash),
+  1, 'O hash gravado é o SHA-256 do TEXTO do token devolvido — a MESMA representação que o worker usa (defeito corrigido, item 1: antes o hash gravado era dos BYTES aleatórios crus, e o token devolvido nunca batia com o hash gravado)'
 );
 
 -- Uma SEGUNDA interação com o token novo acrescenta touchpoint sem
--- sobrescrever o primeiro (regra explícita do item 5).
+-- sobrescrever o primeiro (regra explícita do item 5 original). O hash
+-- usado aqui é recalculado a partir do TOKEN REALMENTE DEVOLVIDO pela
+-- RPC — exatamente como o worker calcula de verdade a partir do que o
+-- visitante manda de volta — nunca lido de `token_hash` no banco (item 1
+-- da auditoria pós-dry-run: ler o hash já gravado escondia a
+-- incompatibilidade real entre emissão e verificação, porque comparava a
+-- coluna com ela mesma em vez de reproduzir o cálculo do cliente).
 select count(*)::int as touchpoints_before from public.touchpoints where contact_id = :'contact1'::uuid \gset
 
 select ingest_form_event(
@@ -817,10 +954,8 @@ select ingest_form_event(
 select id as event_issued from public.webhook_events
 where source_event_id = 'bbbbbbbb-0000-4000-8000-000000000003'::uuid \gset
 
-select (
-  select encode(token_hash, 'base64') from public.continuity_references
-  where id = (:'issued'::jsonb ->> 'id')::uuid
-) as issued_hash_b64 \gset
+select encode(extensions.digest(convert_to(:'issued'::jsonb ->> 'token', 'utf8'), 'sha256'), 'base64')
+  as issued_hash_b64 \gset
 
 select process_form_event(:'event_issued'::uuid, jsonb_build_object(
   'contact', jsonb_build_object('name', 'Visitante Um'),
@@ -895,6 +1030,33 @@ select is(
 );
 
 -- -----------------------------------------------------------------
+-- 15b) ingest_form_event recusa answers_config_snapshot CORROMPIDO
+--      (item 4 da auditoria pós-dry-run) — defesa em profundidade: a
+--      borda TypeScript já valida antes de chamar a RPC, mas a RPC não
+--      é chamável só por ali. Um snapshot corrompido, passado direto,
+--      nunca vira {fields: []} em silêncio: recusa ANTES de gravar
+--      qualquer coisa, e zero eventos são processados.
+-- -----------------------------------------------------------------
+
+select count(*)::int as webhook_events_antes_do_snapshot_ruim from public.webhook_events \gset
+
+select throws_ok(
+  format($$select ingest_form_event(%L::uuid, 'cccccccc-0000-4000-8000-000000000099'::uuid, %L::bytea,
+           'proto-snapshot-corrompido', '\xde'::bytea, '\x000000000000000000000000'::bytea,
+           '\x00000000000000000000000000000000'::bytea, 'aes-256-gcm', '1', '{}'::jsonb, now(),
+           '{"fields":[{"key":"Chave Maiuscula","label":"x","type":"text"}]}'::jsonb)$$,
+         :'endpoint', :'hash1'),
+  'answers_config_invalid: bad key Chave Maiuscula',
+  'Snapshot corrompido inserido direto pela RPC é recusado — mesmo validador do create/update_form_endpoint'
+);
+
+select is(
+  (select count(*)::int from public.webhook_events),
+  :'webhook_events_antes_do_snapshot_ruim'::int,
+  'Nenhum evento novo é gravado quando o snapshot é recusado (zero eventos processados)'
+);
+
+-- -----------------------------------------------------------------
 -- 16) get_lead_attribution: alcance por REGISTRO, não por contato
 --     (item 10 da auditoria pós-dry-run) — mesmo contato, dois leads,
 --     responsáveis diferentes.
@@ -956,6 +1118,107 @@ reset role;
 select is(
   (select jsonb_array_length(:'attribution_lead2'::jsonb -> 'sequence')),
   1, 'A sequência do lead2 contém só o próprio touchpoint — nada do lead1 vaza para cá também'
+);
+
+-- -----------------------------------------------------------------
+-- 16b) Escopo depois de CORREÇÃO entre leads (item 5 da auditoria
+--      pós-dry-run) — mesmo contato, dois leads de responsáveis
+--      diferentes: correct_touchpoint_demand_link só exige o MESMO
+--      CONTATO, nunca o mesmo lead de origem — corrigir um touchpoint
+--      para a oportunidade de OUTRO lead do mesmo contato é permitido de
+--      propósito. A EXIBIÇÃO precisa migrar junto (vínculo efetivo):
+--      sem isto, quem só tem acesso ao lead de origem continuava
+--      recebendo o id da oportunidade — e todo o histórico da correção,
+--      com nome de quem corrigiu — do lead de DESTINO, mesmo sem acesso
+--      a ele.
+-- -----------------------------------------------------------------
+
+select id as tp1_link_vigente from public.touchpoint_demand_links
+where touchpoint_id = :'tp1'::uuid and supersedes_id = :'link2'::uuid \gset
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
+select correct_touchpoint_demand_link(:'tp1'::uuid, :'tp1_link_vigente'::uuid, 'assign', :'opp_scope'::uuid,
+  'item 5 — correção entre leads do mesmo contato') as corr_cross_lead \gset
+reset role;
+
+select is(
+  (select private.touchpoint_effective_opportunity(:'tp1'::uuid)),
+  :'opp_scope'::uuid, 'Fixture: tp1 agora tem oportunidade vigente do OUTRO lead (lead2_scope)'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'lucas', 'role', 'authenticated')::text, true);
+select get_lead_attribution(:'lead1'::uuid) as attribution_lead1_depois \gset
+reset role;
+
+select is(
+  (select bool_or((elem ->> 'id') = :'tp1')
+   from jsonb_array_elements(:'attribution_lead1_depois'::jsonb -> 'sequence') elem),
+  false,
+  'Depois da correção para o OUTRO lead, tp1 SAI da sequência do lead de origem (a exibição segue o vínculo efetivo, não a origem)'
+);
+select is(
+  (:'attribution_lead1_depois'::text like ('%' || :'opp_scope' || '%')),
+  false,
+  'A resposta de get_lead_attribution(lead1) para o advogado do lead1 nunca contém o id da oportunidade do lead2_scope (sem vazamento de IDs)'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'vitor', 'role', 'authenticated')::text, true);
+select get_lead_attribution(:'lead2_scope'::uuid) as attribution_lead2_depois \gset
+reset role;
+
+select is(
+  (select jsonb_array_length(:'attribution_lead2_depois'::jsonb -> 'sequence')),
+  2, 'tp1 passa a aparecer na sequência do lead2_scope — a exibição migrou com o vínculo efetivo'
+);
+select is(
+  (select bool_or((elem ->> 'id') = :'tp1')
+   from jsonb_array_elements(:'attribution_lead2_depois'::jsonb -> 'sequence') elem),
+  true,
+  'vitor (responsável pelo lead2_scope) enxerga tp1 depois da correção, sem precisar de acesso ao lead1'
+);
+
+-- -----------------------------------------------------------------
+-- 16c) revoke_continuity_reference: alcance por REGISTRO (item 3 da
+--      auditoria pós-dry-run) — dois advogados, leads de responsáveis
+--      diferentes: revogar a referência do lead ALHEIO responde como
+--      "não encontrada" e não altera a linha.
+-- -----------------------------------------------------------------
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'vitor', 'role', 'authenticated')::text, true);
+select issue_continuity_reference(:'lead2_scope'::uuid, :'opp_scope'::uuid, 168) as issued_scope \gset
+reset role;
+
+select (:'issued_scope'::jsonb ->> 'id') as continuity_scope_id \gset
+
+-- lucas é responsável pelo lead1, não pelo lead2_scope: não enxerga a
+-- referência dele.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'lucas', 'role', 'authenticated')::text, true);
+select throws_ok(
+  format($$select revoke_continuity_reference(%L::uuid)$$, :'continuity_scope_id'),
+  'continuity_reference_not_found',
+  'Advogado sem acesso ao lead2_scope não revoga a referência dele (recusa como "não encontrada", nunca "proibido")'
+);
+reset role;
+
+select is(
+  (select revoked_at from public.continuity_references where id = :'continuity_scope_id'::uuid),
+  null, 'A tentativa recusada NÃO altera a referência — ausência de alteração comprovada'
+);
+
+-- vitor, o responsável de verdade pelo lead2_scope, revoga normalmente.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'vitor', 'role', 'authenticated')::text, true);
+select revoke_continuity_reference(:'continuity_scope_id'::uuid);
+reset role;
+
+select isnt(
+  (select revoked_at from public.continuity_references where id = :'continuity_scope_id'::uuid),
+  null, 'O responsável de verdade pelo lead consegue revogar normalmente'
 );
 
 -- -----------------------------------------------------------------

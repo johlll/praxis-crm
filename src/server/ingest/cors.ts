@@ -13,6 +13,12 @@
  *    (nunca "*"), e só quando o hostname dela está na lista de
  *    `allowed_hostnames` do PRÓPRIO endpoint — a mesma lista já usada
  *    para conferir o `hostname` do Turnstile;
+ *  - protocolo e porta NUNCA são arbitrários (item 7 da auditoria
+ *    pós-dry-run — defeito corrigido: só o hostname era conferido, então
+ *    QUALQUER protocolo e QUALQUER porta reivindicando o mesmo hostname
+ *    eram aceitos). Fora do domínio de desenvolvimento local — onde
+ *    preview e e2e genuinamente variam porta —, a origem só é aceita em
+ *    HTTPS, na porta padrão (443, implícita, nunca declarada);
  *  - `Vary: Origin` sempre que o cabeçalho existir, para caches
  *    intermediários não misturarem respostas de origens diferentes;
  *  - os cabeçalhos acompanham resposta de SUCESSO e de ERRO, desde que a
@@ -20,21 +26,34 @@
  *    legível pelo JS da origem legítima;
  *  - sem `Origin` (chamada servidor-a-servidor, curl, etc.) não há nada
  *    para autorizar: CORS é um mecanismo de NAVEGADOR, e a ausência do
- *    cabeçalho não é tratada como origem inválida.
+ *    cabeçalho não é tratada como origem inválida — mas um `Origin`
+ *    PRESENTE e não autorizado É recusado, antes de qualquer gravação
+ *    (ver handleFormSubmission, passo 2b): o CORS do navegador só impede
+ *    o JS de LER a resposta, nunca impede um cliente que não é navegador
+ *    de mandar a requisição com um `Origin` forjado.
  */
+
+const LOCAL_DEV_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1"]);
 
 export function matchAllowedOrigin(originHeader: string | null, allowedHostnames: string[]): string | null {
   if (!originHeader) return null;
 
-  let hostname: string;
+  let url: URL;
   try {
-    hostname = new URL(originHeader).hostname.toLowerCase();
+    url = new URL(originHeader);
   } catch {
     return null;
   }
 
+  const hostname = url.hostname.toLowerCase();
   const allowed = allowedHostnames.map((value) => value.toLowerCase());
-  return allowed.includes(hostname) ? originHeader : null;
+  if (!allowed.includes(hostname)) return null;
+
+  if (!LOCAL_DEV_HOSTNAMES.has(hostname) && (url.protocol !== "https:" || url.port !== "")) {
+    return null;
+  }
+
+  return originHeader;
 }
 
 export function corsResponseHeaders(allowedOrigin: string | null): Record<string, string> {

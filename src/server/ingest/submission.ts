@@ -25,7 +25,10 @@ export const submissionSchema = z
     // banco, a partir de received_at — aqui só se exige que seja uma data
     // válida: data inválida é recusada ANTES da ingestão (contrato §3).
     occurredAt: z.iso.datetime({ offset: true }),
-    turnstileToken: trimmed(4096).min(1),
+    // Limite do contrato OFICIAL da Cloudflare (item 2 da auditoria
+    // pós-dry-run): o token do Turnstile nunca passa de 2048 caracteres —
+    // 4096 era um teto arbitrário, maior que qualquer token real.
+    turnstileToken: trimmed(2048).min(1),
     // Honeypot: precisa chegar vazio. Preenchido = robô.
     website: trimmed(200).optional(),
     contact: z.object({

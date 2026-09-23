@@ -32,6 +32,27 @@ describe("matchAllowedOrigin", () => {
   it("porta ou subdomínio diferentes não colam com o hostname configurado", () => {
     expect(matchAllowedOrigin("https://outro.exemplo.test", ["exemplo.test"])).toBeNull();
   });
+
+  // Item 7 da auditoria pós-dry-run: hostname sozinho não bastava —
+  // qualquer protocolo e qualquer porta reivindicando o MESMO hostname
+  // eram aceitos, mesmo fora de HTTPS na porta padrão.
+  it("HTTP é recusado quando o hostname não é de desenvolvimento local", () => {
+    expect(matchAllowedOrigin("http://exemplo.test", ["exemplo.test"])).toBeNull();
+  });
+
+  it("porta explícita é recusada quando o hostname não é de desenvolvimento local", () => {
+    expect(matchAllowedOrigin("https://exemplo.test:8443", ["exemplo.test"])).toBeNull();
+  });
+
+  it("HTTPS na porta padrão (implícita) continua autorizado", () => {
+    expect(matchAllowedOrigin("https://exemplo.test", ["exemplo.test"])).toBe("https://exemplo.test");
+  });
+
+  it("localhost/127.0.0.1 continuam aceitando HTTP e porta explícita (dev/e2e)", () => {
+    expect(matchAllowedOrigin("http://localhost", ["localhost"])).toBe("http://localhost");
+    expect(matchAllowedOrigin("http://localhost:3000", ["localhost"])).toBe("http://localhost:3000");
+    expect(matchAllowedOrigin("https://127.0.0.1:4000", ["127.0.0.1"])).toBe("https://127.0.0.1:4000");
+  });
 });
 
 describe("cabeçalhos de CORS", () => {

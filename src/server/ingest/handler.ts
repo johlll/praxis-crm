@@ -39,6 +39,8 @@ export type PublicFailure =
   | "rate_limited"
   | "payload_too_large"
   | "idempotency_payload_conflict"
+  | "origin_not_allowed"
+  | "form_endpoint_misconfigured"
   | "service_unavailable";
 
 export type IngestResult =
@@ -103,6 +105,22 @@ export async function handleFormSubmission(
     : null;
   if (!endpoint) return { ok: false, failure: "form_endpoint_unavailable", corsOrigin };
 
+  // 2b. `Origin` PRESENTE e não autorizado é recusado AQUI, antes de ler
+  //     o corpo ou gravar qualquer coisa (defeito corrigido — item 7 da
+  //     auditoria pós-dry-run): o CORS do navegador só impede o JS de LER
+  //     a resposta, nunca impede o SERVIDOR de processar a requisição —
+  //     um cliente que não é navegador (curl, outro site postando via
+  //     <form> sem fetch) pode forjar um `Origin` qualquer, e antes desta
+  //     recusa o evento era gravado normalmente mesmo vindo de uma
+  //     origem fora da lista do endpoint. Sem `Origin` (chamada
+  //     servidor-a-servidor) continua permitida — CORS é mecanismo de
+  //     navegador, e a ausência do cabeçalho nunca é tratada como origem
+  //     inválida.
+  const originHeader = request.headers.get("origin");
+  if (originHeader && !corsOrigin) {
+    return { ok: false, failure: "origin_not_allowed", corsOrigin };
+  }
+
   // 3. Limite de corpo, antes de desserializar.
   const raw = await request.text();
   if (Buffer.byteLength(raw, "utf8") > MAX_BODY_BYTES) {
@@ -133,8 +151,19 @@ export async function handleFormSubmission(
   // 5b. `answers` só pode conter os campos que o ENDPOINT configura:
   //     campo desconhecido, obrigatório ausente ou tipo/tamanho errado
   //     são recusados aqui — a borda nunca aceita e guarda "o que der".
+  //
+  //     Config AUSENTE (`answers_config` nulo — endpoint que nunca
+  //     configurou campo nenhum) é um `{fields: []}` LEGÍTIMO. Config
+  //     PRESENTE mas que não passa no MESMO schema usado na tela de
+  //     configuração é CORRUPÇÃO — nunca vira `{fields: []}` em silêncio
+  //     (defeito corrigido — item 4 da auditoria pós-dry-run: a borda
+  //     aceitava a submissão como se o endpoint não tivesse campo nenhum
+  //     configurado, mascarando o problema em vez de falhar fechada).
   const answersConfigResult = answersConfigSchema.safeParse(endpoint.answers_config ?? EMPTY_ANSWERS_CONFIG);
-  const answersConfig = answersConfigResult.success ? answersConfigResult.data : EMPTY_ANSWERS_CONFIG;
+  if (!answersConfigResult.success) {
+    return { ok: false, failure: "form_endpoint_misconfigured", corsOrigin };
+  }
+  const answersConfig = answersConfigResult.data;
   if (!buildAnswersSchema(answersConfig).safeParse(submission.answers).success) {
     return { ok: false, failure: "invalid_submission", corsOrigin };
   }

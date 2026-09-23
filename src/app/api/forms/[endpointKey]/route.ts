@@ -29,6 +29,12 @@ const STATUS: Record<PublicFailure, number> = {
   rate_limited: 429,
   payload_too_large: 413,
   idempotency_payload_conflict: 409,
+  // Origin presente e fora da lista do endpoint (item 7 da auditoria
+  // pós-dry-run): recusa explícita, nunca silenciosa.
+  origin_not_allowed: 403,
+  // Config corrompida no servidor — nunca culpa do visitante nem algo
+  // que ele possa corrigir reenviando (item 4 da auditoria pós-dry-run).
+  form_endpoint_misconfigured: 503,
   service_unavailable: 503,
 };
 

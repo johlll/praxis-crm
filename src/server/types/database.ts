@@ -862,6 +862,7 @@ export type Database = {
           purpose: string
           revoked_at: string | null
           token_hash: string
+          updated_at: string
           used_count: number
           workspace_id: string
         }
@@ -877,6 +878,7 @@ export type Database = {
           purpose: string
           revoked_at?: string | null
           token_hash: string
+          updated_at?: string
           used_count?: number
           workspace_id: string
         }
@@ -892,6 +894,7 @@ export type Database = {
           purpose?: string
           revoked_at?: string | null
           token_hash?: string
+          updated_at?: string
           used_count?: number
           workspace_id?: string
         }

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { answersConfigSchema, buildAnswersSchema, EMPTY_ANSWERS_CONFIG } from "@/modules/forms/schema";
+import { answersConfigSchema, buildAnswersSchema } from "@/modules/forms/schema";
 import { decryptPayload } from "@/server/ingest/payload-crypto";
 import { submissionSchema, workerInput } from "@/server/ingest/submission";
 
@@ -106,9 +106,19 @@ export async function processWebhookEvent(
   // endpoint mudou de configuração depois que este evento foi recebido, é
   // a versão ANTIGA que decide se o conteúdo já aceito continua válido —
   // nunca a atual, silenciosamente.
-  const snapshotResult = answersConfigSchema.safeParse(event.answers_config_snapshot ?? EMPTY_ANSWERS_CONFIG);
-  const snapshotConfig = snapshotResult.success ? snapshotResult.data : EMPTY_ANSWERS_CONFIG;
-  if (!buildAnswersSchema(snapshotConfig).safeParse(submission.answers).success) {
+  //
+  // Um snapshot que NÃO passa no MESMO schema usado na borda é corrupção
+  // (ex.: escrita direta na RPC ingest_form_event, fora da rota HTTP),
+  // não "sem campo configurado" — nunca vira `{fields: []}` em silêncio
+  // (defeito corrigido — item 4 da auditoria pós-dry-run). Um código
+  // PERMANENTE e distinto de `answers_schema_invalid`: o problema é do
+  // próprio evento gravado, nunca algo que o visitante possa corrigir
+  // reenviando, e process_form_event nunca chega a ser chamado.
+  const snapshotResult = answersConfigSchema.safeParse(event.answers_config_snapshot);
+  if (!snapshotResult.success) {
+    return { status: "failed", code: "config_snapshot_invalid" };
+  }
+  if (!buildAnswersSchema(snapshotResult.data).safeParse(submission.answers).success) {
     return { status: "failed", code: "answers_schema_invalid" };
   }
 

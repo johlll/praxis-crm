@@ -41,8 +41,10 @@ function IssueContinuityLink({ leadId }: { leadId: string }) {
         <div>
           <p className="m-0 text-body font-semibold text-text">Link de continuidade</p>
           <p className="m-0 text-meta text-text-muted">
-            Gera um token de uso único (válido por 30 dias) para o formulário de continuidade reconhecer este lead
-            sem usar telefone ou e-mail como identidade.
+            Gera um token (válido por 30 dias, revogável a qualquer momento) para o formulário de continuidade
+            reconhecer este lead sem usar telefone ou e-mail como identidade. Não é de uso único: o mesmo link pode
+            acrescentar mais de uma interação até expirar ou ser revogado — só o VALOR do token, exibido abaixo,
+            aparece uma única vez.
           </p>
         </div>
         <form action={action}>

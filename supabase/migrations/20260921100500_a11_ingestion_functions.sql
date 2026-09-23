@@ -103,6 +103,14 @@ begin
     raise exception 'form_endpoint_unavailable';
   end if;
 
+  -- Defesa em profundidade (item 4 da auditoria pós-dry-run): a borda já
+  -- valida `answers_config_snapshot` com o MESMO schema (Zod) antes de
+  -- chamar esta RPC, mas a RPC não é chamável só por ali — snapshot
+  -- corrompido nunca pode virar `{fields: []}` em silêncio, nem aqui nem
+  -- no worker (get_webhook_event_payload): recusa ANTES de gravar
+  -- qualquer coisa, com o MESMO validador usado em create/update_form_endpoint.
+  perform private.assert_answers_config(coalesce(p_answers_config_snapshot, '{"fields": []}'::jsonb));
+
   -- Caminho rápido da repetição legítima: sem tentar inserir nada.
   select * into v_existing from public.webhook_events
   where workspace_id = v_endpoint.workspace_id

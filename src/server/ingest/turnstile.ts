@@ -23,13 +23,22 @@ import { getIngestConfig } from "@/server/ingest/config";
  * na verificação, só o risco de tratar um HMAC como se fosse endereço.
  * Omitir o campo é seguro: a Cloudflare o trata como opcional.
  *
- * `idempotency_key` é derivado do PRÓPRIO TOKEN (SHA-256), não do
- * `sourceEventId` da submissão (defeito corrigido): a chave precisa ser
- * estável só entre retries da MESMA verificação — ou seja, quando o
- * cliente reenvia com o TOKEN QUE NÃO MUDOU. Usar `sourceEventId` fazia
- * duas verificações de tokens DIFERENTES (ex.: token renovado após
- * expirar) compartilhar a mesma chave, arriscando a Cloudflare devolver
- * uma resposta cacheada da verificação anterior para um token novo.
+ * `idempotency_key` é derivada do PRÓPRIO TOKEN, não do `sourceEventId`
+ * da submissão (defeito corrigido): a chave precisa ser estável só entre
+ * retries da MESMA verificação — ou seja, quando o cliente reenvia com o
+ * TOKEN QUE NÃO MUDOU. Usar `sourceEventId` fazia duas verificações de
+ * tokens DIFERENTES (ex.: token renovado após expirar) compartilhar a
+ * mesma chave, arriscando a Cloudflare devolver uma resposta cacheada da
+ * verificação anterior para um token novo.
+ *
+ * Formato do valor (item 2 da auditoria pós-dry-run): a documentação da
+ * Cloudflare descreve `idempotency_key` como um UUID — um SHA-256 em hex
+ * (64 caracteres) não tem esse formato. Em vez de gerar um UUID aleatório
+ * a cada chamada (o que quebraria a estabilidade entre retries do MESMO
+ * token), o UUID é DERIVADO deterministicamente do hash do token: os 16
+ * primeiros bytes do SHA-256, com os nibbles de versão/variante ajustados
+ * para RFC 4122 — mesmo token sempre produz o mesmo UUID, token diferente
+ * sempre produz um UUID diferente.
  */
 
 const SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
@@ -51,12 +60,22 @@ type SiteverifyResponse = {
   "error-codes"?: string[];
 };
 
+/** UUID (versão 4, variante RFC 4122) derivado deterministicamente do token. */
+function deriveIdempotencyKey(token: string): string {
+  const digest = createHash("sha256").update(token, "utf8").digest();
+  const bytes = Buffer.from(digest.subarray(0, 16));
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export const cloudflareTurnstileVerifier: TurnstileVerifier = async (input) => {
   const secret = getIngestConfig().TURNSTILE_SECRET_KEY;
 
   // Estável só quando o TOKEN é o mesmo (retry de rede da mesma
   // verificação); um token diferente (renovado) produz uma chave nova.
-  const idempotencyKey = createHash("sha256").update(input.token, "utf8").digest("hex");
+  const idempotencyKey = deriveIdempotencyKey(input.token);
 
   const body = new URLSearchParams({
     secret,

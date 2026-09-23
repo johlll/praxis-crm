@@ -65,7 +65,22 @@ describe("cloudflareTurnstileVerifier — corpo real enviado ao Siteverify", () 
     expect(body.has("remoteip")).toBe(false);
   });
 
-  it("idempotency_key é o SHA-256 do token — o MESMO token produz a MESMA chave", async () => {
+  it("idempotency_key tem FORMATO de UUID (item 2 da auditoria pós-dry-run — antes era hex de 64 caracteres)", async () => {
+    const { cloudflareTurnstileVerifier } = await import("@/server/ingest/turnstile");
+    const { resetIngestConfigCache } = await import("@/server/ingest/config");
+    resetIngestConfigCache();
+
+    await cloudflareTurnstileVerifier({
+      token: "token-qualquer",
+      expectedAction: "formulario",
+      allowedHostnames: ["exemplo.test"],
+    });
+
+    const key = new URLSearchParams(fetchMock.mock.calls[0]![1].body as string).get("idempotency_key");
+    expect(key).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  });
+
+  it("idempotency_key é derivada do token — o MESMO token produz a MESMA chave", async () => {
     const { cloudflareTurnstileVerifier } = await import("@/server/ingest/turnstile");
     const { resetIngestConfigCache } = await import("@/server/ingest/config");
     resetIngestConfigCache();
