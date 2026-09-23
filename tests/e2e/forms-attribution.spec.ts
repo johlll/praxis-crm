@@ -12,6 +12,14 @@ import { login } from "./helpers";
  * exercida é exatamente a de produção.
  */
 
+// occurredAt agora integra o hash de idempotência (item 1 da auditoria
+// pós-dry-run): precisa ser ESTÁVEL entre chamadas que reutilizam o
+// mesmo sourceEventId (testes 3 e 4), exatamente como o exemplo de
+// integração documenta (persistido junto do sourceEventId, nunca
+// recalculado a cada tentativa). Um valor fixo para todo o arquivo serve
+// tão bem quanto, já que nenhum teste depende do instante real.
+const DEFAULT_OCCURRED_AT = new Date().toISOString();
+
 test.describe.serial("A11 — formulários próprios e atribuição", () => {
   let publicKey: string;
 
@@ -30,7 +38,7 @@ test.describe.serial("A11 — formulários próprios e atribuição", () => {
     const body = {
       sourceEventId: crypto.randomUUID(),
       contractVersion: 1,
-      occurredAt: new Date().toISOString(),
+      occurredAt: DEFAULT_OCCURRED_AT,
       turnstileToken: "teste-turnstile-ok",
       contact: {
         name: "Visitante do Site",
