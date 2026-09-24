@@ -829,6 +829,27 @@ faziam para `leads` e `clients`.
   origem) e desvincular depois da transferência (o touchpoint volta ao
   lead de origem, e o histórico dele continua sem revelar a passagem pela
   oportunidade do lead de destino).
+  **Correção pós-auditoria (quarta rodada, item 1):** a projeção de
+  `history` do item 1 da terceira rodada tratou `opportunity_id is null`
+  (ação `unassign`) como "não referencia oportunidade nenhuma, então não
+  tem o que vazar" — presunção errada. O `reason`/`actor_name` de um
+  `unassign` narram a desvinculação do vínculo ANTERIOR (a entrada que ele
+  supersede na cadeia), que pode pertencer a um lead diferente do que está
+  sendo consultado. Um advogado com acesso só ao lead de DESTINO de uma
+  transferência enxergava o motivo de uma desvinculação feita no lead de
+  ORIGEM antes dela (e vice-versa, ao "voltar"). Corrigido com uma CTE
+  recursiva (`chain`) que caminha `touchpoint_demand_links` da raiz até a
+  ponta, carregando em cada linha `owning_opportunity_id`: a própria
+  `opportunity_id` quando não nula (entrada `assign`, igual a antes), ou a
+  última vista na cadeia até ali quando nula (entrada `unassign`,
+  inclusive uma sequência degenerada de vários `unassign` seguidos). Sem
+  nenhuma oportunidade na cadeia até ali (nunca houve vínculo), o alcance
+  cai no lead de ORIGEM do touchpoint — mesma regra do
+  `coalesce(eo.lead_id, t.lead_id)` já usada para escopar a `sequence`.
+  Testado nos dois sentidos, com motivo IDENTIFICÁVEL em cada lado: pgTAP
+  escrito e confirmado FALHANDO contra o código da terceira rodada antes
+  de escrever a correção, depois confirmado passando — e com checagem
+  positiva de que o histórico legítimo de cada lado não foi retirado junto.
 - **Alcance por registro em `revoke_continuity_reference` (item 3):** a
   função conferia o papel do ator no workspace, mas nunca aplicava
   `private.lead_accessible_to_role` ao lead da referência — ao contrário

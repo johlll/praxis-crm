@@ -6,7 +6,7 @@ e a PR #16 (documentação da A10) **não foi mesclada**.
 Contrato completo: [`docs/decisoes/a11-ingestao-atribuicao.md`](docs/decisoes/a11-ingestao-atribuicao.md).
 Exemplo de integração do navegador: [`docs/decisoes/a11-exemplo-integracao.md`](docs/decisoes/a11-exemplo-integracao.md).
 
-**Este documento passou por TRÊS rodadas de auditoria pós-dry-run.** A
+**Este documento passou por QUATRO rodadas de auditoria pós-dry-run.** A
 primeira encontrou 12 bloqueadores (idempotência incompleta, Turnstile
 vazando IP, ausência de CORS, identidade forjável, continuidade nunca
 emitida, `answers_config` decorativo, consentimento sem evidência, FKs
@@ -22,7 +22,13 @@ rodada, feita em cima da correção da segunda (commit `8ecdec0`), encontrou
 mais 2 — de novo incluindo um defeito que a PRÓPRIA correção da segunda
 rodada introduziu (`listFormEndpoints()` repetindo, na LEITURA, o mesmo
 antipadrão de fallback silencioso que o item 4 da segunda rodada já tinha
-corrigido na ESCRITA) — corrigidos e registrados em §2.3. Todos os 22,
+corrigido na ESCRITA) — corrigidos e registrados em §2.3. A quarta rodada,
+feita em cima da correção da terceira (commit `c049bbd`), encontrou mais 1
+— de novo uma variação do que a PRÓPRIA correção da terceira rodada não
+cobriu (a projeção por alcance do item 1 da 3ª rodada tratou
+`opportunity_id is null` como "sem o que vazar", mas uma entrada
+`unassign` narra a desvinculação de um vínculo ANTERIOR, que pode
+pertencer a outro lead) — corrigido e registrado em §2.4. Todos os 23,
 somados, foram corrigidos nesta branch, sempre em migrations **ainda
 pendentes** (nenhuma foi aplicada em banco hospedado).
 
@@ -88,7 +94,16 @@ tinha corrigido — desta vez na LEITURA, não na escrita.
 | 1 | Excluir o touchpoint fora do alcance (item 5 da 2ª rodada) não bastava: o registro do touchpoint que PERTENCE (por ter migrado de outro lead) ainda devolvia `lead_id`/`original_opportunity_id` do lead de ORIGEM, e o `history` completo — incluindo o vínculo anterior à correção, com motivo e nome de quem corrigiu, tudo do lead de origem | Projeção por alcance DENTRO da RPC: `lead_id` sempre é o lead consultado; `original_opportunity_id` só aparece quando pertence a ele; `history` só traz entradas cuja `opportunity_id` é nula ou pertence ao lead consultado — testado nos dois sentidos (transferência e desvincular depois da transferência) |
 | 2 | `listFormEndpoints()` fazia fallback silencioso de `answers_config` corrompido para `{fields: []}` — a tela de edição (item 8 da 2ª rodada) nascia PREENCHIDA com esse fallback, e salvar qualquer outra alteração reenviava `{fields: []}` como a configuração "atual", apagando de verdade os campos gravados; além disso, `private.assert_answers_config()` (SQL) aceitava `maxLength` fracionário (`1.5` passava no banco, só falhava no Zod da aplicação) e media `label` sem trimar (divergindo do Zod na direção oposta) | Leitura inteira agora LANÇA `FormEndpointsLoadError` quando algum `answers_config` não passa no schema (mesmo contrato de erro das outras `*LoadError`); SQL alinhado ao Zod com `trunc()` para `maxLength` e `char_length(btrim(...))` para `label` |
 
-Nenhuma migration **já aplicada** foi editada em nenhuma das três
+## 2.4 Quarta rodada — 1 defeito e a correção
+
+Feita em cima do commit `c049bbd` (CI verde da terceira rodada). Variação
+do que a PRÓPRIA correção do item 1 da 3ª rodada deixou passar.
+
+| # | Defeito | Correção |
+|---|---|---|
+| 1 | A projeção de `history` (item 1 da 3ª rodada) liberava qualquer entrada com `opportunity_id` nulo incondicionalmente, tratando "unassign" como "nunca referencia oportunidade, então não tem o que vazar" — mas o `reason`/`actor_name` de um `unassign` narram a desvinculação do vínculo ANTERIOR (a entrada que ele supersede), que pode pertencer a outro lead. Um advogado com acesso só ao lead de DESTINO de uma transferência via `correct_touchpoint_demand_link` enxergava o motivo de uma desvinculação feita no lead de ORIGEM (e vice-versa, na volta) | CTE recursiva (`chain`) caminha `touchpoint_demand_links` da raiz até a ponta carregando `owning_opportunity_id`: a própria `opportunity_id` quando não nula, ou a última vista na cadeia quando nula. O alcance de cada entrada de histórico passa a ser o de `owning_opportunity_id` (ou o lead de origem do touchpoint, se nunca houve vínculo) — nunca mais "ninguém". Testado nos dois sentidos: desvincular em A e depois transferir para B (motivo de A não aparece para B); transferir para B e depois desvincular de volta para A (motivo de B não aparece para A). pgTAP escrito ANTES da correção, confirmado falhando contra o código anterior, depois passando |
+
+Nenhuma migration **já aplicada** foi editada em nenhuma das quatro
 rodadas. Como nenhuma migration da A11 havia sido aplicada em banco
 hospedado, todas as correções entraram **dentro das próprias migrations
 pendentes** (não como camada nova por cima) — a lista continua com 10
@@ -173,7 +188,11 @@ Resumo:
   histórico do lead de destino de uma correção entre leads (item 5 da 2ª
   rodada), e o REGISTRO de um touchpoint migrado é projetado por alcance
   campo a campo — `lead_id`, `original_opportunity_id` e cada entrada de
-  `history` (item 1 da 3ª rodada).
+  `history` (item 1 da 3ª rodada). Cada entrada de `history` é escopada
+  pelo vínculo que ela desfez (ou pelo próprio, se `assign`), não por
+  `opportunity_id is null` — uma entrada `unassign` não deixa de ter
+  alcance só por não referenciar oportunidade nenhuma (item 1 da 4ª
+  rodada).
 - **`answers_config`/snapshot corrompidos falham fechados em quatro
   camadas** — borda, `ingest_form_event`, worker (item 4 da 2ª rodada) e
   agora também a LEITURA (`listFormEndpoints`, item 2 da 3ª rodada) —
@@ -195,11 +214,11 @@ Postgres via Docker no runner.
 
 | Suíte | Testes | Confirmado por |
 |---|---|---|
-| `npm test` (Vitest, todos os arquivos) | **408/408 passando** | execução local **e** CI (commit `b2cec52`) |
-| — dos quais, arquivos `tests/unit/a11-*.test.ts` | 8 arquivos (novo: `a11-form-endpoints-list-error.test.ts`) | execução local |
-| `supabase/tests/database/18_a11_ingestao_atribuicao.test.sql` | **140/140 asserções** (127 depois da 2ª rodada, 113 depois da 1ª, 70 antes dela) | **CI**, commit `b2cec52` — suíte pgTAP completa: 740/740 |
-| Isolamento entre workspaces | **26/26** | **CI**, commit `b2cec52` |
-| `tests/e2e/forms-attribution.spec.ts` | **15 testes** (sem novo teste e2e nesta rodada — cobertura nova ficou em pgTAP e Vitest) | **CI**, commit `b2cec52` — suíte e2e completa: 76/76 |
+| `npm test` (Vitest, todos os arquivos) | **408/408 passando** | execução local **e** CI (commit `7ba7d1b`) |
+| — dos quais, arquivos `tests/unit/a11-*.test.ts` | 8 arquivos (novo na 3ª rodada: `a11-form-endpoints-list-error.test.ts`) | execução local |
+| `supabase/tests/database/18_a11_ingestao_atribuicao.test.sql` | **146/146 asserções** (140 depois da 3ª rodada, 127 depois da 2ª, 113 depois da 1ª, 70 antes dela) | **CI**, commit `7ba7d1b` — suíte pgTAP completa: 746/746 |
+| Isolamento entre workspaces | **26/26** | **CI**, commit `7ba7d1b` |
+| `tests/e2e/forms-attribution.spec.ts` | **15 testes** (sem novo teste e2e desde a 3ª rodada — cobertura nova ficou em pgTAP) | **CI**, commit `7ba7d1b` — suíte e2e completa: 76/76 |
 
 Cobertura nova/ampliada pela segunda rodada, por item: hash de
 continuidade recomputado a partir do token REALMENTE devolvido, nunca
@@ -219,6 +238,17 @@ nos dois sentidos — transferência entre leads e desvincular depois dela
 (1); `listFormEndpoints()` lançando em vez de mascarar config corrompida,
 `maxLength` fracionário e `label` não trimado alinhados entre SQL e Zod,
 nas duas direções (2).
+
+Cobertura nova da quarta rodada, por item: motivo IDENTIFICÁVEL num
+`unassign`, reproduzindo o vazamento nos dois sentidos — desvincular no
+lead de origem e depois transferir para o lead de destino (motivo do
+lead de origem não aparece para quem só acessa o destino); transferir e
+depois desvincular de volta (motivo do lead de destino não aparece para
+quem só acessa a origem) — e uma checagem positiva de que o histórico
+LEGÍTIMO de cada lado continua visível, sem nada retirado além do que
+vazava (1). Os 4 pgTAP novos foram confirmados falhando contra o código
+anterior à correção (CI, run 36030034204) antes de passarem contra a
+correção (CI, run 36030604559, commit `7ba7d1b`).
 
 Os e2e e pgTAP das rodadas anteriores seguem cobertos — nenhuma asserção
 foi enfraquecida ou removida, só reescrita quando o próprio mecanismo que
