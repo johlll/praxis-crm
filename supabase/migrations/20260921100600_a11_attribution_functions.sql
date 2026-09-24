@@ -208,14 +208,38 @@ begin
               and not exists (select 1 from public.touchpoint_demand_links c where c.supersedes_id = l.id)
             limit 1
           ),
-          -- Histórico também projetado por alcance: uma entrada cuja
-          -- `opportunity_id` pertence a OUTRO lead (ex.: o vínculo
-          -- original, antes da correção que trouxe o touchpoint para cá)
-          -- nunca aparece — ela carregaria o id da oportunidade, o motivo
-          -- e o responsável de um lead inacessível. Entrada de
-          -- `unassign` (`opportunity_id` nulo) nunca referencia
-          -- oportunidade nenhuma, então não tem o que vazar.
+          -- Histórico também projetado por alcance (item 1 da quarta
+          -- rodada de auditoria): uma entrada cuja `opportunity_id`
+          -- pertence a OUTRO lead nunca aparece — ela carregaria o id da
+          -- oportunidade, o motivo e o responsável de um lead inacessível.
+          -- Uma entrada `unassign` tem `opportunity_id` nulo, mas isso NÃO
+          -- prova que ela é inofensiva: seu `reason`/`actor_name` narram a
+          -- desvinculação do vínculo ANTERIOR, que pertencia a um lead —
+          -- possivelmente outro. `opportunity_id is null` sozinho já foi
+          -- tratado como "sem o que vazar" (defeito corrigido aqui); o
+          -- alcance certo de uma entrada `unassign` é o alcance de quem
+          -- ela desfez, não "ninguém".
+          --
+          -- `chain` caminha a cadeia da RAIZ até a ponta e carrega, em
+          -- cada linha, `owning_opportunity_id`: a própria `opportunity_id`
+          -- quando não nula (entrada `assign`, igual a antes), ou a última
+          -- vista na cadeia até ali (entrada `unassign`, inclusive uma
+          -- sequência degenerada de vários `unassign` seguidos). Sem
+          -- nenhuma oportunidade na cadeia até ali (nunca houve vínculo),
+          -- cai no lead de ORIGEM do touchpoint — mesma regra do
+          -- `coalesce(eo.lead_id, t.lead_id)` já usado no `where` abaixo.
           'history', (
+            with recursive chain as (
+              select l.id, l.action, l.opportunity_id, l.reason, l.actor_user_id, l.created_at,
+                     l.opportunity_id as owning_opportunity_id
+              from public.touchpoint_demand_links l
+              where l.touchpoint_id = t.id and l.supersedes_id is null
+              union all
+              select l.id, l.action, l.opportunity_id, l.reason, l.actor_user_id, l.created_at,
+                     coalesce(l.opportunity_id, c.owning_opportunity_id)
+              from public.touchpoint_demand_links l
+              join chain c on l.supersedes_id = c.id
+            )
             select coalesce(jsonb_agg(jsonb_build_object(
               'id', h.id,
               'action', h.action,
@@ -224,11 +248,10 @@ begin
               'actor_name', u.full_name,
               'created_at', h.created_at
             ) order by h.created_at), '[]'::jsonb)
-            from public.touchpoint_demand_links h
+            from chain h
             left join public.users u on u.id = h.actor_user_id
-            left join public.opportunities ho on ho.id = h.opportunity_id
-            where h.touchpoint_id = t.id
-              and (h.opportunity_id is null or ho.lead_id = v_lead.id)
+            left join public.opportunities ho on ho.id = h.owning_opportunity_id
+            where coalesce(ho.lead_id, t.lead_id) = v_lead.id
           ),
           'consent', (
             select jsonb_build_object('decision', ce.decision, 'purpose_code', ce.purpose_code,
