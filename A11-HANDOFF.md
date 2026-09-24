@@ -1,7 +1,8 @@
 # A11 — Formulários próprios e atribuição multitoque · Handoff
 
-Branch `feat/a11-forms-attribution`. **Nenhum banco hospedado foi tocado**
-e a PR #16 (documentação da A10) **não foi mesclada**.
+Branch `feat/a11-forms-attribution`. **As 10 migrations foram aplicadas
+com sucesso no projeto hospedado `praxis-crm-dev`** e validadas ao vivo
+(§10). A PR #16 (documentação da A10) **não foi mesclada**.
 
 Contrato completo: [`docs/decisoes/a11-ingestao-atribuicao.md`](docs/decisoes/a11-ingestao-atribuicao.md).
 Exemplo de integração do navegador: [`docs/decisoes/a11-exemplo-integracao.md`](docs/decisoes/a11-exemplo-integracao.md).
@@ -312,6 +313,57 @@ Nenhuma migration aplicada **em banco hospedado** foi editada.
 - **Retenção de payload cifrado**: `occurred_at` também é limpo no
   vencimento (é dado declarado pelo visitante). `normalized_occurred_at`
   permanece, porque é o que a atribuição usa e não identifica ninguém.
-- A validação funcional completa em preview **depende de autorização** para
-  aplicar as migrations no Supabase de desenvolvimento — novo dry-run
-  necessário depois desta correção, novo checkpoint próprio.
+- A validação visual em preview real (navegador) das telas de configuração
+  de formulário e do AttributionPanel **ainda não foi feita** — depende da
+  credencial de login de QA, que precisa ser reenviada pelo usuário nesta
+  sessão (arquivo local, não persistido em memória de longo prazo).
+
+## 10. Validação pós-migration em banco hospedado (`praxis-crm-dev`)
+
+As 10 migrations listadas em §8 foram aplicadas com `supabase db push
+--linked` sem erro; todas aparecem como `remote OK` em `supabase migration
+list --linked`. Validação feita por impersonação de papel
+(`set local role authenticated` + `request.jwt.claims`) contra o banco
+real, com registros fictícios dedicados no workspace de QA existente
+("Escritório QA Praxis", `c62151fe-7adb-4a02-9001-8674e8209181`), sempre
+confirmando persistência por **leitura em invocação separada** da escrita
+— nunca só visibilidade transacional.
+
+**Schema e permissões:**
+- 8 tabelas novas com RLS habilitada **e forçada**; zero GRANT de tabela
+  para `anon`/`authenticated` (tudo via RPC).
+- 12 funções esperadas existem; todas `SECURITY DEFINER` exceto
+  `private.assert_answers_config` (helper de validação pura, correto por
+  design).
+- `anon` sem EXECUTE em nenhuma função sensível; `ingest_form_event`,
+  `process_form_event`, `resolve_form_endpoint`, `mark_outbox_published`,
+  `mark_outbox_failed`, `purge_expired_webhook_events` corretamente **não**
+  concedidas a `authenticated` (só `service_role`).
+- Enums estendidos como esperado (`activity_source += form_intake`,
+  `consent_purpose += formulario_contato`, `touchpoint_link_action` novo).
+
+**Funcional, com usuários reais do workspace de QA:**
+- `create_form_endpoint`/`update_form_endpoint`: funcionam, incluindo
+  persistência de campo extra numa edição; `insufficient_permission`
+  corretamente devolvido para papel `lawyer`.
+- `get_lead_attribution`/`correct_touchpoint_demand_link`: sequência de
+  touchpoints, histórico e atribuição corretos; `unassign` refletido em
+  leitura separada com `effective_opportunity_id` tornando-se `null`.
+- Atividades (A6, não alterada estruturalmente pela A11): `create_activity`
+  e `complete_activity` seguem funcionando, `lock_version` incrementando.
+- **Mesclar/desfazer contatos**: `merge_contacts` reparenta corretamente um
+  touchpoint do contato perdedor para o vencedor (confirmado por leitura
+  separada); `unmerge_contact` reverte tudo — `merged_into_contact_id`
+  volta a `null` e o touchpoint volta ao contato original.
+- **Ingestão (`ingest_form_event`/`process_form_event`, como
+  `service_role`)**: reenvio com mesmo `source_event_id` e mesmo
+  `content_hash` não duplica evento nem outbox (`created: false`, mesmo
+  `webhook_event_id`); mesmo `source_event_id` com `content_hash`
+  diferente é recusado com `idempotency_payload_conflict`;
+  `process_form_event` cria contato → lead → oportunidade → touchpoint →
+  atividade numa só chamada; reprocessar o mesmo evento devolve
+  `already_processed: true` com os mesmos IDs, sem duplicar nada.
+
+**Não coberto nesta rodada:** validação visual via navegador (depende de
+credencial de login) e configuração dos serviços externos (Turnstile,
+Upstash, Inngest — continuam pendentes, §7).
