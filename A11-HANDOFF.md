@@ -195,10 +195,11 @@ Postgres via Docker no runner.
 
 | Suíte | Testes | Confirmado por |
 |---|---|---|
-| `npm test` (Vitest, todos os arquivos) | **408/408 passando** | **execução local** nesta sessão |
+| `npm test` (Vitest, todos os arquivos) | **408/408 passando** | execução local **e** CI (commit `b2cec52`) |
 | — dos quais, arquivos `tests/unit/a11-*.test.ts` | 8 arquivos (novo: `a11-form-endpoints-list-error.test.ts`) | execução local |
-| `supabase/tests/database/18_a11_ingestao_atribuicao.test.sql` | **140 asserções** (contagem estática — 127 depois da 2ª rodada, 113 depois da 1ª, 70 antes dela) | **CI** (pendente nesta sessão) |
-| `tests/e2e/forms-attribution.spec.ts` | **15 testes** (sem novo teste e2e nesta rodada — cobertura nova ficou em pgTAP e Vitest) | **CI** (pendente nesta sessão) |
+| `supabase/tests/database/18_a11_ingestao_atribuicao.test.sql` | **140/140 asserções** (127 depois da 2ª rodada, 113 depois da 1ª, 70 antes dela) | **CI**, commit `b2cec52` — suíte pgTAP completa: 740/740 |
+| Isolamento entre workspaces | **26/26** | **CI**, commit `b2cec52` |
+| `tests/e2e/forms-attribution.spec.ts` | **15 testes** (sem novo teste e2e nesta rodada — cobertura nova ficou em pgTAP e Vitest) | **CI**, commit `b2cec52` — suíte e2e completa: 76/76 |
 
 Cobertura nova/ampliada pela segunda rodada, por item: hash de
 continuidade recomputado a partir do token REALMENTE devolvido, nunca
