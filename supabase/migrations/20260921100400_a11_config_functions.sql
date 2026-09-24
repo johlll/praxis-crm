@@ -92,8 +92,13 @@ begin
     end if;
     v_keys := v_keys || v_key;
 
+    -- char_length do valor JÁ TRIMADO (não do bruto): Zod mede o
+    -- `label` depois de `.trim()` (`z.string().trim().min(1).max(160)`)
+    -- — um rótulo com espaço sobrando nas pontas passava aqui e falhava
+    -- na aplicação, porque o SQL media o comprimento do valor CRU
+    -- (defeito corrigido — item 2 da terceira rodada de auditoria).
     if nullif(btrim(coalesce(v_field ->> 'label', '')), '') is null
-       or char_length(v_field ->> 'label') > 160 then
+       or char_length(btrim(v_field ->> 'label')) > 160 then
       raise exception 'answers_config_invalid: bad label for %', v_key;
     end if;
 
@@ -109,7 +114,12 @@ begin
       if v_type <> 'text' then
         raise exception 'answers_config_invalid: maxLength only applies to text (%)', v_key;
       end if;
+      -- Precisa ser um INTEIRO (Zod: `z.number().int().min(1).max(2000)`)
+      -- — comparar com `trunc()` recusa `1.5`, que antes passava aqui
+      -- (número, dentro da faixa) e só falhava na aplicação (defeito
+      -- corrigido — item 2 da terceira rodada de auditoria).
       if jsonb_typeof(v_field -> 'maxLength') <> 'number'
+         or (v_field ->> 'maxLength')::numeric <> trunc((v_field ->> 'maxLength')::numeric)
          or (v_field ->> 'maxLength')::numeric < 1
          or (v_field ->> 'maxLength')::numeric > 2000 then
         raise exception 'answers_config_invalid: bad maxLength for %', v_key;

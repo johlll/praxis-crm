@@ -185,8 +185,22 @@ begin
           'fbclid', t.fbclid,
           'landing_url', t.landing_url,
           'referrer', t.referrer,
-          'lead_id', t.lead_id,
-          'original_opportunity_id', t.opportunity_id,
+          -- Projeção por alcance (item 1 da terceira rodada de auditoria):
+          -- um touchpoint pode aparecer aqui MIGRADO de outro lead do
+          -- mesmo contato (vínculo efetivo, comentário abaixo) — sem
+          -- isto, o registro devolvido ainda carregava o lead de ORIGEM
+          -- (`t.lead_id`) e a oportunidade ORIGINAL (`t.opportunity_id`),
+          -- os dois do lead alheio, mesmo já filtrando QUAIS touchpoints
+          -- entram na resposta. `lead_id` sempre reflete o lead que está
+          -- sendo efetivamente consultado (`v_lead.id`) — é o valor
+          -- semanticamente certo depois da migração, não só uma máscara.
+          -- `original_opportunity_id` só é mostrado quando pertence ao
+          -- MESMO lead consultado; por construção, um touchpoint só grava
+          -- `opportunity_id` na criação com uma oportunidade do PRÓPRIO
+          -- `t.lead_id` — então "nativo neste lead" é a única condição
+          -- que precisa ser conferida.
+          'lead_id', v_lead.id,
+          'original_opportunity_id', case when t.lead_id = v_lead.id then t.opportunity_id else null end,
           'effective_opportunity_id', private.touchpoint_effective_opportunity(t.id),
           'current_link_id', (
             select l.id from public.touchpoint_demand_links l
@@ -194,6 +208,13 @@ begin
               and not exists (select 1 from public.touchpoint_demand_links c where c.supersedes_id = l.id)
             limit 1
           ),
+          -- Histórico também projetado por alcance: uma entrada cuja
+          -- `opportunity_id` pertence a OUTRO lead (ex.: o vínculo
+          -- original, antes da correção que trouxe o touchpoint para cá)
+          -- nunca aparece — ela carregaria o id da oportunidade, o motivo
+          -- e o responsável de um lead inacessível. Entrada de
+          -- `unassign` (`opportunity_id` nulo) nunca referencia
+          -- oportunidade nenhuma, então não tem o que vazar.
           'history', (
             select coalesce(jsonb_agg(jsonb_build_object(
               'id', h.id,
@@ -205,7 +226,9 @@ begin
             ) order by h.created_at), '[]'::jsonb)
             from public.touchpoint_demand_links h
             left join public.users u on u.id = h.actor_user_id
+            left join public.opportunities ho on ho.id = h.opportunity_id
             where h.touchpoint_id = t.id
+              and (h.opportunity_id is null or ho.lead_id = v_lead.id)
           ),
           'consent', (
             select jsonb_build_object('decision', ce.decision, 'purpose_code', ce.purpose_code,

@@ -8,7 +8,7 @@
 -- regressão histórica inventada.
 
 begin;
-select plan(127);
+select plan(140);
 
 \set otavio '20000000-0000-0000-0000-000000000014'
 \set lucas  '20000000-0000-0000-0000-000000000011'
@@ -1025,6 +1025,36 @@ select throws_ok(
   'Duas definições com a MESMA chave são recusadas'
 );
 
+-- Item 2 da terceira rodada de auditoria pós-dry-run: maxLength=1.5 é um
+-- `number` do JSON, dentro da faixa 1–2000 — passava no SQL antes desta
+-- correção e só falhava depois, na validação Zod da aplicação
+-- (`z.number().int()`). O banco precisa recusar sozinho, sem depender da
+-- borda para pegar um valor que a própria RPC aceitaria gravar.
+select throws_ok(
+  format($$select create_form_endpoint(%L::uuid, 'maxLength fracionário', %L::uuid, %L::uuid, 'Cível', 'call', 60,
+           'new_intake', 'formulario', array['exemplo.test'], 'chave-maxlength-fracao-aaaaaa',
+           '{"fields":[{"key":"motivo","label":"Motivo","type":"text","maxLength":1.5}]}'::jsonb)$$,
+         :'ws', :'pipeline', :'stage0'),
+  'answers_config_invalid: bad maxLength for motivo',
+  'maxLength fracionário (1.5) é recusado — precisa ser um INTEIRO, como o Zod já exige na aplicação'
+);
+
+-- Mesmo item, na direção OPOSTA: char_length media o LABEL BRUTO, não o
+-- trimado — um rótulo com exatamente 160 caracteres ÚTEIS mais espaço
+-- sobrando nas pontas passava no Zod (`.trim().max(160)`, mede depois de
+-- trimar) e era RECUSADO pelo SQL (media o valor cru). O banco não pode
+-- ser mais estrito que a própria borda que ele deveria só reforçar.
+select lives_ok(
+  format($$select create_form_endpoint(%L::uuid, 'Rótulo com espaço nas pontas', %L::uuid, %L::uuid, 'Cível', 'call', 60,
+           'new_intake', 'formulario', array['exemplo.test'], 'chave-label-espaco-aaaaaaaaaa',
+           %L::jsonb)$$,
+         :'ws', :'pipeline', :'stage0',
+         jsonb_build_object('fields', jsonb_build_array(jsonb_build_object(
+           'key', 'motivo', 'label', '  ' || repeat('a', 160) || '  ', 'type', 'text'
+         )))::text),
+  'Rótulo com 160 caracteres úteis + espaço nas pontas (164 no total) é ACEITO — comprimento medido depois do trim, como o Zod'
+);
+
 select create_form_endpoint(
   :'ws'::uuid, 'Campos válidos', :'pipeline'::uuid, :'stage0'::uuid, 'Cível', 'call', 60,
   'new_intake', 'formulario', array['exemplo.test'], 'chave-campos-validos-aaaaaaaa',
@@ -1187,6 +1217,111 @@ select is(
    from jsonb_array_elements(:'attribution_lead2_depois'::jsonb -> 'sequence') elem),
   true,
   'vitor (responsável pelo lead2_scope) enxerga tp1 depois da correção, sem precisar de acesso ao lead1'
+);
+
+-- -----------------------------------------------------------------
+-- 16b.1) Projeção/mascaramento DENTRO do registro migrado (item 1 da
+--        terceira rodada de auditoria) — não bastava excluir touchpoints
+--        de fora do alcance: o PRÓPRIO registro de tp1, agora
+--        legitimamente visível em lead2_scope, ainda carregava
+--        `lead_id` (o lead de ORIGEM, lead1) e `original_opportunity_id`
+--        (a oportunidade original, opp1, de lead1) — e o `history`
+--        completo, incluindo o vínculo original com opp1 e a correção
+--        intermediária para opp2 (ambos de lead1), com motivo e nome de
+--        quem corrigiu. Nada disso pode aparecer para vitor.
+-- -----------------------------------------------------------------
+
+select (
+  select elem from jsonb_array_elements(:'attribution_lead2_depois'::jsonb -> 'sequence') as elem
+  where (elem ->> 'id') = :'tp1'
+) as tp1_em_lead2 \gset
+
+select is(
+  :'tp1_em_lead2'::jsonb ->> 'lead_id', :'lead2_scope',
+  'tp1, visto de lead2_scope, devolve lead_id = lead2_scope (o lead efetivamente consultado), nunca lead1'
+);
+select is(
+  :'tp1_em_lead2'::jsonb ->> 'original_opportunity_id', null,
+  'original_opportunity_id vem NULO para vitor — a oportunidade original (opp1) pertence a lead1, inacessível a ele'
+);
+select is(
+  (select jsonb_array_length(:'tp1_em_lead2'::jsonb -> 'history')),
+  2, 'O histórico de tp1 para vitor tem só as 2 entradas SEM oportunidade de lead1: o unassign e a correção para opp_scope'
+);
+select is(
+  (select bool_or((h ->> 'opportunity_id') in (:'opp1', :'opp2'))
+   from jsonb_array_elements(:'tp1_em_lead2'::jsonb -> 'history') h),
+  false,
+  'Nenhuma entrada do histórico de tp1, para vitor, referencia opp1 nem opp2 (oportunidades de lead1)'
+);
+select is(
+  (:'attribution_lead2_depois'::text like ('%' || :'opp1' || '%'))
+  or (:'attribution_lead2_depois'::text like ('%' || :'opp2' || '%')),
+  false,
+  'A resposta INTEIRA de get_lead_attribution(lead2_scope) para vitor nunca contém opp1 nem opp2 (defesa em profundidade)'
+);
+
+-- -----------------------------------------------------------------
+-- 16b.2) Desvincular DEPOIS da transferência (item 1 da terceira rodada)
+--        — tp1 volta a pertencer à sequência de lead1 (sem oportunidade
+--        vigente, cai no lead de origem), e o histórico dele PARA LUCAS
+--        continua sem revelar a passagem por opp_scope (de lead2_scope).
+-- -----------------------------------------------------------------
+
+select (:'corr_cross_lead'::jsonb ->> 'link_id') as link_cross_lead \gset
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
+select correct_touchpoint_demand_link(:'tp1'::uuid, :'link_cross_lead'::uuid, 'unassign');
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'vitor', 'role', 'authenticated')::text, true);
+select get_lead_attribution(:'lead2_scope'::uuid) as attribution_lead2_apos_desvinculo \gset
+reset role;
+
+select is(
+  (select bool_or((elem ->> 'id') = :'tp1')
+   from jsonb_array_elements(:'attribution_lead2_apos_desvinculo'::jsonb -> 'sequence') elem),
+  false,
+  'Depois de desvincular, tp1 SAI da sequência de lead2_scope (vitor perde o acesso de volta)'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'lucas', 'role', 'authenticated')::text, true);
+select get_lead_attribution(:'lead1'::uuid) as attribution_lead1_apos_desvinculo \gset
+reset role;
+
+select is(
+  (select bool_or((elem ->> 'id') = :'tp1')
+   from jsonb_array_elements(:'attribution_lead1_apos_desvinculo'::jsonb -> 'sequence') elem),
+  true,
+  'Depois de desvincular, tp1 VOLTA para a sequência de lead1 (sem oportunidade vigente, cai no lead de origem)'
+);
+
+select (
+  select elem from jsonb_array_elements(:'attribution_lead1_apos_desvinculo'::jsonb -> 'sequence') as elem
+  where (elem ->> 'id') = :'tp1'
+) as tp1_de_volta_em_lead1 \gset
+
+select is(
+  :'tp1_de_volta_em_lead1'::jsonb ->> 'lead_id', :'lead1',
+  'De volta em lead1 (nativo), lead_id é o próprio lead1'
+);
+select is(
+  :'tp1_de_volta_em_lead1'::jsonb ->> 'original_opportunity_id', :'opp1',
+  'De volta em lead1 (nativo), original_opportunity_id volta a mostrar opp1 — pertence ao próprio lead1'
+);
+select is(
+  (select bool_or((h ->> 'opportunity_id') = :'opp_scope')
+   from jsonb_array_elements(:'tp1_de_volta_em_lead1'::jsonb -> 'history') h),
+  false,
+  'O histórico de tp1, de volta em lead1, NÃO revela a passagem por opp_scope (oportunidade de lead2_scope, inacessível a lucas)'
+);
+select is(
+  (:'attribution_lead1_apos_desvinculo'::text like ('%' || :'opp_scope' || '%')),
+  false,
+  'A resposta INTEIRA de get_lead_attribution(lead1) para lucas nunca contém opp_scope, mesmo depois do túnel de ida e volta'
 );
 
 -- -----------------------------------------------------------------

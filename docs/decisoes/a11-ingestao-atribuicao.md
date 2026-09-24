@@ -238,6 +238,35 @@ editar qualquer outra coisa não apaga mais a configuração de campos
 existente. Testado em `tests/e2e/forms-attribution.spec.ts` (edita,
 recarrega a página, confirma persistência no banco).
 
+**Correção pós-auditoria (terceira rodada, item 2):** dois defeitos
+novos, um de leitura e um de validação.
+
+1. **`listFormEndpoints()` reintroduzia exatamente o antipadrão do item 4
+   da segunda rodada, mas na LEITURA** — `answers_config` corrompido no
+   banco virava `{fields: []}` em silêncio (`safeParse` com fallback para
+   `EMPTY_ANSWERS_CONFIG`), em vez de recusar. Isso é mais grave do que
+   parece: a tela de edição (item 8, acima) nasce PREENCHIDA com o que
+   `listFormEndpoints()` devolve — com o fallback silencioso, ela nascia
+   achando que o endpoint não tinha campo nenhum, e salvar QUALQUER outra
+   alteração (ex.: só o nome) reenviava esse fallback vazio como a
+   configuração "atual", **apagando de verdade** os campos gravados no
+   banco. Corrigido: a leitura inteira agora LANÇA `FormEndpointsLoadError`
+   quando algum endpoint tem `answers_config` que não passa no schema —
+   mesmo contrato de erro de `ClientsLoadError`/`ConversationsLoadError`
+   (nunca finge que a lista está vazia ou "ok" quando a leitura falhou).
+2. **`private.assert_answers_config()` (SQL) e o Zod da aplicação
+   aceitavam conjuntos diferentes de valores para `maxLength`** — o SQL
+   só conferia `jsonb_typeof = 'number'` e a faixa 1–2000, sem exigir
+   número INTEIRO; `1.5` passava no banco (inclusive gravável direto pela
+   RPC) e só era recusado depois, no Zod (`z.number().int()`). Corrigido
+   comparando com `trunc()`. Na mesma correção, alinhado também o
+   comprimento do `label`: o SQL media `char_length` do valor CRU
+   enquanto o Zod mede depois de `.trim()` — um rótulo com espaço
+   sobrando nas pontas podia ser aceito pelo Zod e recusado pelo SQL (a
+   direção oposta do defeito do `maxLength`, mas o mesmo problema de
+   fundo: o banco, que deveria só REFORÇAR a mesma regra da aplicação,
+   divergia dela).
+
 ### Falha fechada sem infraestrutura
 
 Em **produção e preview**, a ausência de configuração obrigatória de
@@ -776,6 +805,30 @@ faziam para `leads` e `clients`.
   lead" junto com a correção, exatamente como já muda de oportunidade);
   sem oportunidade vigente (nunca vinculado, ou explicitamente
   desvinculado), cai de volta no lead de origem, como sempre foi.
+  **Correção pós-auditoria (terceira rodada, item 1):** excluir o
+  touchpoint que NÃO pertence não bastava — o registro do touchpoint que
+  PERTENCE (por ter migrado) ainda carregava campos do lead de origem.
+  `lead_id` devolvia `t.lead_id` (o lead de origem, não o consultado) e
+  `original_opportunity_id` devolvia `t.opportunity_id`, que por migração
+  podia pertencer ao lead de origem — os dois vazavam o id de um lead
+  inacessível para quem só tinha acesso ao lead de destino. Pior: o
+  `history` completo continuava vindo junto, incluindo o vínculo ORIGINAL
+  (antes da correção) com a oportunidade do lead de origem, motivo e nome
+  de quem corrigiu. Corrigido com projeção por alcance DENTRO da própria
+  RPC: `lead_id` sempre devolve o lead efetivamente consultado (nunca o
+  de origem); `original_opportunity_id` só é mostrado quando pertence ao
+  MESMO lead consultado (por construção, um touchpoint só grava
+  `opportunity_id` na criação com uma oportunidade do seu próprio
+  `t.lead_id` — checar `t.lead_id = v_lead.id` já garante isso); e cada
+  entrada de `history` só aparece quando a `opportunity_id` dela é nula
+  (ação `unassign`, que não referencia oportunidade nenhuma) ou pertence
+  ao lead consultado — uma entrada presa à oportunidade de OUTRO lead
+  nunca aparece, nem para quem a correção trouxe o touchpoint PARA cá,
+  nem para quem ele SAIU de lá. Testado nos dois sentidos: transferência
+  entre leads (o destino vê o registro mascarado, sem nada do lead de
+  origem) e desvincular depois da transferência (o touchpoint volta ao
+  lead de origem, e o histórico dele continua sem revelar a passagem pela
+  oportunidade do lead de destino).
 - **Alcance por registro em `revoke_continuity_reference` (item 3):** a
   função conferia o papel do ator no workspace, mas nunca aplicava
   `private.lead_accessible_to_role` ao lead da referência — ao contrário
