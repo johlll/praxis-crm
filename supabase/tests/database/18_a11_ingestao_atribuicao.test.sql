@@ -8,7 +8,7 @@
 -- regressão histórica inventada.
 
 begin;
-select plan(140);
+select plan(146);
 
 \set otavio '20000000-0000-0000-0000-000000000014'
 \set lucas  '20000000-0000-0000-0000-000000000011'
@@ -376,7 +376,12 @@ select id as link2 from public.touchpoint_demand_links
 where touchpoint_id = :'tp1'::uuid and supersedes_id = :'link1'::uuid \gset
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
-select correct_touchpoint_demand_link(:'tp1'::uuid, :'link2'::uuid, 'unassign');
+-- Motivo IDENTIFICÁVEL (item 1 da quarta rodada de auditoria): esta
+-- desvinculação acontece enquanto tp1 ainda pertence a lead1 (desfaz o
+-- vínculo com opp2). Depois, em 16b, tp1 é transferido para lead2_scope
+-- — o motivo abaixo nunca pode aparecer para quem só acessa lead2_scope.
+select correct_touchpoint_demand_link(:'tp1'::uuid, :'link2'::uuid, 'unassign', null,
+  'motivo-confidencial-do-lead1');
 reset role;
 
 select is(
@@ -1229,6 +1234,12 @@ select is(
 --        completo, incluindo o vínculo original com opp1 e a correção
 --        intermediária para opp2 (ambos de lead1), com motivo e nome de
 --        quem corrigiu. Nada disso pode aparecer para vitor.
+--
+--        Reforçado pelo item 1 da QUARTA rodada: o unassign que desfez o
+--        vínculo com opp2 (link3, feito enquanto tp1 era de lead1) tem
+--        `opportunity_id` nulo, mas seu `reason`/`actor_name` descrevem
+--        uma ação de lead1 — `opportunity_id is null` sozinho não bastava
+--        para provar a entrada inofensiva, e ela vazava para vitor.
 -- -----------------------------------------------------------------
 
 select (
@@ -1246,7 +1257,21 @@ select is(
 );
 select is(
   (select jsonb_array_length(:'tp1_em_lead2'::jsonb -> 'history')),
-  2, 'O histórico de tp1 para vitor tem só as 2 entradas SEM oportunidade de lead1: o unassign e a correção para opp_scope'
+  1, 'O histórico de tp1 para vitor tem só 1 entrada: a atribuição para opp_scope. O unassign anterior desfez o vínculo com opp2 — pertencia a lead1, não a lead2_scope, mesmo tendo opportunity_id nulo (item 1 da quarta rodada)'
+);
+select is(
+  (:'tp1_em_lead2'::jsonb -> 'history' -> 0 ->> 'action'),
+  'assign', 'A única entrada visível para vitor é a de atribuição (link4), não o unassign anterior (link3, de lead1)'
+);
+select is(
+  (:'tp1_em_lead2'::jsonb -> 'history' -> 0 ->> 'reason'),
+  'item 5 — correção entre leads do mesmo contato',
+  'O motivo legítimo da correção PARA lead2_scope continua visível para vitor (histórico legítimo preservado)'
+);
+select is(
+  (:'attribution_lead2_depois'::text like ('%motivo-confidencial-do-lead1%')),
+  false,
+  'REPRODUÇÃO DO VAZAMENTO (item 1, quarta rodada): o motivo do unassign feito em lead1 (antes da transferência) nunca aparece para vitor, que só acessa lead2_scope — antes da correção, este teste falha'
 );
 select is(
   (select bool_or((h ->> 'opportunity_id') in (:'opp1', :'opp2'))
@@ -1266,13 +1291,23 @@ select is(
 --        — tp1 volta a pertencer à sequência de lead1 (sem oportunidade
 --        vigente, cai no lead de origem), e o histórico dele PARA LUCAS
 --        continua sem revelar a passagem por opp_scope (de lead2_scope).
+--
+--        Reforçado pelo item 1 da QUARTA rodada ("a volta ao lead A"): o
+--        unassign que desfez o vínculo com opp_scope tem `opportunity_id`
+--        nulo, mas seu `reason` descreve uma ação de lead2_scope — antes
+--        da correção, esse motivo vazava para lucas junto do retorno.
 -- -----------------------------------------------------------------
 
 select (:'corr_cross_lead'::jsonb ->> 'link_id') as link_cross_lead \gset
 
+-- Motivo IDENTIFICÁVEL também aqui, simétrico ao de 16b: esta
+-- desvinculação acontece enquanto tp1 pertence a lead2_scope (desfaz o
+-- vínculo com opp_scope). Depois de "voltar" para lead1, o motivo abaixo
+-- nunca pode aparecer para lucas.
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
-select correct_touchpoint_demand_link(:'tp1'::uuid, :'link_cross_lead'::uuid, 'unassign');
+select correct_touchpoint_demand_link(:'tp1'::uuid, :'link_cross_lead'::uuid, 'unassign', null,
+  'motivo-confidencial-do-lead2-scope');
 reset role;
 
 set local role authenticated;
@@ -1322,6 +1357,20 @@ select is(
   (:'attribution_lead1_apos_desvinculo'::text like ('%' || :'opp_scope' || '%')),
   false,
   'A resposta INTEIRA de get_lead_attribution(lead1) para lucas nunca contém opp_scope, mesmo depois do túnel de ida e volta'
+);
+select is(
+  (select jsonb_array_length(:'tp1_de_volta_em_lead1'::jsonb -> 'history')),
+  3, 'De volta em lead1, o histórico tem as 3 entradas do PRÓPRIO lead1 (vínculo com opp1, correção para opp2, unassign de opp2) — as 2 de lead2_scope (assign e unassign de opp_scope) ficam de fora'
+);
+select is(
+  (:'attribution_lead1_apos_desvinculo'::text like '%motivo-confidencial-do-lead1%'),
+  true,
+  'O motivo do unassign que pertence a lead1 (desfez o vínculo com opp2, feito ANTES da transferência) continua visível para lucas — histórico legítimo preservado'
+);
+select is(
+  (:'attribution_lead1_apos_desvinculo'::text like '%motivo-confidencial-do-lead2-scope%'),
+  false,
+  'REPRODUÇÃO DO VAZAMENTO (item 1, quarta rodada — "volta ao lead A"): o motivo do unassign feito em lead2_scope (que trouxe tp1 de volta) nunca aparece para lucas — antes da correção, este teste falha'
 );
 
 -- -----------------------------------------------------------------
