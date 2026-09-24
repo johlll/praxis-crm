@@ -314,9 +314,31 @@ Nenhuma migration aplicada **em banco hospedado** foi editada.
   vencimento (é dado declarado pelo visitante). `normalized_occurred_at`
   permanece, porque é o que a atribuição usa e não identifica ninguém.
 - A validação visual em preview real (navegador) das telas de configuração
-  de formulário e do AttributionPanel **ainda não foi feita** — depende da
-  credencial de login de QA, que precisa ser reenviada pelo usuário nesta
-  sessão (arquivo local, não persistido em memória de longo prazo).
+  de formulário e do AttributionPanel **foi concluída** nesta rodada — ver
+  §11.
+- **Achado nesta rodada**: `/api/cron/outbox` e `/api/cron/retention`
+  devolvem `401 unauthorized` quando a configuração A11 está incompleta
+  (Turnstile/Upstash/Inngest ausentes), porque `authorized()` engole
+  qualquer `IngestConfigError` de `getIngestConfig()` como "não
+  autorizado" antes de checar o `CRON_SECRET`. Isso diverge do padrão do
+  resto do sistema (`/api/forms/[endpointKey]` devolve `503
+  service_unavailable` no mesmo cenário — falha fechada, mas com
+  diagnóstico correto). Não é um bug de segurança (a rota segue fechada
+  nos dois casos), mas é enganoso: um operador vendo `401` conclui
+  "`CRON_SECRET` errado" quando na verdade falta configurar Turnstile/
+  Upstash/Inngest. Correção sugerida, não aplicada nesta rodada: mover a
+  checagem do `CRON_SECRET` para antes de `getIngestConfig()` completo,
+  ou capturar `IngestConfigError` separadamente e devolver `503`.
+- **Achado nesta rodada (UX)**: no `AttributionPanel`, o botão
+  "Desvincular" de `correct_touchpoint_demand_link` falha silenciosamente
+  quando o dropdown "Vincular a" está com seu valor padrão (a oportunidade
+  atualmente vinculada) — a RPC recusa `unassign` com `opportunity_id`
+  não nulo (`opportunity_not_allowed_on_unassign`), e a mensagem de erro
+  só aparece se o usuário não navegar/recarregar antes de notar. Funciona
+  corretamente assim que o dropdown é trocado para "Não atribuído" antes
+  de clicar "Desvincular" — mas o valor padrão do próprio dropdown induz
+  o erro. Corrigível na UI: ignorar o valor do dropdown quando
+  `action=unassign`, ou desabilitar/ocultar o dropdown nesse caso.
 
 ## 10. Validação pós-migration em banco hospedado (`praxis-crm-dev`)
 
@@ -364,6 +386,92 @@ confirmando persistência por **leitura em invocação separada** da escrita
   atividade numa só chamada; reprocessar o mesmo evento devolve
   `already_processed: true` com os mesmos IDs, sem duplicar nada.
 
-**Não coberto nesta rodada:** validação visual via navegador (depende de
-credencial de login) e configuração dos serviços externos (Turnstile,
+**Não coberto nesta rodada:** validação visual via navegador (feita na
+rodada seguinte, §11) e configuração dos serviços externos (Turnstile,
 Upstash, Inngest — continuam pendentes, §7).
+
+## 11. Validação visual em navegador (rodada seguinte)
+
+Feita com Playwright contra o deployment de preview real
+(`praxis-au1cxrwsu-johllls-projects.vercel.app`, protegido por Vercel
+SSO — acesso via `x-vercel-protection-bypass` + `x-vercel-set-bypass-cookie`,
+secret de automação do próprio projeto). Login com a conta `owner` de
+`praxis-demo-a10.txt` (`demo-a10.owner@praxis.test`); as credenciais de
+`praxisqa1`/`praxisqa2` (workspace "Escritório QA Praxis", usado nos
+testes SQL de §10) continuam sem senha registrada em arquivo local —
+não foram necessárias nesta rodada.
+
+**Workspace dedicado criado pelo fluxo normal do app**: "QA A11
+Validacao Visual" (`9c912c4e-0ebc-4c6e-a148-9e56a091781c`), via
+`/onboarding` — nota: o link "Criar novo workspace" do menu do sidebar
+aponta para `/onboarding`, que só é acessível a quem NÃO tem workspace
+ativo (`src/app/onboarding/page.tsx` redireciona quem já tem um); para
+um usuário que já é membro de outro workspace, o link está
+funcionalmente quebrado. Contornado limpando o cookie
+`praxis_active_workspace` antes de navegar — nenhum outro workspace,
+registro ou senha foi alterado.
+
+**Método de cada verificação, explicitado conforme pedido:**
+
+| O quê | Como |
+|---|---|
+| Criar/editar endpoint de formulário, preservando campo extra | **Navegador** (Playwright) — formulário criado com campo `telefone_alternativo`, editado adicionando `melhor_horario`; ambos confirmados presentes após `reload()` real da página |
+| Domínio permitido do CORS | **Navegador** — preenchido com o hostname estável do branch (ver §12); não testado o preflight HTTP real (isso exige Turnstile configurado, ver achado sobre `401`) |
+| Acesso recusado por papel (owner-only) | **Navegador** — `demo-a10.lawyer` autenticado no workspace de QA, `GET /configuracoes/formularios` devolve `404` (não `403`, conforme ADR de alcance) |
+| AttributionPanel — leitura | **Navegador** — dados reais criados via **SQL/RPC direto** (`ingest_form_event`+`process_form_event`, não passou pela rota HTTP pública nem pelo Inngest), depois visualizados na aba "Origem" do Perfil 360 |
+| AttributionPanel — correção de vínculo (unassign) | **Navegador**, ação de UI real (Server Action → RPC `correct_touchpoint_demand_link`); confirmado por **SQL** (leitura separada em `touchpoint_demand_links`) e por **novo carregamento da página** |
+| AttributionPanel — acesso por papel | **Navegador** — `demo-a10.lawyer` vê a aba "Origem" e os dados (leitura permitida), mas os botões "Corrigir associação"/"Gerar link" não aparecem (ação restrita a owner/admin/manager) |
+| Reconciliação de outbox (falha → preservação → restauração → republicação → processamento único) | **SQL/RPC direto** (`claim_outbox_batch`, `mark_outbox_failed`, `mark_outbox_published`, `process_form_event`) — **não** foi feito via a rota HTTP `/api/cron/outbox` nem via Inngest real (ver achado do `401` abaixo) |
+
+**Explicitamente NÃO testado nesta rodada** (ficaria sendo prova de algo que não foi exercitado): Turnstile, CORS preflight real, rate limit, honeypot, publicação real no Inngest, disparo automático por agendador. Essas camadas vivem na rota HTTP pública e nos serviços externos, nenhum dos quais está configurado ainda.
+
+## 12. Infraestrutura externa — preparação para execução
+
+**URLs estáveis definidas** (o hostname por-deploy muda a cada push; o
+alias de branch não):
+
+- Formulário de QA: `https://praxis-crm-git-feat-a11-forms-attribution-johllls-projects.vercel.app/qa/formulario-a11` — página nova em `src/app/qa/formulario-a11/`, fora da landing da Vizentini, só para exercitar o contrato público (réplica do exemplo em `docs/decisoes/a11-exemplo-integracao.md`) contra este preview.
+- Callback do Inngest: `https://praxis-crm-git-feat-a11-forms-attribution-johllls-projects.vercel.app/api/inngest`
+- Domínio a declarar no Turnstile e em "Domínios permitidos" do endpoint: `praxis-crm-git-feat-a11-forms-attribution-johllls-projects.vercel.app`
+
+**Vercel SSO Protection e automação**: este projeto tem `ssoProtection.deploymentType = "all_except_custom_domains"` — protege todo deployment em `*.vercel.app` (preview e produção sem domínio próprio), mas **não** protege domínios customizados. Ou seja, em produção real com domínio da Vizentini, isso não é um problema; só afeta os testes contra `*.vercel.app` de agora. Resolvido com **Protection Bypass for Automation** (recurso nativo da Vercel): secret de automação (`VERCEL_AUTOMATION_BYPASS_SECRET`, já existia neste projeto) usado via header/query `x-vercel-protection-bypass`, com `x-vercel-set-bypass-cookie: true` para navegação subsequente sem repetir o parâmetro. O Inngest e o workflow do GitHub Actions (§13) usam essa mesma query string na URL configurada.
+
+**Segredos próprios da A11**: gerados e configurados no ambiente Preview (branch `feat/a11-forms-attribution`) — `A11_IP_HMAC_KEY`, `A11_PAYLOAD_ACTIVE_KEY_VERSION`+`A11_PAYLOAD_KEY_VERSIONS`, `CRON_SECRET`, e `SUPABASE_SECRET_KEY` (que estava vazia mesmo localmente — puxada da chave `service_role` real do projeto via `supabase projects api-keys --reveal`). Confirmados salvos corretamente por trigger de redeploy + achado do `401` explicado abaixo (que provou que o `CRON_SECRET` está sendo lido — só falta o resto da config para a rota responder 200).
+
+**Achado ao configurar via `vercel env add | stdin` num pipe do Git Bash**: os primeiros 5 valores gravados vieram truncados (não é possível confirmar o tamanho de uma env var "Sensitive" via `env pull`, que sempre mascara — só foi possível perceber pelo teste HTTP real dando `401`). Corrigido regravando com `< arquivo` em vez de pipe. **Se for configurar segredos futuros via CLI, prefira sempre redirecionamento de arquivo a pipe.**
+
+### Turnstile, Upstash, Inngest — inventário (sem contratar nada nesta rodada)
+
+| Serviço | Env var no praxis-crm | Custo/limite confirmado (fonte oficial) | Quem faz |
+|---|---|---|---|
+| Cloudflare Turnstile | `TURNSTILE_SECRET_KEY` (server); a site key pública vai no HTML da página de QA/landing, não em env var do servidor | Gratuito, sem cap de volume publicado no Standard; 20 widgets/conta, 10 hostnames/widget ([blog.cloudflare.com/turnstile-ga](https://blog.cloudflare.com/turnstile-ga/)) | Você cria a conta/widget (login); eu configuro a env var depois |
+| Upstash Redis | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Tier gratuito permanente: 256 MB, 500k comandos/mês, 10 GB banda/mês ([upstash.com/pricing/redis](https://upstash.com/pricing/redis)) | Você cria a conta/database; eu configuro as env vars depois |
+| Inngest | `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY` | Hobby gratuito: 50k execuções/mês, 5 steps concorrentes, 3 usuários, 7 dias de trace ([inngest.com/pricing](https://www.inngest.com/pricing)) | Você cria a conta/app; eu configuro as env vars depois |
+
+Prompts prontos para Claude Chrome executar essas três criações (sem devolver secret nenhum no chat) estão no fechamento da rodada, fora deste arquivo.
+
+## 13. Plano de recuperação — corrigido
+
+**Correção sobre a descrição anterior**: o reconciliador (`claim_outbox_batch`, chamado por `/api/cron/outbox`) **republica** o evento pendente/travado — ele nunca processa o efeito comercial. Quem processa é sempre `process_form_event`, chamado pelo worker (Inngest ou, em teste, o adaptador inline). Isso já estava correto no código; a imprecisão estava só na forma como uma rodada anterior descreveu o teste.
+
+**Teste executado nesta rodada** (SQL/RPC direto, simulando cada etapa do ciclo real — nenhum caminho de processamento alternativo foi criado):
+
+1. `ingest_form_event` cria `webhook_events` (status `received`) + `outbox` (state `pending`).
+2. `claim_outbox_batch` reivindica (state `publishing`, `attempts: 1`); `mark_outbox_failed(..., 'inngest_unavailable', 0)` simula a publicação real falhando — state vira `failed`.
+3. **Confirmado por leitura separada**: `webhook_events.status` continua `received` (evento preservado, nada perdido); `outbox.state = 'failed'`, `attempts: 1`, `last_error_code: 'inngest_unavailable'`.
+4. "Serviço restaurado": `claim_outbox_batch` reivindica de novo — **republicação confirmada** (mesmo `webhook_event_id`/`outbox_id`, `attempts: 2`).
+5. `mark_outbox_published` + `process_form_event` (simula o worker recebendo a republicação) — processa pela primeira vez: cria contato → lead → oportunidade → touchpoint → atividade.
+6. `process_form_event` chamado de novo (simula reconciliador reivindicando por engano após já processado) — devolve `already_processed: true`, mesmos IDs, **nenhuma duplicação**; `claim_outbox_batch` chamado mais uma vez não devolve mais o evento (já fora do critério de elegibilidade).
+
+**Continuar funcionando com o Inngest indisponível**: por desenho — o outbox no Postgres é a fonte da verdade, não o Inngest; o reconciliador só depende do banco.
+
+### Testar execução automática antes do merge — limitação real encontrada
+
+GitHub Actions **não avalia workflows fora do branch padrão de jeito nenhum** — nem `schedule:` nem disparo manual via `workflow_dispatch` funcionam a partir de um branch de feature. Confirmado ao tentar `gh workflow run a11-reconcile.yml --ref feat/a11-forms-attribution`: `HTTP 404: workflow a11-reconcile.yml not found on the default branch`. Isso é mais restritivo do que só "schedule só roda do branch padrão" — nenhuma execução do workflow é possível antes do merge para `main`.
+
+**O que já está pronto, pendente só do merge:**
+- `.github/workflows/a11-reconcile.yml` — chama `/api/cron/outbox` e `/api/cron/retention` via HTTP autenticado (`CRON_SECRET` + bypass da proteção SSO da Vercel), a cada 10 minutos por `schedule:`, e sob demanda por `workflow_dispatch`.
+- Secrets do repositório já configurados: `A11_CRON_SECRET`, `VERCEL_AUTOMATION_BYPASS_SECRET`.
+- **Passa a disparar sozinho automaticamente assim que este arquivo existir em `main`** — ou seja, requer o merge da A11 (ou, no mínimo, deste arquivo isolado) para ser validado de ponta a ponta como agendamento real.
+
+**Alternativa concreta para provar execução automática HOJE, sem merge e sem contratar nada**: usar `ScheduleWakeup` (mecanismo do próprio Claude Code) para, dentro de uma sessão, chamar o endpoint em intervalos por um período limitado — prova o disparo periódico não supervisionado turno a turno, mas **só resulta em sucesso real (200) depois que Turnstile/Upstash/Inngest estiverem configurados** (sem eles, a rota responde `401` pelo motivo descrito na seção de achados — `getIngestConfig()` falha antes mesmo de checar o `CRON_SECRET`). Não executado nesta rodada — decisão de deixar documentado e retomar depois da configuração externa.
