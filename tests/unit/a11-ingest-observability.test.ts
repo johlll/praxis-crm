@@ -126,7 +126,7 @@ describe("observabilidade sanitizada de invalid_submission", () => {
   }
 
   function expectNoSecretLeak() {
-    const raw = warnSpy.mock.calls.map((call) => call[0]).join("\n");
+    const raw = warnSpy.mock.calls.map((call: unknown[]) => call[0]).join("\n");
     for (const segredo of SEGREDOS) {
       expect(raw).not.toContain(segredo);
     }
