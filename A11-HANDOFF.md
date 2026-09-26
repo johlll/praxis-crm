@@ -474,4 +474,76 @@ GitHub Actions **não avalia workflows fora do branch padrão de jeito nenhum** 
 - Secrets do repositório já configurados: `A11_CRON_SECRET`, `VERCEL_AUTOMATION_BYPASS_SECRET`.
 - **Passa a disparar sozinho automaticamente assim que este arquivo existir em `main`** — ou seja, requer o merge da A11 (ou, no mínimo, deste arquivo isolado) para ser validado de ponta a ponta como agendamento real.
 
+## 14. Configuração externa concluída e validação HTTP real (rodada final)
+
+**Turnstile, Upstash e Inngest configurados** (via Claude Chrome, contas
+já existentes reaproveitadas — nenhuma conta nova criada; planos
+gratuitos em todos os três). Variáveis confirmadas presentes no
+ambiente Preview, escopadas ao branch `feat/a11-forms-attribution`:
+`TURNSTILE_SECRET_KEY`, `NEXT_PUBLIC_QA_TURNSTILE_SITE_KEY`,
+`UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`,
+`INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY` — nenhuma em Production.
+Inngest sincronizado com sucesso no branch environment
+`feat/a11-forms-attribution`; função `a11-process-form-submission`
+("A11 — processar submissão de formulário") ativa.
+
+**Duas correções de código nesta rodada, ambas fora da lógica de
+negócio da A11:**
+- `src/proxy.ts`: a página de QA (`/qa/formulario-a11`) não estava na
+  allowlist `PUBLIC_PATHS` — um visitante anônimo era desviado para
+  `/entrar` em vez de ver o formulário. Adicionada.
+- `src/proxy.ts`: a CSP (`script-src`/`frame-src`) bloqueava o iframe do
+  widget Turnstile (`challenges.cloudflare.com`) — liberado, com
+  comentário explícito de que essa exceção existe só por causa da
+  página de QA e deve ser removida junto dela.
+
+**Validado por HTTP real (chamada autenticada direta, não é prova de
+agendamento automático):**
+- `POST /api/cron/outbox` com `CRON_SECRET` real → `200
+  {"claimed":0,"published":0,"failed":0}` (nada pendente no momento;
+  confirma que a config completa do schema A11 passa a validar e que o
+  `CRON_SECRET` está correto — antes de Turnstile/Upstash/Inngest
+  existirem, essa mesma chamada devolvia `401`, ver achado §9).
+- Widget Turnstile real carrega e responde no navegador, com o
+  hostname/site key corretos — confirmado visualmente duas vezes
+  (antes e depois da restauração da secret key, ver incidente abaixo).
+- **Tentativa de envio automatizado (Playwright) foi corretamente
+  recusada pelo Turnstile real** ("Falha na verificação") — isso é o
+  comportamento CORRETO esperado (Turnstile existe para bloquear
+  automação), não um defeito.
+- Para exercitar o restante do pipeline (CORS real, rate limit,
+  publicação no Inngest) sem um humano completando o captcha, troquei
+  **temporariamente** `TURNSTILE_SECRET_KEY`/`NEXT_PUBLIC_QA_TURNSTILE_SITE_KEY`
+  pelas chaves de teste **oficiais e públicas** da Cloudflare
+  (`1x0000...AA`/`1x0000...AA`, documentadas para automação de QA). O
+  desafio passou, mas a submissão foi recusada com `403` — as chaves de
+  teste da Cloudflare devolvem um `hostname`/`action` fixos que não
+  batem com a configuração real do endpoint, então `hostname_mismatch`/
+  `action_mismatch` dispara por desenho do próprio código (`src/server/ingest/turnstile.ts`).
+  **Não foi possível, portanto, exercitar CORS real/rate limit/
+  publicação no Inngest de ponta a ponta nesta rodada** — isso exigiria
+  um humano completando o captcha real, fora do alcance de automação.
+
+**Incidente durante o teste com chave de teste (registrado
+integralmente, por instrução do usuário):**
+- Ao remover `TURNSTILE_SECRET_KEY` para trocar pela chave de teste,
+  não havia cópia do valor real salva em nenhum lugar acessível a mim
+  (foi inserida diretamente na Vercel pelo Claude Chrome, sem nunca
+  passar pelo chat) — a remoção deixou a variável ausente por um
+  intervalo.
+- **Nenhuma captação pública estava ativa nesse intervalo**: a rota
+  pública de ingestão só é usada pela página de QA deste branch
+  (`/qa/formulario-a11`), não há tráfego real de visitantes na landing
+  da Vizentini apontando para este preview.
+- A chave original foi restaurada pelo usuário diretamente na Vercel
+  (site key e secret key), confirmada por mim via `vercel env ls`
+  (escopo correto: Preview + branch `feat/a11-forms-attribution`, ausente
+  de Production) antes de qualquer novo teste.
+- Ao restaurar, o usuário também corrigiu um escopo que havia ficado
+  incorreto anteriormente incluindo Production — confirmado removido;
+  a variável hoje existe só em Preview.
+- **Lição registrada**: qualquer teste futuro com chave de teste deve
+  rodar em ambiente local/processo isolado, nunca substituindo a
+  configuração real do Preview compartilhado.
+
 **Alternativa concreta para provar execução automática HOJE, sem merge e sem contratar nada**: usar `ScheduleWakeup` (mecanismo do próprio Claude Code) para, dentro de uma sessão, chamar o endpoint em intervalos por um período limitado — prova o disparo periódico não supervisionado turno a turno, mas **só resulta em sucesso real (200) depois que Turnstile/Upstash/Inngest estiverem configurados** (sem eles, a rota responde `401` pelo motivo descrito na seção de achados — `getIngestConfig()` falha antes mesmo de checar o `CRON_SECRET`). Não executado nesta rodada — decisão de deixar documentado e retomar depois da configuração externa.
