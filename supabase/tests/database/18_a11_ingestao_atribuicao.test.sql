@@ -8,7 +8,7 @@
 -- regressão histórica inventada.
 
 begin;
-select plan(161);
+select plan(178);
 
 \set otavio '20000000-0000-0000-0000-000000000014'
 \set lucas  '20000000-0000-0000-0000-000000000011'
@@ -82,9 +82,9 @@ select is(
                        'claim_outbox_batch','mark_outbox_published','mark_outbox_failed',
                        'mark_webhook_event_failed','get_webhook_event_payload',
                        'purge_expired_webhook_events','flag_stuck_webhook_events',
-                       'flag_expiring_webhook_events')
+                       'flag_expiring_webhook_events','resolve_stale_outbox_batch')
      and has_function_privilege(r.role_name, p.oid, 'EXECUTE')),
-  0, 'anon e authenticated NÃO chamam ingestão, fila, payload nem retenção (pulariam Turnstile e rate limit)'
+  0, 'anon e authenticated NÃO chamam ingestão, fila, payload, retenção nem convergência de outbox (pulariam Turnstile e rate limit)'
 );
 
 select is(
@@ -1689,6 +1689,227 @@ select is(
   (select count(*)::int from jsonb_array_elements(:'claimed3'::jsonb) item
    where (item ->> 'outbox_id') = :'outbox_fluxo'),
   0, 'Outbox published não é mais elegível ao reconciliador'
+);
+
+-- -----------------------------------------------------------------
+-- 18) Outbox órfã: evento já terminal por OUTRO caminho converge
+--     sozinha, nunca fica presa para sempre e nunca é republicada
+--     (achado real do teste de recuperação de outbox no Preview).
+-- -----------------------------------------------------------------
+
+-- A) evento vira `processed` (worker) sem que a outbox tenha sido
+--    reclamada/publicada — o cenário exatamente reproduzido no Preview.
+select ingest_form_event(
+  :'endpoint'::uuid, 'eeeeeeee-0000-4000-8000-000000000001'::uuid, :'hash1'::bytea, 'proto-orfa-processada-aaa',
+  '\xde'::bytea, '\x000000000000000000000000'::bytea, '\x00000000000000000000000000000000'::bytea,
+  'aes-256-gcm', '1', '{}'::jsonb, now()
+) as ing_orfa_a \gset
+select id as event_orfa_a from public.webhook_events
+where source_event_id = 'eeeeeeee-0000-4000-8000-000000000001'::uuid \gset
+select id as outbox_orfa_a from public.outbox where webhook_event_id = :'event_orfa_a'::uuid \gset
+
+select process_form_event(:'event_orfa_a'::uuid, jsonb_build_object(
+  'contact', jsonb_build_object('name', 'Visitante Orfa A'),
+  'attribution', jsonb_build_object('channel', 'formulario'),
+  'consent', jsonb_build_object('decision', 'granted', 'channel', 'email',
+                                'legal_basis', 'consentimento', 'purpose', 'Contato pelo site')
+));
+select is(
+  (select state::text from public.outbox where id = :'outbox_orfa_a'::uuid),
+  'pending', 'Órfã A: evento já processado, outbox continua pending (o defeito, antes da convergência)'
+);
+
+-- B) evento vira `processed` depois de a outbox já ter FALHADO uma vez.
+select ingest_form_event(
+  :'endpoint'::uuid, 'eeeeeeee-0000-4000-8000-000000000002'::uuid, :'hash1'::bytea, 'proto-orfa-falhada-aaaa',
+  '\xde'::bytea, '\x000000000000000000000000'::bytea, '\x00000000000000000000000000000000'::bytea,
+  'aes-256-gcm', '1', '{}'::jsonb, now()
+) as ing_orfa_b \gset
+select id as event_orfa_b from public.webhook_events
+where source_event_id = 'eeeeeeee-0000-4000-8000-000000000002'::uuid \gset
+select id as outbox_orfa_b from public.outbox where webhook_event_id = :'event_orfa_b'::uuid \gset
+
+select claim_outbox_batch(20, 120) as claim_orfa_b \gset
+select mark_outbox_failed(:'outbox_orfa_b'::uuid, 'publish_failed', 0);
+select process_form_event(:'event_orfa_b'::uuid, jsonb_build_object(
+  'contact', jsonb_build_object('name', 'Visitante Orfa B'),
+  'attribution', jsonb_build_object('channel', 'formulario'),
+  'consent', jsonb_build_object('decision', 'granted', 'channel', 'email',
+                                'legal_basis', 'consentimento', 'purpose', 'Contato pelo site')
+));
+select is(
+  (select state::text from public.outbox where id = :'outbox_orfa_b'::uuid),
+  'failed', 'Órfã B: evento processado depois de a outbox já ter falhado — continua failed'
+);
+
+-- C) evento vira `processed` enquanto a outbox está `publishing` com o
+--    lock JÁ EXPIRADO (worker anterior travou/caiu no meio do caminho).
+select ingest_form_event(
+  :'endpoint'::uuid, 'eeeeeeee-0000-4000-8000-000000000003'::uuid, :'hash1'::bytea, 'proto-orfa-lockexp-aaaa',
+  '\xde'::bytea, '\x000000000000000000000000'::bytea, '\x00000000000000000000000000000000'::bytea,
+  'aes-256-gcm', '1', '{}'::jsonb, now()
+) as ing_orfa_c \gset
+select id as event_orfa_c from public.webhook_events
+where source_event_id = 'eeeeeeee-0000-4000-8000-000000000003'::uuid \gset
+select id as outbox_orfa_c from public.outbox where webhook_event_id = :'event_orfa_c'::uuid \gset
+
+select claim_outbox_batch(20, 120) as claim_orfa_c \gset
+update public.outbox set lock_expires_at = now() - interval '1 minute'
+where id = :'outbox_orfa_c'::uuid;
+select process_form_event(:'event_orfa_c'::uuid, jsonb_build_object(
+  'contact', jsonb_build_object('name', 'Visitante Orfa C'),
+  'attribution', jsonb_build_object('channel', 'formulario'),
+  'consent', jsonb_build_object('decision', 'granted', 'channel', 'email',
+                                'legal_basis', 'consentimento', 'purpose', 'Contato pelo site')
+));
+select is(
+  (select state::text from public.outbox where id = :'outbox_orfa_c'::uuid),
+  'publishing', 'Órfã C: evento processado com a outbox travada (publishing) e lock já expirado'
+);
+
+-- D) evento vira `expired_unprocessed` por outro caminho que não o
+--    `purge_expired_webhook_events` (que já resolve a outbox sozinho) —
+--    simula qualquer futuro caminho que produza o mesmo estado.
+select ingest_form_event(
+  :'endpoint'::uuid, 'eeeeeeee-0000-4000-8000-000000000004'::uuid, :'hash1'::bytea, 'proto-orfa-expirada-aaa',
+  '\xde'::bytea, '\x000000000000000000000000'::bytea, '\x00000000000000000000000000000000'::bytea,
+  'aes-256-gcm', '1', '{}'::jsonb, now()
+) as ing_orfa_d \gset
+select id as event_orfa_d from public.webhook_events
+where source_event_id = 'eeeeeeee-0000-4000-8000-000000000004'::uuid \gset
+select id as outbox_orfa_d from public.outbox where webhook_event_id = :'event_orfa_d'::uuid \gset
+
+update public.webhook_events set status = 'expired_unprocessed' where id = :'event_orfa_d'::uuid;
+select is(
+  (select state::text from public.outbox where id = :'outbox_orfa_d'::uuid),
+  'pending', 'Órfã D: evento expired_unprocessed por outro caminho, outbox continua pending'
+);
+
+-- E) evento vira `purged` (hoje nunca produzido pelo código real, mas o
+--    enum existe e o invariante precisa valer para qualquer origem).
+select ingest_form_event(
+  :'endpoint'::uuid, 'eeeeeeee-0000-4000-8000-000000000005'::uuid, :'hash1'::bytea, 'proto-orfa-purgada-aaaa',
+  '\xde'::bytea, '\x000000000000000000000000'::bytea, '\x00000000000000000000000000000000'::bytea,
+  'aes-256-gcm', '1', '{}'::jsonb, now()
+) as ing_orfa_e \gset
+select id as event_orfa_e from public.webhook_events
+where source_event_id = 'eeeeeeee-0000-4000-8000-000000000005'::uuid \gset
+select id as outbox_orfa_e from public.outbox where webhook_event_id = :'event_orfa_e'::uuid \gset
+
+update public.webhook_events set status = 'purged' where id = :'event_orfa_e'::uuid;
+select is(
+  (select state::text from public.outbox where id = :'outbox_orfa_e'::uuid),
+  'pending', 'Órfã E: evento purged, outbox continua pending'
+);
+
+-- F) evento AINDA elegível (não terminal) — controle negativo: não pode
+--    ser varrido pela convergência.
+select ingest_form_event(
+  :'endpoint'::uuid, 'eeeeeeee-0000-4000-8000-000000000006'::uuid, :'hash1'::bytea, 'proto-ainda-elegivel-aaa',
+  '\xde'::bytea, '\x000000000000000000000000'::bytea, '\x00000000000000000000000000000000'::bytea,
+  'aes-256-gcm', '1', '{}'::jsonb, now()
+) as ing_elegivel \gset
+select id as event_elegivel from public.webhook_events
+where source_event_id = 'eeeeeeee-0000-4000-8000-000000000006'::uuid \gset
+select id as outbox_elegivel from public.outbox where webhook_event_id = :'event_elegivel'::uuid \gset
+
+-- Convergência real: A, B, C, D, E resolvem; F não é tocado.
+select resolve_stale_outbox_batch(200) as resolve1 \gset
+
+select is(
+  (select count(*)::int from jsonb_array_elements(:'resolve1'::jsonb) item
+   where (item ->> 'outbox_id') in (:'outbox_orfa_a', :'outbox_orfa_b', :'outbox_orfa_c',
+                                     :'outbox_orfa_d', :'outbox_orfa_e')),
+  5, 'A convergência resolve as cinco órfãs (pending, failed, publishing-com-lock-expirado, expired_unprocessed, purged) numa só passada'
+);
+select is(
+  (select count(*)::int from jsonb_array_elements(:'resolve1'::jsonb) item
+   where (item ->> 'outbox_id') = :'outbox_elegivel'),
+  0, 'A convergência NÃO toca a outbox ainda elegível (evento não terminal)'
+);
+
+select is(
+  (select jsonb_object_agg(state, n) from (
+    select state::text, count(*) as n from public.outbox
+    where id in (:'outbox_orfa_a', :'outbox_orfa_b', :'outbox_orfa_c', :'outbox_orfa_d', :'outbox_orfa_e')
+    group by state
+  ) t),
+  '{"resolved": 5}'::jsonb,
+  'As cinco órfãs terminam em `resolved` — nunca `published` (nada foi de fato publicado)'
+);
+
+select is(
+  (select count(*)::int from public.outbox
+   where id in (:'outbox_orfa_a', :'outbox_orfa_b', :'outbox_orfa_c', :'outbox_orfa_d', :'outbox_orfa_e')
+     and (resolved_at is null or locked_at is not null or lock_expires_at is not null)),
+  0, 'Convergência grava resolved_at e libera qualquer lock remanescente nas cinco'
+);
+
+select is(
+  (select resolved_reason from public.outbox where id = :'outbox_orfa_a'::uuid),
+  'event_processed', 'Órfã A: motivo sanitizado registrado corretamente (event_processed)'
+);
+select is(
+  (select resolved_reason from public.outbox where id = :'outbox_orfa_d'::uuid),
+  'event_expired_unprocessed', 'Órfã D: motivo sanitizado registrado corretamente (event_expired_unprocessed)'
+);
+select is(
+  (select resolved_reason from public.outbox where id = :'outbox_orfa_e'::uuid),
+  'event_purged', 'Órfã E: motivo sanitizado registrado corretamente (event_purged)'
+);
+
+-- Evento resolvido nunca é republicado; o ainda elegível continua
+-- funcionando normalmente pelo caminho de sempre.
+select claim_outbox_batch(20, 120) as claim_pos_resolve \gset
+select is(
+  (select count(*)::int from jsonb_array_elements(:'claim_pos_resolve'::jsonb) item
+   where (item ->> 'outbox_id') in (:'outbox_orfa_a', :'outbox_orfa_b', :'outbox_orfa_c',
+                                     :'outbox_orfa_d', :'outbox_orfa_e')),
+  0, 'Nenhuma das cinco órfãs resolvidas é reivindicada pelo cron — nunca republicada'
+);
+select is(
+  (select count(*)::int from jsonb_array_elements(:'claim_pos_resolve'::jsonb) item
+   where (item ->> 'outbox_id') = :'outbox_elegivel'),
+  1, 'A outbox ainda elegível continua sendo reivindicada normalmente pelo reconciliador'
+);
+select mark_outbox_published(:'outbox_elegivel'::uuid);
+
+-- Segunda passada é idempotente: nada sobra para resolver de novo (prova
+-- sequencial de que a convergência não repete trabalho; a ausência de
+-- publicação/finalização em duplicidade sob concorrência REAL de duas
+-- transações é provada à parte, com duas conexões de verdade, em
+-- scripts/a11-outbox-resolve-concurrency-check.mjs).
+select resolve_stale_outbox_batch(200) as resolve2 \gset
+select is(
+  (select count(*)::int from jsonb_array_elements(:'resolve2'::jsonb) item
+   where (item ->> 'outbox_id') in (:'outbox_orfa_a', :'outbox_orfa_b', :'outbox_orfa_c',
+                                     :'outbox_orfa_d', :'outbox_orfa_e')),
+  0, 'Segunda convergência não repete trabalho — nada sobrou para resolver'
+);
+
+-- Isolamento entre workspaces continua correto para a função nova:
+-- authenticated (mesmo o dono do workspace) não a executa — é exclusiva
+-- do service_role, como toda função de fila/retenção da A11.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
+select throws_ok(
+  $$select resolve_stale_outbox_batch(10)$$,
+  '42501',
+  null,
+  'Isolamento: authenticated não executa resolve_stale_outbox_batch (permissão negada, exclusiva do service_role)'
+);
+reset role;
+
+-- Retenção não trata a órfã A (já processada, já convergida) como
+-- travada: `processed_at` está preenchido, então `flag_stuck_webhook_events`
+-- nunca a inclui, convergida ou não.
+update public.webhook_events set stuck_after = now() - interval '1 minute'
+where id = :'event_orfa_a'::uuid;
+select flag_stuck_webhook_events(200) as stuck_pos_resolve \gset
+select is(
+  (select count(*)::int from jsonb_array_elements(:'stuck_pos_resolve'::jsonb ->  'alerts') item
+   where (item ->> 'webhook_event_id') = :'event_orfa_a'),
+  0, 'Evento já processado (órfã convergida) nunca é tratado como travado pela retenção'
 );
 
 select * from finish();

@@ -76,6 +76,21 @@ jobs:
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="${PUBLISHABLE_KEY:?PUBLISHABLE_KEY vazio}" \
             node scripts/a9-proposal-number-concurrency-check.mjs
 
+      - name: Teste de concorrência real (A11 — convergência de outbox órfã)
+        # Mesmo motivo dos dois passos acima: duas chamadas concorrentes de
+        # resolve_stale_outbox_batch sobre a MESMA outbox órfã não podem
+        # convergê-la duas vezes — ver
+        # scripts/a11-outbox-resolve-concurrency-check.mjs. Função exclusiva
+        # do service_role, por isso usa a chave de service role local
+        # (Postgres descartado ao fim do workflow).
+        run: |
+          RAW="$(supabase status -o env)"
+          eval "$RAW"
+          NEXT_PUBLIC_SUPABASE_URL="${API_URL:?API_URL vazio}" \
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="${PUBLISHABLE_KEY:?PUBLISHABLE_KEY vazio}" \
+          SUPABASE_SECRET_KEY="${SERVICE_ROLE_KEY:-${SECRET_KEY:?SERVICE_ROLE_KEY/SECRET_KEY vazio}}" \
+            node scripts/a11-outbox-resolve-concurrency-check.mjs
+
       - name: Exportar credenciais do Supabase local para o build/e2e
         run: |
           # Escreve .env.local de verdade em vez de só exportar em

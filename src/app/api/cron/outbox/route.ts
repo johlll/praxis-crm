@@ -10,13 +10,16 @@ export const dynamic = "force-dynamic";
 /**
  * Reconciliador da outbox (A11, contrato §7).
  *
- * O que ele faz: encontra outbox pendente ou travada, reserva com locking
- * seguro, republica no Inngest com o MESMO `webhook_event_id` e registra
- * a tentativa.
+ * O que ele faz: primeiro converge outbox órfã (evento já terminal por
+ * outro caminho — processado, expirado sem processamento, ou purgado —
+ * que nunca seria republicada, mas também nunca saía de pending/failed/
+ * publishing); depois encontra a outbox pendente ou travada que SOBROU,
+ * reserva com locking seguro, republica no Inngest com o MESMO
+ * `webhook_event_id` e registra a tentativa.
  *
  * O que ele NUNCA faz: efeito comercial. Ele não cria contato, lead,
- * oportunidade, atividade nem touchpoint — só republica. Quem aplica
- * efeito é o worker, e só dentro da RPC transacional.
+ * oportunidade, atividade nem touchpoint — só republica ou converge. Quem
+ * aplica efeito é o worker, e só dentro da RPC transacional.
  *
  * Cobre o cenário "publiquei e a resposta se perdeu": republicar o mesmo
  * id é inofensivo (o Inngest deduplica por 24 h e, passado isso, o worker
@@ -41,6 +44,12 @@ export async function POST(request: Request) {
   }
 
   const supabase = createAdminSupabaseClient();
+
+  const resolution = await supabase.rpc("resolve_stale_outbox_batch", { p_limit: 200 });
+  if (resolution.error) {
+    return NextResponse.json({ error: "resolve_failed" }, { status: 503 });
+  }
+  const resolved = ((resolution.data ?? []) as unknown as { outbox_id: string }[]).length;
 
   const { data, error } = await supabase.rpc("claim_outbox_batch", {
     p_limit: 20,
@@ -79,7 +88,7 @@ export async function POST(request: Request) {
     }
   }
 
-  return NextResponse.json({ claimed: batch.length, published, failed });
+  return NextResponse.json({ resolved, claimed: batch.length, published, failed });
 }
 
 // GET com o mesmo segredo, para o agendador da Vercel (que usa GET).

@@ -1742,6 +1742,8 @@ export type Database = {
           locked_at: string | null
           next_attempt_at: string
           published_at: string | null
+          resolved_at: string | null
+          resolved_reason: string | null
           state: Database["public"]["Enums"]["outbox_state"]
           updated_at: string
           webhook_event_id: string
@@ -1757,6 +1759,8 @@ export type Database = {
           locked_at?: string | null
           next_attempt_at?: string
           published_at?: string | null
+          resolved_at?: string | null
+          resolved_reason?: string | null
           state?: Database["public"]["Enums"]["outbox_state"]
           updated_at?: string
           webhook_event_id: string
@@ -1772,6 +1776,8 @@ export type Database = {
           locked_at?: string | null
           next_attempt_at?: string
           published_at?: string | null
+          resolved_at?: string | null
+          resolved_reason?: string | null
           state?: Database["public"]["Enums"]["outbox_state"]
           updated_at?: string
           webhook_event_id?: string
@@ -3358,6 +3364,10 @@ export type Database = {
         Returns: Json
       }
       resolve_form_endpoint: { Args: { p_public_key: string }; Returns: Json }
+      resolve_stale_outbox_batch: {
+        Args: { p_limit?: number }
+        Returns: Json
+      }
       reveal_contact_cpf_cnpj: {
         Args: { p_contact_id: string; p_reason?: string }
         Returns: {
@@ -3777,6 +3787,7 @@ export type Database = {
         | "published"
         | "failed"
         | "abandoned"
+        | "resolved"
       proposal_channel: "email" | "whatsapp"
       proposal_status: "rascunho" | "enviada" | "aceita" | "recusada"
       stage_requirement_type: "text" | "textarea" | "date" | "checkbox"
@@ -3974,6 +3985,7 @@ export const Constants = {
         "published",
         "failed",
         "abandoned",
+        "resolved",
       ],
       proposal_channel: ["email", "whatsapp"],
       proposal_status: ["rascunho", "enviada", "aceita", "recusada"],
