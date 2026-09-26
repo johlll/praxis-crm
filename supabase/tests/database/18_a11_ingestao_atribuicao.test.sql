@@ -8,7 +8,7 @@
 -- regressão histórica inventada.
 
 begin;
-select plan(146);
+select plan(159);
 
 \set otavio '20000000-0000-0000-0000-000000000014'
 \set lucas  '20000000-0000-0000-0000-000000000011'
@@ -530,6 +530,181 @@ select is(
   (select used_count from public.continuity_references
    where token_hash = decode(repeat('44', 32), 'hex')),
   0, 'Referência com finalidade errada nunca é marcada como usada'
+);
+
+-- -----------------------------------------------------------------
+-- 8c) used_count/last_used_at registram QUALQUER uso bem-sucedido da
+--     referência para identidade — mesmo quando capture_mode do
+--     endpoint não é 'continuity' e a demanda é aberta do zero
+--     (docs/decisoes/a11-ingestao-atribuicao.md §8.1/linha 754: "mudam
+--     a cada uso", sem ressalva de capture_mode). Defeito corrigido:
+--     o token influenciava a IDENTIDADE do contato (reaproveitado, não
+--     criado de novo) em qualquer endpoint, mas só era CONTABILIZADO
+--     como usado dentro do bloco condicionado a
+--     capture_mode = 'continuity' — uma referência emitida e usada de
+--     verdade num endpoint new_intake ficava com used_count = 0 e
+--     last_used_at = null para sempre.
+-- -----------------------------------------------------------------
+
+insert into public.continuity_references (
+  workspace_id, token_hash, contact_id, lead_id, opportunity_id, purpose, expires_at
+)
+values (
+  :'ws'::uuid, decode(repeat('55', 32), 'hex'),
+  :'contact1'::uuid, :'lead1'::uuid, :'opp1'::uuid, 'form_continuity', now() + interval '7 days'
+);
+
+select ingest_form_event(
+  :'endpoint'::uuid, 'cccccccc-0000-4000-8000-000000000001'::uuid, :'hash1'::bytea,
+  'proto-ni-continuidade-a', '\xde'::bytea, '\x000000000000000000000000'::bytea,
+  '\x00000000000000000000000000000000'::bytea, 'aes-256-gcm', '1', '{}'::jsonb, now()
+);
+select id as event_ni_cont from public.webhook_events
+where source_event_id = 'cccccccc-0000-4000-8000-000000000001'::uuid \gset
+
+select process_form_event(:'event_ni_cont'::uuid, jsonb_build_object(
+  'contact', jsonb_build_object('name', 'Visitante Reincidente'),
+  'continuity_token_hash', encode(decode(repeat('55', 32), 'hex'), 'base64'),
+  'attribution', jsonb_build_object('channel', 'formulario', 'source', 'google')
+)) as proc_ni_cont \gset
+
+select is((:'proc_ni_cont'::jsonb ->> 'new_demand')::boolean, true,
+  'new_intake com token de continuidade válido AINDA abre demanda nova (contrato §8, inalterado)');
+select is((:'proc_ni_cont'::jsonb ->> 'contact_id'), :'contact1',
+  'Mas a IDENTIDADE do contato é reaproveitada pelo token — nunca cria contato duplicado');
+select is(
+  (select used_count from public.continuity_references where token_hash = decode(repeat('55', 32), 'hex')),
+  1, 'Uso bem-sucedido para identidade incrementa used_count mesmo em endpoint new_intake'
+);
+select isnt(
+  (select last_used_at from public.continuity_references where token_hash = decode(repeat('55', 32), 'hex')),
+  null, 'last_used_at é preenchido no mesmo uso'
+);
+
+-- Reprocessar o MESMO evento (worker concorrente) não incrementa de novo.
+select process_form_event(:'event_ni_cont'::uuid, '{}'::jsonb) as proc_ni_cont_again \gset
+select is((:'proc_ni_cont_again'::jsonb ->> 'already_processed')::boolean, true,
+  'Reprocessar o mesmo evento encontra already_processed');
+select is(
+  (select used_count from public.continuity_references where token_hash = decode(repeat('55', 32), 'hex')),
+  1, 'Reprocessar o MESMO evento não incrementa used_count de novo'
+);
+
+-- Um SEGUNDO evento distinto, reaproveitando o MESMO token reutilizável,
+-- incrementa de novo (a referência não é de uso único — texto da UI em
+-- src/components/leads/attribution-panel.tsx).
+select ingest_form_event(
+  :'endpoint'::uuid, 'cccccccc-0000-4000-8000-000000000002'::uuid, :'hash1'::bytea,
+  'proto-ni-continuidade-b', '\xde'::bytea, '\x000000000000000000000000'::bytea,
+  '\x00000000000000000000000000000000'::bytea, 'aes-256-gcm', '1', '{}'::jsonb, now()
+);
+select id as event_ni_cont2 from public.webhook_events
+where source_event_id = 'cccccccc-0000-4000-8000-000000000002'::uuid \gset
+
+select process_form_event(:'event_ni_cont2'::uuid, jsonb_build_object(
+  'contact', jsonb_build_object('name', 'Visitante Reincidente'),
+  'continuity_token_hash', encode(decode(repeat('55', 32), 'hex'), 'base64'),
+  'attribution', jsonb_build_object('channel', 'formulario', 'source', 'google')
+)) as proc_ni_cont2 \gset
+
+select is(
+  (select used_count from public.continuity_references where token_hash = decode(repeat('55', 32), 'hex')),
+  2, 'Dois eventos distintos com o mesmo token reutilizável incrementam DUAS vezes'
+);
+
+-- Token EXPIRADO nunca incrementa (a referência nem é resolvida: fica
+-- indistinguível de "sem continuidade").
+insert into public.continuity_references (
+  workspace_id, token_hash, contact_id, lead_id, opportunity_id, purpose, expires_at
+)
+values (
+  :'ws'::uuid, decode(repeat('66', 32), 'hex'),
+  :'contact1'::uuid, :'lead1'::uuid, :'opp1'::uuid, 'form_continuity', now() - interval '1 minute'
+);
+select ingest_form_event(
+  :'endpoint'::uuid, 'cccccccc-0000-4000-8000-000000000003'::uuid, :'hash1'::bytea,
+  'proto-ni-continuidade-c', '\xde'::bytea, '\x000000000000000000000000'::bytea,
+  '\x00000000000000000000000000000000'::bytea, 'aes-256-gcm', '1', '{}'::jsonb, now()
+);
+select id as event_ni_expirado from public.webhook_events
+where source_event_id = 'cccccccc-0000-4000-8000-000000000003'::uuid \gset
+
+select process_form_event(:'event_ni_expirado'::uuid, jsonb_build_object(
+  'contact', jsonb_build_object('name', 'Visitante Token Expirado'),
+  'continuity_token_hash', encode(decode(repeat('66', 32), 'hex'), 'base64'),
+  'attribution', jsonb_build_object('channel', 'formulario')
+)) as proc_ni_expirado \gset
+
+select is((:'proc_ni_expirado'::jsonb ->> 'new_demand')::boolean, true,
+  'Token expirado é tratado como SEM continuidade (abre demanda nova, contato novo)');
+select is(
+  (select used_count from public.continuity_references where token_hash = decode(repeat('66', 32), 'hex')),
+  0, 'Token expirado nunca incrementa used_count'
+);
+
+-- Token REVOGADO nunca incrementa.
+insert into public.continuity_references (
+  workspace_id, token_hash, contact_id, lead_id, opportunity_id, purpose, expires_at, revoked_at
+)
+values (
+  :'ws'::uuid, decode(repeat('77', 32), 'hex'),
+  :'contact1'::uuid, :'lead1'::uuid, :'opp1'::uuid, 'form_continuity', now() + interval '7 days', now()
+);
+select ingest_form_event(
+  :'endpoint'::uuid, 'cccccccc-0000-4000-8000-000000000004'::uuid, :'hash1'::bytea,
+  'proto-ni-continuidade-d', '\xde'::bytea, '\x000000000000000000000000'::bytea,
+  '\x00000000000000000000000000000000'::bytea, 'aes-256-gcm', '1', '{}'::jsonb, now()
+);
+select id as event_ni_revogado from public.webhook_events
+where source_event_id = 'cccccccc-0000-4000-8000-000000000004'::uuid \gset
+
+select process_form_event(:'event_ni_revogado'::uuid, jsonb_build_object(
+  'contact', jsonb_build_object('name', 'Visitante Token Revogado'),
+  'continuity_token_hash', encode(decode(repeat('77', 32), 'hex'), 'base64'),
+  'attribution', jsonb_build_object('channel', 'formulario')
+)) as proc_ni_revogado \gset
+
+select is((:'proc_ni_revogado'::jsonb ->> 'new_demand')::boolean, true,
+  'Token revogado é tratado como SEM continuidade');
+select is(
+  (select used_count from public.continuity_references where token_hash = decode(repeat('77', 32), 'hex')),
+  0, 'Token revogado nunca incrementa used_count'
+);
+
+-- Falha transacional em QUALQUER ponto posterior da mesma chamada não
+-- deixa incremento parcial: 'decision' fora do enum consent_decision
+-- ('granted'|'refused') derruba a função inteira DEPOIS que o
+-- incremento já teria acontecido — a transação da função inteira
+-- desfaz tudo, incluindo o UPDATE em continuity_references.
+insert into public.continuity_references (
+  workspace_id, token_hash, contact_id, lead_id, opportunity_id, purpose, expires_at
+)
+values (
+  :'ws'::uuid, decode(repeat('88', 32), 'hex'),
+  :'contact1'::uuid, :'lead1'::uuid, :'opp1'::uuid, 'form_continuity', now() + interval '7 days'
+);
+select ingest_form_event(
+  :'endpoint'::uuid, 'cccccccc-0000-4000-8000-000000000005'::uuid, :'hash1'::bytea,
+  'proto-ni-continuidade-e', '\xde'::bytea, '\x000000000000000000000000'::bytea,
+  '\x00000000000000000000000000000000'::bytea, 'aes-256-gcm', '1', '{}'::jsonb, now()
+);
+select id as event_ni_falha from public.webhook_events
+where source_event_id = 'cccccccc-0000-4000-8000-000000000005'::uuid \gset
+
+select throws_ok(
+  format($$select process_form_event(%L::uuid, jsonb_build_object(
+    'contact', jsonb_build_object('name', 'Visitante Falha Transacional'),
+    'continuity_token_hash', encode(decode(repeat('88', 32), 'hex'), 'base64'),
+    'consent', jsonb_build_object('decision', 'nem_granted_nem_refused'),
+    'attribution', jsonb_build_object('channel', 'formulario')
+  ))$$, :'event_ni_falha'),
+  '22P02',
+  null,
+  'decision fora do enum consent_decision derruba a função inteira'
+);
+select is(
+  (select used_count from public.continuity_references where token_hash = decode(repeat('88', 32), 'hex')),
+  0, 'Falha transacional posterior desfaz também o incremento de used_count (nada de incremento parcial)'
 );
 
 -- -----------------------------------------------------------------
