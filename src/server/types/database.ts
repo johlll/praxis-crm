@@ -3364,10 +3364,7 @@ export type Database = {
         Returns: Json
       }
       resolve_form_endpoint: { Args: { p_public_key: string }; Returns: Json }
-      resolve_stale_outbox_batch: {
-        Args: { p_limit?: number }
-        Returns: Json
-      }
+      resolve_stale_outbox_batch: { Args: { p_limit?: number }; Returns: Json }
       reveal_contact_cpf_cnpj: {
         Args: { p_contact_id: string; p_reason?: string }
         Returns: {
