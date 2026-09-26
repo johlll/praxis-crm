@@ -629,10 +629,24 @@ Todos os caminhos que a borda pública devolve como `invalid_submission` (contra
 
 **`continuity-token.local.txt` apagado** após a validação; confirmado ausente do diretório do harness (fora do repositório) e nenhum vestígio de token/segredo em `git status`/`git log -p` do repositório real.
 
+## 16d. Rate limit real (Upstash) — bloqueio comprovado e defeito de contrato corrigido (Retry-After)
+
+**Inspeção do código antes de agir** (`src/server/ingest/rate-limit.ts`, `src/server/ingest/handler.ts`): duas janelas deslizantes obrigatórias — **5 requisições/60s por (endpoint, HMAC do IP)** e **120/60s por endpoint**; chave sanitizada `` `${endpointId}:${HMAC-SHA256(IP)}` `` (prefixo `praxis:a11:ip`) e `` `${endpointId}` `` (prefixo `praxis:a11:endpoint`) — o IP bruto nunca é persistido. **Achado de ordem**: o rate limit roda ANTES da verificação real do Turnstile no `handleFormSubmission` — o schema só exige `turnstileToken` não-vazio (não válido), então uma requisição com token sintaticamente válido mas falso atravessa o limitador de verdade sem precisar de captcha humano algum. Isso permitiu um teste 100% automatizado, sem afrouxar nenhuma proteção.
+
+**Endpoint dedicado `QA A11 Rate Limit`** (`1053f02c-1b90-474c-9b67-17c251b3fbd0`, `capture_mode: new_intake`, `answers_config` vazio), criado pela interface oficial, sem tocar os endpoints do Cenário Base/Continuidade.
+
+**Execução real contra o Preview**: 6 requisições sequenciais, mesmo IP/endpoint, token de Turnstile sintaticamente válido mas falso — as 5 primeiras devolveram `403 captcha_failed` (atravessaram o rate limit, falharam depois no Turnstile real); a 6ª devolveu **`429 rate_limited`**. Parei imediatamente na 6ª, sem continuar bombardeando. Confirmado por leitura: nenhuma escrita de negócio em nenhuma das 6 tentativas (contagens do workspace inalteradas nas 8 tabelas; `webhook_events` do endpoint dedicado = 0). Leitura direta do contador/TTL no Upstash não foi possível — `UPSTASH_REDIS_REST_URL`/`TOKEN` vêm mascarados (`[SENSITIVE]`) mesmo listados como "Encrypted" no `vercel env ls`, mesmo comportamento de mascaramento já documentado nesta sessão; não tentei caminho alternativo de extração. O HTTP 429 real, determinístico na 6ª tentativa, já comprova o bloqueio do Upstash de ponta a ponta.
+
+**Defeito de contrato/UX encontrado e corrigido com TDD**: o `429` não incluía `Retry-After` — o cliente não tinha como saber quando tentar de novo. Testes escritos primeiro (`tests/unit/a11-ingest.test.ts`, `tests/unit/a11-cors.test.ts`), confirmados **vermelhos** (2 + 4 falhas exatas) contra o código antigo, antes de qualquer correção:
+- `rate-limit.ts`: `RateLimitOutcome` de falha agora carrega `resetAt` (timestamp real do Upstash, nunca chutado).
+- `handler.ts`: `retryAfterSeconds = max(1, ceil((resetAt - now) / 1000))`, só para `rate_limited` — nenhuma outra recusa recebe o campo.
+- `cors.ts`: nova `failureResponseHeaders()` adiciona `Retry-After` e expõe via `Access-Control-Expose-Headers` só quando a origem já é autorizada; origem não autorizada continua sem nenhum cabeçalho de CORS (recusa intacta). Nenhum `X-RateLimit-*` adicionado.
+- CI verde (commit `beadc49`): typecheck, lint, 433 testes unitários (8 novos), pgTAP/isolamento/build/e2e inalterados.
+
 ## 17. Pendências para a próxima rodada, nesta ordem
 
 1. **Cenário 2 "de verdade" — CONCLUÍDO E APROVADO** (§16c). `sourceEventId` anterior `a4944261-4ec9-4d7c-885c-d22255fed0eb` (tentativa com 400, achado de configuração) permanece sem `webhook_event` — nunca usado, evidência preservada.
-2. Rate limit real (Upstash): tentativas inválidas controladas, sem criar dado de negócio, confirmando `429` e headers esperados.
+2. **Rate limit real — CONCLUÍDO** (§16d). Falta só repetir a confirmação do `429`+`Retry-After` no Preview atualizado, depois que a janela anterior expirar (não apagar manualmente o contador).
 3. Recuperação automática do outbox: criar um pendente controlado e reproduzível, chamar `/api/cron/outbox` via HTTP real autenticado, confirmar `claimed:1/published:1/failed:0`, confirmar execução correspondente no Inngest, e confirmar que uma segunda chamada não republica/duplica.
 4. Remoção do scaffolding de QA antes do merge (`/qa/formulario-a11`, allowlist, exceções de CSP, envs `NEXT_PUBLIC_QA_*`), incluindo o endpoint de continuidade dedicado.
 5. Inventário read-only pré/pós-merge (URL do workflow, variáveis Preview vs. Production, sincronização do Inngest, `A11_CRON_SECRET` vs. `CRON_SECRET`) — sem copiar segredos, sem alterar Production, com parada para autorização.
