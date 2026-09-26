@@ -547,3 +547,37 @@ integralmente, por instrução do usuário):**
   configuração real do Preview compartilhado.
 
 **Alternativa concreta para provar execução automática HOJE, sem merge e sem contratar nada**: usar `ScheduleWakeup` (mecanismo do próprio Claude Code) para, dentro de uma sessão, chamar o endpoint em intervalos por um período limitado — prova o disparo periódico não supervisionado turno a turno, mas **só resulta em sucesso real (200) depois que Turnstile/Upstash/Inngest estiverem configurados** (sem eles, a rota responde `401` pelo motivo descrito na seção de achados — `getIngestConfig()` falha antes mesmo de checar o `CRON_SECRET`). Não executado nesta rodada — decisão de deixar documentado e retomar depois da configuração externa.
+
+## 15. Validação cross-origin real (harness local) e observabilidade sanitizada
+
+**Método:** harness estático servido em `http://localhost` (fora do repositório, nunca commitado, apagado ao final), com o site key REAL do Turnstile (`0x4AAAAAAFD6Yb_-gD_u4GIt`) e desafio resolvido por um humano — nunca automatizado. O bypass da Vercel Authentication (`VERCEL_AUTOMATION_BYPASS_SECRET`) foi colado pelo usuário diretamente num arquivo local irmão do `index.html`, nunca visto nem impresso por mim; enviado só como query parameter, nunca como header (evita expandir os headers exigidos no preflight).
+
+**Cenário base (evento novo) — PASSOU, comprovado por leitura direta no banco (SQL read-only via `supabase db query --linked`, nunca escrita):**
+- `webhook_events`: 1 registro, `status: processed`.
+- `outbox`: 1 registro, `state: published`, `attempts: 0`.
+- `contacts` / `leads` / `opportunities` / `activities` / `touchpoints` / `contact_consents`: exatamente 1 registro cada, cadeia completa criada uma única vez.
+- Execução do Inngest não observada diretamente (sem token do dashboard à mão), mas comprovada por inferência válida: o outbox só republica, nunca cria contato/lead/oportunidade — essas linhas só existem porque o worker do Inngest rodou `process_form_event`.
+
+**Cenário 1 (reenvio idempotente, mesmo `sourceEventId`, novo token Turnstile):**
+- 1ª tentativa: `400 {"error":"invalid_submission"}`. Investigado a fundo (ver achado abaixo) — **sem causa confirmada**.
+- 2ª tentativa (autorizada explicitamente, única, instrumentada): `202 {"status":"received"}`, mesmo `sourceEventId`. Todas as contagens de negócio continuaram em 1 — idempotência real comprovada.
+
+**Achado sobre o `400` isolado — investigado, não corrigido por hipótese:**
+Reproduzi o payload exato (mesma identidade, mesmos campos) contra os schemas Zod reais do produto e a config real do endpoint (lida no banco): validou limpo. Repeti a tentativa real, instrumentada (harness passou a capturar, antes do fetch, o corpo sanitizado e o estado do honeypot, nunca o bypass nem o token): passou limpo, honeypot confirmado vazio no DOM e no corpo enviado. **Não foi possível reproduzir o `400` nem atribuí-lo a uma causa determinística** (não é honeypot, não é schema, não é config do endpoint). A hipótese mais provável — falha transitória na resolução do IP confiável de borda (`x-vercel-forwarded-for`) — permanece **não confirmada**, e nenhuma correção comportamental foi feita com base nela.
+
+**Descoberta separada, não relacionada ao `400`:** `corsHeader: null` no harness NÃO é sinal de falha de CORS. Por especificação, `Access-Control-Allow-Origin` não está entre os headers que o navegador expõe via `Headers.get()` a menos que o servidor declare `Access-Control-Expose-Headers` (`src/server/ingest/cors.ts` não declara). O CORS real já estava comprovado pelo simples fato de o corpo ter sido lido pelo JavaScript — se a origem não fosse autorizada, o `fetch()` teria rejeitado antes disso. O harness foi corrigido para não apresentar mais esse campo como possível problema.
+
+**Melhoria de observabilidade entregue (não é correção do `400`, é capacidade de diagnosticar uma recorrência):**
+Todos os caminhos que a borda pública devolve como `invalid_submission` (contrato §1: recusa sempre genérica, nunca distinguível de fora) agora registram, em `src/server/ingest/observability.ts`, um log estruturado sanitizado (`console.warn(JSON.stringify(...))`, mesmo padrão já usado em `src/app/api/cron/retention/route.ts`):
+- `json_parse_error`, `schema_validation_failed` (com `code`/`path` de cada issue do Zod, nunca `message` nem valor), `honeypot_filled`, `contract_version_mismatch` (com os números esperado/recebido), `answers_schema_validation_failed` (mesmo tratamento de issues), `client_ip_unresolved` (com `missing_trusted_header`/`invalid_ip`, nunca o IP).
+- Nunca payload, nome, e-mail, telefone, resposta livre, IP bruto, token do Turnstile, bypass ou qualquer segredo.
+- A resposta pública **não mudou**: continua exatamente `400 {"error":"invalid_submission"}` em todos os casos, sem diferenciação externa.
+- Testes novos em `tests/unit/a11-ingest-observability.test.ts` (9 testes, escritos ANTES da implementação, todos falhavam sem ela): classificação correta de cada motivo, ausência de dados sensíveis nos logs, e confirmação de que a resposta pública permanece genérica.
+
+**Pendências para a próxima rodada, nesta ordem (nenhuma executada ainda):**
+1. Cenário 2 (continuidade): segunda interação com token de continuidade válido → deve criar só um novo `touchpoint`, sem novo contato/lead/oportunidade.
+2. Rate limit real (Upstash): tentativas inválidas controladas, sem criar dado de negócio, confirmando `429` e headers esperados.
+3. Recuperação automática do outbox: criar um pendente controlado e reproduzível, chamar `/api/cron/outbox` via HTTP real autenticado, confirmar `claimed:1/published:1/failed:0`, confirmar execução correspondente no Inngest, e confirmar que uma segunda chamada não republica/duplica.
+4. Remoção do scaffolding de QA antes do merge (`/qa/formulario-a11`, allowlist, exceções de CSP, envs `NEXT_PUBLIC_QA_*`).
+5. Inventário read-only pré/pós-merge (URL do workflow, variáveis Preview vs. Production, sincronização do Inngest, `A11_CRON_SECRET` vs. `CRON_SECRET`) — sem copiar segredos, sem alterar Production, com parada para autorização.
+6. Fechamento técnico final: suíte completa, handoff, PR, commit, push, CI.

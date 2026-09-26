@@ -6,6 +6,7 @@ import { matchAllowedOrigin } from "@/server/ingest/cors";
 import { IngestConfigError, getIngestConfig, usesTestAdapters } from "@/server/ingest/config";
 import { clientIpFromHeaders, shouldTrustForwardedFor } from "@/server/ingest/client-ip";
 import { encryptPayload, hmacIp } from "@/server/ingest/payload-crypto";
+import { logInvalidSubmission, sanitizeZodIssues } from "@/server/ingest/observability";
 import type { EventPublisher } from "@/server/ingest/publisher";
 import type { RateLimiter } from "@/server/ingest/rate-limit";
 import type { TurnstileVerifier } from "@/server/ingest/turnstile";
@@ -127,24 +128,37 @@ export async function handleFormSubmission(
     return { ok: false, failure: "payload_too_large", corsOrigin };
   }
 
+  const logContext = { form_endpoint_id: endpoint.id, workspace_id: endpoint.workspace_id };
+
   let json: unknown;
   try {
     json = JSON.parse(raw);
   } catch {
+    logInvalidSubmission("json_parse_error", logContext);
     return { ok: false, failure: "invalid_submission", corsOrigin };
   }
 
   // 4. Schema estrito: campo desconhecido é recusa, não "ignora e segue".
   const parsed = submissionSchema.safeParse(json);
-  if (!parsed.success) return { ok: false, failure: "invalid_submission", corsOrigin };
+  if (!parsed.success) {
+    logInvalidSubmission("schema_validation_failed", logContext, {
+      issues: sanitizeZodIssues(parsed.error.issues),
+    });
+    return { ok: false, failure: "invalid_submission", corsOrigin };
+  }
   const submission = parsed.data;
 
   // 5. Honeypot: preenchido = robô. Mesma recusa genérica.
   if (submission.website && submission.website.trim() !== "") {
+    logInvalidSubmission("honeypot_filled", logContext);
     return { ok: false, failure: "invalid_submission", corsOrigin };
   }
 
   if (endpoint.contract_version !== submission.contractVersion) {
+    logInvalidSubmission("contract_version_mismatch", logContext, {
+      expected: endpoint.contract_version,
+      received: submission.contractVersion,
+    });
     return { ok: false, failure: "invalid_submission", corsOrigin };
   }
 
@@ -164,14 +178,21 @@ export async function handleFormSubmission(
     return { ok: false, failure: "form_endpoint_misconfigured", corsOrigin };
   }
   const answersConfig = answersConfigResult.data;
-  if (!buildAnswersSchema(answersConfig).safeParse(submission.answers).success) {
+  const answersResult = buildAnswersSchema(answersConfig).safeParse(submission.answers);
+  if (!answersResult.success) {
+    logInvalidSubmission("answers_schema_validation_failed", logContext, {
+      issues: sanitizeZodIssues(answersResult.error.issues),
+    });
     return { ok: false, failure: "invalid_submission", corsOrigin };
   }
 
   // 6. IP: só de cabeçalho confiável da borda, nunca do corpo. Só o HMAC
   //    sai daqui.
   const ip = clientIpFromHeaders(request.headers, { trustForwardedFor: shouldTrustForwardedFor() });
-  if (!ip.ok) return { ok: false, failure: "invalid_submission", corsOrigin };
+  if (!ip.ok) {
+    logInvalidSubmission("client_ip_unresolved", logContext, { header_reason: ip.reason });
+    return { ok: false, failure: "invalid_submission", corsOrigin };
+  }
   const ipHmac = hmacIp(ip.ip);
   const ipHmacHex = ipHmac.toString("hex");
 
