@@ -31,13 +31,32 @@ const CONTINUITY_INITIAL: ContinuityActionState = { ok: false };
  * Botão que emite um link de continuidade (A11, item 5 da auditoria
  * pós-dry-run): o token só existe em claro NESTA resposta — some ao sair
  * da tela ou pedir outro. O servidor grava só o hash.
+ *
+ * Defeito corrigido (achado do Cenário 2 real): a RPC
+ * `issue_continuity_reference` sempre aceitou `opportunityId` opcional
+ * (precisa pertencer ao MESMO lead — verificado no servidor), mas esta
+ * tela nunca oferecia como escolhê-lo — só `leadId` era enviado. Uma
+ * referência assim, usada num endpoint `continuity`, reaproveita o LEAD
+ * mas nunca a oportunidade: o touchpoint resultante fica "Não atribuído"
+ * em vez de vinculado à demanda original. Com exatamente uma oportunidade
+ * elegível ela vem pré-selecionada (mas a escolha continua visível); com
+ * várias, nada vem pré-selecionado — a escolha precisa ser consciente;
+ * "Sem oportunidade vinculada" é uma opção explícita, nunca um resultado
+ * implícito de esquecer de escolher.
  */
-function IssueContinuityLink({ leadId }: { leadId: string }) {
+function IssueContinuityLink({
+  leadId,
+  opportunities,
+}: {
+  leadId: string;
+  opportunities: { id: string; label: string }[];
+}) {
   const [state, action, pending] = useActionState(issueContinuityReferenceAction, CONTINUITY_INITIAL);
+  const defaultOpportunityId = opportunities.length === 1 ? (opportunities[0]?.id ?? "") : "";
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <p className="m-0 text-body font-semibold text-text">Link de continuidade</p>
           <p className="m-0 text-meta text-text-muted">
@@ -46,9 +65,31 @@ function IssueContinuityLink({ leadId }: { leadId: string }) {
             acrescentar mais de uma interação até expirar ou ser revogado — só o VALOR do token, exibido abaixo,
             aparece uma única vez.
           </p>
+          {opportunities.length === 0 ? (
+            <p className="m-0 mt-1 text-meta text-text-tertiary">
+              Sem oportunidade vinculada — este lead ainda não tem oportunidades.
+            </p>
+          ) : null}
         </div>
-        <form action={action}>
+        <form action={action} className="flex flex-wrap items-end gap-2">
           <input type="hidden" name="leadId" value={leadId} />
+          {opportunities.length > 0 ? (
+            <label className="flex flex-col gap-1 text-meta text-text-secondary">
+              Oportunidade
+              <select
+                name="opportunityId"
+                defaultValue={defaultOpportunityId}
+                className="h-8 rounded-input border border-border-input bg-surface px-2 text-body"
+              >
+                <option value="">Sem oportunidade vinculada</option>
+                {opportunities.map((opportunity) => (
+                  <option key={opportunity.id} value={opportunity.id}>
+                    {opportunity.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <Button type="submit" variant="secondary" size="sm" disabled={pending}>
             {pending ? "Gerando…" : "Gerar link"}
           </Button>
@@ -304,7 +345,7 @@ export function AttributionPanel({
         </ul>
       )}
 
-      {canIssueContinuity ? <IssueContinuityLink leadId={leadId} /> : null}
+      {canIssueContinuity ? <IssueContinuityLink leadId={leadId} opportunities={opportunities} /> : null}
     </section>
   );
 }

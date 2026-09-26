@@ -8,7 +8,7 @@
 -- regressão histórica inventada.
 
 begin;
-select plan(159);
+select plan(161);
 
 \set otavio '20000000-0000-0000-0000-000000000014'
 \set lucas  '20000000-0000-0000-0000-000000000011'
@@ -1172,6 +1172,36 @@ reset role;
 select isnt(
   (select revoked_at from public.continuity_references where id = (:'issued'::jsonb ->> 'id')::uuid),
   null, 'Revogação explícita marca revoked_at antes do vencimento'
+);
+
+-- -----------------------------------------------------------------
+-- 14b) issue_continuity_reference recusa oportunidade de OUTRO lead
+--      (achado do Cenário 2 real: a UI não oferecia opportunityId, mas o
+--      contrato do SERVIDOR já precisa estar correto antes de a
+--      interface passar a expor a escolha)
+-- -----------------------------------------------------------------
+
+insert into public.leads (workspace_id, contact_id, legal_area, priority, created_by)
+values (:'ws'::uuid, :'contact1'::uuid, 'Cível', 'media', :'otavio')
+returning id as lead_outro_14b \gset
+
+insert into public.opportunities (workspace_id, lead_id, pipeline_id, stage_id, created_by)
+values (:'ws'::uuid, :'lead_outro_14b'::uuid, :'pipeline'::uuid, :'stage0'::uuid, :'otavio')
+returning id as opp_outro_14b \gset
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'otavio', 'role', 'authenticated')::text, true);
+select throws_ok(
+  format($$select issue_continuity_reference(%L::uuid, %L::uuid, 168)$$, :'lead1', :'opp_outro_14b'),
+  'opportunity_not_found',
+  'Emitir continuidade para lead1 com uma oportunidade de OUTRO lead é recusado, nunca aceito silenciosamente'
+);
+reset role;
+
+select is(
+  (select count(*)::int from public.continuity_references
+   where lead_id = :'lead1'::uuid and opportunity_id = :'opp_outro_14b'::uuid),
+  0, 'Nenhuma referência é gravada quando a oportunidade não pertence ao lead informado'
 );
 
 -- -----------------------------------------------------------------
