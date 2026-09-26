@@ -115,7 +115,19 @@ export type Permission =
   | "proposal.edit"
   | "conflict_check.view"
   | "conflict_check.edit"
-  | "lead_note.edit";
+  | "lead_note.edit"
+  // A11 — formulários próprios e atribuição. Configurar endpoint abre uma
+  // porta PÚBLICA: mesmo nível de conversation.simulate (só owner/admin),
+  // mais restrito que pipeline.configure. Corrigir vínculo de atribuição
+  // reescreve número de painel: mesma faixa de contact.merge e
+  // conversation.link (owner/admin/manager).
+  | "form_endpoint.manage"
+  | "attribution.correct"
+  // Emitir/revogar referência de continuidade: mesma faixa de quem edita
+  // a oportunidade (quem já pode agir na demanda pode mandar um link para
+  // o cliente continuá-la) — não a mesma faixa restrita de
+  // attribution.correct, que reescreve número de painel.
+  | "continuity.issue";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -149,6 +161,9 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "conflict_check.view": new Set(ROLES),
   "conflict_check.edit": new Set<Role>(["owner", "admin", "manager", "lawyer"]),
   "lead_note.edit": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
+  "form_endpoint.manage": new Set<Role>(["owner", "admin"]),
+  "continuity.issue": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
+  "attribution.correct": new Set<Role>(["owner", "admin", "manager"]),
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {

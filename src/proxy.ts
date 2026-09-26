@@ -25,9 +25,30 @@ import { getEnv } from "@/server/env";
  * contrário de `getSession()` (que só lê o cookie, sem confirmar que ainda
  * é válido) — é por isso que é este o método usado aqui, não o outro.
  */
-const PUBLIC_PATHS = ["/entrar", "/auth", "/convite"];
+/**
+ * Caminhos que não passam pela sessão do usuário.
+ *
+ * Além das telas de autenticação, a superfície de ingestão da A11: cada
+ * uma dessas rotas se autentica sozinha e não tem usuário logado —
+ * captação pública (chave opaca + Turnstile + rate limit), o endpoint do
+ * Inngest (assinatura do provedor) e os crons (segredo próprio no
+ * cabeçalho). Sem isto, um POST de formulário era desviado para /entrar e
+ * a captação respondia a página de login.
+ */
+const PUBLIC_PATHS = [
+  "/entrar",
+  "/auth",
+  "/convite",
+  "/api/forms",
+  "/api/inngest",
+  "/api/cron",
+  // Página de QA da A11 (src/app/qa/formulario-a11): fora da landing da
+  // Vizentini, existe só neste branch para exercitar o contrato público
+  // do formulário contra um visitante anônimo real.
+  "/qa",
+];
 
-function isPublicPath(pathname: string): boolean {
+export function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 }
 
@@ -40,7 +61,11 @@ function isPublicPath(pathname: string): boolean {
 function buildCsp(nonce: string, supabaseUrl: string): string {
   return [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
+    // challenges.cloudflare.com: só para o widget Turnstile da página de
+    // QA da A11 (src/app/qa/formulario-a11) — a landing real (fora deste
+    // repositório) carrega o script no PRÓPRIO domínio dela, sujeito à
+    // CSP dela, não a esta. Remover junto com a página de QA.
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' https://challenges.cloudflare.com`,
     // Next/font injeta <style> inline para as fontes locais geradas no
     // build — não há nonce automático para style-src no App Router hoje,
     // então 'unsafe-inline' aqui é a exceção pragmática desta CSP (o custo
@@ -49,6 +74,7 @@ function buildCsp(nonce: string, supabaseUrl: string): string {
     "img-src 'self' data:",
     "font-src 'self' data:",
     `connect-src 'self' ${supabaseUrl}`,
+    "frame-src https://challenges.cloudflare.com",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",

@@ -9,6 +9,17 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   authentication_required: "Sua sessão expirou. Entre novamente.",
   workspace_creation_requires_authentication: "Sua sessão expirou. Entre novamente.",
   insufficient_permission: "Você não tem permissão para fazer isso.",
+  // A11 — formulários próprios e atribuição.
+  form_endpoint_not_found: "Formulário não encontrado.",
+  link_version_conflict:
+    "Alguém corrigiu esta atribuição enquanto você editava. Recarregue e tente de novo.",
+  opportunity_other_contact:
+    "Só é possível vincular a interação a uma oportunidade do mesmo contato.",
+  opportunity_required: "Escolha a oportunidade para vincular.",
+  opportunity_not_allowed_on_unassign:
+    "Para desvincular, não escolha oportunidade.",
+  touchpoint_not_found: "Interação não encontrada.",
+  invalid_attribution_model: "Modelo de atribuição inválido.",
   invalid_email: "Informe um e-mail válido.",
   already_a_member: "Essa pessoa já é membro deste workspace.",
   invitation_not_found: "Convite não encontrado ou link inválido.",

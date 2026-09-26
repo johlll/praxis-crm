@@ -27,6 +27,7 @@ export type Database = {
           source_conversation_message_id: string | null
           source_rule_id: string | null
           source_stage_transition_id: string | null
+          source_webhook_event_id: string | null
           status: Database["public"]["Enums"]["activity_status"]
           title: string
           type: Database["public"]["Enums"]["activity_type"]
@@ -50,6 +51,7 @@ export type Database = {
           source_conversation_message_id?: string | null
           source_rule_id?: string | null
           source_stage_transition_id?: string | null
+          source_webhook_event_id?: string | null
           status?: Database["public"]["Enums"]["activity_status"]
           title: string
           type: Database["public"]["Enums"]["activity_type"]
@@ -73,6 +75,7 @@ export type Database = {
           source_conversation_message_id?: string | null
           source_rule_id?: string | null
           source_stage_transition_id?: string | null
+          source_webhook_event_id?: string | null
           status?: Database["public"]["Enums"]["activity_status"]
           title?: string
           type?: Database["public"]["Enums"]["activity_type"]
@@ -113,6 +116,13 @@ export type Database = {
             columns: ["workspace_id", "source_stage_transition_id"]
             isOneToOne: false
             referencedRelation: "stage_transitions"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "activities_source_webhook_event_same_workspace_fkey"
+            columns: ["workspace_id", "source_webhook_event_id"]
+            isOneToOne: false
+            referencedRelation: "webhook_events"
             referencedColumns: ["workspace_id", "id"]
           },
           {
@@ -334,6 +344,112 @@ export type Database = {
           },
           {
             foreignKeyName: "conflict_checks_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      consent_evidence: {
+        Row: {
+          channel: Database["public"]["Enums"]["contact_channel"]
+          contact_consent_id: string | null
+          contact_id: string
+          created_at: string
+          decided_at: string
+          decision: Database["public"]["Enums"]["consent_decision"]
+          evidence: Json
+          form_endpoint_id: string | null
+          id: string
+          ip_hmac: string | null
+          legal_basis: Database["public"]["Enums"]["consent_legal_basis"]
+          purpose: string
+          purpose_code: Database["public"]["Enums"]["consent_purpose"]
+          supersedes_id: string | null
+          text_hash: string | null
+          text_version: string | null
+          webhook_event_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          channel: Database["public"]["Enums"]["contact_channel"]
+          contact_consent_id?: string | null
+          contact_id: string
+          created_at?: string
+          decided_at: string
+          decision: Database["public"]["Enums"]["consent_decision"]
+          evidence?: Json
+          form_endpoint_id?: string | null
+          id?: string
+          ip_hmac?: string | null
+          legal_basis: Database["public"]["Enums"]["consent_legal_basis"]
+          purpose: string
+          purpose_code: Database["public"]["Enums"]["consent_purpose"]
+          supersedes_id?: string | null
+          text_hash?: string | null
+          text_version?: string | null
+          webhook_event_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          channel?: Database["public"]["Enums"]["contact_channel"]
+          contact_consent_id?: string | null
+          contact_id?: string
+          created_at?: string
+          decided_at?: string
+          decision?: Database["public"]["Enums"]["consent_decision"]
+          evidence?: Json
+          form_endpoint_id?: string | null
+          id?: string
+          ip_hmac?: string | null
+          legal_basis?: Database["public"]["Enums"]["consent_legal_basis"]
+          purpose?: string
+          purpose_code?: Database["public"]["Enums"]["consent_purpose"]
+          supersedes_id?: string | null
+          text_hash?: string | null
+          text_version?: string | null
+          webhook_event_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "consent_evidence_consent_same_workspace_fkey"
+            columns: ["workspace_id", "contact_consent_id"]
+            isOneToOne: false
+            referencedRelation: "contact_consents"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "consent_evidence_contact_same_workspace_fkey"
+            columns: ["workspace_id", "contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "consent_evidence_endpoint_same_workspace_fkey"
+            columns: ["workspace_id", "form_endpoint_id"]
+            isOneToOne: false
+            referencedRelation: "form_endpoints"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "consent_evidence_event_same_workspace_fkey"
+            columns: ["workspace_id", "webhook_event_id"]
+            isOneToOne: false
+            referencedRelation: "webhook_events"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "consent_evidence_supersedes_same_workspace_fkey"
+            columns: ["workspace_id", "supersedes_id"]
+            isOneToOne: false
+            referencedRelation: "consent_evidence"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "consent_evidence_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
@@ -733,6 +849,86 @@ export type Database = {
           },
         ]
       }
+      continuity_references: {
+        Row: {
+          contact_id: string
+          created_at: string
+          created_by: string | null
+          expires_at: string
+          id: string
+          last_used_at: string | null
+          lead_id: string
+          opportunity_id: string | null
+          purpose: string
+          revoked_at: string | null
+          token_hash: string
+          updated_at: string
+          used_count: number
+          workspace_id: string
+        }
+        Insert: {
+          contact_id: string
+          created_at?: string
+          created_by?: string | null
+          expires_at: string
+          id?: string
+          last_used_at?: string | null
+          lead_id: string
+          opportunity_id?: string | null
+          purpose: string
+          revoked_at?: string | null
+          token_hash: string
+          updated_at?: string
+          used_count?: number
+          workspace_id: string
+        }
+        Update: {
+          contact_id?: string
+          created_at?: string
+          created_by?: string | null
+          expires_at?: string
+          id?: string
+          last_used_at?: string | null
+          lead_id?: string
+          opportunity_id?: string | null
+          purpose?: string
+          revoked_at?: string | null
+          token_hash?: string
+          updated_at?: string
+          used_count?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "continuity_references_contact_same_workspace_fkey"
+            columns: ["workspace_id", "contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "continuity_references_lead_contact_fkey"
+            columns: ["workspace_id", "lead_id", "contact_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["workspace_id", "id", "contact_id"]
+          },
+          {
+            foreignKeyName: "continuity_references_opportunity_same_lead_fkey"
+            columns: ["workspace_id", "opportunity_id", "lead_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["workspace_id", "id", "lead_id"]
+          },
+          {
+            foreignKeyName: "continuity_references_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       conversations: {
         Row: {
           channel_id: string
@@ -877,6 +1073,142 @@ export type Database = {
           },
           {
             foreignKeyName: "duplicate_candidates_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      form_endpoint_keys: {
+        Row: {
+          created_at: string
+          created_by: string
+          form_endpoint_id: string
+          id: string
+          public_key: string
+          revoked_at: string | null
+          revoked_by: string | null
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          form_endpoint_id: string
+          id?: string
+          public_key: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          form_endpoint_id?: string
+          id?: string
+          public_key?: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "form_endpoint_keys_endpoint_same_workspace_fkey"
+            columns: ["workspace_id", "form_endpoint_id"]
+            isOneToOne: false
+            referencedRelation: "form_endpoints"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "form_endpoint_keys_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      form_endpoints: {
+        Row: {
+          allowed_hostnames: string[]
+          answers_config: Json
+          capture_mode: Database["public"]["Enums"]["form_capture_mode"]
+          contract_version: number
+          created_at: string
+          created_by: string
+          disabled_at: string | null
+          disabled_by: string | null
+          id: string
+          initial_activity_due_minutes: number
+          initial_activity_type: Database["public"]["Enums"]["activity_type"]
+          legal_area: string
+          name: string
+          pipeline_id: string
+          stage_id: string
+          status: Database["public"]["Enums"]["form_endpoint_status"]
+          turnstile_action: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          allowed_hostnames: string[]
+          answers_config?: Json
+          capture_mode: Database["public"]["Enums"]["form_capture_mode"]
+          contract_version?: number
+          created_at?: string
+          created_by: string
+          disabled_at?: string | null
+          disabled_by?: string | null
+          id?: string
+          initial_activity_due_minutes: number
+          initial_activity_type: Database["public"]["Enums"]["activity_type"]
+          legal_area: string
+          name: string
+          pipeline_id: string
+          stage_id: string
+          status?: Database["public"]["Enums"]["form_endpoint_status"]
+          turnstile_action: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          allowed_hostnames?: string[]
+          answers_config?: Json
+          capture_mode?: Database["public"]["Enums"]["form_capture_mode"]
+          contract_version?: number
+          created_at?: string
+          created_by?: string
+          disabled_at?: string | null
+          disabled_by?: string | null
+          id?: string
+          initial_activity_due_minutes?: number
+          initial_activity_type?: Database["public"]["Enums"]["activity_type"]
+          legal_area?: string
+          name?: string
+          pipeline_id?: string
+          stage_id?: string
+          status?: Database["public"]["Enums"]["form_endpoint_status"]
+          turnstile_action?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "form_endpoints_pipeline_same_workspace_fkey"
+            columns: ["workspace_id", "pipeline_id"]
+            isOneToOne: false
+            referencedRelation: "pipelines"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "form_endpoints_stage_belongs_to_pipeline_fkey"
+            columns: ["pipeline_id", "stage_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_stages"
+            referencedColumns: ["pipeline_id", "id"]
+          },
+          {
+            foreignKeyName: "form_endpoints_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
@@ -1399,6 +1731,69 @@ export type Database = {
           },
         ]
       }
+      outbox: {
+        Row: {
+          attempts: number
+          created_at: string
+          event_type: string
+          id: string
+          last_error_code: string | null
+          lock_expires_at: string | null
+          locked_at: string | null
+          next_attempt_at: string
+          published_at: string | null
+          state: Database["public"]["Enums"]["outbox_state"]
+          updated_at: string
+          webhook_event_id: string
+          workspace_id: string
+        }
+        Insert: {
+          attempts?: number
+          created_at?: string
+          event_type: string
+          id?: string
+          last_error_code?: string | null
+          lock_expires_at?: string | null
+          locked_at?: string | null
+          next_attempt_at?: string
+          published_at?: string | null
+          state?: Database["public"]["Enums"]["outbox_state"]
+          updated_at?: string
+          webhook_event_id: string
+          workspace_id: string
+        }
+        Update: {
+          attempts?: number
+          created_at?: string
+          event_type?: string
+          id?: string
+          last_error_code?: string | null
+          lock_expires_at?: string | null
+          locked_at?: string | null
+          next_attempt_at?: string
+          published_at?: string | null
+          state?: Database["public"]["Enums"]["outbox_state"]
+          updated_at?: string
+          webhook_event_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "outbox_event_same_workspace_fkey"
+            columns: ["workspace_id", "webhook_event_id"]
+            isOneToOne: false
+            referencedRelation: "webhook_events"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "outbox_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       pipeline_stages: {
         Row: {
           color: string | null
@@ -1797,6 +2192,199 @@ export type Database = {
           },
         ]
       }
+      touchpoint_demand_links: {
+        Row: {
+          action: Database["public"]["Enums"]["touchpoint_link_action"]
+          actor_user_id: string | null
+          created_at: string
+          id: string
+          opportunity_id: string | null
+          reason: string | null
+          supersedes_id: string | null
+          touchpoint_id: string
+          workspace_id: string
+        }
+        Insert: {
+          action: Database["public"]["Enums"]["touchpoint_link_action"]
+          actor_user_id?: string | null
+          created_at?: string
+          id?: string
+          opportunity_id?: string | null
+          reason?: string | null
+          supersedes_id?: string | null
+          touchpoint_id: string
+          workspace_id: string
+        }
+        Update: {
+          action?: Database["public"]["Enums"]["touchpoint_link_action"]
+          actor_user_id?: string | null
+          created_at?: string
+          id?: string
+          opportunity_id?: string | null
+          reason?: string | null
+          supersedes_id?: string | null
+          touchpoint_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "touchpoint_demand_links_opportunity_same_workspace_fkey"
+            columns: ["workspace_id", "opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "touchpoint_demand_links_supersedes_same_chain_fkey"
+            columns: ["workspace_id", "touchpoint_id", "supersedes_id"]
+            isOneToOne: false
+            referencedRelation: "touchpoint_demand_links"
+            referencedColumns: ["workspace_id", "touchpoint_id", "id"]
+          },
+          {
+            foreignKeyName: "touchpoint_demand_links_touchpoint_same_workspace_fkey"
+            columns: ["workspace_id", "touchpoint_id"]
+            isOneToOne: false
+            referencedRelation: "touchpoints"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "touchpoint_demand_links_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      touchpoints: {
+        Row: {
+          campaign: string | null
+          channel: string
+          consent_evidence_id: string | null
+          contact_id: string
+          content: string | null
+          created_at: string
+          fbclid: string | null
+          form_endpoint_id: string | null
+          gclid: string | null
+          id: string
+          landing_url: string | null
+          lead_id: string | null
+          medium: string | null
+          normalized_occurred_at: string
+          occurred_at: string | null
+          opportunity_id: string | null
+          position: number
+          received_at: string
+          referrer: string | null
+          source: string | null
+          term: string | null
+          webhook_event_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          campaign?: string | null
+          channel: string
+          consent_evidence_id?: string | null
+          contact_id: string
+          content?: string | null
+          created_at?: string
+          fbclid?: string | null
+          form_endpoint_id?: string | null
+          gclid?: string | null
+          id?: string
+          landing_url?: string | null
+          lead_id?: string | null
+          medium?: string | null
+          normalized_occurred_at: string
+          occurred_at?: string | null
+          opportunity_id?: string | null
+          position: number
+          received_at: string
+          referrer?: string | null
+          source?: string | null
+          term?: string | null
+          webhook_event_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          campaign?: string | null
+          channel?: string
+          consent_evidence_id?: string | null
+          contact_id?: string
+          content?: string | null
+          created_at?: string
+          fbclid?: string | null
+          form_endpoint_id?: string | null
+          gclid?: string | null
+          id?: string
+          landing_url?: string | null
+          lead_id?: string | null
+          medium?: string | null
+          normalized_occurred_at?: string
+          occurred_at?: string | null
+          opportunity_id?: string | null
+          position?: number
+          received_at?: string
+          referrer?: string | null
+          source?: string | null
+          term?: string | null
+          webhook_event_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "touchpoints_consent_evidence_same_workspace_fkey"
+            columns: ["workspace_id", "consent_evidence_id"]
+            isOneToOne: false
+            referencedRelation: "consent_evidence"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "touchpoints_contact_same_workspace_fkey"
+            columns: ["workspace_id", "contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "touchpoints_endpoint_same_workspace_fkey"
+            columns: ["workspace_id", "form_endpoint_id"]
+            isOneToOne: false
+            referencedRelation: "form_endpoints"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "touchpoints_event_same_workspace_fkey"
+            columns: ["workspace_id", "webhook_event_id"]
+            isOneToOne: false
+            referencedRelation: "webhook_events"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "touchpoints_lead_same_workspace_fkey"
+            columns: ["workspace_id", "lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "touchpoints_opportunity_same_lead_fkey"
+            columns: ["workspace_id", "opportunity_id", "lead_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["workspace_id", "id", "lead_id"]
+          },
+          {
+            foreignKeyName: "touchpoints_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       users: {
         Row: {
           avatar_url: string | null
@@ -1823,6 +2411,126 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      webhook_events: {
+        Row: {
+          answers_config_snapshot: Json
+          attempts: number
+          content_hash: string
+          created_at: string
+          expires_at: string
+          expiring_alerted_at: string | null
+          form_endpoint_id: string
+          id: string
+          last_error_code: string | null
+          normalization_code: string
+          normalized_occurred_at: string
+          occurred_at: string | null
+          payload_algorithm: string | null
+          payload_auth_tag: string | null
+          payload_ciphertext: string | null
+          payload_iv: string | null
+          payload_key_version: string | null
+          payload_sanitized: Json | null
+          processed_at: string | null
+          public_protocol: string
+          purged_at: string | null
+          received_at: string
+          result_activity_id: string | null
+          result_contact_id: string | null
+          result_lead_id: string | null
+          result_opportunity_id: string | null
+          result_touchpoint_id: string | null
+          source_event_id: string
+          status: Database["public"]["Enums"]["webhook_event_status"]
+          stuck_after: string
+          stuck_alerted_at: string | null
+          workspace_id: string
+        }
+        Insert: {
+          answers_config_snapshot?: Json
+          attempts?: number
+          content_hash: string
+          created_at?: string
+          expires_at: string
+          expiring_alerted_at?: string | null
+          form_endpoint_id: string
+          id?: string
+          last_error_code?: string | null
+          normalization_code: string
+          normalized_occurred_at: string
+          occurred_at?: string | null
+          payload_algorithm?: string | null
+          payload_auth_tag?: string | null
+          payload_ciphertext?: string | null
+          payload_iv?: string | null
+          payload_key_version?: string | null
+          payload_sanitized?: Json | null
+          processed_at?: string | null
+          public_protocol: string
+          purged_at?: string | null
+          received_at?: string
+          result_activity_id?: string | null
+          result_contact_id?: string | null
+          result_lead_id?: string | null
+          result_opportunity_id?: string | null
+          result_touchpoint_id?: string | null
+          source_event_id: string
+          status?: Database["public"]["Enums"]["webhook_event_status"]
+          stuck_after: string
+          stuck_alerted_at?: string | null
+          workspace_id: string
+        }
+        Update: {
+          answers_config_snapshot?: Json
+          attempts?: number
+          content_hash?: string
+          created_at?: string
+          expires_at?: string
+          expiring_alerted_at?: string | null
+          form_endpoint_id?: string
+          id?: string
+          last_error_code?: string | null
+          normalization_code?: string
+          normalized_occurred_at?: string
+          occurred_at?: string | null
+          payload_algorithm?: string | null
+          payload_auth_tag?: string | null
+          payload_ciphertext?: string | null
+          payload_iv?: string | null
+          payload_key_version?: string | null
+          payload_sanitized?: Json | null
+          processed_at?: string | null
+          public_protocol?: string
+          purged_at?: string | null
+          received_at?: string
+          result_activity_id?: string | null
+          result_contact_id?: string | null
+          result_lead_id?: string | null
+          result_opportunity_id?: string | null
+          result_touchpoint_id?: string | null
+          source_event_id?: string
+          status?: Database["public"]["Enums"]["webhook_event_status"]
+          stuck_after?: string
+          stuck_alerted_at?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "webhook_events_endpoint_same_workspace_fkey"
+            columns: ["workspace_id", "form_endpoint_id"]
+            isOneToOne: false
+            referencedRelation: "form_endpoints"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "webhook_events_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       whatsapp_channels: {
         Row: {
@@ -2085,6 +2793,10 @@ export type Database = {
         Args: { p_invitation_id: string }
         Returns: undefined
       }
+      claim_outbox_batch: {
+        Args: { p_limit?: number; p_lock_seconds?: number }
+        Returns: Json
+      }
       clear_contact_cpf_cnpj: {
         Args: { p_contact_id: string }
         Returns: undefined
@@ -2096,6 +2808,16 @@ export type Database = {
       contact_has_sensitive: {
         Args: { p_contact_id: string }
         Returns: boolean
+      }
+      correct_touchpoint_demand_link: {
+        Args: {
+          p_action: Database["public"]["Enums"]["touchpoint_link_action"]
+          p_expected_current_link_id: string
+          p_opportunity_id?: string
+          p_reason?: string
+          p_touchpoint_id: string
+        }
+        Returns: Json
       }
       create_activity: {
         Args: {
@@ -2146,6 +2868,24 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      create_form_endpoint: {
+        Args: {
+          p_allowed_hostnames: string[]
+          p_answers_config?: Json
+          p_capture_mode: Database["public"]["Enums"]["form_capture_mode"]
+          p_contract_version?: number
+          p_initial_activity_due_minutes: number
+          p_initial_activity_type: Database["public"]["Enums"]["activity_type"]
+          p_legal_area: string
+          p_name: string
+          p_pipeline_id: string
+          p_public_key: string
+          p_stage_id: string
+          p_turnstile_action: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       create_lead: {
         Args: {
@@ -2293,6 +3033,11 @@ export type Database = {
         Args: { p_candidate_id: string }
         Returns: undefined
       }
+      flag_expiring_webhook_events: {
+        Args: { p_days_before?: number; p_limit?: number }
+        Returns: Json
+      }
+      flag_stuck_webhook_events: { Args: { p_limit?: number }; Returns: Json }
       get_activity: { Args: { p_activity_id: string }; Returns: Json }
       get_activity_counts: { Args: { p_workspace_id: string }; Returns: Json }
       get_client: { Args: { p_client_id: string }; Returns: Json }
@@ -2319,8 +3064,21 @@ export type Database = {
         }
         Returns: Json
       }
+      get_dashboard_attribution: {
+        Args: {
+          p_assigned_to?: string
+          p_legal_area?: string
+          p_model?: string
+          p_only_unassigned?: boolean
+          p_period_days?: number
+          p_source?: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       get_last_completed_meeting: { Args: { p_lead_id: string }; Returns: Json }
       get_lead: { Args: { p_lead_id: string }; Returns: Json }
+      get_lead_attribution: { Args: { p_lead_id: string }; Returns: Json }
       get_lead_timeline: {
         Args: {
           p_before?: string
@@ -2341,8 +3099,39 @@ export type Database = {
         Args: { p_opportunity_id: string; p_to_stage_id: string }
         Returns: Json
       }
+      get_webhook_event_payload: {
+        Args: { p_webhook_event_id: string }
+        Returns: Json
+      }
       get_win_requirements_status: {
         Args: { p_opportunity_id: string }
+        Returns: Json
+      }
+      ingest_form_event: {
+        Args: {
+          p_answers_config_snapshot?: Json
+          p_content_hash: string
+          p_form_endpoint_id: string
+          p_occurred_at: string
+          p_payload_algorithm: string
+          p_payload_auth_tag: string
+          p_payload_ciphertext: string
+          p_payload_iv: string
+          p_payload_key_version: string
+          p_payload_sanitized: Json
+          p_public_protocol: string
+          p_retention_days?: number
+          p_source_event_id: string
+          p_stuck_after_minutes?: number
+        }
+        Returns: Json
+      }
+      issue_continuity_reference: {
+        Args: {
+          p_lead_id: string
+          p_opportunity_id?: string
+          p_validity_hours?: number
+        }
         Returns: Json
       }
       list_activities: {
@@ -2400,6 +3189,7 @@ export type Database = {
           total_count: number
         }[]
       }
+      list_form_endpoints: { Args: { p_workspace_id: string }; Returns: Json }
       list_leads: {
         Args: {
           p_assigned_to?: string
@@ -2444,6 +3234,22 @@ export type Database = {
           p_opportunity_id: string
         }
         Returns: Json
+      }
+      mark_outbox_failed: {
+        Args: {
+          p_error_code: string
+          p_outbox_id: string
+          p_retry_in_seconds?: number
+        }
+        Returns: undefined
+      }
+      mark_outbox_published: {
+        Args: { p_outbox_id: string }
+        Returns: undefined
+      }
+      mark_webhook_event_failed: {
+        Args: { p_error_code: string; p_webhook_event_id: string }
+        Returns: undefined
       }
       merge_contacts: {
         Args: {
@@ -2495,6 +3301,14 @@ export type Database = {
           workspace_name: string
         }[]
       }
+      process_form_event: {
+        Args: { p_input: Json; p_webhook_event_id: string }
+        Returns: Json
+      }
+      purge_expired_webhook_events: {
+        Args: { p_limit?: number }
+        Returns: Json
+      }
       reassign_activity: {
         Args: {
           p_activity_id: string
@@ -2543,6 +3357,7 @@ export type Database = {
         }
         Returns: Json
       }
+      resolve_form_endpoint: { Args: { p_public_key: string }; Returns: Json }
       reveal_contact_cpf_cnpj: {
         Args: { p_contact_id: string; p_reason?: string }
         Returns: {
@@ -2553,6 +3368,14 @@ export type Database = {
       revoke_contact_consent: {
         Args: { p_consent_id: string }
         Returns: undefined
+      }
+      revoke_continuity_reference: {
+        Args: { p_continuity_reference_id: string }
+        Returns: Json
+      }
+      rotate_form_endpoint_key: {
+        Args: { p_form_endpoint_id: string; p_new_public_key: string }
+        Returns: Json
       }
       search_contacts_by_cpf_cnpj: {
         Args: { p_blind_indexes_base64: string[]; p_workspace_id: string }
@@ -2602,6 +3425,13 @@ export type Database = {
           p_key_version: string
         }
         Returns: undefined
+      }
+      set_form_endpoint_status: {
+        Args: {
+          p_form_endpoint_id: string
+          p_status: Database["public"]["Enums"]["form_endpoint_status"]
+        }
+        Returns: Json
       }
       set_lead_status: {
         Args: {
@@ -2790,6 +3620,22 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      update_form_endpoint: {
+        Args: {
+          p_allowed_hostnames: string[]
+          p_answers_config?: Json
+          p_capture_mode: Database["public"]["Enums"]["form_capture_mode"]
+          p_form_endpoint_id: string
+          p_initial_activity_due_minutes: number
+          p_initial_activity_type: Database["public"]["Enums"]["activity_type"]
+          p_legal_area: string
+          p_name: string
+          p_pipeline_id: string
+          p_stage_id: string
+          p_turnstile_action: string
+        }
+        Returns: Json
+      }
       update_lead_basic_fields: {
         Args: {
           p_expected_updated_at?: string
@@ -2879,7 +3725,11 @@ export type Database = {
     }
     Enums: {
       activity_assignee_rule: "unassigned" | "lead_owner"
-      activity_source: "manual" | "stage_rule" | "whatsapp_inbound"
+      activity_source:
+        | "manual"
+        | "stage_rule"
+        | "whatsapp_inbound"
+        | "form_intake"
       activity_status: "pending" | "done"
       activity_type: "call" | "meeting" | "task" | "email" | "deadline"
       client_status: "ativo" | "encerrado" | "suspenso"
@@ -2888,18 +3738,24 @@ export type Database = {
         | "sem_conflito"
         | "conflito_identificado"
         | "em_analise"
+      consent_decision: "granted" | "refused"
       consent_legal_basis:
         | "consentimento"
         | "legitimo_interesse"
         | "execucao_de_contrato"
         | "obrigacao_legal"
         | "outro"
-      consent_purpose: "whatsapp_atendimento" | "whatsapp_marketing"
+      consent_purpose:
+        | "whatsapp_atendimento"
+        | "whatsapp_marketing"
+        | "formulario_contato"
       contact_channel: "whatsapp" | "email" | "telefone" | "presencial"
       contact_type: "pf" | "pj"
       duplicate_status: "pending" | "merged" | "dismissed"
       duplicate_tier: "strong" | "review" | "low"
       fee_model: "fixed" | "contingency" | "fixed_contingency"
+      form_capture_mode: "new_intake" | "continuity"
+      form_endpoint_status: "active" | "disabled"
       handoff_status: "pendente" | "concluido" | "falhou"
       invitation_status: "pending" | "accepted" | "cancelled" | "expired"
       lead_priority: "baixa" | "media" | "alta"
@@ -2915,9 +3771,24 @@ export type Database = {
       message_direction: "inbound" | "outbound"
       message_status: "queued" | "sent" | "delivered" | "read" | "failed"
       opportunity_status: "open" | "won" | "lost"
+      outbox_state:
+        | "pending"
+        | "publishing"
+        | "published"
+        | "failed"
+        | "abandoned"
       proposal_channel: "email" | "whatsapp"
       proposal_status: "rascunho" | "enviada" | "aceita" | "recusada"
       stage_requirement_type: "text" | "textarea" | "date" | "checkbox"
+      touchpoint_link_action: "assign" | "unassign"
+      webhook_event_status:
+        | "received"
+        | "processing"
+        | "processed"
+        | "failed"
+        | "dead"
+        | "expired_unprocessed"
+        | "purged"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -3046,7 +3917,12 @@ export const Constants = {
   public: {
     Enums: {
       activity_assignee_rule: ["unassigned", "lead_owner"],
-      activity_source: ["manual", "stage_rule", "whatsapp_inbound"],
+      activity_source: [
+        "manual",
+        "stage_rule",
+        "whatsapp_inbound",
+        "form_intake",
+      ],
       activity_status: ["pending", "done"],
       activity_type: ["call", "meeting", "task", "email", "deadline"],
       client_status: ["ativo", "encerrado", "suspenso"],
@@ -3056,6 +3932,7 @@ export const Constants = {
         "conflito_identificado",
         "em_analise",
       ],
+      consent_decision: ["granted", "refused"],
       consent_legal_basis: [
         "consentimento",
         "legitimo_interesse",
@@ -3063,12 +3940,18 @@ export const Constants = {
         "obrigacao_legal",
         "outro",
       ],
-      consent_purpose: ["whatsapp_atendimento", "whatsapp_marketing"],
+      consent_purpose: [
+        "whatsapp_atendimento",
+        "whatsapp_marketing",
+        "formulario_contato",
+      ],
       contact_channel: ["whatsapp", "email", "telefone", "presencial"],
       contact_type: ["pf", "pj"],
       duplicate_status: ["pending", "merged", "dismissed"],
       duplicate_tier: ["strong", "review", "low"],
       fee_model: ["fixed", "contingency", "fixed_contingency"],
+      form_capture_mode: ["new_intake", "continuity"],
+      form_endpoint_status: ["active", "disabled"],
       handoff_status: ["pendente", "concluido", "falhou"],
       invitation_status: ["pending", "accepted", "cancelled", "expired"],
       lead_priority: ["baixa", "media", "alta"],
@@ -3085,9 +3968,26 @@ export const Constants = {
       message_direction: ["inbound", "outbound"],
       message_status: ["queued", "sent", "delivered", "read", "failed"],
       opportunity_status: ["open", "won", "lost"],
+      outbox_state: [
+        "pending",
+        "publishing",
+        "published",
+        "failed",
+        "abandoned",
+      ],
       proposal_channel: ["email", "whatsapp"],
       proposal_status: ["rascunho", "enviada", "aceita", "recusada"],
       stage_requirement_type: ["text", "textarea", "date", "checkbox"],
+      touchpoint_link_action: ["assign", "unassign"],
+      webhook_event_status: [
+        "received",
+        "processing",
+        "processed",
+        "failed",
+        "dead",
+        "expired_unprocessed",
+        "purged",
+      ],
     },
   },
 } as const

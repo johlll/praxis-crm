@@ -154,7 +154,7 @@ describe("seletores dos filtros acompanham a URL", () => {
   const area = () => screen.getByLabelText("Área jurídica") as HTMLSelectElement;
 
   it("limpar filtros volta os três seletores ao padrão sem recarregar a página", () => {
-    const filtered: DashboardFilters = { periodDays: 7, assignedTo: LUCAS, onlyUnassigned: false, legalArea: "Família", pipelineId: null, selectedOpportunityId: null };
+    const filtered: DashboardFilters = { periodDays: 7, assignedTo: LUCAS, onlyUnassigned: false, legalArea: "Família", pipelineId: null, attributionModel: "first_touch", source: null, selectedOpportunityId: null };
     const { rerender } = render(bar(filtered, true));
     expect(period().value).toBe("7");
     expect(owner().value).toBe(LUCAS);
@@ -162,15 +162,15 @@ describe("seletores dos filtros acompanham a URL", () => {
 
     // "Limpar filtros" é um link: a navegação do cliente troca as props
     // do mesmo componente, sem desmontá-lo.
-    rerender(bar({ periodDays: 30, assignedTo: null, onlyUnassigned: false, legalArea: null, pipelineId: null, selectedOpportunityId: null }, false));
+    rerender(bar({ periodDays: 30, assignedTo: null, onlyUnassigned: false, legalArea: null, pipelineId: null, attributionModel: "first_touch", source: null, selectedOpportunityId: null }, false));
     expect(period().value).toBe("30");
     expect(owner().value).toBe("");
     expect(area().value).toBe("");
   });
 
   it("voltar e avançar no navegador mantém os seletores iguais à URL", () => {
-    const semFiltro: DashboardFilters = { periodDays: 30, assignedTo: null, onlyUnassigned: false, legalArea: null, pipelineId: null, selectedOpportunityId: null };
-    const comFiltro: DashboardFilters = { periodDays: 90, assignedTo: null, onlyUnassigned: true, legalArea: "Trabalhista", pipelineId: null, selectedOpportunityId: null };
+    const semFiltro: DashboardFilters = { periodDays: 30, assignedTo: null, onlyUnassigned: false, legalArea: null, pipelineId: null, attributionModel: "first_touch", source: null, selectedOpportunityId: null };
+    const comFiltro: DashboardFilters = { periodDays: 90, assignedTo: null, onlyUnassigned: true, legalArea: "Trabalhista", pipelineId: null, attributionModel: "first_touch", source: null, selectedOpportunityId: null };
 
     const { rerender } = render(bar(semFiltro, false));
     rerender(bar(comFiltro, true));
