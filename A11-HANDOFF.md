@@ -574,10 +574,26 @@ Todos os caminhos que a borda pública devolve como `invalid_submission` (contra
 - A resposta pública **não mudou**: continua exatamente `400 {"error":"invalid_submission"}` em todos os casos, sem diferenciação externa.
 - Testes novos em `tests/unit/a11-ingest-observability.test.ts` (9 testes, escritos ANTES da implementação, todos falhavam sem ela): classificação correta de cada motivo, ausência de dados sensíveis nos logs, e confirmação de que a resposta pública permanece genérica.
 
-**Pendências para a próxima rodada, nesta ordem (nenhuma executada ainda):**
-1. Cenário 2 (continuidade): segunda interação com token de continuidade válido → deve criar só um novo `touchpoint`, sem novo contato/lead/oportunidade.
-2. Rate limit real (Upstash): tentativas inválidas controladas, sem criar dado de negócio, confirmando `429` e headers esperados.
-3. Recuperação automática do outbox: criar um pendente controlado e reproduzível, chamar `/api/cron/outbox` via HTTP real autenticado, confirmar `claimed:1/published:1/failed:0`, confirmar execução correspondente no Inngest, e confirmar que uma segunda chamada não republica/duplica.
-4. Remoção do scaffolding de QA antes do merge (`/qa/formulario-a11`, allowlist, exceções de CSP, envs `NEXT_PUBLIC_QA_*`).
-5. Inventário read-only pré/pós-merge (URL do workflow, variáveis Preview vs. Production, sincronização do Inngest, `A11_CRON_SECRET` vs. `CRON_SECRET`) — sem copiar segredos, sem alterar Production, com parada para autorização.
-6. Fechamento técnico final: suíte completa, handoff, PR, commit, push, CI.
+## 16. Cenário 2 (continuidade) — achado real e correção (used_count/last_used_at)
+
+**Execução real do Cenário 2** (mesmo harness, token de continuidade emitido pela UI oficial — `issueContinuityReferenceAction`/AttributionPanel, acionado via Playwright autenticado como `demo-a10.owner`, nunca por insert direto): `202`, mesmo contato reaproveitado, **mas** `leads`/`opportunities`/`activities` foram de 1 para 2 (nova demanda aberta) — resultado correto por desenho, não defeito: o endpoint de QA usado tem `capture_mode: 'new_intake'`, e `process_form_event` só reaproveita lead/oportunidade quando `capture_mode = 'continuity'` (contrato §8: "captação nova explícita SEMPRE abre demanda nova, mesmo com a pessoa identificada").
+
+**Defeito real encontrado e corrigido:** apesar do contato ter sido corretamente reaproveitado pelo token (prova de que o token influenciou a identidade), `continuity_references.used_count` ficou em `0` e `last_used_at` em `null` — a bookkeeping de uso só rodava dentro do MESMO bloco condicionado a `capture_mode = 'continuity'`, nunca refletindo o uso real em endpoints `new_intake`. Confirmado sem ambiguidade contra `docs/decisoes/a11-ingestao-atribuicao.md` (linha ~754: "`used_count`/`last_used_at` mudam a cada uso", sem ressalva de `capture_mode`).
+
+**Corrigido com TDD, em migration nova** (`20260926180000_a11_continuity_used_count_fix.sql`, forward-only — `20260921100500_a11_ingestion_functions.sql` já aplicada em `praxis-crm-dev` não foi editada):
+- Teste escrito primeiro em `supabase/tests/database/18_a11_ingestao_atribuicao.test.sql` (seção 8c, 13 novas asserções, plano 146→159), confirmado **vermelho** via CI (4 falhas exatas: uso em `new_intake` não incrementava, reprocessamento idempotente, dois eventos distintos incrementando duas vezes) antes de qualquer correção.
+- Cobre também: token expirado/revogado/finalidade errada nunca incrementam (comportamento já correto, preservado); falha transacional posterior (`consent.decision` fora do enum) desfaz o incremento junto com o resto — sem incremento parcial.
+- Correção: o `update continuity_references set used_count=…, last_used_at=…` saiu do bloco condicionado por `capture_mode` e passou a rodar sempre que `v_continuity.id is not null` — a mesma condição já usada para reaproveitar o contato. O reaproveitamento de lead/oportunidade continua exatamente condicionado a `capture_mode = 'continuity'`, sem nenhuma mudança de comportamento comercial.
+- Confirmado **verde** via CI depois da correção: 159/159 (run `36261010946`). Suíte JS completa (417 testes) também verde.
+- **Duas colisões de fixture do próprio teste** (não do defeito) precisaram de correção no meio do caminho: `token_hash` é único globalmente e dois dos bytes escolhidos colidiam com fixtures já existentes mais abaixo no arquivo (seções 8b/12); um `source_event_id` também colidia com a seção 17 (outbox). Ambas corrigidas trocando os valores, sem tocar na lógica do teste.
+- **Não aplicada em `praxis-crm-dev` (banco hospedado) nesta rodada** — pendente de dry-run e autorização explícita.
+
+## 17. Pendências para a próxima rodada, nesta ordem
+
+1. Autorização e aplicação (dry-run primeiro) da migration `20260926180000_a11_continuity_used_count_fix.sql` em `praxis-crm-dev`.
+2. Cenário 2 "de verdade": criar pela UI oficial um endpoint dedicado `QA A11 Continuidade` com `capture_mode: continuity`, emitir referência ligada ao lead/oportunidade originais do cenário base, e confirmar que só um novo touchpoint é criado (sem nova demanda) — o que o endpoint `new_intake` usado até aqui não pode provar por desenho.
+3. Rate limit real (Upstash): tentativas inválidas controladas, sem criar dado de negócio, confirmando `429` e headers esperados.
+4. Recuperação automática do outbox: criar um pendente controlado e reproduzível, chamar `/api/cron/outbox` via HTTP real autenticado, confirmar `claimed:1/published:1/failed:0`, confirmar execução correspondente no Inngest, e confirmar que uma segunda chamada não republica/duplica.
+5. Remoção do scaffolding de QA antes do merge (`/qa/formulario-a11`, allowlist, exceções de CSP, envs `NEXT_PUBLIC_QA_*`), incluindo o novo endpoint de continuidade dedicado do item 2.
+6. Inventário read-only pré/pós-merge (URL do workflow, variáveis Preview vs. Production, sincronização do Inngest, `A11_CRON_SECRET` vs. `CRON_SECRET`) — sem copiar segredos, sem alterar Production, com parada para autorização.
+7. Fechamento técnico final: suíte completa, handoff, PR, commit, push, CI.
