@@ -37,7 +37,7 @@ export const fakeRateLimiter: RateLimiter = async ({ endpointId, ipHmacHex }) =>
   const recent = (hits.get(key) ?? []).filter((time) => now - time < 60_000);
   recent.push(now);
   hits.set(key, recent);
-  return recent.length > 5 ? { ok: false, scope: "ip" } : { ok: true };
+  return recent.length > 5 ? { ok: false, scope: "ip", resetAt: now + 60_000 } : { ok: true };
 };
 
 export function resetFakeRateLimiter(): void {

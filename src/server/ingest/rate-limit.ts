@@ -20,7 +20,13 @@ import { getIngestConfig } from "@/server/ingest/config";
  * diagnóstico.
  */
 
-export type RateLimitOutcome = { ok: true } | { ok: false; scope: "ip" | "endpoint" };
+export type RateLimitOutcome =
+  | { ok: true }
+  // `resetAt`: timestamp UNIX em MILISSEGUNDOS de quando a janela reseta
+  // de verdade (devolvido pelo próprio Upstash) — nunca um horário
+  // chutado. É a partir dele que a borda calcula o Retry-After em
+  // segundos (handler.ts).
+  | { ok: false; scope: "ip" | "endpoint"; resetAt: number };
 
 export type RateLimiter = (input: {
   endpointId: string;
@@ -55,10 +61,10 @@ export const upstashRateLimiter: RateLimiter = async ({ endpointId, ipHmacHex })
   const { perIp, perEndpoint } = limiters();
 
   const ip = await perIp.limit(`${endpointId}:${ipHmacHex}`);
-  if (!ip.success) return { ok: false, scope: "ip" };
+  if (!ip.success) return { ok: false, scope: "ip", resetAt: ip.reset };
 
   const endpoint = await perEndpoint.limit(endpointId);
-  if (!endpoint.success) return { ok: false, scope: "endpoint" };
+  if (!endpoint.success) return { ok: false, scope: "endpoint", resetAt: endpoint.reset };
 
   return { ok: true };
 };

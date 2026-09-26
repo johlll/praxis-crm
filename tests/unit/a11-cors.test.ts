@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { corsPreflightHeaders, corsResponseHeaders, matchAllowedOrigin } from "@/server/ingest/cors";
+import { corsPreflightHeaders, corsResponseHeaders, failureResponseHeaders, matchAllowedOrigin } from "@/server/ingest/cors";
 
 /**
  * CORS estrito de /api/forms/[endpointKey] (item 3 da auditoria
@@ -72,5 +72,39 @@ describe("cabeçalhos de CORS", () => {
     expect(headers["Access-Control-Allow-Methods"]).toContain("POST");
     expect(headers["Access-Control-Allow-Methods"]).toContain("OPTIONS");
     expect(headers["Access-Control-Allow-Headers"]).toContain("Content-Type");
+  });
+});
+
+describe("failureResponseHeaders — Retry-After no 429 (achado de contrato)", () => {
+  it("com retryAfterSeconds e origem autorizada: Retry-After presente E exposto via Access-Control-Expose-Headers", () => {
+    const headers = failureResponseHeaders("https://exemplo.test", 7);
+    expect(headers["Retry-After"]).toBe("7");
+    expect(headers["Access-Control-Expose-Headers"]).toBe("Retry-After");
+    // Nenhuma regressão nos cabeçalhos de CORS já existentes.
+    expect(headers["Access-Control-Allow-Origin"]).toBe("https://exemplo.test");
+    expect(headers.Vary).toBe("Origin");
+  });
+
+  it("sem retryAfterSeconds (chamada não bloqueada pelo rate limit): nenhum Retry-After nem Expose-Headers", () => {
+    const headers = failureResponseHeaders("https://exemplo.test", undefined);
+    expect(headers["Retry-After"]).toBeUndefined();
+    expect(headers["Access-Control-Expose-Headers"]).toBeUndefined();
+    // Os demais cabeçalhos de CORS continuam intactos.
+    expect(headers["Access-Control-Allow-Origin"]).toBe("https://exemplo.test");
+  });
+
+  it("com retryAfterSeconds mas origem NÃO autorizada: continua recusada — nenhum cabeçalho de CORS, Retry-After não vaza para o JS de origem não autorizada", () => {
+    const headers = failureResponseHeaders(null, 7);
+    expect(headers["Access-Control-Allow-Origin"]).toBeUndefined();
+    expect(headers["Access-Control-Expose-Headers"]).toBeUndefined();
+    expect(headers.Vary).toBeUndefined();
+  });
+
+  it("não expõe X-RateLimit-Limit, Remaining nem qualquer outro contador — só Retry-After", () => {
+    const headers = failureResponseHeaders("https://exemplo.test", 3);
+    const keys = Object.keys(headers);
+    expect(keys).not.toContain("X-RateLimit-Limit");
+    expect(keys).not.toContain("X-RateLimit-Remaining");
+    expect(headers["Access-Control-Expose-Headers"]).toBe("Retry-After");
   });
 });

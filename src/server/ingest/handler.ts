@@ -46,7 +46,16 @@ export type PublicFailure =
 
 export type IngestResult =
   | { ok: true; protocol: string; corsOrigin: string | null }
-  | { ok: false; failure: PublicFailure; corsOrigin: string | null };
+  | {
+      ok: false;
+      failure: PublicFailure;
+      corsOrigin: string | null;
+      // Só existe para failure === "rate_limited" — achado de contrato/UX
+      // corrigido: o 429 não informava quando tentar de novo. Segundos
+      // inteiros, sempre ≥ 1, calculados a partir do `resetAt` REAL do
+      // limitador (rate-limit.ts) — nunca um horário absoluto.
+      retryAfterSeconds?: number;
+    };
 
 export type IngestDeps = {
   supabase: SupabaseClient;
@@ -199,7 +208,10 @@ export async function handleFormSubmission(
   // 7. Rate limit antes do Turnstile: é a proteção mais barata e a que
   //    contém a enxurrada sem gastar chamada externa.
   const limited = await deps.rateLimit({ endpointId: endpoint.id, ipHmacHex });
-  if (!limited.ok) return { ok: false, failure: "rate_limited", corsOrigin };
+  if (!limited.ok) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((limited.resetAt - Date.now()) / 1000));
+    return { ok: false, failure: "rate_limited", corsOrigin, retryAfterSeconds };
+  }
 
   // 8. Turnstile com hostname e action conferidos (não só `success`). A
   //    chave de idempotência do siteverify é derivada do PRÓPRIO TOKEN,

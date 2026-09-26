@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { createAdminSupabaseClient } from "@/server/supabase/admin";
 import { handleFormSubmission, resolveEndpointForCors, type PublicFailure } from "@/server/ingest/handler";
 import { usesTestAdapters } from "@/server/ingest/config";
-import { corsPreflightHeaders, corsResponseHeaders, matchAllowedOrigin } from "@/server/ingest/cors";
+import { corsPreflightHeaders, corsResponseHeaders, failureResponseHeaders, matchAllowedOrigin } from "@/server/ingest/cors";
 import { fakeRateLimiter, fakeTurnstileVerifier, inlineWorkerPublisher } from "@/server/ingest/test-adapters";
 import { inngestPublisher } from "@/server/ingest/publisher";
 import { upstashRateLimiter } from "@/server/ingest/rate-limit";
@@ -87,11 +87,14 @@ export async function POST(
 
   // Cabeçalhos de CORS acompanham sucesso E erro, desde que a origem
   // seja autorizada (defeito corrigido: a rota não tinha CORS nenhum).
-  const headers = corsResponseHeaders(result.corsOrigin);
-
   if (!result.ok) {
+    // Achado de contrato/UX: o 429 de rate limit não informava QUANDO
+    // tentar de novo. `retryAfterSeconds` só existe para essa recusa —
+    // as demais continuam exatamente como antes, sem Retry-After nenhum.
+    const headers = failureResponseHeaders(result.corsOrigin, result.retryAfterSeconds);
     return NextResponse.json({ error: result.failure }, { status: STATUS[result.failure], headers });
   }
 
+  const headers = corsResponseHeaders(result.corsOrigin);
   return NextResponse.json({ protocol: result.protocol, status: "received" }, { status: 202, headers });
 }

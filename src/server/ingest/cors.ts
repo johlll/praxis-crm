@@ -56,12 +56,44 @@ export function matchAllowedOrigin(originHeader: string | null, allowedHostnames
   return originHeader;
 }
 
-export function corsResponseHeaders(allowedOrigin: string | null): Record<string, string> {
+export function corsResponseHeaders(
+  allowedOrigin: string | null,
+  options?: { exposeHeaders?: string[] },
+): Record<string, string> {
   if (!allowedOrigin) return {};
-  return {
+  const headers: Record<string, string> = {
     "Access-Control-Allow-Origin": allowedOrigin,
     Vary: "Origin",
   };
+  if (options?.exposeHeaders?.length) {
+    headers["Access-Control-Expose-Headers"] = options.exposeHeaders.join(", ");
+  }
+  return headers;
+}
+
+/**
+ * Cabeçalhos de uma resposta de RECUSA (sucesso nunca passa por aqui —
+ * ver route.ts). Achado de contrato/UX: o 429 de rate limit não informava
+ * QUANDO tentar de novo. `retryAfterSeconds` só existe para essa recusa
+ * específica (nunca para as outras) e vira o header padrão `Retry-After`,
+ * em segundos — nunca um horário absoluto, nunca um contador interno
+ * (`X-RateLimit-*` não é exigido nem adicionado). Só é exposto ao JS de
+ * origem cross-origin quando essa origem já é autorizada — sem origem
+ * autorizada, esta função devolve exatamente o que `corsResponseHeaders`
+ * já devolvia: nenhum cabeçalho de CORS, a recusa continua intacta.
+ */
+export function failureResponseHeaders(
+  allowedOrigin: string | null,
+  retryAfterSeconds: number | undefined,
+): Record<string, string> {
+  const headers = corsResponseHeaders(
+    allowedOrigin,
+    retryAfterSeconds !== undefined ? { exposeHeaders: ["Retry-After"] } : undefined,
+  );
+  if (retryAfterSeconds !== undefined) {
+    headers["Retry-After"] = String(retryAfterSeconds);
+  }
+  return headers;
 }
 
 export function corsPreflightHeaders(allowedOrigin: string | null): Record<string, string> {

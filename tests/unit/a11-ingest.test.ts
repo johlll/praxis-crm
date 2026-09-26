@@ -429,10 +429,66 @@ describe("borda pública de ingestão", () => {
   });
 
   it("rate limit estourado recusa antes do Turnstile", async () => {
-    const limited = vi.fn(async () => ({ ok: false, scope: "ip" }) as const);
+    const resetAt = Date.now() + 30_000;
+    const limited = vi.fn(async () => ({ ok: false, scope: "ip", resetAt }) as const);
     const result = await handleFormSubmission("chave", request(VALID), deps({ rateLimit: limited as never }));
-    expect(result).toEqual({ ok: false, failure: "rate_limited", corsOrigin: null });
+    expect(result).toMatchObject({ ok: false, failure: "rate_limited", corsOrigin: null });
     expect(alwaysOkTurnstile).not.toHaveBeenCalled();
+  });
+
+  // Achado de contrato/UX (não é o "rate limit estourado" em si, já coberto
+  // acima): o 429 não informava QUANDO tentar de novo. Corrigido com
+  // Retry-After em segundos, calculado a partir do `resetAt` REAL devolvido
+  // pelo limitador — nunca um horário absoluto, nunca chutado.
+  describe("Retry-After no 429 (achado de contrato — o 429 não informava quando tentar de novo)", () => {
+    it("calcula Retry-After a partir do reset REAL do limitador, em segundos inteiros — nunca um horário absoluto", async () => {
+      const resetAt = Date.now() + 45_000;
+      const limited = vi.fn(async () => ({ ok: false, scope: "ip", resetAt }) as const);
+      const result = await handleFormSubmission("chave", request(VALID), deps({ rateLimit: limited as never }));
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("unreachable");
+      expect(result.failure).toBe("rate_limited");
+      expect(typeof result.retryAfterSeconds).toBe("number");
+      expect(Number.isInteger(result.retryAfterSeconds)).toBe(true);
+      // Tolerância de 2s para o tempo de execução do próprio teste — nunca
+      // um valor fixo/absoluto (ex.: o próprio timestamp de reset).
+      expect(result.retryAfterSeconds).toBeGreaterThanOrEqual(43);
+      expect(result.retryAfterSeconds).toBeLessThanOrEqual(45);
+      expect(result.retryAfterSeconds).not.toBe(resetAt);
+    });
+
+    it("Retry-After nunca é menor que 1, mesmo com o reset já no passado", async () => {
+      const resetAt = Date.now() - 5_000;
+      const limited = vi.fn(async () => ({ ok: false, scope: "endpoint", resetAt }) as const);
+      const result = await handleFormSubmission("chave", request(VALID), deps({ rateLimit: limited as never }));
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("unreachable");
+      expect(result.retryAfterSeconds).toBe(1);
+    });
+
+    it("chamadas NÃO bloqueadas pelo rate limit nunca recebem Retry-After — nem outras recusas, nem sucesso", async () => {
+      const successResult = await handleFormSubmission("chave", request(VALID), deps());
+      expect(successResult.ok).toBe(true);
+      expect("retryAfterSeconds" in successResult).toBe(false);
+
+      const invalidResult = await handleFormSubmission("chave", request({ ...VALID, website: "sou um robo" }), deps());
+      expect(invalidResult).toMatchObject({ ok: false, failure: "invalid_submission" });
+      if (!invalidResult.ok) expect(invalidResult.retryAfterSeconds).toBeUndefined();
+    });
+
+    it("nenhuma ingestão acontece depois do bloqueio de rate limit — sem regressão no Turnstile nem na gravação", async () => {
+      const calls: RpcCall[] = [];
+      const resetAt = Date.now() + 10_000;
+      const limited = vi.fn(async () => ({ ok: false, scope: "ip", resetAt }) as const);
+      const result = await handleFormSubmission(
+        "chave",
+        request(VALID),
+        deps({ rateLimit: limited as never, supabase: fakeSupabase({ calls }) }),
+      );
+      expect(result).toMatchObject({ ok: false, failure: "rate_limited" });
+      expect(alwaysOkTurnstile).not.toHaveBeenCalled();
+      expect(calls.some((call) => call.fn === "ingest_form_event")).toBe(false);
+    });
   });
 
   it("hostname fora da lista do endpoint é recusado", async () => {
