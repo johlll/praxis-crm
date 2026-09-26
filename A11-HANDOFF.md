@@ -602,9 +602,36 @@ Todos os caminhos que a borda pública devolve como `invalid_submission` (contra
 
 **Corrigido pela interface oficial** ("Editar" → "Adicionar campo", sem tocar `capture_mode`/pipeline/etapa/Turnstile/domínios/banco diretamente): os dois campos foram replicados EXATAMENTE do endpoint `QA A11 Formulario Visual` (chave, rótulo, tipo, obrigatoriedade, ordem). Confirmado por leitura separada: `answers_config` dos dois endpoints é **igual por comparação JSONB** (`equivalente_ao_original: true`); `capture_mode` continua `continuity`; pipeline/etapa/Turnstile/hostnames/status inalterados.
 
+## 16c. Cenário 2 "de verdade" — execução aprovada, ponta a ponta
+
+**Submissão real** (captcha resolvido por humano, endpoint corrigido): HTTP público **202**, `sourceEventId` enviado pelo harness `57c174ef-f339-46e2-966d-3c504e2b8605`. Confirmado por leitura: **`2fac02d3-f558-4900-841f-ee59adc84c80` é o ID INTERNO da linha de `webhook_events`** correspondente (`source_event_id = 57c174ef-...`), `status: processed`, `received_at`/`processed_at` no mesmo minuto.
+
+**Comparação antes/depois** (workspace QA A11 Validacao Visual):
+
+| Tabela | Antes | Depois |
+|---|---|---|
+| webhook_events | 4 | 5 |
+| outbox | 4 | 5 (nova: `state: published`, `attempts: 0`) |
+| contacts | 3 | 3 |
+| leads | 4 | 4 |
+| opportunities | 4 | 4 |
+| activities | 4 | 4 |
+| touchpoints | 4 | 5 |
+| contact_consents | 2 | 3 |
+
+**Reaproveitamento confirmado**: `result_contact_id`/`result_lead_id`/`result_opportunity_id` do evento processado são exatamente o contato, lead e **oportunidade originais** (`edbfa477-...`/`a26cdbd4-...`/`ae9184c1-...`) — a correção do seletor de oportunidade funcionou ponta a ponta. `result_activity_id: null` — nenhuma atividade nova, como esperado (continuidade nunca cria atividade).
+
+**Novo touchpoint** (`d0d60713-0c51-4936-8225-5cfa6107b5cb`) na **posição 3** — motivo: já existiam dois touchpoints anteriores no mesmo contato (posição 1, Cenário Base; posição 2, teste `new_intake` da rodada anterior), confirmado por leitura da sequência completa. Vinculado à oportunidade original `ae9184c1-...`.
+
+**Referência `fa4185aa-ba35-46e8-a105-a0814fa6cb30`**: `used_count` 0→1, `last_used_at` preenchido (`2026-09-26 20:50:53.475759+00`), `revoked_at` continua `null`.
+
+**Execução real do Inngest confirmada por log** (não inferida): deployment `dpl_A5sFEdPiNEFrKovjjoeoyMDHFZcf`, sequência `OPTIONS /api/forms/... → 204` (20:50:48.408Z) → `POST /api/forms/... → 202` (20:50:51.343Z) → `POST /api/inngest → 206` (20:50:53.047Z), coincidindo com `processed_at` do banco no mesmo segundo.
+
+**`continuity-token.local.txt` apagado** após a validação; confirmado ausente do diretório do harness (fora do repositório) e nenhum vestígio de token/segredo em `git status`/`git log -p` do repositório real.
+
 ## 17. Pendências para a próxima rodada, nesta ordem
 
-1. Cenário 2 "de verdade" — harness reconfigurado com `answers_config` corrigido, aguardando um único clique humano (Turnstile real) contra o endpoint `QA A11 Continuidade` já corrigido; sourceEventId `a4944261-4ec9-4d7c-885c-d22255fed0eb` preservado (nunca usado, sem webhook_event criado); confirmar que só um novo touchpoint é criado (sem nova demanda) e que `used_count` vai de 0 para 1 com `last_used_at` preenchido.
+1. **Cenário 2 "de verdade" — CONCLUÍDO E APROVADO** (§16c). `sourceEventId` anterior `a4944261-4ec9-4d7c-885c-d22255fed0eb` (tentativa com 400, achado de configuração) permanece sem `webhook_event` — nunca usado, evidência preservada.
 2. Rate limit real (Upstash): tentativas inválidas controladas, sem criar dado de negócio, confirmando `429` e headers esperados.
 3. Recuperação automática do outbox: criar um pendente controlado e reproduzível, chamar `/api/cron/outbox` via HTTP real autenticado, confirmar `claimed:1/published:1/failed:0`, confirmar execução correspondente no Inngest, e confirmar que uma segunda chamada não republica/duplica.
 4. Remoção do scaffolding de QA antes do merge (`/qa/formulario-a11`, allowlist, exceções de CSP, envs `NEXT_PUBLIC_QA_*`), incluindo o endpoint de continuidade dedicado.
