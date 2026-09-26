@@ -643,11 +643,15 @@ Todos os caminhos que a borda pública devolve como `invalid_submission` (contra
 - `cors.ts`: nova `failureResponseHeaders()` adiciona `Retry-After` e expõe via `Access-Control-Expose-Headers` só quando a origem já é autorizada; origem não autorizada continua sem nenhum cabeçalho de CORS (recusa intacta). Nenhum `X-RateLimit-*` adicionado.
 - CI verde (commit `beadc49`): typecheck, lint, 433 testes unitários (8 novos), pgTAP/isolamento/build/e2e inalterados.
 
+**Confirmação final, no Preview atualizado** (deployment `dpl_CZzspnSnp9Gbxf52wwjuaRvWX462`, janela anterior expirada naturalmente — ~21 minutos depois, sem apagar o contador manualmente): repeti o mesmo teste no endpoint dedicado, agora **por navegador real** (Playwright, página servida em `http://localhost:8765`, hostname permitido do endpoint — CORS de verdade, não `curl`/Node). 5 tentativas `403`, 6ª `429`, parei imediatamente. **O JavaScript da página leu com sucesso `resposta.headers.get("retry-after")` → `"29"`** — prova definitiva de que `Access-Control-Expose-Headers` funciona de ponta a ponta para origem autorizada (não bastava o servidor enviar o header; o navegador precisa deixar o JS lê-lo, e leu). Confirmado por leitura, de novo: nenhuma tabela de negócio mudou (mesmas contagens da rodada anterior); `eventos_no_endpoint_rate_limit: 0`.
+
+**Item de rate limit encerrado.**
+
 ## 17. Pendências para a próxima rodada, nesta ordem
 
 1. **Cenário 2 "de verdade" — CONCLUÍDO E APROVADO** (§16c). `sourceEventId` anterior `a4944261-4ec9-4d7c-885c-d22255fed0eb` (tentativa com 400, achado de configuração) permanece sem `webhook_event` — nunca usado, evidência preservada.
-2. **Rate limit real — CONCLUÍDO** (§16d). Falta só repetir a confirmação do `429`+`Retry-After` no Preview atualizado, depois que a janela anterior expirar (não apagar manualmente o contador).
+2. **Rate limit real — CONCLUÍDO E ENCERRADO** (§16d), incluindo o defeito de contrato (`Retry-After`) e a confirmação por navegador real no Preview atualizado.
 3. Recuperação automática do outbox: criar um pendente controlado e reproduzível, chamar `/api/cron/outbox` via HTTP real autenticado, confirmar `claimed:1/published:1/failed:0`, confirmar execução correspondente no Inngest, e confirmar que uma segunda chamada não republica/duplica.
-4. Remoção do scaffolding de QA antes do merge (`/qa/formulario-a11`, allowlist, exceções de CSP, envs `NEXT_PUBLIC_QA_*`), incluindo o endpoint de continuidade dedicado.
+4. Remoção do scaffolding de QA antes do merge (`/qa/formulario-a11`, allowlist, exceções de CSP, envs `NEXT_PUBLIC_QA_*`), incluindo os endpoints dedicados de continuidade e rate limit.
 5. Inventário read-only pré/pós-merge (URL do workflow, variáveis Preview vs. Production, sincronização do Inngest, `A11_CRON_SECRET` vs. `CRON_SECRET`) — sem copiar segredos, sem alterar Production, com parada para autorização.
 6. Fechamento técnico final: suíte completa, handoff, PR, commit, push, CI.
