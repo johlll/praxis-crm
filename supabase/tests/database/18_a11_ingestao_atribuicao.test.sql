@@ -550,7 +550,7 @@ insert into public.continuity_references (
   workspace_id, token_hash, contact_id, lead_id, opportunity_id, purpose, expires_at
 )
 values (
-  :'ws'::uuid, decode(repeat('55', 32), 'hex'),
+  :'ws'::uuid, decode(repeat('cc', 32), 'hex'),
   :'contact1'::uuid, :'lead1'::uuid, :'opp1'::uuid, 'form_continuity', now() + interval '7 days'
 );
 
@@ -564,7 +564,7 @@ where source_event_id = 'cccccccc-0000-4000-8000-000000000001'::uuid \gset
 
 select process_form_event(:'event_ni_cont'::uuid, jsonb_build_object(
   'contact', jsonb_build_object('name', 'Visitante Reincidente'),
-  'continuity_token_hash', encode(decode(repeat('55', 32), 'hex'), 'base64'),
+  'continuity_token_hash', encode(decode(repeat('cc', 32), 'hex'), 'base64'),
   'attribution', jsonb_build_object('channel', 'formulario', 'source', 'google')
 )) as proc_ni_cont \gset
 
@@ -573,11 +573,11 @@ select is((:'proc_ni_cont'::jsonb ->> 'new_demand')::boolean, true,
 select is((:'proc_ni_cont'::jsonb ->> 'contact_id'), :'contact1',
   'Mas a IDENTIDADE do contato é reaproveitada pelo token — nunca cria contato duplicado');
 select is(
-  (select used_count from public.continuity_references where token_hash = decode(repeat('55', 32), 'hex')),
+  (select used_count from public.continuity_references where token_hash = decode(repeat('cc', 32), 'hex')),
   1, 'Uso bem-sucedido para identidade incrementa used_count mesmo em endpoint new_intake'
 );
 select isnt(
-  (select last_used_at from public.continuity_references where token_hash = decode(repeat('55', 32), 'hex')),
+  (select last_used_at from public.continuity_references where token_hash = decode(repeat('cc', 32), 'hex')),
   null, 'last_used_at é preenchido no mesmo uso'
 );
 
@@ -586,7 +586,7 @@ select process_form_event(:'event_ni_cont'::uuid, '{}'::jsonb) as proc_ni_cont_a
 select is((:'proc_ni_cont_again'::jsonb ->> 'already_processed')::boolean, true,
   'Reprocessar o mesmo evento encontra already_processed');
 select is(
-  (select used_count from public.continuity_references where token_hash = decode(repeat('55', 32), 'hex')),
+  (select used_count from public.continuity_references where token_hash = decode(repeat('cc', 32), 'hex')),
   1, 'Reprocessar o MESMO evento não incrementa used_count de novo'
 );
 
@@ -603,12 +603,12 @@ where source_event_id = 'cccccccc-0000-4000-8000-000000000002'::uuid \gset
 
 select process_form_event(:'event_ni_cont2'::uuid, jsonb_build_object(
   'contact', jsonb_build_object('name', 'Visitante Reincidente'),
-  'continuity_token_hash', encode(decode(repeat('55', 32), 'hex'), 'base64'),
+  'continuity_token_hash', encode(decode(repeat('cc', 32), 'hex'), 'base64'),
   'attribution', jsonb_build_object('channel', 'formulario', 'source', 'google')
 )) as proc_ni_cont2 \gset
 
 select is(
-  (select used_count from public.continuity_references where token_hash = decode(repeat('55', 32), 'hex')),
+  (select used_count from public.continuity_references where token_hash = decode(repeat('cc', 32), 'hex')),
   2, 'Dois eventos distintos com o mesmo token reutilizável incrementam DUAS vezes'
 );
 
@@ -618,7 +618,7 @@ insert into public.continuity_references (
   workspace_id, token_hash, contact_id, lead_id, opportunity_id, purpose, expires_at
 )
 values (
-  :'ws'::uuid, decode(repeat('66', 32), 'hex'),
+  :'ws'::uuid, decode(repeat('aa', 32), 'hex'),
   :'contact1'::uuid, :'lead1'::uuid, :'opp1'::uuid, 'form_continuity', now() - interval '1 minute'
 );
 select ingest_form_event(
@@ -631,14 +631,14 @@ where source_event_id = 'cccccccc-0000-4000-8000-000000000003'::uuid \gset
 
 select process_form_event(:'event_ni_expirado'::uuid, jsonb_build_object(
   'contact', jsonb_build_object('name', 'Visitante Token Expirado'),
-  'continuity_token_hash', encode(decode(repeat('66', 32), 'hex'), 'base64'),
+  'continuity_token_hash', encode(decode(repeat('aa', 32), 'hex'), 'base64'),
   'attribution', jsonb_build_object('channel', 'formulario')
 )) as proc_ni_expirado \gset
 
 select is((:'proc_ni_expirado'::jsonb ->> 'new_demand')::boolean, true,
   'Token expirado é tratado como SEM continuidade (abre demanda nova, contato novo)');
 select is(
-  (select used_count from public.continuity_references where token_hash = decode(repeat('66', 32), 'hex')),
+  (select used_count from public.continuity_references where token_hash = decode(repeat('aa', 32), 'hex')),
   0, 'Token expirado nunca incrementa used_count'
 );
 
@@ -647,7 +647,7 @@ insert into public.continuity_references (
   workspace_id, token_hash, contact_id, lead_id, opportunity_id, purpose, expires_at, revoked_at
 )
 values (
-  :'ws'::uuid, decode(repeat('77', 32), 'hex'),
+  :'ws'::uuid, decode(repeat('bb', 32), 'hex'),
   :'contact1'::uuid, :'lead1'::uuid, :'opp1'::uuid, 'form_continuity', now() + interval '7 days', now()
 );
 select ingest_form_event(
@@ -660,14 +660,14 @@ where source_event_id = 'cccccccc-0000-4000-8000-000000000004'::uuid \gset
 
 select process_form_event(:'event_ni_revogado'::uuid, jsonb_build_object(
   'contact', jsonb_build_object('name', 'Visitante Token Revogado'),
-  'continuity_token_hash', encode(decode(repeat('77', 32), 'hex'), 'base64'),
+  'continuity_token_hash', encode(decode(repeat('bb', 32), 'hex'), 'base64'),
   'attribution', jsonb_build_object('channel', 'formulario')
 )) as proc_ni_revogado \gset
 
 select is((:'proc_ni_revogado'::jsonb ->> 'new_demand')::boolean, true,
   'Token revogado é tratado como SEM continuidade');
 select is(
-  (select used_count from public.continuity_references where token_hash = decode(repeat('77', 32), 'hex')),
+  (select used_count from public.continuity_references where token_hash = decode(repeat('bb', 32), 'hex')),
   0, 'Token revogado nunca incrementa used_count'
 );
 
