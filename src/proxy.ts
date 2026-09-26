@@ -35,7 +35,18 @@ import { getEnv } from "@/server/env";
  * cabeçalho). Sem isto, um POST de formulário era desviado para /entrar e
  * a captação respondia a página de login.
  */
-const PUBLIC_PATHS = ["/entrar", "/auth", "/convite", "/api/forms", "/api/inngest", "/api/cron"];
+const PUBLIC_PATHS = [
+  "/entrar",
+  "/auth",
+  "/convite",
+  "/api/forms",
+  "/api/inngest",
+  "/api/cron",
+  // Página de QA da A11 (src/app/qa/formulario-a11): fora da landing da
+  // Vizentini, existe só neste branch para exercitar o contrato público
+  // do formulário contra um visitante anônimo real.
+  "/qa",
+];
 
 export function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
