@@ -14,7 +14,7 @@ on:
       target_url:
         description: "URL base do deployment (produção ou preview)"
         required: true
-        default: "https://praxis-crm.vercel.app"
+        default: "https://praxis-crm-eight.vercel.app"
 
 jobs:
   reconcile:
@@ -24,7 +24,7 @@ jobs:
         env:
           CRON_SECRET: ${{ secrets.A11_CRON_SECRET }}
           BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-          TARGET_URL: ${{ github.event.inputs.target_url || 'https://praxis-crm.vercel.app' }}
+          TARGET_URL: ${{ github.event.inputs.target_url || 'https://praxis-crm-eight.vercel.app' }}
         run: |
           curl -sf -X POST "${TARGET_URL}/api/cron/outbox?x-vercel-protection-bypass=${BYPASS_SECRET}" \
             -H "Authorization: Bearer ${CRON_SECRET}" \
@@ -35,7 +35,7 @@ jobs:
         env:
           CRON_SECRET: ${{ secrets.A11_CRON_SECRET }}
           BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-          TARGET_URL: ${{ github.event.inputs.target_url || 'https://praxis-crm.vercel.app' }}
+          TARGET_URL: ${{ github.event.inputs.target_url || 'https://praxis-crm-eight.vercel.app' }}
         run: |
           curl -sf -X POST "${TARGET_URL}/api/cron/retention?x-vercel-protection-bypass=${BYPASS_SECRET}" \
             -H "Authorization: Bearer ${CRON_SECRET}" \

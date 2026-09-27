@@ -42,10 +42,6 @@ const PUBLIC_PATHS = [
   "/api/forms",
   "/api/inngest",
   "/api/cron",
-  // Página de QA da A11 (src/app/qa/formulario-a11): fora da landing da
-  // Vizentini, existe só neste branch para exercitar o contrato público
-  // do formulário contra um visitante anônimo real.
-  "/qa",
 ];
 
 export function isPublicPath(pathname: string): boolean {
@@ -61,10 +57,9 @@ export function isPublicPath(pathname: string): boolean {
 function buildCsp(nonce: string, supabaseUrl: string): string {
   return [
     "default-src 'self'",
-    // challenges.cloudflare.com: só para o widget Turnstile da página de
-    // QA da A11 (src/app/qa/formulario-a11) — a landing real (fora deste
-    // repositório) carrega o script no PRÓPRIO domínio dela, sujeito à
-    // CSP dela, não a esta. Remover junto com a página de QA.
+    // challenges.cloudflare.com: exigido pelo Turnstile real da A11
+    // (ingestão pública). Não é scaffolding de QA — mantém mesmo depois
+    // da remoção da página de QA (src/app/qa/formulario-a11).
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' https://challenges.cloudflare.com`,
     // Next/font injeta <style> inline para as fontes locais geradas no
     // build — não há nonce automático para style-src no App Router hoje,
