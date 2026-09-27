@@ -682,6 +682,51 @@ Fixture removida por completo depois do uso (commit `7f63eb0`, CI verde, novo Pr
 1. **Cenário 2 "de verdade" — CONCLUÍDO E APROVADO** (§16c). `sourceEventId` anterior `a4944261-4ec9-4d7c-885c-d22255fed0eb` (tentativa com 400, achado de configuração) permanece sem `webhook_event` — nunca usado, evidência preservada.
 2. **Rate limit real — CONCLUÍDO E ENCERRADO** (§16d), incluindo o defeito de contrato (`Retry-After`) e a confirmação por navegador real no Preview atualizado.
 3. **Recuperação de outbox — CONCLUÍDA E ENCERRADA** (§16e): migration aplicada em `praxis-crm-dev`, os três testes reais confirmados (`resolved:2/0/0/0` nas duas órfãs históricas; `resolved:0/claimed:1/published:1/failed:0` no evento novo, com cadeia de negócio completa via fixture temporária de QA já removida; `0/0/0/0` na fila vazia).
-4. Remoção do scaffolding de QA antes do merge (`/qa/formulario-a11`, allowlist, exceções de CSP, envs `NEXT_PUBLIC_QA_*`), incluindo os endpoints dedicados de continuidade e rate limit.
-5. Inventário read-only pré/pós-merge (URL do workflow, variáveis Preview vs. Production, sincronização do Inngest, `A11_CRON_SECRET` vs. `CRON_SECRET` — ambiguidade já documentada em §16e) — sem copiar segredos, sem alterar Production, com parada para autorização.
-6. Fechamento técnico final: suíte completa, handoff, PR, commit, push, CI.
+4. **Auditoria final pré-merge — CONCLUÍDA** (§18): achado bloqueador real (URL inexistente no fallback do `a11-reconcile.yml`) corrigido; scaffolding de QA removido do código; os 4 endpoints hospedados desativados (não apagados); variáveis públicas de QA removidas da Vercel.
+5. **Decisão temporária de infraestrutura registrada** (§18): Preview e Production continuarão compartilhando o mesmo projeto Supabase `praxis-crm-dev` enquanto só houver dado fictício/QA — decisão explícita do responsável, não um defeito. Separar os ambientes deve ser reconsiderado antes da entrada de clientes reais.
+6. Configurar Production (Turnstile com hostname real, Upstash, Inngest, todas as variáveis A11 + `SUPABASE_SECRET_KEY` + `CRON_SECRET` na Vercel Production) — ver matriz de prontidão em §18.
+7. Fechamento técnico final: suíte completa, handoff, PR, commit, push, CI.
+
+## 18. Auditoria final pré-merge e preparação para Production
+
+**Auditoria (somente leitura, sem alterações)**: HEAD `dd7cb93` confirmado idêntico local/remoto/PR; CI verde; PR `OPEN`/`MERGEABLE`/`CLEAN`, base = `main` real; 13 migrations locais = remotas, sem drift (`supabase migration list --linked`, todas `local == remote`); RLS forçada nas 8 tabelas confirmada no banco real; zero grants de tabela para `anon`/`authenticated`; as 22 funções da A11 auditadas uma a uma — todas `SECURITY DEFINER` com `search_path=""`, split correto `service_role`/`authenticated`, nenhuma acessível a `anon`; nenhum segredo real no diff da branch; 778 asserções pgTAP (18 arquivos) + 26 de isolamento + 3 concorrências reais + 433 unitários + 76 e2e, todos verdes no HEAD exato da PR.
+
+**Achado bloqueador real, corrigido nesta rodada**: o fallback de `target_url` em `a11-reconcile.yml` (usado tanto por `workflow_dispatch` sem override quanto pelo `schedule` automático) apontava para `https://praxis-crm.vercel.app` — confirmado por HTTP real que esse domínio **não é alias deste projeto** (`vercel inspect` recusa, pertence a outra conta). Os aliases reais de Production são `praxis-crm-eight.vercel.app` / `praxis-crm-johllls-projects.vercel.app` / `praxis-crm-git-main-johllls-projects.vercel.app`. Corrigido para `https://praxis-crm-eight.vercel.app`; override manual via `workflow_dispatch` preservado; teste estático novo (`tests/unit/a11-reconcile-workflow.test.ts`) impede que o domínio errado volte.
+
+**Decisão explícita do responsável, registrada como decisão TEMPORÁRIA de infraestrutura**: Preview e Production continuarão usando o mesmo projeto Supabase `praxis-crm-dev` (único projeto existente na organização) enquanto só houver dado fictício/QA no sistema — não existem clientes reais hoje. Nenhum dado foi migrado, limpo ou copiado; nenhuma senha foi alterada; nenhum projeto novo foi criado. **Separar os ambientes deve ser reconsiderado antes da entrada de dados reais de clientes** — isso não bloqueia a A11 agora.
+
+**Scaffolding de QA removido do produto**: página `/qa/formulario-a11` (`page.tsx`/`client.tsx`) apagada; `/qa` retirado de `PUBLIC_PATHS` (`src/proxy.ts`); a exceção de CSP para `challenges.cloudflare.com` foi **preservada** (pertence ao Turnstile real da ingestão pública, não ao scaffolding). Busca no repositório confirma zero referências restantes a `/qa/formulario-a11`, à liberação genérica de `/qa`, ou a `NEXT_PUBLIC_QA_*` no código/testes/docs.
+
+**Os 4 `form_endpoints` "QA A11 *" foram desativados (não apagados)**, via `set_form_endpoint_status` (a função oficial, com impersonação de sessão real de um owner de cada workspace — mesmo padrão de todo o resto da sessão):
+
+| id | nome | status antes | status depois |
+|---|---|---|---|
+| `fe1e82d2-8695-47fc-8389-28bd8bcfc3e7` | QA A11 - Captacao institucional (editado) | active | **disabled** |
+| `36668cf4-b7fb-44df-a165-7fdaf0b6d943` | QA A11 Continuidade | active | **disabled** |
+| `751c05d9-b4c0-4a64-9a88-b822aa18de09` | QA A11 Formulario Visual | active | **disabled** |
+| `1053f02c-1b90-474c-9b67-17c251b3fbd0` | QA A11 Rate Limit | active | **disabled** |
+
+Confirmado por leitura separada: as 4 evidências (`webhook_events`, `outbox`, `contacts`, `leads`, `opportunities`, `activities`, `touchpoints`, `contact_consents`, `continuity_references`) permanecem intactas — nenhuma linha apagada, contagens idênticas às do teste anterior.
+
+**Variáveis públicas de QA removidas da Vercel** (Preview/branch A11, sem consumidor depois da remoção da página): `NEXT_PUBLIC_QA_TURNSTILE_SITE_KEY`, `NEXT_PUBLIC_QA_A11_FORM_ENDPOINT_KEY`. Nenhuma outra variável tocada (`TURNSTILE_SECRET_KEY`, `UPSTASH_*`, `INNGEST_*`, `CRON_SECRET`, `SUPABASE_SECRET_KEY`, `A11_PAYLOAD_*`, `A11_IP_HMAC_KEY` confirmadas inalteradas por leitura).
+
+CI verde no novo HEAD (commit `f5e1824`): typecheck, lint, 436 unitários (433 + 3 novos do teste estático do workflow), pgTAP, isolamento, as três concorrências reais, build, e2e.
+
+**Matriz de prontidão para Production (nada configurado ainda nesta rodada):**
+
+| Item | Estado |
+|---|---|
+| Código da A11 | Pronto |
+| RLS/grants/funções | Prontos e verificados no banco real |
+| Migrations | Todas aplicadas em `praxis-crm-dev`, sem pendência |
+| Turnstile hostname de produção | Falta configurar |
+| Upstash para produção | Falta decidir (compartilhar ou separar do Redis de dev) e configurar |
+| Inngest em produção | Falta sincronizar a função |
+| Variáveis A11 na Vercel Production | Nenhuma existe hoje |
+| `SUPABASE_SECRET_KEY` + chaves de cifra em Production | Nenhuma existe hoje |
+| `CRON_SECRET` em Production | Não existe |
+| Correspondência com `A11_CRON_SECRET` (GitHub) | Não verificável sem expor segredos — ambos mascarados |
+| URL do workflow `a11-reconcile.yml` | **Corrigida nesta rodada** |
+| Comportamento do schedule após ir para `main` | Ativa a cada 10 min; agora aponta para o domínio certo |
+| Cron nativo da Vercel | Não existe (`vercel.json` sem `crons`) — mecanismo é só o GitHub Actions |
+| Preview/Production compartilharem o Supabase | **Decisão temporária aceita explicitamente** — reconsiderar antes de dado real |
