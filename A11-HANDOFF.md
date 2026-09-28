@@ -792,3 +792,50 @@ Nenhuma escrita ocorreu: nenhum cron autenticado foi chamado, nenhum endpoint fo
 3. Reconfirmar interativamente (login real) que `/visao-geral`, Perfil 360 e as telas de configuração de formulários carregam sem erro em Production — pendente por falta de credencial nesta rodada.
 4. Reconsiderar a decisão temporária de Supabase (`praxis-crm-dev`) e Redis (Upstash) compartilhados entre Preview e Production antes da entrada de dados reais de clientes.
 5. Os quatro endpoints "QA A11 *" permanecem desativados (herdado de §18, não reativado nesta rodada).
+
+## 21. Sincronização do Inngest Production — resolvido após realinhamento da signing key
+
+**Sintoma**: a sincronização do app em `Praxis CRM → Production`, apontando para `https://praxis-crm-eight.vercel.app/api/inngest`, era recusada pelo painel com `Unauthorized response from URL`.
+
+**Causa comprovada, pelos logs de runtime da Vercel e pelo fluxo de controle do SDK instalado** (`inngest@4.20.0`, `node_modules/inngest/components/InngestCommHandler.js`, `validateSignature`): a requisição `PUT /api/inngest` enviada pelo Inngest chegou ao handler e falhou na verificação de assinatura com `Error: Invalid signature`. O SDK lança erros distintos em cada etapa, e a ordem deles elimina as alternativas:
+
+| Etapa do SDK | Erro que produziria | Observado? |
+|---|---|---|
+| `INNGEST_SIGNING_KEY` ausente/vazia | `No signing key found in client options or INNGEST_SIGNING_KEY env var` | Não — a variável estava presente e não vazia no runtime |
+| Cabeçalho de assinatura ausente | `No x-inngest-signature provided` | Não no PUT (foi o que um GET **sem assinatura** produziu, fenômeno distinto e esperado em modo `cloud`) |
+| Assinatura expirada (checada antes da comparação) | `Signature has expired` | Não — desvio de relógio descartado |
+| HMAC divergente | `Invalid signature` | **Sim** |
+
+Como o HMAC é calculado sobre `corpo + timestamp` (ambos vindos da própria requisição) com a chave derivada de `INNGEST_SIGNING_KEY`, a única variável restante era o material da chave. A hipótese de o corpo lido diferir do corpo assinado foi descartada por precedente: o mesmo código, mesmo SDK e mesmo runtime já validavam requisições assinadas do Inngest no ambiente de branch (execuções reais registradas em §16) — falha exclusiva de um ambiente aponta para a chave, não para o código.
+
+**Intervenção autorizada, mínima**: a signing key **atual** do ambiente Production foi obtida no painel oficial autenticado (sem gerar nem rotacionar chave) e **somente** `INNGEST_SIGNING_KEY` da Vercel Production foi regravada com esse valor, via stdin, sem exibir o valor em nenhum momento. `INNGEST_EVENT_KEY`, todas as demais variáveis de Production e todo o escopo Preview/branch permaneceram intactos (confirmado por nomes/escopos/idades: apenas uma entrada com timestamp novo). Em seguida, **um único** redeploy do mesmo SHA de Production (`8e490634e…`), sem promover Preview.
+
+**Não foi determinada a natureza da divergência**: segredos da Vercel são write-only, o valor anterior não foi lido e não é possível saber em que ele diferia. Nenhuma suposição é registrada aqui.
+
+**Resultado**: novo deployment de Production `dpl_BUCTscXqx5jgu44qEdRLS1PWP5hi`, target `production`, `Ready`, aliases `praxis-crm-eight.vercel.app` e `praxis-crm-johllls-projects.vercel.app`. Uma única tentativa de sincronização, do app existente, sem duplicata:
+
+- App `praxis-crm` em `Production` — `Last sync: Success`, `28/09/2026, 20:52:54`
+- SDK `4.20.0`, framework `Next.js`, linguagem `JavaScript`, método `Serve`, plataforma `Vercel`
+- Função `a11-process-form-submission` (slug `praxis-crm-a11-process-form-submission`), nome `A11 — processar submissão de formulário`, trigger `praxis/form.submission.received`, **Active**
+- Configuração lida do painel confere com o código: `9 retries`, concorrência escopo `FUNCTION` limite `5`
+- Nenhum aviso de assinatura, chave incompatível ou falha de comunicação. Os dois avisos informativos presentes (`OTel span processor not added`, `Extended traces not enabled`) são recursos opcionais, não erros
+- Logs de runtime confirmam o antes/depois: `20:26:57` `PUT` → `error`/`Invalid signature`; `20:52:54` `PUT`, `20:52:56` `POST`, `20:52:57` `GET` → todos `info`, sem erro (o `GET` agora passa porque vem assinado)
+- O registro de "Unattached syncs" da tentativa falha (`20:26:57`) foi **preservado** no painel como evidência histórica
+- Nenhum evento foi enviado, nenhum cron foi executado: `Runs volume 0`, `Failure rate 0.00%`
+
+## 22. Agendamento do `a11-reconcile.yml` — sem runs, causa não determinada
+
+Decorridas **1h51min** desde o merge (`2026-09-28T22:05:01Z`, momento em que o GitHub registrou o workflow) até `2026-09-28T23:56:19Z`, com cron `*/10 * * * *`, seriam esperados cerca de 11 disparos. **Nenhum run existe** — nem deste workflow, nem de qualquer outro por `event=schedule` neste repositório.
+
+Descartado por verificação direta (somente leitura):
+
+| Hipótese | Evidência |
+|---|---|
+| Arquivo ausente do branch padrão | Presente em `main` (`.github/workflows/a11-reconcile.yml`, sha `0afb5f2`) |
+| Workflow desabilitado (manualmente ou por inatividade de 60 dias) | `state: active`, registrado em `2026-09-28T22:05:01Z` |
+| Actions desabilitado ou com política restritiva | `enabled: true`, `allowed_actions: all` |
+| Repositório arquivado, desabilitado ou fork | `archived: false`, `disabled: false`, `fork: false` |
+| Restrição de repositório privado/plano | Repositório é **público** |
+| Cron inválido ou `schedule:` mal indentado | Bloco `on: schedule: - cron: "*/10 * * * *"` conferido no arquivo em `main`, sintaxe válida |
+
+**Permanece sem causa comprovada.** A explicação candidata é o comportamento documentado do GitHub de atrasar ou descartar execuções agendadas sob carga — intervalos curtos como `*/10` são os mais afetados —, mas **não há evidência verificável** disso pela API (não existe endpoint que exponha o próximo disparo previsto), e por isso não é registrado aqui como conclusão. Item aberto para observação na próxima rodada.
