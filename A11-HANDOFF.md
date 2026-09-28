@@ -730,3 +730,27 @@ CI verde no novo HEAD (commit `f5e1824`): typecheck, lint, 436 unitários (433 +
 | Comportamento do schedule após ir para `main` | Ativa a cada 10 min; agora aponta para o domínio certo |
 | Cron nativo da Vercel | Não existe (`vercel.json` sem `crons`) — mecanismo é só o GitHub Actions |
 | Preview/Production compartilharem o Supabase | **Decisão temporária aceita explicitamente** — reconsiderar antes de dado real |
+
+## 19. Rotação das chaves A11 e configuração do segredo do cron
+
+**Motivo da rotação**: durante a checagem de fontes locais para configurar Production (§18), confirmou-se que as três variáveis `A11_PAYLOAD_ACTIVE_KEY_VERSION`, `A11_PAYLOAD_KEY_VERSIONS` e `A11_IP_HMAC_KEY` existiam somente em Preview/branch, sem nenhuma origem recuperável (não estavam em `.env.local`, em nenhum script commitado, nem em documentação) — foram definidas diretamente na Vercel em algum momento não registrado. A própria Vercel confirma que valores do tipo Secret são irrecuperáveis. Diante disso, o responsável autorizou a rotação coordenada das três chaves (versão ativa nova `v2`) em vez de tentar recuperar as antigas.
+
+**Perda aceita**: os 8 `webhook_events` que ainda carregavam payload cifrado ficam permanentemente indecifráveis. Todos os 8 pertencem exclusivamente aos 4 `form_endpoints` "QA A11 *" (desativados desde §18) — nenhum é dado real de cliente. As linhas de negócio derivadas (contatos, leads, oportunidades, atividades, touchpoints, protocolo público, hash de conteúdo, timestamps) **não dependem do ciphertext** e continuam intactas e consultáveis — só o conteúdo bruto cifrado do payload se torna ilegível.
+
+**Evidências preservadas**: nenhuma linha foi apagada, nenhuma migration rodou, nenhuma retenção foi executada. As 8 linhas com ciphertext permanecem no banco como evidência histórica sanitizada, apenas sem capacidade de decifragem.
+
+**Execução**:
+- Versão ativa: `v2`. Chave de cifra e chave de HMAC geradas uma única vez (32 bytes aleatórios em base64 cada), junto com um `CRON_SECRET` independente (32+ bytes).
+- As três variáveis foram regravadas em **Preview, escopo restrito à branch `feat/a11-forms-attribution`** (substituindo as anteriores, agora irrecuperáveis) e criadas em **Production** — as seis gravações usaram exatamente a mesma origem, dentro da mesma sessão, sem regenerar valor entre elas.
+- Preview foi **redeployado** (apenas o deployment mais recente da branch, sem promover a Production) para que o runtime passasse a usar os valores novos — variáveis de ambiente só entram em vigor em deployments criados depois da gravação.
+- Verificação pós-redeploy: deployment `Ready`; resposta HTTP limpa (401, não 500) em uma chamada de teste ao endpoint de ingestão, confirmando que o parsing das três variáveis novas foi bem-sucedido; nenhum endpoint reativado, nenhum formulário enviado.
+- `CRON_SECRET` criado em **Production** (não existia antes). O GitHub Actions secret `A11_CRON_SECRET` do repositório `johlll/praxis-crm` foi atualizado com **exatamente o mesmo valor**, na mesma sessão. `CRON_SECRET` de Preview **não foi alterado**.
+- Nenhuma variável foi ampliada para Preview global — todas as gravações de Preview permanecem restritas à branch `feat/a11-forms-attribution`.
+
+**Arquivo de recuperação administrativo**: os quatro valores gerados (as três chaves A11 + o novo `CRON_SECRET`) foram salvos uma única vez em `C:\Users\niero\Desktop\Henrique\praxis-a11-secrets.txt`, fora do repositório, com permissões NTFS restritas ao usuário Windows atual (`icacls`, sem herança, sem acesso público). Este arquivo **não é temporário** — é a cópia de recuperação administrativa e deve continuar existindo fora do controle de versão. Nunca deve ser commitado, anexado à PR ou impresso em log. `SUPABASE_SECRET_KEY` não está nesse arquivo, pois já estava preservada em `.env.local`.
+
+**Conferência final por nomes e escopos** (nenhum valor exibido em nenhum momento): Production possui `A11_PAYLOAD_ACTIVE_KEY_VERSION`, `A11_PAYLOAD_KEY_VERSIONS`, `A11_IP_HMAC_KEY`, `SUPABASE_SECRET_KEY`, `TURNSTILE_SECRET_KEY`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY` e `CRON_SECRET`. GitHub possui `A11_CRON_SECRET` atualizado nesta rodada. Preview/branch mantém as três variáveis A11 (agora na versão `v2`) e o `CRON_SECRET` original, sem alteração.
+
+**Redis (Upstash) continua temporariamente compartilhado** entre Preview e Production, na mesma decisão temporária registrada em §18 para o Supabase — nada foi separado nesta rodada.
+
+**Limites respeitados**: nenhuma chave foi impressa, nenhum segredo passou por argumento de linha de comando (todas as gravações usaram stdin), nenhum deployment foi promovido a Production, nenhum cron foi executado manualmente, nenhum Inngest de Production foi sincronizado, nenhum endpoint foi reativado, nenhum formulário foi enviado, nenhum merge foi feito.
