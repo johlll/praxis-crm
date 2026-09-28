@@ -754,3 +754,41 @@ CI verde no novo HEAD (commit `f5e1824`): typecheck, lint, 436 unitários (433 +
 **Redis (Upstash) continua temporariamente compartilhado** entre Preview e Production, na mesma decisão temporária registrada em §18 para o Supabase — nada foi separado nesta rodada.
 
 **Limites respeitados**: nenhuma chave foi impressa, nenhum segredo passou por argumento de linha de comando (todas as gravações usaram stdin), nenhum deployment foi promovido a Production, nenhum cron foi executado manualmente, nenhum Inngest de Production foi sincronizado, nenhum endpoint foi reativado, nenhum formulário foi enviado, nenhum merge foi feito.
+
+## 20. Merge da PR #17 e primeiro deployment de Production
+
+**Checkpoint pré-merge**: confirmado imediatamente antes do merge — PR #17 `OPEN`, head `826378e` (idêntico local/remoto), CI verde nesse HEAD, `MERGEABLE`/`CLEAN`, `main` sem nenhum commit à frente da branch (0 commits de divergência), as dez variáveis de Production presentes pelos nomes já documentados em §19, `A11_CRON_SECRET` presente no GitHub, `a11-reconcile.yml` com o fallback correto (`https://praxis-crm-eight.vercel.app`), nenhuma rota/página de QA nem `NEXT_PUBLIC_QA_*` remanescente no código. O status `disabled` dos 4 endpoints "QA A11 *" **não foi reconfirmado ao vivo nesta rodada** — a credencial de teste usada em sessões anteriores não estava mais disponível nesta sessão, e leitura direta de tabela via REST é bloqueada por design (sem `GRANT` para `service_role`, só via RPC oficial). Como nenhuma ação desta ou de sessões anteriores chamou a RPC de reativação desde a última confirmação por leitura (§18), o estado permanece herdado como `disabled`.
+
+**Merge**: feito com merge commit (sem squash, sem rebase, sem commit direto em `main`).
+
+- SHA do merge: `8e490634eeb1807f48ebdaa05a5133778215e9cb`
+- Pais: primeiro pai `252693ffa96d1ca28302205493762106f68c7e28` (o `main` anterior, exato), segundo pai `826378e4098266e9f439b6a6dc60c11103a2e6d0` (head exato da PR)
+- PR #17 marcada `MERGED`; `main` remoto apontando para o merge commit
+
+**Deployment automático de Production**: disparado pelo próprio merge, sem promoção manual e sem uso de deployment antigo.
+
+- GitHub Deployment: `id 6721631640`, `sha 8e490634eeb1807f48ebdaa05a5133778215e9cb` (exatamente o SHA do merge), ambiente `Production`, status `success`
+- Deployment Vercel correspondente: `dpl_Ee6ejnEyBpCnHz31JoBNTnfHpPY9`, target `production`, status final `Ready`
+- Aliases confirmados: `https://praxis-crm-eight.vercel.app`, `https://praxis-crm-johllls-projects.vercel.app` (e o alias de branch `praxis-crm-git-main-johllls-projects.vercel.app`)
+
+**Smoke test sem escrita** (todos contra `praxis-crm-eight.vercel.app`, nenhuma sessão criada, nenhum dado gravado):
+
+| Verificação | Resultado |
+|---|---|
+| `/entrar` carrega | `200`, sem erro de console (0 mensagens) |
+| `/visao-geral` sem sessão | `307` → redireciona para `/entrar` (comportamento esperado) |
+| `/qa/formulario-a11` | `307` → redireciona para `/entrar` (rota não existe mais; o proxy intercepta antes de resolver 404, mesmo comportamento de qualquer caminho protegido inexistente) |
+| `/api/cron/outbox` sem autenticação | `401` |
+| `/api/forms/<endpoint inexistente>` | `404`, corpo `{"error":"form_endpoint_unavailable"}`, sem criar evento |
+| Login com conta owner de QA | **Não executado** — credencial de sessão anterior não disponível nesta rodada; não foi solicitada nem inventada |
+| Perfil 360 / telas de configuração de formulários | **Não verificado** — depende do login acima |
+
+Nenhuma escrita ocorreu: nenhum cron autenticado foi chamado, nenhum endpoint foi reativado, nenhuma submissão válida foi feita, nenhum dado foi criado, o Inngest de Production não foi sincronizado, nenhuma variável foi alterada, B1 não foi iniciado.
+
+**Pendências explícitas para a próxima rodada**:
+
+1. Sincronizar o Inngest de Production (app ainda não registrada no ambiente de produção do Inngest).
+2. Observar o primeiro disparo real do `a11-reconcile.yml` pelo `schedule` (agora que a branch está em `main`, o agendamento automático passa a valer).
+3. Reconfirmar interativamente (login real) que `/visao-geral`, Perfil 360 e as telas de configuração de formulários carregam sem erro em Production — pendente por falta de credencial nesta rodada.
+4. Reconsiderar a decisão temporária de Supabase (`praxis-crm-dev`) e Redis (Upstash) compartilhados entre Preview e Production antes da entrada de dados reais de clientes.
+5. Os quatro endpoints "QA A11 *" permanecem desativados (herdado de §18, não reativado nesta rodada).
