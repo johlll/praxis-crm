@@ -28,6 +28,11 @@ export default tseslint.config(
     ignores: [
       "src/app/api/webhooks/**",
       "src/app/api/cron/**",
+      // A11: a captação pública e o worker do Inngest são a MESMA
+      // categoria de webhooks e jobs — entrada sem sessão de usuário,
+      // atrás de Turnstile/rate limit, que precisa falar com o banco.
+      "src/app/api/forms/**",
+      "src/app/api/inngest/**",
       "src/server/supabase/admin.ts",
     ],
     rules: {
@@ -38,7 +43,7 @@ export default tseslint.config(
             {
               group: ["**/server/supabase/admin", "@/server/supabase/admin"],
               message:
-                "O cliente service_role ignora a RLS. Importe-o apenas em webhooks e jobs (src/app/api/webhooks/**, src/app/api/cron/**).",
+                "O cliente service_role ignora a RLS. Importe-o apenas em webhooks e jobs (src/app/api/webhooks/**, src/app/api/cron/**, src/app/api/forms/**, src/app/api/inngest/**).",
             },
           ],
         },

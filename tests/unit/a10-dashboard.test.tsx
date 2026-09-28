@@ -172,6 +172,10 @@ describe("filtros da URL", () => {
       onlyUnassigned: false,
       legalArea: null,
       pipelineId: null,
+      // A11: modelo e origem entram nos mesmos filtros de URL. Primeiro
+      // toque é o padrão; origem inválida/ausente é null.
+      attributionModel: "first_touch",
+      source: null,
       selectedOpportunityId: null,
     });
   });

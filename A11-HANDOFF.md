@@ -1,0 +1,756 @@
+# A11 — Formulários próprios e atribuição multitoque · Handoff
+
+Branch `feat/a11-forms-attribution`. **As 10 migrations foram aplicadas
+com sucesso no projeto hospedado `praxis-crm-dev`** e validadas ao vivo
+(§10). A PR #16 (documentação da A10) **não foi mesclada**.
+
+Contrato completo: [`docs/decisoes/a11-ingestao-atribuicao.md`](docs/decisoes/a11-ingestao-atribuicao.md).
+Exemplo de integração do navegador: [`docs/decisoes/a11-exemplo-integracao.md`](docs/decisoes/a11-exemplo-integracao.md).
+
+**Este documento passou por QUATRO rodadas de auditoria pós-dry-run.** A
+primeira encontrou 12 bloqueadores (idempotência incompleta, Turnstile
+vazando IP, ausência de CORS, identidade forjável, continuidade nunca
+emitida, `answers_config` decorativo, consentimento sem evidência, FKs
+compostas anulando `workspace_id`, outbox nunca marcada, vazamento de
+escopo em `get_lead_attribution`, cobertura de merge incompleta e este
+próprio documento desatualizado) — todos corrigidos e registrados em
+§2.1. A segunda rodada, feita em cima da correção da primeira (commit
+`fe5a05b`), encontrou mais 8 — desta vez incluindo dois defeitos que a
+PRÓPRIA correção da primeira rodada introduziu (hash de continuidade
+incompatível entre emissão e verificação; `idempotency_key` do Turnstile
+sem formato de UUID) — corrigidos e registrados em §2.2. A terceira
+rodada, feita em cima da correção da segunda (commit `8ecdec0`), encontrou
+mais 2 — de novo incluindo um defeito que a PRÓPRIA correção da segunda
+rodada introduziu (`listFormEndpoints()` repetindo, na LEITURA, o mesmo
+antipadrão de fallback silencioso que o item 4 da segunda rodada já tinha
+corrigido na ESCRITA) — corrigidos e registrados em §2.3. A quarta rodada,
+feita em cima da correção da terceira (commit `c049bbd`), encontrou mais 1
+— de novo uma variação do que a PRÓPRIA correção da terceira rodada não
+cobriu (a projeção por alcance do item 1 da 3ª rodada tratou
+`opportunity_id is null` como "sem o que vazar", mas uma entrada
+`unassign` narra a desvinculação de um vínculo ANTERIOR, que pode
+pertencer a outro lead) — corrigido e registrado em §2.4. Todos os 23,
+somados, foram corrigidos nesta branch, sempre em migrations **ainda
+pendentes** (nenhuma foi aplicada em banco hospedado).
+
+## 1. O que foi entregue
+
+| Bloco | Onde |
+|---|---|
+| Configuração de endpoints por workspace, com ciclo de vida próprio, lista de campos validada e tela de EDIÇÃO | `form_endpoints` + `form_endpoint_keys`, `/configuracoes/formularios`, `private.assert_answers_config` |
+| Rota pública, com CORS estrito por origem exata (protocolo/porta conferidos) e recusa de origem não autorizada no servidor | `src/app/api/forms/[endpointKey]/route.ts`, `src/server/ingest/cors.ts` |
+| Turnstile (hostname, action, sem IP, `idempotency_key` UUID determinística pelo token, token até 2048 caracteres), rate limit, honeypot, limite de corpo, schema estrito e versionado | `src/server/ingest/*` |
+| Evento idempotente (hash cobre occurredAt/continuidade/consentimento), payload cifrado, diagnóstico sanitizado, `answers_config_snapshot` validado em três camadas | `webhook_events`, `ingest_form_event` |
+| Outbox marcada atomicamente pela publicação inicial + Inngest (retries alinhados a `dead`) + cron reconciliador | `outbox`, `/api/inngest`, `/api/cron/outbox` |
+| Worker idempotente com materialização transacional; identidade só por continuidade (token servidor, hash-only, mesma representação na emissão e na verificação) | `process_form_event`, `issue_continuity_reference`, `revoke_continuity_reference` |
+| Touchpoints append-only e vínculo versionado, com atribuição de `get_lead_attribution` seguindo o vínculo EFETIVO (migra com a correção, nunca vaza para o lead de origem) | `touchpoints`, `touchpoint_demand_links` |
+| Referências de continuidade (emissão/revogação reais, revogação com alcance por registro) e evidência de consentimento (com `text_hash`) | `continuity_references`, `consent_evidence` |
+| Integração com mesclagem/desmesclagem (`touchpoints`, `continuity_references` com detecção de USO/REVOGAÇÃO posterior via `updated_at`, `consent_evidence`) | `20260921100800_a11_merge_integration.sql` |
+| AttributionPanel no Perfil 360, com alcance por REGISTRO (não por contato), e emissão de link de continuidade (reutilizável, não "de uso único") | aba "Origem" em `/leads/[id]` |
+| Primeiro/último toque e conversão no painel, com filtro de origem | `get_dashboard_attribution`, `AttributionCard` |
+| Retenção de 30 dias, tombstone e `expired_unprocessed` | `purge_expired_webhook_events`, `/api/cron/retention` |
+
+## 2.1 Primeira rodada — 12 defeitos e a correção
+
+| # | Defeito | Correção |
+|---|---|---|
+| 1 | Hash de idempotência não cobria `occurredAt`, token de continuidade nem texto de consentimento | `businessContent()` passa a incluir `occurredAt`, SHA-256 do token e SHA-256 do texto aceito; exemplo de integração persiste `occurredAt` junto do `sourceEventId` |
+| 2 | Turnstile recebia HMAC do IP em `remoteip` (campo é IP real) e usava `sourceEventId` como `idempotency_key` (estável entre tokens diferentes) | `remoteip` removido; `idempotency_key` derivada do token, dentro do verificador |
+| 3 | `/api/forms/[endpointKey]` sem CORS — sem preflight, sem `Access-Control-Allow-Origin` | `OPTIONS` + cabeçalhos em toda resposta (sucesso e erro) para origem autorizada; nunca `"*"` |
+| 4 | `externalIdentity` no corpo público permitia reivindicar QUALQUER contato do workspace | Campo removido do contrato; identidade confiável só por referência de continuidade |
+| 5 | `continuity_references` existia mas nada emitia token algum | `issue_continuity_reference`/`revoke_continuity_reference`, FK que garante contato/lead da mesma cadeia, finalidade validada no processamento |
+| 6 | `answers_config` só validava a FORMA (`{fields: [...]}`), não o conteúdo | `private.assert_answers_config` no banco + Zod na borda/worker, com snapshot por evento |
+| 7 | `granted` sem evidência era aceito; `text_hash` nunca era calculado | Zod exige `textVersion`+`acceptedText` para `granted`; `text_hash` calculado e gravado |
+| 8 | FKs compostas com `ON DELETE SET NULL` sem lista de colunas anulariam `workspace_id` | `ON DELETE SET NULL (coluna_opcional)`, sintaxe PG15+ |
+| 9 | Outbox nunca marcada pela publicação inicial (nem sucesso nem falha); retries do Inngest desalinhados do limiar de `dead` | `mark_outbox_published`/`mark_outbox_failed` chamadas após a tentativa inicial; `retries: 9` alinhado a `attempts + 1 >= 10` |
+| 10 | `get_lead_attribution` vazava touchpoints de OUTRO lead do mesmo contato | `sequence` escopada por `t.lead_id`, não `t.contact_id` (revisto na 2ª rodada — item 5) |
+| 11 | Cobertura de merge/unmerge não cobria `continuity_references`/`consent_evidence`; relatório anterior invertia a lista de tabelas reparentadas | pgTAP cobrindo as três tabelas, undo, e conflito por alteração posterior (revisto na 2ª rodada — item 6) |
+| 12 | Este documento e a descrição da PR estavam desatualizados | Reescritos |
+
+## 2.2 Segunda rodada — 8 defeitos e a correção
+
+Feita em cima do commit `fe5a05b` (CI verde da primeira rodada). Dois
+destes defeitos (1 e 2) foram introduzidos pela PRÓPRIA correção
+anterior — registrados sem eufemismo.
+
+| # | Defeito | Correção |
+|---|---|---|
+| 1 | `issue_continuity_reference` gravava o hash dos BYTES aleatórios crus; o worker sempre calculou o hash do TEXTO base64url devolvido ao cliente. Toda referência emitida era inutilizável — o token nunca era reconhecido de volta | `digest(convert_to(v_token_url, 'utf8'), 'sha256')` — mesma representação (texto) dos dois lados. Teste de emissão/segunda-interação reescrito para derivar o hash do TOKEN REALMENTE DEVOLVIDO pela RPC, nunca lido de `token_hash` no banco |
+| 2 | `idempotency_key` do Turnstile era SHA-256 em hex (64 caracteres) — a Cloudflare documenta o campo como UUID; `turnstileToken` aceitava até 4096 caracteres (contrato oficial: 2048) | UUID v4 determinístico derivado dos 16 primeiros bytes do SHA-256 do token; `turnstileToken` limitado a `max(2048)` |
+| 3 | `revoke_continuity_reference` nunca aplicava `lead_accessible_to_role` ao lead da própria referência — um advogado sem acesso ao lead conseguia revogar (teria conseguido reemitir) a referência de outro responsável | Resolve o lead da referência e aplica a mesma checagem de `issue_continuity_reference`; fora do alcance responde `continuity_reference_not_found` |
+| 4 | Config/snapshot de `answers_config` PRESENTE mas corrompido virava `{fields: []}` em silêncio, na borda e no worker — tratando corrupção como "sem campo configurado" | Três camadas recusam fechado: borda (`form_endpoint_misconfigured`), `ingest_form_event` (SQL, `assert_answers_config` no snapshot), worker (`config_snapshot_invalid`, código permanente, nunca chama `process_form_event`) |
+| 5 | `get_lead_attribution` (já corrigido na 1ª rodada para escopar por `lead_id` de origem) vazava a oportunidade e o histórico do lead de DESTINO quando um touchpoint era corrigido, via `correct_touchpoint_demand_link`, para a oportunidade de OUTRO lead do mesmo contato | Escopo passou a seguir o VÍNCULO EFETIVO (`coalesce(oportunidade_vigente.lead_id, t.lead_id)`), não a origem imutável — o touchpoint "migra" de sequência junto com a correção |
+| 6 | `continuity_references` é mutável (`used_count`/`last_used_at`/`revoked_at`), mas o merge só detectava a linha ter sido APAGADA — usar ou revogar a referência entre o merge e o desfazer passava batido | Coluna `updated_at` (com trigger) + mesmo mecanismo de conflito por versão que `leads`/`clients` já usam |
+| 7 | CORS conferia só o `hostname` (protocolo/porta arbitrários passavam); `Origin` presente e não autorizado não era recusado no servidor — só ficava sem cabeçalho de resposta | Fora de `localhost`/`127.0.0.1`/`::1`, só HTTPS na porta padrão; `Origin` presente e fora da lista é recusado (`origin_not_allowed`, 403) ANTES de gravar qualquer coisa |
+| 8 | Tela de edição de endpoint não existia (só criar/desativar/rotacionar); texto da UI de continuidade dizia "uso único", mas a referência é reutilizável — só o VALOR do token aparece uma vez | `/configuracoes/formularios` ganhou "Editar", pré-preenchido, com e2e provando persistência depois de recarregar; texto corrigido |
+
+## 2.3 Terceira rodada — 2 defeitos e a correção
+
+Feita em cima do commit `8ecdec0` (CI verde da segunda rodada). O item 2
+é uma variação do mesmo antipadrão que o item 4 da segunda rodada já
+tinha corrigido — desta vez na LEITURA, não na escrita.
+
+| # | Defeito | Correção |
+|---|---|---|
+| 1 | Excluir o touchpoint fora do alcance (item 5 da 2ª rodada) não bastava: o registro do touchpoint que PERTENCE (por ter migrado de outro lead) ainda devolvia `lead_id`/`original_opportunity_id` do lead de ORIGEM, e o `history` completo — incluindo o vínculo anterior à correção, com motivo e nome de quem corrigiu, tudo do lead de origem | Projeção por alcance DENTRO da RPC: `lead_id` sempre é o lead consultado; `original_opportunity_id` só aparece quando pertence a ele; `history` só traz entradas cuja `opportunity_id` é nula ou pertence ao lead consultado — testado nos dois sentidos (transferência e desvincular depois da transferência) |
+| 2 | `listFormEndpoints()` fazia fallback silencioso de `answers_config` corrompido para `{fields: []}` — a tela de edição (item 8 da 2ª rodada) nascia PREENCHIDA com esse fallback, e salvar qualquer outra alteração reenviava `{fields: []}` como a configuração "atual", apagando de verdade os campos gravados; além disso, `private.assert_answers_config()` (SQL) aceitava `maxLength` fracionário (`1.5` passava no banco, só falhava no Zod da aplicação) e media `label` sem trimar (divergindo do Zod na direção oposta) | Leitura inteira agora LANÇA `FormEndpointsLoadError` quando algum `answers_config` não passa no schema (mesmo contrato de erro das outras `*LoadError`); SQL alinhado ao Zod com `trunc()` para `maxLength` e `char_length(btrim(...))` para `label` |
+
+## 2.4 Quarta rodada — 1 defeito e a correção
+
+Feita em cima do commit `c049bbd` (CI verde da terceira rodada). Variação
+do que a PRÓPRIA correção do item 1 da 3ª rodada deixou passar.
+
+| # | Defeito | Correção |
+|---|---|---|
+| 1 | A projeção de `history` (item 1 da 3ª rodada) liberava qualquer entrada com `opportunity_id` nulo incondicionalmente, tratando "unassign" como "nunca referencia oportunidade, então não tem o que vazar" — mas o `reason`/`actor_name` de um `unassign` narram a desvinculação do vínculo ANTERIOR (a entrada que ele supersede), que pode pertencer a outro lead. Um advogado com acesso só ao lead de DESTINO de uma transferência via `correct_touchpoint_demand_link` enxergava o motivo de uma desvinculação feita no lead de ORIGEM (e vice-versa, na volta) | CTE recursiva (`chain`) caminha `touchpoint_demand_links` da raiz até a ponta carregando `owning_opportunity_id`: a própria `opportunity_id` quando não nula, ou a última vista na cadeia quando nula. O alcance de cada entrada de histórico passa a ser o de `owning_opportunity_id` (ou o lead de origem do touchpoint, se nunca houve vínculo) — nunca mais "ninguém". Testado nos dois sentidos: desvincular em A e depois transferir para B (motivo de A não aparece para B); transferir para B e depois desvincular de volta para A (motivo de B não aparece para A). pgTAP escrito ANTES da correção, confirmado falhando contra o código anterior, depois passando |
+
+Nenhuma migration **já aplicada** foi editada em nenhuma das quatro
+rodadas. Como nenhuma migration da A11 havia sido aplicada em banco
+hospedado, todas as correções entraram **dentro das próprias migrations
+pendentes** (não como camada nova por cima) — a lista continua com 10
+arquivos, os mesmos da primeira rodada.
+
+## 3. Decisões que o código real obrigou a tomar
+
+Registradas por extenso em `docs/decisoes/a11-ingestao-atribuicao.md` §16.
+Resumo:
+
+1. **Bloco de origem é função separada de `get_dashboard`.** A unidade é
+   oportunidade, não lead. Filtrar "leads recebidos" por origem trocaria a
+   unidade no meio do caminho. O payload declara `unit` e a interface diz
+   isso em português.
+2. **Telefone brasileiro sem código de país** (achado por teste): prefixar
+   `+` em `11988887777` produzia `+11988887777` — código de país 1 (EUA).
+   `toE164BR()` só assume Brasil quando o formato é inequívoco; fora disso
+   devolve `null`.
+3. **Cliente do Inngest inerte na construção** (achado pelo build): exigir
+   configuração no escopo do módulo derrubava o BUILD inteiro num ambiente
+   sem as variáveis. A falha fechada passou para a publicação e para o
+   atendimento da rota, por requisição.
+4. **`touchpoints.position` pode repetir depois de uma mesclagem.** Nada
+   depende disso: ordenação e atribuição usam
+   `(normalized_occurred_at, received_at, id)`.
+5. **FK deferrable de `continuity_references` precisou ser `INITIALLY
+   DEFERRED`, não `INITIALLY IMMEDIATE`** (achado pelo CI, não só na
+   revisão, na primeira rodada): a suposição inicial era que a ordem de
+   `merge_contacts()`/`unmerge_contact()` (leads reparentados antes de
+   `continuity_references`) nunca criaria violação transitória, então
+   `INITIALLY IMMEDIATE` foi tentado primeiro para preservar erro cedo em
+   uso normal e em pgTAP. Errado: o CI reproduziu a violação de verdade —
+   `update or delete on table "leads" violates foreign key constraint
+   "continuity_references_lead_contact_fkey"` — porque o fim da instrução
+   que reparenteia `leads` já não encontra mais o par antigo, enquanto
+   `continuity_references` ainda não foi atualizada. Corrigido para
+   `INITIALLY DEFERRED` (checagem só no commit). Consequência aceita:
+   dentro de pgTAP (que só faz `rollback`) esta constraint específica não
+   dispara sozinha — teria que ser forçada com `set constraints ...
+   immediate` dentro do próprio teste.
+6. **Permissão de emitir/revogar continuidade (`continuity.issue`) segue a
+   faixa de `lead.edit`/`opportunity.edit`** (owner/admin/manager/lawyer/
+   sales), não a faixa mais restrita de `attribution.correct`: mandar um
+   link de continuação ao cliente é uma ação do dia a dia de quem já atua
+   na demanda, não uma reescrita de atribuição.
+7. **`now()` é fixo durante toda a transação de um arquivo pgTAP** (mesmo
+   padrão já documentado em `08_a3_merge.test.sql`): os testes de
+   "continuity_references usada/revogada depois do merge" (item 6 da 2ª
+   rodada) precisaram desligar o trigger de `updated_at` e backdatar a
+   linha manualmente para simular a passagem real de tempo entre a
+   mesclagem e a ação — sem isso, os dois timestamps seriam idênticos e o
+   cenário nunca apareceria dentro de uma única transação de teste.
+
+## 4. Segurança
+
+- **Workspace sempre derivado do endpoint/lead no servidor.** O navegador
+  nunca informa workspace.
+- **`service_role` restrita por lint** a `src/app/api/{forms,webhooks,cron,inngest}/**`.
+- **Nenhum GRANT de tabela** para `anon`/`authenticated` nas oito tabelas
+  novas: tudo passa por função `SECURITY DEFINER` com `search_path` fixo.
+- **`ingest_form_event`, `process_form_event` e `resolve_form_endpoint`
+  não são concedidas a `authenticated`** — um visitante com a chave
+  publicável não consegue pular Turnstile e rate limit chamando a RPC.
+- **IP nunca é persistido e nunca sai para terceiros.** Só o HMAC (chave
+  própria) vai para o rate limit; o Turnstile nunca recebe o IP — nem
+  completo, nem como HMAC.
+- **Identidade confiável só por token de continuidade**, emitido pelo
+  servidor e guardado só por hash — com a MESMA representação (texto) na
+  emissão e na verificação (item 1 da 2ª rodada) — e nenhum campo do
+  corpo público permite reivindicar um contato existente.
+- **CORS confere origem exata, protocolo e porta** (item 7 da 2ª rodada);
+  `Origin` presente e não autorizado é recusado no SERVIDOR, não só
+  omitido do cabeçalho de resposta.
+- **Chave de cifra exclusiva da A11**, separada de contatos, blind index e
+  cookie. Sem ela, a ingestão para **antes de qualquer gravação**.
+- **Configuração de endpoint restrita a owner/admin**; correção de vínculo
+  a owner/admin/manager; emissão/revogação de continuidade a owner/admin/
+  manager/lawyer/sales, ambas com alcance por registro — todas com
+  auditoria.
+- **Alcance por registro em `get_lead_attribution`**: escopado pelo
+  vínculo EFETIVO, não pelo lead de origem imutável — não vaza id nem
+  histórico do lead de destino de uma correção entre leads (item 5 da 2ª
+  rodada), e o REGISTRO de um touchpoint migrado é projetado por alcance
+  campo a campo — `lead_id`, `original_opportunity_id` e cada entrada de
+  `history` (item 1 da 3ª rodada). Cada entrada de `history` é escopada
+  pelo vínculo que ela desfez (ou pelo próprio, se `assign`), não por
+  `opportunity_id is null` — uma entrada `unassign` não deixa de ter
+  alcance só por não referenciar oportunidade nenhuma (item 1 da 4ª
+  rodada).
+- **`answers_config`/snapshot corrompidos falham fechados em quatro
+  camadas** — borda, `ingest_form_event`, worker (item 4 da 2ª rodada) e
+  agora também a LEITURA (`listFormEndpoints`, item 2 da 3ª rodada) —
+  nenhuma delas finge que uma configuração corrompida é `{fields: []}`.
+- **`private.assert_answers_config()` (SQL) alinhado ao Zod da
+  aplicação**: `maxLength` precisa ser inteiro, `label` é medido depois
+  de trimado — nas duas direções, o banco nunca é mais permissivo nem
+  mais estrito que a própria borda que ele deveria só reforçar (item 2 da
+  3ª rodada).
+
+## 5. Testes
+
+**Convenção desta seção:** "confirmado localmente" = a suíte rodou nesta
+máquina e o resultado abaixo é o que ela reportou. "Contagem estática" =
+contagem de `it(`/`test(`/asserções no código-fonte, sem execução — esta
+máquina não tem Docker, então `supabase start`/pgTAP/e2e não rodam aqui;
+quem confirma essas contagens é o CI (GitHub Actions), efêmero, que sobe
+Postgres via Docker no runner.
+
+| Suíte | Testes | Confirmado por |
+|---|---|---|
+| `npm test` (Vitest, todos os arquivos) | **408/408 passando** | execução local **e** CI (commit `7ba7d1b`) |
+| — dos quais, arquivos `tests/unit/a11-*.test.ts` | 8 arquivos (novo na 3ª rodada: `a11-form-endpoints-list-error.test.ts`) | execução local |
+| `supabase/tests/database/18_a11_ingestao_atribuicao.test.sql` | **146/146 asserções** (140 depois da 3ª rodada, 127 depois da 2ª, 113 depois da 1ª, 70 antes dela) | **CI**, commit `7ba7d1b` — suíte pgTAP completa: 746/746 |
+| Isolamento entre workspaces | **26/26** | **CI**, commit `7ba7d1b` |
+| `tests/e2e/forms-attribution.spec.ts` | **15 testes** (sem novo teste e2e desde a 3ª rodada — cobertura nova ficou em pgTAP) | **CI**, commit `7ba7d1b` — suíte e2e completa: 76/76 |
+
+Cobertura nova/ampliada pela segunda rodada, por item: hash de
+continuidade recomputado a partir do token REALMENTE devolvido, nunca
+lido do banco (1); formato UUID da `idempotency_key`, estabilidade e
+diferença entre tokens (2); dois advogados/leads revogando referência
+alheia, sem alteração (3); `answers_config`/snapshot corrompidos
+recusados em três camadas, zero eventos processados (4); mesmo contato,
+dois leads, correção do touchpoint para a oportunidade do outro lead, sem
+vazamento de id/histórico (5); continuity_references usada ou revogada
+depois do merge causando `undo_conflict` (6); HTTP×HTTPS, porta
+diferente, `Origin` não autorizado recusado antes de gravar (7); edição
+de endpoint preenchida e persistida depois de recarregar (8).
+
+Cobertura nova da terceira rodada, por item: registro migrado projetado
+campo a campo (`lead_id`, `original_opportunity_id`, `history` filtrado),
+nos dois sentidos — transferência entre leads e desvincular depois dela
+(1); `listFormEndpoints()` lançando em vez de mascarar config corrompida,
+`maxLength` fracionário e `label` não trimado alinhados entre SQL e Zod,
+nas duas direções (2).
+
+Cobertura nova da quarta rodada, por item: motivo IDENTIFICÁVEL num
+`unassign`, reproduzindo o vazamento nos dois sentidos — desvincular no
+lead de origem e depois transferir para o lead de destino (motivo do
+lead de origem não aparece para quem só acessa o destino); transferir e
+depois desvincular de volta (motivo do lead de destino não aparece para
+quem só acessa a origem) — e uma checagem positiva de que o histórico
+LEGÍTIMO de cada lado continua visível, sem nada retirado além do que
+vazava (1). Os 4 pgTAP novos foram confirmados falhando contra o código
+anterior à correção (CI, run 36030034204) antes de passarem contra a
+correção (CI, run 36030604559, commit `7ba7d1b`).
+
+Os e2e e pgTAP das rodadas anteriores seguem cobertos — nenhuma asserção
+foi enfraquecida ou removida, só reescrita quando o próprio mecanismo que
+ela verificava mudou (ex.: o hash da referência de continuidade).
+
+## 6. Validação local nesta sessão
+
+| Verificação | Resultado |
+|---|---|
+| `npm run typecheck` | limpo |
+| `npm run lint` | limpo |
+| `npm test` | **408/408** (um arquivo alheio, `client-detail-error.test.ts`, deu timeout uma vez sob contenção de recursos ao rodar a suíte inteira e passou limpo ao rodar sozinho — não toca nada desta correção) |
+| `npm run build` | passa sem nenhuma variável da A11 — só as rotas de ingestão e jobs respondem `503` sanitizado |
+
+**Docker continua indisponível nesta máquina**, então `supabase start`,
+pgTAP, `db:types:check` (comparação do gerador) e e2e **não foram
+executados localmente nesta sessão**. Nenhuma coluna nova foi adicionada
+nesta rodada — `src/server/types/database.ts` não precisou de edição
+manual; é o CI, com Docker, que confirma isso (`db:types:check`).
+
+## 7. Infraestrutura ainda NÃO ativada
+
+Nada externo foi configurado nesta fase (não estava autorizado):
+
+- Turnstile (site key/secret) — não criado;
+- Upstash Redis — não criado;
+- Inngest (app, event key, signing key) — não criado;
+- cron da Vercel para `/api/cron/outbox` e `/api/cron/retention` — **as
+  funções, os endpoints protegidos e os testes existem**; só o
+  agendamento depende da infraestrutura;
+- variáveis de ambiente em Preview/Produção — não preenchidas.
+
+Enquanto isso, em produção e preview a captação **falha fechada** com
+`503`: não existe captação pública real ativada.
+
+## 8. Migrations (todas novas, forward-only — 10 arquivos)
+
+```
+20260921100000_a11_enum_extensions.sql      activity_source += form_intake
+                                            consent_purpose += formulario_contato
+20260921100100_a11_schema.sql               8 tabelas + tipos + activities.source_webhook_event_id + continuity_references.updated_at
+20260921100200_a11_rls.sql                  RLS habilitada e forçada, deny-all
+20260921100300_a11_private_functions.sql    atribuição (ponta vigente, elegibilidade)
+20260921100400_a11_config_functions.sql     CRUD de endpoint (owner/admin) + validação de answers_config (maxLength inteiro, label trimado)
+20260921100500_a11_ingestion_functions.sql  ingestão (com assert_answers_config no snapshot), outbox, worker
+20260921100600_a11_attribution_functions.sql correção de vínculo (por vínculo efetivo, projetado por alcance) + emissão/revogação de continuidade (hash de texto, alcance por registro)
+20260921100700_a11_retention_functions.sql  retenção e alertas
+20260921100800_a11_merge_integration.sql    merge/undo estendidos, continuity_references com updated_at
+20260921100900_a11_revoke_default_execute.sql revoke explícito de anon/authenticated
+```
+
+Nenhuma migration aplicada **em banco hospedado** foi editada.
+`supabase/migrations/20260917110000` (A10) continua intocada.
+
+## 9. Pendências e limitações honestas (atualizado)
+
+- **Emissão de link de continuidade tem UI mínima** (botão no Perfil 360
+  que mostra o token uma vez) — não há reenvio por e-mail automático nem
+  listagem de referências emitidas/revogadas por lead; isso ficaria para
+  uma fase de UX dedicada, se o produto precisar.
+- **Retenção de payload cifrado**: `occurred_at` também é limpo no
+  vencimento (é dado declarado pelo visitante). `normalized_occurred_at`
+  permanece, porque é o que a atribuição usa e não identifica ninguém.
+- A validação visual em preview real (navegador) das telas de configuração
+  de formulário e do AttributionPanel **foi concluída** nesta rodada — ver
+  §11.
+- **Achado nesta rodada**: `/api/cron/outbox` e `/api/cron/retention`
+  devolvem `401 unauthorized` quando a configuração A11 está incompleta
+  (Turnstile/Upstash/Inngest ausentes), porque `authorized()` engole
+  qualquer `IngestConfigError` de `getIngestConfig()` como "não
+  autorizado" antes de checar o `CRON_SECRET`. Isso diverge do padrão do
+  resto do sistema (`/api/forms/[endpointKey]` devolve `503
+  service_unavailable` no mesmo cenário — falha fechada, mas com
+  diagnóstico correto). Não é um bug de segurança (a rota segue fechada
+  nos dois casos), mas é enganoso: um operador vendo `401` conclui
+  "`CRON_SECRET` errado" quando na verdade falta configurar Turnstile/
+  Upstash/Inngest. Correção sugerida, não aplicada nesta rodada: mover a
+  checagem do `CRON_SECRET` para antes de `getIngestConfig()` completo,
+  ou capturar `IngestConfigError` separadamente e devolver `503`.
+- **Achado nesta rodada (UX)**: no `AttributionPanel`, o botão
+  "Desvincular" de `correct_touchpoint_demand_link` falha silenciosamente
+  quando o dropdown "Vincular a" está com seu valor padrão (a oportunidade
+  atualmente vinculada) — a RPC recusa `unassign` com `opportunity_id`
+  não nulo (`opportunity_not_allowed_on_unassign`), e a mensagem de erro
+  só aparece se o usuário não navegar/recarregar antes de notar. Funciona
+  corretamente assim que o dropdown é trocado para "Não atribuído" antes
+  de clicar "Desvincular" — mas o valor padrão do próprio dropdown induz
+  o erro. Corrigível na UI: ignorar o valor do dropdown quando
+  `action=unassign`, ou desabilitar/ocultar o dropdown nesse caso.
+
+## 10. Validação pós-migration em banco hospedado (`praxis-crm-dev`)
+
+As 10 migrations listadas em §8 foram aplicadas com `supabase db push
+--linked` sem erro; todas aparecem como `remote OK` em `supabase migration
+list --linked`. Validação feita por impersonação de papel
+(`set local role authenticated` + `request.jwt.claims`) contra o banco
+real, com registros fictícios dedicados no workspace de QA existente
+("Escritório QA Praxis", `c62151fe-7adb-4a02-9001-8674e8209181`), sempre
+confirmando persistência por **leitura em invocação separada** da escrita
+— nunca só visibilidade transacional.
+
+**Schema e permissões:**
+- 8 tabelas novas com RLS habilitada **e forçada**; zero GRANT de tabela
+  para `anon`/`authenticated` (tudo via RPC).
+- 12 funções esperadas existem; todas `SECURITY DEFINER` exceto
+  `private.assert_answers_config` (helper de validação pura, correto por
+  design).
+- `anon` sem EXECUTE em nenhuma função sensível; `ingest_form_event`,
+  `process_form_event`, `resolve_form_endpoint`, `mark_outbox_published`,
+  `mark_outbox_failed`, `purge_expired_webhook_events` corretamente **não**
+  concedidas a `authenticated` (só `service_role`).
+- Enums estendidos como esperado (`activity_source += form_intake`,
+  `consent_purpose += formulario_contato`, `touchpoint_link_action` novo).
+
+**Funcional, com usuários reais do workspace de QA:**
+- `create_form_endpoint`/`update_form_endpoint`: funcionam, incluindo
+  persistência de campo extra numa edição; `insufficient_permission`
+  corretamente devolvido para papel `lawyer`.
+- `get_lead_attribution`/`correct_touchpoint_demand_link`: sequência de
+  touchpoints, histórico e atribuição corretos; `unassign` refletido em
+  leitura separada com `effective_opportunity_id` tornando-se `null`.
+- Atividades (A6, não alterada estruturalmente pela A11): `create_activity`
+  e `complete_activity` seguem funcionando, `lock_version` incrementando.
+- **Mesclar/desfazer contatos**: `merge_contacts` reparenta corretamente um
+  touchpoint do contato perdedor para o vencedor (confirmado por leitura
+  separada); `unmerge_contact` reverte tudo — `merged_into_contact_id`
+  volta a `null` e o touchpoint volta ao contato original.
+- **Ingestão (`ingest_form_event`/`process_form_event`, como
+  `service_role`)**: reenvio com mesmo `source_event_id` e mesmo
+  `content_hash` não duplica evento nem outbox (`created: false`, mesmo
+  `webhook_event_id`); mesmo `source_event_id` com `content_hash`
+  diferente é recusado com `idempotency_payload_conflict`;
+  `process_form_event` cria contato → lead → oportunidade → touchpoint →
+  atividade numa só chamada; reprocessar o mesmo evento devolve
+  `already_processed: true` com os mesmos IDs, sem duplicar nada.
+
+**Não coberto nesta rodada:** validação visual via navegador (feita na
+rodada seguinte, §11) e configuração dos serviços externos (Turnstile,
+Upstash, Inngest — continuam pendentes, §7).
+
+## 11. Validação visual em navegador (rodada seguinte)
+
+Feita com Playwright contra o deployment de preview real
+(`praxis-au1cxrwsu-johllls-projects.vercel.app`, protegido por Vercel
+SSO — acesso via `x-vercel-protection-bypass` + `x-vercel-set-bypass-cookie`,
+secret de automação do próprio projeto). Login com a conta `owner` de
+`praxis-demo-a10.txt` (`demo-a10.owner@praxis.test`); as credenciais de
+`praxisqa1`/`praxisqa2` (workspace "Escritório QA Praxis", usado nos
+testes SQL de §10) continuam sem senha registrada em arquivo local —
+não foram necessárias nesta rodada.
+
+**Workspace dedicado criado pelo fluxo normal do app**: "QA A11
+Validacao Visual" (`9c912c4e-0ebc-4c6e-a148-9e56a091781c`), via
+`/onboarding` — nota: o link "Criar novo workspace" do menu do sidebar
+aponta para `/onboarding`, que só é acessível a quem NÃO tem workspace
+ativo (`src/app/onboarding/page.tsx` redireciona quem já tem um); para
+um usuário que já é membro de outro workspace, o link está
+funcionalmente quebrado. Contornado limpando o cookie
+`praxis_active_workspace` antes de navegar — nenhum outro workspace,
+registro ou senha foi alterado.
+
+**Método de cada verificação, explicitado conforme pedido:**
+
+| O quê | Como |
+|---|---|
+| Criar/editar endpoint de formulário, preservando campo extra | **Navegador** (Playwright) — formulário criado com campo `telefone_alternativo`, editado adicionando `melhor_horario`; ambos confirmados presentes após `reload()` real da página |
+| Domínio permitido do CORS | **Navegador** — preenchido com o hostname estável do branch (ver §12); não testado o preflight HTTP real (isso exige Turnstile configurado, ver achado sobre `401`) |
+| Acesso recusado por papel (owner-only) | **Navegador** — `demo-a10.lawyer` autenticado no workspace de QA, `GET /configuracoes/formularios` devolve `404` (não `403`, conforme ADR de alcance) |
+| AttributionPanel — leitura | **Navegador** — dados reais criados via **SQL/RPC direto** (`ingest_form_event`+`process_form_event`, não passou pela rota HTTP pública nem pelo Inngest), depois visualizados na aba "Origem" do Perfil 360 |
+| AttributionPanel — correção de vínculo (unassign) | **Navegador**, ação de UI real (Server Action → RPC `correct_touchpoint_demand_link`); confirmado por **SQL** (leitura separada em `touchpoint_demand_links`) e por **novo carregamento da página** |
+| AttributionPanel — acesso por papel | **Navegador** — `demo-a10.lawyer` vê a aba "Origem" e os dados (leitura permitida), mas os botões "Corrigir associação"/"Gerar link" não aparecem (ação restrita a owner/admin/manager) |
+| Reconciliação de outbox (falha → preservação → restauração → republicação → processamento único) | **SQL/RPC direto** (`claim_outbox_batch`, `mark_outbox_failed`, `mark_outbox_published`, `process_form_event`) — **não** foi feito via a rota HTTP `/api/cron/outbox` nem via Inngest real (ver achado do `401` abaixo) |
+
+**Explicitamente NÃO testado nesta rodada** (ficaria sendo prova de algo que não foi exercitado): Turnstile, CORS preflight real, rate limit, honeypot, publicação real no Inngest, disparo automático por agendador. Essas camadas vivem na rota HTTP pública e nos serviços externos, nenhum dos quais está configurado ainda.
+
+## 12. Infraestrutura externa — preparação para execução
+
+**URLs estáveis definidas** (o hostname por-deploy muda a cada push; o
+alias de branch não):
+
+- Formulário de QA: `https://praxis-crm-git-feat-a11-forms-attribution-johllls-projects.vercel.app/qa/formulario-a11` — página nova em `src/app/qa/formulario-a11/`, fora da landing da Vizentini, só para exercitar o contrato público (réplica do exemplo em `docs/decisoes/a11-exemplo-integracao.md`) contra este preview.
+- Callback do Inngest: `https://praxis-crm-git-feat-a11-forms-attribution-johllls-projects.vercel.app/api/inngest`
+- Domínio a declarar no Turnstile e em "Domínios permitidos" do endpoint: `praxis-crm-git-feat-a11-forms-attribution-johllls-projects.vercel.app`
+
+**Vercel SSO Protection e automação**: este projeto tem `ssoProtection.deploymentType = "all_except_custom_domains"` — protege todo deployment em `*.vercel.app` (preview e produção sem domínio próprio), mas **não** protege domínios customizados. Ou seja, em produção real com domínio da Vizentini, isso não é um problema; só afeta os testes contra `*.vercel.app` de agora. Resolvido com **Protection Bypass for Automation** (recurso nativo da Vercel): secret de automação (`VERCEL_AUTOMATION_BYPASS_SECRET`, já existia neste projeto) usado via header/query `x-vercel-protection-bypass`, com `x-vercel-set-bypass-cookie: true` para navegação subsequente sem repetir o parâmetro. O Inngest e o workflow do GitHub Actions (§13) usam essa mesma query string na URL configurada.
+
+**Segredos próprios da A11**: gerados e configurados no ambiente Preview (branch `feat/a11-forms-attribution`) — `A11_IP_HMAC_KEY`, `A11_PAYLOAD_ACTIVE_KEY_VERSION`+`A11_PAYLOAD_KEY_VERSIONS`, `CRON_SECRET`, e `SUPABASE_SECRET_KEY` (que estava vazia mesmo localmente — puxada da chave `service_role` real do projeto via `supabase projects api-keys --reveal`). Confirmados salvos corretamente por trigger de redeploy + achado do `401` explicado abaixo (que provou que o `CRON_SECRET` está sendo lido — só falta o resto da config para a rota responder 200).
+
+**Achado ao configurar via `vercel env add | stdin` num pipe do Git Bash**: os primeiros 5 valores gravados vieram truncados (não é possível confirmar o tamanho de uma env var "Sensitive" via `env pull`, que sempre mascara — só foi possível perceber pelo teste HTTP real dando `401`). Corrigido regravando com `< arquivo` em vez de pipe. **Se for configurar segredos futuros via CLI, prefira sempre redirecionamento de arquivo a pipe.**
+
+### Turnstile, Upstash, Inngest — inventário (sem contratar nada nesta rodada)
+
+| Serviço | Env var no praxis-crm | Custo/limite confirmado (fonte oficial) | Quem faz |
+|---|---|---|---|
+| Cloudflare Turnstile | `TURNSTILE_SECRET_KEY` (server); a site key pública vai no HTML da página de QA/landing, não em env var do servidor | Gratuito, sem cap de volume publicado no Standard; 20 widgets/conta, 10 hostnames/widget ([blog.cloudflare.com/turnstile-ga](https://blog.cloudflare.com/turnstile-ga/)) | Você cria a conta/widget (login); eu configuro a env var depois |
+| Upstash Redis | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Tier gratuito permanente: 256 MB, 500k comandos/mês, 10 GB banda/mês ([upstash.com/pricing/redis](https://upstash.com/pricing/redis)) | Você cria a conta/database; eu configuro as env vars depois |
+| Inngest | `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY` | Hobby gratuito: 50k execuções/mês, 5 steps concorrentes, 3 usuários, 7 dias de trace ([inngest.com/pricing](https://www.inngest.com/pricing)) | Você cria a conta/app; eu configuro as env vars depois |
+
+Prompts prontos para Claude Chrome executar essas três criações (sem devolver secret nenhum no chat) estão no fechamento da rodada, fora deste arquivo.
+
+## 13. Plano de recuperação — corrigido
+
+**Correção sobre a descrição anterior**: o reconciliador (`claim_outbox_batch`, chamado por `/api/cron/outbox`) **republica** o evento pendente/travado — ele nunca processa o efeito comercial. Quem processa é sempre `process_form_event`, chamado pelo worker (Inngest ou, em teste, o adaptador inline). Isso já estava correto no código; a imprecisão estava só na forma como uma rodada anterior descreveu o teste.
+
+**Teste executado nesta rodada** (SQL/RPC direto, simulando cada etapa do ciclo real — nenhum caminho de processamento alternativo foi criado):
+
+1. `ingest_form_event` cria `webhook_events` (status `received`) + `outbox` (state `pending`).
+2. `claim_outbox_batch` reivindica (state `publishing`, `attempts: 1`); `mark_outbox_failed(..., 'inngest_unavailable', 0)` simula a publicação real falhando — state vira `failed`.
+3. **Confirmado por leitura separada**: `webhook_events.status` continua `received` (evento preservado, nada perdido); `outbox.state = 'failed'`, `attempts: 1`, `last_error_code: 'inngest_unavailable'`.
+4. "Serviço restaurado": `claim_outbox_batch` reivindica de novo — **republicação confirmada** (mesmo `webhook_event_id`/`outbox_id`, `attempts: 2`).
+5. `mark_outbox_published` + `process_form_event` (simula o worker recebendo a republicação) — processa pela primeira vez: cria contato → lead → oportunidade → touchpoint → atividade.
+6. `process_form_event` chamado de novo (simula reconciliador reivindicando por engano após já processado) — devolve `already_processed: true`, mesmos IDs, **nenhuma duplicação**; `claim_outbox_batch` chamado mais uma vez não devolve mais o evento (já fora do critério de elegibilidade).
+
+**Continuar funcionando com o Inngest indisponível**: por desenho — o outbox no Postgres é a fonte da verdade, não o Inngest; o reconciliador só depende do banco.
+
+### Testar execução automática antes do merge — limitação real encontrada
+
+GitHub Actions **não avalia workflows fora do branch padrão de jeito nenhum** — nem `schedule:` nem disparo manual via `workflow_dispatch` funcionam a partir de um branch de feature. Confirmado ao tentar `gh workflow run a11-reconcile.yml --ref feat/a11-forms-attribution`: `HTTP 404: workflow a11-reconcile.yml not found on the default branch`. Isso é mais restritivo do que só "schedule só roda do branch padrão" — nenhuma execução do workflow é possível antes do merge para `main`.
+
+**O que já está pronto, pendente só do merge:**
+- `.github/workflows/a11-reconcile.yml` — chama `/api/cron/outbox` e `/api/cron/retention` via HTTP autenticado (`CRON_SECRET` + bypass da proteção SSO da Vercel), a cada 10 minutos por `schedule:`, e sob demanda por `workflow_dispatch`.
+- Secrets do repositório já configurados: `A11_CRON_SECRET`, `VERCEL_AUTOMATION_BYPASS_SECRET`.
+- **Passa a disparar sozinho automaticamente assim que este arquivo existir em `main`** — ou seja, requer o merge da A11 (ou, no mínimo, deste arquivo isolado) para ser validado de ponta a ponta como agendamento real.
+
+## 14. Configuração externa concluída e validação HTTP real (rodada final)
+
+**Turnstile, Upstash e Inngest configurados** (via Claude Chrome, contas
+já existentes reaproveitadas — nenhuma conta nova criada; planos
+gratuitos em todos os três). Variáveis confirmadas presentes no
+ambiente Preview, escopadas ao branch `feat/a11-forms-attribution`:
+`TURNSTILE_SECRET_KEY`, `NEXT_PUBLIC_QA_TURNSTILE_SITE_KEY`,
+`UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`,
+`INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY` — nenhuma em Production.
+Inngest sincronizado com sucesso no branch environment
+`feat/a11-forms-attribution`; função `a11-process-form-submission`
+("A11 — processar submissão de formulário") ativa.
+
+**Duas correções de código nesta rodada, ambas fora da lógica de
+negócio da A11:**
+- `src/proxy.ts`: a página de QA (`/qa/formulario-a11`) não estava na
+  allowlist `PUBLIC_PATHS` — um visitante anônimo era desviado para
+  `/entrar` em vez de ver o formulário. Adicionada.
+- `src/proxy.ts`: a CSP (`script-src`/`frame-src`) bloqueava o iframe do
+  widget Turnstile (`challenges.cloudflare.com`) — liberado, com
+  comentário explícito de que essa exceção existe só por causa da
+  página de QA e deve ser removida junto dela.
+
+**Validado por HTTP real (chamada autenticada direta, não é prova de
+agendamento automático):**
+- `POST /api/cron/outbox` com `CRON_SECRET` real → `200
+  {"claimed":0,"published":0,"failed":0}` (nada pendente no momento;
+  confirma que a config completa do schema A11 passa a validar e que o
+  `CRON_SECRET` está correto — antes de Turnstile/Upstash/Inngest
+  existirem, essa mesma chamada devolvia `401`, ver achado §9).
+- Widget Turnstile real carrega e responde no navegador, com o
+  hostname/site key corretos — confirmado visualmente duas vezes
+  (antes e depois da restauração da secret key, ver incidente abaixo).
+- **Tentativa de envio automatizado (Playwright) foi corretamente
+  recusada pelo Turnstile real** ("Falha na verificação") — isso é o
+  comportamento CORRETO esperado (Turnstile existe para bloquear
+  automação), não um defeito.
+- Para exercitar o restante do pipeline (CORS real, rate limit,
+  publicação no Inngest) sem um humano completando o captcha, troquei
+  **temporariamente** `TURNSTILE_SECRET_KEY`/`NEXT_PUBLIC_QA_TURNSTILE_SITE_KEY`
+  pelas chaves de teste **oficiais e públicas** da Cloudflare
+  (`1x0000...AA`/`1x0000...AA`, documentadas para automação de QA). O
+  desafio passou, mas a submissão foi recusada com `403` — as chaves de
+  teste da Cloudflare devolvem um `hostname`/`action` fixos que não
+  batem com a configuração real do endpoint, então `hostname_mismatch`/
+  `action_mismatch` dispara por desenho do próprio código (`src/server/ingest/turnstile.ts`).
+  **Não foi possível, portanto, exercitar CORS real/rate limit/
+  publicação no Inngest de ponta a ponta nesta rodada** — isso exigiria
+  um humano completando o captcha real, fora do alcance de automação.
+
+**Incidente durante o teste com chave de teste (registrado
+integralmente, por instrução do usuário):**
+- Ao remover `TURNSTILE_SECRET_KEY` para trocar pela chave de teste,
+  não havia cópia do valor real salva em nenhum lugar acessível a mim
+  (foi inserida diretamente na Vercel pelo Claude Chrome, sem nunca
+  passar pelo chat) — a remoção deixou a variável ausente por um
+  intervalo.
+- **Nenhuma captação pública estava ativa nesse intervalo**: a rota
+  pública de ingestão só é usada pela página de QA deste branch
+  (`/qa/formulario-a11`), não há tráfego real de visitantes na landing
+  da Vizentini apontando para este preview.
+- A chave original foi restaurada pelo usuário diretamente na Vercel
+  (site key e secret key), confirmada por mim via `vercel env ls`
+  (escopo correto: Preview + branch `feat/a11-forms-attribution`, ausente
+  de Production) antes de qualquer novo teste.
+- Ao restaurar, o usuário também corrigiu um escopo que havia ficado
+  incorreto anteriormente incluindo Production — confirmado removido;
+  a variável hoje existe só em Preview.
+- **Lição registrada**: qualquer teste futuro com chave de teste deve
+  rodar em ambiente local/processo isolado, nunca substituindo a
+  configuração real do Preview compartilhado.
+
+**Alternativa concreta para provar execução automática HOJE, sem merge e sem contratar nada**: usar `ScheduleWakeup` (mecanismo do próprio Claude Code) para, dentro de uma sessão, chamar o endpoint em intervalos por um período limitado — prova o disparo periódico não supervisionado turno a turno, mas **só resulta em sucesso real (200) depois que Turnstile/Upstash/Inngest estiverem configurados** (sem eles, a rota responde `401` pelo motivo descrito na seção de achados — `getIngestConfig()` falha antes mesmo de checar o `CRON_SECRET`). Não executado nesta rodada — decisão de deixar documentado e retomar depois da configuração externa.
+
+## 15. Validação cross-origin real (harness local) e observabilidade sanitizada
+
+**Método:** harness estático servido em `http://localhost` (fora do repositório, nunca commitado, apagado ao final), com o site key REAL do Turnstile (`0x4AAAAAAFD6Yb_-gD_u4GIt`) e desafio resolvido por um humano — nunca automatizado. O bypass da Vercel Authentication (`VERCEL_AUTOMATION_BYPASS_SECRET`) foi colado pelo usuário diretamente num arquivo local irmão do `index.html`, nunca visto nem impresso por mim; enviado só como query parameter, nunca como header (evita expandir os headers exigidos no preflight).
+
+**Cenário base (evento novo) — PASSOU, comprovado por leitura direta no banco (SQL read-only via `supabase db query --linked`, nunca escrita):**
+- `webhook_events`: 1 registro, `status: processed`.
+- `outbox`: 1 registro, `state: published`, `attempts: 0`.
+- `contacts` / `leads` / `opportunities` / `activities` / `touchpoints` / `contact_consents`: exatamente 1 registro cada, cadeia completa criada uma única vez.
+- Execução do Inngest não observada diretamente (sem token do dashboard à mão), mas comprovada por inferência válida: o outbox só republica, nunca cria contato/lead/oportunidade — essas linhas só existem porque o worker do Inngest rodou `process_form_event`.
+
+**Cenário 1 (reenvio idempotente, mesmo `sourceEventId`, novo token Turnstile):**
+- 1ª tentativa: `400 {"error":"invalid_submission"}`. Investigado a fundo (ver achado abaixo) — **sem causa confirmada**.
+- 2ª tentativa (autorizada explicitamente, única, instrumentada): `202 {"status":"received"}`, mesmo `sourceEventId`. Todas as contagens de negócio continuaram em 1 — idempotência real comprovada.
+
+**Achado sobre o `400` isolado — investigado, não corrigido por hipótese:**
+Reproduzi o payload exato (mesma identidade, mesmos campos) contra os schemas Zod reais do produto e a config real do endpoint (lida no banco): validou limpo. Repeti a tentativa real, instrumentada (harness passou a capturar, antes do fetch, o corpo sanitizado e o estado do honeypot, nunca o bypass nem o token): passou limpo, honeypot confirmado vazio no DOM e no corpo enviado. **Não foi possível reproduzir o `400` nem atribuí-lo a uma causa determinística** (não é honeypot, não é schema, não é config do endpoint). A hipótese mais provável — falha transitória na resolução do IP confiável de borda (`x-vercel-forwarded-for`) — permanece **não confirmada**, e nenhuma correção comportamental foi feita com base nela.
+
+**Descoberta separada, não relacionada ao `400`:** `corsHeader: null` no harness NÃO é sinal de falha de CORS. Por especificação, `Access-Control-Allow-Origin` não está entre os headers que o navegador expõe via `Headers.get()` a menos que o servidor declare `Access-Control-Expose-Headers` (`src/server/ingest/cors.ts` não declara). O CORS real já estava comprovado pelo simples fato de o corpo ter sido lido pelo JavaScript — se a origem não fosse autorizada, o `fetch()` teria rejeitado antes disso. O harness foi corrigido para não apresentar mais esse campo como possível problema.
+
+**Melhoria de observabilidade entregue (não é correção do `400`, é capacidade de diagnosticar uma recorrência):**
+Todos os caminhos que a borda pública devolve como `invalid_submission` (contrato §1: recusa sempre genérica, nunca distinguível de fora) agora registram, em `src/server/ingest/observability.ts`, um log estruturado sanitizado (`console.warn(JSON.stringify(...))`, mesmo padrão já usado em `src/app/api/cron/retention/route.ts`):
+- `json_parse_error`, `schema_validation_failed` (com `code`/`path` de cada issue do Zod, nunca `message` nem valor), `honeypot_filled`, `contract_version_mismatch` (com os números esperado/recebido), `answers_schema_validation_failed` (mesmo tratamento de issues), `client_ip_unresolved` (com `missing_trusted_header`/`invalid_ip`, nunca o IP).
+- Nunca payload, nome, e-mail, telefone, resposta livre, IP bruto, token do Turnstile, bypass ou qualquer segredo.
+- A resposta pública **não mudou**: continua exatamente `400 {"error":"invalid_submission"}` em todos os casos, sem diferenciação externa.
+- Testes novos em `tests/unit/a11-ingest-observability.test.ts` (9 testes, escritos ANTES da implementação, todos falhavam sem ela): classificação correta de cada motivo, ausência de dados sensíveis nos logs, e confirmação de que a resposta pública permanece genérica.
+
+## 16. Cenário 2 (continuidade) — achado real e correção (used_count/last_used_at)
+
+**Execução real do Cenário 2** (mesmo harness, token de continuidade emitido pela UI oficial — `issueContinuityReferenceAction`/AttributionPanel, acionado via Playwright autenticado como `demo-a10.owner`, nunca por insert direto): `202`, mesmo contato reaproveitado, **mas** `leads`/`opportunities`/`activities` foram de 1 para 2 (nova demanda aberta) — resultado correto por desenho, não defeito: o endpoint de QA usado tem `capture_mode: 'new_intake'`, e `process_form_event` só reaproveita lead/oportunidade quando `capture_mode = 'continuity'` (contrato §8: "captação nova explícita SEMPRE abre demanda nova, mesmo com a pessoa identificada").
+
+**Defeito real encontrado e corrigido:** apesar do contato ter sido corretamente reaproveitado pelo token (prova de que o token influenciou a identidade), `continuity_references.used_count` ficou em `0` e `last_used_at` em `null` — a bookkeeping de uso só rodava dentro do MESMO bloco condicionado a `capture_mode = 'continuity'`, nunca refletindo o uso real em endpoints `new_intake`. Confirmado sem ambiguidade contra `docs/decisoes/a11-ingestao-atribuicao.md` (linha ~754: "`used_count`/`last_used_at` mudam a cada uso", sem ressalva de `capture_mode`).
+
+**Corrigido com TDD, em migration nova** (`20260926180000_a11_continuity_used_count_fix.sql`, forward-only — `20260921100500_a11_ingestion_functions.sql` já aplicada em `praxis-crm-dev` não foi editada):
+- Teste escrito primeiro em `supabase/tests/database/18_a11_ingestao_atribuicao.test.sql` (seção 8c, 13 novas asserções, plano 146→159), confirmado **vermelho** via CI (4 falhas exatas: uso em `new_intake` não incrementava, reprocessamento idempotente, dois eventos distintos incrementando duas vezes) antes de qualquer correção.
+- Cobre também: token expirado/revogado/finalidade errada nunca incrementam (comportamento já correto, preservado); falha transacional posterior (`consent.decision` fora do enum) desfaz o incremento junto com o resto — sem incremento parcial.
+- Correção: o `update continuity_references set used_count=…, last_used_at=…` saiu do bloco condicionado por `capture_mode` e passou a rodar sempre que `v_continuity.id is not null` — a mesma condição já usada para reaproveitar o contato. O reaproveitamento de lead/oportunidade continua exatamente condicionado a `capture_mode = 'continuity'`, sem nenhuma mudança de comportamento comercial.
+- Confirmado **verde** via CI depois da correção: 159/159 (run `36261010946`). Suíte JS completa (417 testes) também verde.
+- **Duas colisões de fixture do próprio teste** (não do defeito) precisaram de correção no meio do caminho: `token_hash` é único globalmente e dois dos bytes escolhidos colidiam com fixtures já existentes mais abaixo no arquivo (seções 8b/12); um `source_event_id` também colidia com a seção 17 (outbox). Ambas corrigidas trocando os valores, sem tocar na lógica do teste.
+- **Aplicada em `praxis-crm-dev` (banco hospedado)**, com autorização explícita, depois de dry-run manual (diff entre a definição hospedada e a nova, por leitura via `supabase db query --linked`, já que `supabase db diff --linked`/`supabase test db --local` continuam indisponíveis nesta máquina sem Docker): `supabase db push --linked` aplicou só esta migration (`"seeds":[],"roles":[]`, sem seed nem escrita adicional); `supabase migration list --linked` confirma `remote` preenchido, zero migrations pendentes. Definição hospedada de `process_form_event` conferida por leitura pós-aplicação: o incremento de `used_count`/`last_used_at` roda incondicionalmente após `v_continuity.id is not null`, fora do gate `capture_mode = 'continuity'` — o reaproveitamento de lead/oportunidade permanece exatamente como antes. **Sem backfill**, por instrução explícita: a referência de continuidade usada no Cenário 2 anterior (`5744c1ac-b43b-4d74-8bc2-eabb6d584efc`) permanece com `used_count=0`/`last_used_at=null`, preservada como evidência histórica do comportamento pré-correção.
+
+## 16b. Cenário 2 "de verdade" — defeito de UI (seletor de oportunidade) e achado de configuração de QA
+
+**Defeito real encontrado no `AttributionPanel`:** o botão oficial "Gerar link" (`src/components/leads/attribution-panel.tsx`) só enviava `leadId` ao Server Action `issueContinuityReferenceAction` — embora ele e a RPC `issue_continuity_reference` já aceitassem `opportunityId` opcional (validado no servidor: precisa pertencer ao MESMO lead, senão `opportunity_not_found`). Uma referência emitida sem oportunidade, usada num endpoint `capture_mode: continuity`, reaproveita o LEAD mas deixa `v_opportunity` nula em `process_form_event` — o touchpoint resultante fica "Não atribuído" em vez de vinculado à demanda original.
+
+**Corrigido com TDD** (`tests/unit/a11-continuity-opportunity-selector.test.tsx`, 8 testes, escritos e confirmados falhando — 6/8 — antes da correção):
+- Seletor de oportunidade adicionado ao fluxo de emissão: pré-seleciona quando há exatamente uma oportunidade elegível (mas a escolha continua visível e alterável), não pré-seleciona nada quando há várias (escolha consciente exigida), rotula "Sem oportunidade vinculada" como opção explícita — nunca resultado implícito de esquecer de escolher.
+- pgTAP novo (seção 14b, `supabase/tests/database/18_a11_ingestao_atribuicao.test.sql`, plano 159→161): confirma que o servidor já recusava (e continua recusando) `opportunityId` de outro lead com `opportunity_not_found`, sem gravar nada.
+- CI verde (commit `e5713f4`, run `36265603398`): typecheck, lint, 425 unitários, 161 pgTAP, isolamento, build, 76 e2e.
+- Referência somente-lead gerada durante a investigação (`a232dd62-f4bc-47cc-bb3b-cebbf811493a`) foi **revogada pela RPC oficial** `revoke_continuity_reference` (impersonação do mesmo owner via SQL — mesmo mecanismo usado em toda a validação funcional de §10/§14, nunca update/delete direto), nunca usada (`used_count=0` no momento da revogação), confirmado por leitura separada (`revoked_at` preenchido). Token nunca revelado.
+
+**Achado de configuração de QA (não é defeito de produto):** a primeira tentativa real de Cenário 2 no endpoint dedicado `QA A11 Continuidade` (`capture_mode: continuity`, criado pela UI oficial) devolveu `400 invalid_submission`. A observabilidade sanitizada (§15) identificou a causa exata sem ambiguidade: log `a11.ingest.invalid_submission`, `reason: "answers_schema_validation_failed"`, `issues: [{"code":"unrecognized_keys","path":""}]`, no `form_endpoint_id` do endpoint de continuidade. Causa: ao criar esse endpoint pela interface, o `answers_config` ficou `{"fields": []}` — os campos `telefone_alternativo`/`melhor_horario` (que o harness sempre envia, herdados do formulário HTML único) nunca foram adicionados. **A validação fechada do produto funcionou exatamente como projetado** (contrato §6: campo não configurado é recusado, nunca aceito silenciosamente); a causa foi erro de configuração do teste, não do código. Confirmado por leitura, sem nenhuma escrita: `webhook_events` com esse `source_event_id` = 0; contagens do workspace inalteradas; referência de continuidade (`fa4185aa-ba35-46e8-a105-a0814fa6cb30`) preservada intocada (`used_count=0`, `last_used_at=null`, `revoked_at=null`).
+
+**Corrigido pela interface oficial** ("Editar" → "Adicionar campo", sem tocar `capture_mode`/pipeline/etapa/Turnstile/domínios/banco diretamente): os dois campos foram replicados EXATAMENTE do endpoint `QA A11 Formulario Visual` (chave, rótulo, tipo, obrigatoriedade, ordem). Confirmado por leitura separada: `answers_config` dos dois endpoints é **igual por comparação JSONB** (`equivalente_ao_original: true`); `capture_mode` continua `continuity`; pipeline/etapa/Turnstile/hostnames/status inalterados.
+
+## 16c. Cenário 2 "de verdade" — execução aprovada, ponta a ponta
+
+**Submissão real** (captcha resolvido por humano, endpoint corrigido): HTTP público **202**, `sourceEventId` enviado pelo harness `57c174ef-f339-46e2-966d-3c504e2b8605`. Confirmado por leitura: **`2fac02d3-f558-4900-841f-ee59adc84c80` é o ID INTERNO da linha de `webhook_events`** correspondente (`source_event_id = 57c174ef-...`), `status: processed`, `received_at`/`processed_at` no mesmo minuto.
+
+**Comparação antes/depois** (workspace QA A11 Validacao Visual):
+
+| Tabela | Antes | Depois |
+|---|---|---|
+| webhook_events | 4 | 5 |
+| outbox | 4 | 5 (nova: `state: published`, `attempts: 0`) |
+| contacts | 3 | 3 |
+| leads | 4 | 4 |
+| opportunities | 4 | 4 |
+| activities | 4 | 4 |
+| touchpoints | 4 | 5 |
+| contact_consents | 2 | 3 |
+
+**Reaproveitamento confirmado**: `result_contact_id`/`result_lead_id`/`result_opportunity_id` do evento processado são exatamente o contato, lead e **oportunidade originais** (`edbfa477-...`/`a26cdbd4-...`/`ae9184c1-...`) — a correção do seletor de oportunidade funcionou ponta a ponta. `result_activity_id: null` — nenhuma atividade nova, como esperado (continuidade nunca cria atividade).
+
+**Novo touchpoint** (`d0d60713-0c51-4936-8225-5cfa6107b5cb`) na **posição 3** — motivo: já existiam dois touchpoints anteriores no mesmo contato (posição 1, Cenário Base; posição 2, teste `new_intake` da rodada anterior), confirmado por leitura da sequência completa. Vinculado à oportunidade original `ae9184c1-...`.
+
+**Referência `fa4185aa-ba35-46e8-a105-a0814fa6cb30`**: `used_count` 0→1, `last_used_at` preenchido (`2026-09-26 20:50:53.475759+00`), `revoked_at` continua `null`.
+
+**Execução real do Inngest confirmada por log** (não inferida): deployment `dpl_A5sFEdPiNEFrKovjjoeoyMDHFZcf`, sequência `OPTIONS /api/forms/... → 204` (20:50:48.408Z) → `POST /api/forms/... → 202` (20:50:51.343Z) → `POST /api/inngest → 206` (20:50:53.047Z), coincidindo com `processed_at` do banco no mesmo segundo.
+
+**`continuity-token.local.txt` apagado** após a validação; confirmado ausente do diretório do harness (fora do repositório) e nenhum vestígio de token/segredo em `git status`/`git log -p` do repositório real.
+
+## 16d. Rate limit real (Upstash) — bloqueio comprovado e defeito de contrato corrigido (Retry-After)
+
+**Inspeção do código antes de agir** (`src/server/ingest/rate-limit.ts`, `src/server/ingest/handler.ts`): duas janelas deslizantes obrigatórias — **5 requisições/60s por (endpoint, HMAC do IP)** e **120/60s por endpoint**; chave sanitizada `` `${endpointId}:${HMAC-SHA256(IP)}` `` (prefixo `praxis:a11:ip`) e `` `${endpointId}` `` (prefixo `praxis:a11:endpoint`) — o IP bruto nunca é persistido. **Achado de ordem**: o rate limit roda ANTES da verificação real do Turnstile no `handleFormSubmission` — o schema só exige `turnstileToken` não-vazio (não válido), então uma requisição com token sintaticamente válido mas falso atravessa o limitador de verdade sem precisar de captcha humano algum. Isso permitiu um teste 100% automatizado, sem afrouxar nenhuma proteção.
+
+**Endpoint dedicado `QA A11 Rate Limit`** (`1053f02c-1b90-474c-9b67-17c251b3fbd0`, `capture_mode: new_intake`, `answers_config` vazio), criado pela interface oficial, sem tocar os endpoints do Cenário Base/Continuidade.
+
+**Execução real contra o Preview**: 6 requisições sequenciais, mesmo IP/endpoint, token de Turnstile sintaticamente válido mas falso — as 5 primeiras devolveram `403 captcha_failed` (atravessaram o rate limit, falharam depois no Turnstile real); a 6ª devolveu **`429 rate_limited`**. Parei imediatamente na 6ª, sem continuar bombardeando. Confirmado por leitura: nenhuma escrita de negócio em nenhuma das 6 tentativas (contagens do workspace inalteradas nas 8 tabelas; `webhook_events` do endpoint dedicado = 0). Leitura direta do contador/TTL no Upstash não foi possível — `UPSTASH_REDIS_REST_URL`/`TOKEN` vêm mascarados (`[SENSITIVE]`) mesmo listados como "Encrypted" no `vercel env ls`, mesmo comportamento de mascaramento já documentado nesta sessão; não tentei caminho alternativo de extração. O HTTP 429 real, determinístico na 6ª tentativa, já comprova o bloqueio do Upstash de ponta a ponta.
+
+**Defeito de contrato/UX encontrado e corrigido com TDD**: o `429` não incluía `Retry-After` — o cliente não tinha como saber quando tentar de novo. Testes escritos primeiro (`tests/unit/a11-ingest.test.ts`, `tests/unit/a11-cors.test.ts`), confirmados **vermelhos** (2 + 4 falhas exatas) contra o código antigo, antes de qualquer correção:
+- `rate-limit.ts`: `RateLimitOutcome` de falha agora carrega `resetAt` (timestamp real do Upstash, nunca chutado).
+- `handler.ts`: `retryAfterSeconds = max(1, ceil((resetAt - now) / 1000))`, só para `rate_limited` — nenhuma outra recusa recebe o campo.
+- `cors.ts`: nova `failureResponseHeaders()` adiciona `Retry-After` e expõe via `Access-Control-Expose-Headers` só quando a origem já é autorizada; origem não autorizada continua sem nenhum cabeçalho de CORS (recusa intacta). Nenhum `X-RateLimit-*` adicionado.
+- CI verde (commit `beadc49`): typecheck, lint, 433 testes unitários (8 novos), pgTAP/isolamento/build/e2e inalterados.
+
+**Confirmação final, no Preview atualizado** (deployment `dpl_CZzspnSnp9Gbxf52wwjuaRvWX462`, janela anterior expirada naturalmente — ~21 minutos depois, sem apagar o contador manualmente): repeti o mesmo teste no endpoint dedicado, agora **por navegador real** (Playwright, página servida em `http://localhost:8765`, hostname permitido do endpoint — CORS de verdade, não `curl`/Node). 5 tentativas `403`, 6ª `429`, parei imediatamente. **O JavaScript da página leu com sucesso `resposta.headers.get("retry-after")` → `"29"`** — prova definitiva de que `Access-Control-Expose-Headers` funciona de ponta a ponta para origem autorizada (não bastava o servidor enviar o header; o navegador precisa deixar o JS lê-lo, e leu). Confirmado por leitura, de novo: nenhuma tabela de negócio mudou (mesmas contagens da rodada anterior); `eventos_no_endpoint_rate_limit: 0`.
+
+**Item de rate limit encerrado.**
+
+## 16e. Recuperação de outbox — rotação de CRON_SECRET, defeito real encontrado e corrigido (outbox órfã)
+
+**Leitura inicial (antes de criar qualquer coisa)**: `praxis-crm-dev` já tinha **2 outboxes `pending`** pré-existentes (24/09, dois dias antes deste teste), ambas com `webhook_event.status = 'processed'` — evidência preservada do teste anterior de falha→preservação→restauração desta mesma fase. Confirmado por leitura (`payload_sanitized`, nomes de endpoint `QA A11 *`) que eram exclusivamente dados fictícios de QA, sem efeito de negócio real capturado por acidente.
+
+**Rotação do `CRON_SECRET`**: a Vercel confirmou que o valor existente era write-only (não recuperável). Inventário dos consumidores antes de qualquer alteração: código exige `Authorization: Bearer <CRON_SECRET>` exato; a Vercel tinha um único `CRON_SECRET` (`Encrypted`), escopo `Preview`/branch `feat/a11-forms-attribution`; o workflow `a11-reconcile.yml` usa um único secret do GitHub (`A11_CRON_SECRET`) reaproveitável para qualquer `target_url` de `workflow_dispatch` — e seu **default/agendamento aponta para Production**, ambiente que hoje **não tem `CRON_SECRET` configurado**. Ambiguidade real reportada; decisão tomada: rotacionar **somente** o `CRON_SECRET` do Preview na Vercel (32 bytes aleatórios, nunca impresso, salvo só em arquivo local fora do repositório), sem tocar no `A11_CRON_SECRET` do GitHub nem em Production. Redeploy do Preview concluído e verificado (`dpl_J2TMj4NAfkU9oJdbCK3b8dKdhe8x`); chamada sem segredo e com segredo incorreto confirmadas retornando `401` antes de qualquer chamada autenticada.
+
+**Defeito real encontrado ao tentar recuperar as 2 outboxes antigas**: a primeira chamada autenticada a `/api/cron/outbox` devolveu `claimed:0/published:0/failed:0` — não o `2/2/0` esperado. Diagnóstico (sem repetir a chamada, sem alterar nada por hipótese): `claim_outbox_batch` recusa **corretamente** reivindicar outbox cujo `webhook_event.status` já é `processed`/`expired_unprocessed`/`purged` (proteção contra republicação de evento já resolvido). O problema: **nada nunca tirava essas outboxes de `pending`/`failed`/`publishing`** — ficariam presas para sempre, sem serem republicadas e sem serem marcadas como concluídas. `purge_expired_webhook_events` já resolve isso inline para o caso `expired_unprocessed` (na mesma transação em que marca o evento), mas não existia nenhum caminho para o caso, mais comum, de um evento virar `processed` sem que a outbox tenha sido publicada pela rota normal (exatamente o cenário do teste controlado anterior).
+
+**Correção (TDD completo)**:
+- Migrations novas (forward-only; nenhuma migration anterior alterada): `20260926190000_a11_outbox_resolved_state.sql` adiciona o estado terminal `resolved` ao enum `outbox_state` (numa migration própria, por exigência do Postgres de commitar um valor de enum novo antes de usá-lo em comparação); `20260926190100_a11_outbox_resolve_function.sql` adiciona `resolved_reason`/`resolved_at` (com `CHECK` amarrando os dois ao estado `resolved`) e a função `resolve_stale_outbox_batch(p_limit)`, exclusiva do `service_role`.
+- Semântica: `resolved` **nunca** significa "publicado" — nenhuma outbox marcada assim chegou a ser enviada ao Inngest. `resolved_reason` distingue `event_processed`/`event_expired_unprocessed`/`event_purged` (só o status do evento, nunca payload).
+- `/api/cron/outbox` agora chama `resolve_stale_outbox_batch` **antes** de `claim_outbox_batch` e reporta `{ resolved, claimed, published, failed }` — resposta e autenticação existentes preservadas.
+- Concorrência real: `for update of o skip locked` garante que duas execuções concorrentes do reconciliador não resolvem nem "publicam" a mesma outbox órfã duas vezes; provado com pgTAP (sequencial) **e** com duas transações Postgres genuinamente simultâneas via `scripts/a11-outbox-resolve-concurrency-check.mjs` (novo passo no CI, análogo ao dos testes de concorrência de A7/A9).
+- pgTAP (`supabase/tests/database/18_a11_ingestao_atribuicao.test.sql`, `plan(161)` → `plan(178)`, 17 novas asserções): os três status terminais (`processed`, `expired_unprocessed`, `purged`) em `pending`/`failed`/`publishing`-com-lock-expirado convergem numa só passada; controle negativo confirma que um evento ainda elegível **não** é tocado e continua sendo reivindicado normalmente pelo cron; nenhuma das órfãs resolvidas é republicada; isolamento confirmado (`authenticated` recusado com `42501`, exclusiva do `service_role`); retenção (`flag_stuck_webhook_events`) nunca trata um evento já processado (convergido ou não) como travado.
+- CI verde (commit `773b0eb`, formatação de tipo corrigida em `96363c2`): typecheck, lint, 433 testes unitários, pgTAP (178/178), isolamento, os três testes de concorrência real (A7, A9, e o novo de outbox), build, e2e.
+
+**Migration aplicada em `praxis-crm-dev`** (HEAD `835b1b7`, CI verde, Preview `dpl_BHKvaRyZGo9rPeekJwD6siJsMFm4` `Ready`, confirmado por dry-run imediatamente antes: exatamente as duas migrations pendentes, sem seed/backfill/objeto não relacionado): `supabase db push --linked` aplicado uma única vez. Confirmado por leitura: enum `outbox_state` com `resolved` (sortorder 6); colunas `resolved_reason`/`resolved_at` presentes; `resolve_stale_outbox_batch` com `SECURITY DEFINER`, `search_path=""`, `EXECUTE` só para `service_role`; nenhuma tabela/dado alterado fora do efeito estrutural (contagens de negócio idênticas ao baseline).
+
+**Teste 1 — convergência das duas outboxes antigas**: chamada única a `/api/cron/outbox` devolveu exatamente `resolved:2/claimed:0/published:0/failed:0`. Confirmado por leitura: as duas viraram `resolved`/`resolved_reason: event_processed`, `published_at` continua `null` (nunca marcadas falsamente como publicadas), locks limpos, fila sem nenhuma pendência antiga (`0` em pending/failed/publishing), nenhum efeito de negócio novo.
+
+**Teste 2 — bloqueio real de arquitetura, resolvido com fixture temporária de QA**: a primeira tentativa (evento novo com ciphertext fictício, mesmo padrão usado no pgTAP) falhou com `webhook_event.status = failed`/`last_error_code: decrypt_failed` — erro do MEU fixture (pgTAP nunca decifra de verdade; o worker real, sim), não defeito do produto; preservado como está (`webhook_event_id 2e038bb5-...`), nunca reprocessado. Bloqueio real identificado: a chave ativa de cifra do Preview (`A11_PAYLOAD_ACTIVE_KEY_VERSION`/`A11_PAYLOAD_KEY_VERSIONS`) está mascarada (mesma limitação já documentada para Upstash/`CRON_SECRET`), e a rota pública `/api/forms/[endpointKey]` já publica inline em caso de sucesso — nenhuma das duas permite reproduzir "transação concluída, publicação inicial nunca tentada" com um evento novo e decifrável.
+
+Resolvido com uma **fixture temporária de QA** (`/api/cron/qa-create-pending-outbox`, commit `fac824d`, removida em `7f63eb0` — nunca fez parte do produto): só ativa em `VERCEL_ENV=preview` (404 fora dele), autenticada pelo mesmo `CRON_SECRET`, reaproveitando exatamente `encryptPayload`, `submissionSchema`, `businessContent` e a RPC oficial `ingest_form_event` — a única diferença deliberada é nunca chamar o publicador. TDD com 5 testes (401 sem auth, 401 com segredo errado, 404 fora do Preview, cria exatamente 1 evento+outbox sem chamar publicador, payload decifrável pela mesma rotina do worker), vermelho confirmado antes (quebrando a checagem de ambiente) e verde depois; CI verde (commit `fac824d`).
+
+Usada **uma única vez** no Preview: criou `webhook_event_id 116d1748-...`/`outbox_id 946251bd-...`, confirmado por leitura antes do cron (evento `received`, outbox `pending`, ciphertext real de 459 bytes, nenhum efeito de negócio). Chamada única ao cron devolveu exatamente `resolved:0/claimed:1/published:1/failed:0`. Confirmado por leitura: execução real no Inngest (`POST /api/inngest`, log do deployment, timestamp compatível), `webhook_event.status = processed`, outbox `published`, e **exatamente +1** em `contacts`/`leads`/`opportunities`/`activities`/`touchpoints`/`contact_consents` (94/87/78/148/9/5, vindo de 93/86/77/147/8/4) — nenhuma duplicação. Terceira chamada (fila vazia) devolveu exatamente `resolved:0/claimed:0/published:0/failed:0`.
+
+Fixture removida por completo depois do uso (commit `7f63eb0`, CI verde, novo Preview `dpl_6E7aeB317UvuzS3Z9oaLBwfYFKuh` `Ready`): confirmado por HTTP que a rota não resolve mais (`X-Matched-Path: /_not-found`, byte a byte igual a um caminho que nunca existiu, testado em paralelo — o `HTTP 200` do "not-found" é comportamento pré-existente deste app, não uma regressão); busca no repositório confirma nenhum nome/endpoint/código da fixture remanescente, só os dois commits (criar/remover) no histórico. `cron-secret.local.txt` apagado; busca no git confirma nenhum segredo real, só chaves fictícias de teste já documentadas.
+
+**Item de recuperação de outbox encerrado.**
+
+## 17. Pendências para a próxima rodada, nesta ordem
+
+1. **Cenário 2 "de verdade" — CONCLUÍDO E APROVADO** (§16c). `sourceEventId` anterior `a4944261-4ec9-4d7c-885c-d22255fed0eb` (tentativa com 400, achado de configuração) permanece sem `webhook_event` — nunca usado, evidência preservada.
+2. **Rate limit real — CONCLUÍDO E ENCERRADO** (§16d), incluindo o defeito de contrato (`Retry-After`) e a confirmação por navegador real no Preview atualizado.
+3. **Recuperação de outbox — CONCLUÍDA E ENCERRADA** (§16e): migration aplicada em `praxis-crm-dev`, os três testes reais confirmados (`resolved:2/0/0/0` nas duas órfãs históricas; `resolved:0/claimed:1/published:1/failed:0` no evento novo, com cadeia de negócio completa via fixture temporária de QA já removida; `0/0/0/0` na fila vazia).
+4. **Auditoria final pré-merge — CONCLUÍDA** (§18): achado bloqueador real (URL inexistente no fallback do `a11-reconcile.yml`) corrigido; scaffolding de QA removido do código; os 4 endpoints hospedados desativados (não apagados); variáveis públicas de QA removidas da Vercel.
+5. **Decisão temporária de infraestrutura registrada** (§18): Preview e Production continuarão compartilhando o mesmo projeto Supabase `praxis-crm-dev` enquanto só houver dado fictício/QA — decisão explícita do responsável, não um defeito. Separar os ambientes deve ser reconsiderado antes da entrada de clientes reais.
+6. Configurar Production (Turnstile com hostname real, Upstash, Inngest, todas as variáveis A11 + `SUPABASE_SECRET_KEY` + `CRON_SECRET` na Vercel Production) — ver matriz de prontidão em §18.
+7. Fechamento técnico final: suíte completa, handoff, PR, commit, push, CI.
+
+## 18. Auditoria final pré-merge e preparação para Production
+
+**Auditoria (somente leitura, sem alterações)**: HEAD `dd7cb93` confirmado idêntico local/remoto/PR; CI verde; PR `OPEN`/`MERGEABLE`/`CLEAN`, base = `main` real; 13 migrations locais = remotas, sem drift (`supabase migration list --linked`, todas `local == remote`); RLS forçada nas 8 tabelas confirmada no banco real; zero grants de tabela para `anon`/`authenticated`; as 22 funções da A11 auditadas uma a uma — todas `SECURITY DEFINER` com `search_path=""`, split correto `service_role`/`authenticated`, nenhuma acessível a `anon`; nenhum segredo real no diff da branch; 778 asserções pgTAP (18 arquivos) + 26 de isolamento + 3 concorrências reais + 433 unitários + 76 e2e, todos verdes no HEAD exato da PR.
+
+**Achado bloqueador real, corrigido nesta rodada**: o fallback de `target_url` em `a11-reconcile.yml` (usado tanto por `workflow_dispatch` sem override quanto pelo `schedule` automático) apontava para `https://praxis-crm.vercel.app` — confirmado por HTTP real que esse domínio **não é alias deste projeto** (`vercel inspect` recusa, pertence a outra conta). Os aliases reais de Production são `praxis-crm-eight.vercel.app` / `praxis-crm-johllls-projects.vercel.app` / `praxis-crm-git-main-johllls-projects.vercel.app`. Corrigido para `https://praxis-crm-eight.vercel.app`; override manual via `workflow_dispatch` preservado; teste estático novo (`tests/unit/a11-reconcile-workflow.test.ts`) impede que o domínio errado volte.
+
+**Decisão explícita do responsável, registrada como decisão TEMPORÁRIA de infraestrutura**: Preview e Production continuarão usando o mesmo projeto Supabase `praxis-crm-dev` (único projeto existente na organização) enquanto só houver dado fictício/QA no sistema — não existem clientes reais hoje. Nenhum dado foi migrado, limpo ou copiado; nenhuma senha foi alterada; nenhum projeto novo foi criado. **Separar os ambientes deve ser reconsiderado antes da entrada de dados reais de clientes** — isso não bloqueia a A11 agora.
+
+**Scaffolding de QA removido do produto**: página `/qa/formulario-a11` (`page.tsx`/`client.tsx`) apagada; `/qa` retirado de `PUBLIC_PATHS` (`src/proxy.ts`); a exceção de CSP para `challenges.cloudflare.com` foi **preservada** (pertence ao Turnstile real da ingestão pública, não ao scaffolding). Busca no repositório confirma zero referências restantes a `/qa/formulario-a11`, à liberação genérica de `/qa`, ou a `NEXT_PUBLIC_QA_*` no código/testes/docs.
+
+**Os 4 `form_endpoints` "QA A11 *" foram desativados (não apagados)**, via `set_form_endpoint_status` (a função oficial, com impersonação de sessão real de um owner de cada workspace — mesmo padrão de todo o resto da sessão):
+
+| id | nome | status antes | status depois |
+|---|---|---|---|
+| `fe1e82d2-8695-47fc-8389-28bd8bcfc3e7` | QA A11 - Captacao institucional (editado) | active | **disabled** |
+| `36668cf4-b7fb-44df-a165-7fdaf0b6d943` | QA A11 Continuidade | active | **disabled** |
+| `751c05d9-b4c0-4a64-9a88-b822aa18de09` | QA A11 Formulario Visual | active | **disabled** |
+| `1053f02c-1b90-474c-9b67-17c251b3fbd0` | QA A11 Rate Limit | active | **disabled** |
+
+Confirmado por leitura separada: as 4 evidências (`webhook_events`, `outbox`, `contacts`, `leads`, `opportunities`, `activities`, `touchpoints`, `contact_consents`, `continuity_references`) permanecem intactas — nenhuma linha apagada, contagens idênticas às do teste anterior.
+
+**Variáveis públicas de QA removidas da Vercel** (Preview/branch A11, sem consumidor depois da remoção da página): `NEXT_PUBLIC_QA_TURNSTILE_SITE_KEY`, `NEXT_PUBLIC_QA_A11_FORM_ENDPOINT_KEY`. Nenhuma outra variável tocada (`TURNSTILE_SECRET_KEY`, `UPSTASH_*`, `INNGEST_*`, `CRON_SECRET`, `SUPABASE_SECRET_KEY`, `A11_PAYLOAD_*`, `A11_IP_HMAC_KEY` confirmadas inalteradas por leitura).
+
+CI verde no novo HEAD (commit `f5e1824`): typecheck, lint, 436 unitários (433 + 3 novos do teste estático do workflow), pgTAP, isolamento, as três concorrências reais, build, e2e.
+
+**Matriz de prontidão para Production (nada configurado ainda nesta rodada):**
+
+| Item | Estado |
+|---|---|
+| Código da A11 | Pronto |
+| RLS/grants/funções | Prontos e verificados no banco real |
+| Migrations | Todas aplicadas em `praxis-crm-dev`, sem pendência |
+| Turnstile hostname de produção | Falta configurar |
+| Upstash para produção | Falta decidir (compartilhar ou separar do Redis de dev) e configurar |
+| Inngest em produção | Falta sincronizar a função |
+| Variáveis A11 na Vercel Production | Nenhuma existe hoje |
+| `SUPABASE_SECRET_KEY` + chaves de cifra em Production | Nenhuma existe hoje |
+| `CRON_SECRET` em Production | Não existe |
+| Correspondência com `A11_CRON_SECRET` (GitHub) | Não verificável sem expor segredos — ambos mascarados |
+| URL do workflow `a11-reconcile.yml` | **Corrigida nesta rodada** |
+| Comportamento do schedule após ir para `main` | Ativa a cada 10 min; agora aponta para o domínio certo |
+| Cron nativo da Vercel | Não existe (`vercel.json` sem `crons`) — mecanismo é só o GitHub Actions |
+| Preview/Production compartilharem o Supabase | **Decisão temporária aceita explicitamente** — reconsiderar antes de dado real |
+
+## 19. Rotação das chaves A11 e configuração do segredo do cron
+
+**Motivo da rotação**: durante a checagem de fontes locais para configurar Production (§18), confirmou-se que as três variáveis `A11_PAYLOAD_ACTIVE_KEY_VERSION`, `A11_PAYLOAD_KEY_VERSIONS` e `A11_IP_HMAC_KEY` existiam somente em Preview/branch, sem nenhuma origem recuperável (não estavam em `.env.local`, em nenhum script commitado, nem em documentação) — foram definidas diretamente na Vercel em algum momento não registrado. A própria Vercel confirma que valores do tipo Secret são irrecuperáveis. Diante disso, o responsável autorizou a rotação coordenada das três chaves (versão ativa nova `v2`) em vez de tentar recuperar as antigas.
+
+**Perda aceita**: os 8 `webhook_events` que ainda carregavam payload cifrado ficam permanentemente indecifráveis. Todos os 8 pertencem exclusivamente aos 4 `form_endpoints` "QA A11 *" (desativados desde §18) — nenhum é dado real de cliente. As linhas de negócio derivadas (contatos, leads, oportunidades, atividades, touchpoints, protocolo público, hash de conteúdo, timestamps) **não dependem do ciphertext** e continuam intactas e consultáveis — só o conteúdo bruto cifrado do payload se torna ilegível.
+
+**Evidências preservadas**: nenhuma linha foi apagada, nenhuma migration rodou, nenhuma retenção foi executada. As 8 linhas com ciphertext permanecem no banco como evidência histórica sanitizada, apenas sem capacidade de decifragem.
+
+**Execução**:
+- Versão ativa: `v2`. Chave de cifra e chave de HMAC geradas uma única vez (32 bytes aleatórios em base64 cada), junto com um `CRON_SECRET` independente (32+ bytes).
+- As três variáveis foram regravadas em **Preview, escopo restrito à branch `feat/a11-forms-attribution`** (substituindo as anteriores, agora irrecuperáveis) e criadas em **Production** — as seis gravações usaram exatamente a mesma origem, dentro da mesma sessão, sem regenerar valor entre elas.
+- Preview foi **redeployado** (apenas o deployment mais recente da branch, sem promover a Production) para que o runtime passasse a usar os valores novos — variáveis de ambiente só entram em vigor em deployments criados depois da gravação.
+- Verificação pós-redeploy: deployment `Ready`; resposta HTTP limpa (401, não 500) em uma chamada de teste ao endpoint de ingestão, confirmando que o parsing das três variáveis novas foi bem-sucedido; nenhum endpoint reativado, nenhum formulário enviado.
+- `CRON_SECRET` criado em **Production** (não existia antes). O GitHub Actions secret `A11_CRON_SECRET` do repositório `johlll/praxis-crm` foi atualizado com **exatamente o mesmo valor**, na mesma sessão. `CRON_SECRET` de Preview **não foi alterado**.
+- Nenhuma variável foi ampliada para Preview global — todas as gravações de Preview permanecem restritas à branch `feat/a11-forms-attribution`.
+
+**Arquivo de recuperação administrativo**: os quatro valores gerados (as três chaves A11 + o novo `CRON_SECRET`) foram salvos uma única vez em `C:\Users\niero\Desktop\Henrique\praxis-a11-secrets.txt`, fora do repositório, com permissões NTFS restritas ao usuário Windows atual (`icacls`, sem herança, sem acesso público). Este arquivo **não é temporário** — é a cópia de recuperação administrativa e deve continuar existindo fora do controle de versão. Nunca deve ser commitado, anexado à PR ou impresso em log. `SUPABASE_SECRET_KEY` não está nesse arquivo, pois já estava preservada em `.env.local`.
+
+**Conferência final por nomes e escopos** (nenhum valor exibido em nenhum momento): Production possui `A11_PAYLOAD_ACTIVE_KEY_VERSION`, `A11_PAYLOAD_KEY_VERSIONS`, `A11_IP_HMAC_KEY`, `SUPABASE_SECRET_KEY`, `TURNSTILE_SECRET_KEY`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY` e `CRON_SECRET`. GitHub possui `A11_CRON_SECRET` atualizado nesta rodada. Preview/branch mantém as três variáveis A11 (agora na versão `v2`) e o `CRON_SECRET` original, sem alteração.
+
+**Redis (Upstash) continua temporariamente compartilhado** entre Preview e Production, na mesma decisão temporária registrada em §18 para o Supabase — nada foi separado nesta rodada.
+
+**Limites respeitados**: nenhuma chave foi impressa, nenhum segredo passou por argumento de linha de comando (todas as gravações usaram stdin), nenhum deployment foi promovido a Production, nenhum cron foi executado manualmente, nenhum Inngest de Production foi sincronizado, nenhum endpoint foi reativado, nenhum formulário foi enviado, nenhum merge foi feito.
