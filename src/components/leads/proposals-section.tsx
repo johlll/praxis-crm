@@ -190,7 +190,7 @@ function SendProposalForm({ leadId, proposal }: { leadId: string; proposal: Prop
           nenhum envolvido. O envio REAL de e-mail com PDF anexado é outro
           fluxo, abaixo (SendEmailDialog, B1). */}
       <p className="text-meta text-text-tertiary">
-        Já enviou por fora (WhatsApp, ou e-mail sem ser por aqui)? Registre o canal para liberar aceitar/recusar.
+        Envie a proposta ao cliente pelo canal combinado e registre aqui depois — o CRM não despacha a mensagem.
       </p>
       <div className="flex gap-3">
         {PROPOSAL_CHANNELS.map((c) => (
