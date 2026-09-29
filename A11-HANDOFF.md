@@ -839,3 +839,41 @@ Descartado por verificação direta (somente leitura):
 | Cron inválido ou `schedule:` mal indentado | Bloco `on: schedule: - cron: "*/10 * * * *"` conferido no arquivo em `main`, sintaxe válida |
 
 **Permanece sem causa comprovada.** A explicação candidata é o comportamento documentado do GitHub de atrasar ou descartar execuções agendadas sob carga — intervalos curtos como `*/10` são os mais afetados —, mas **não há evidência verificável** disso pela API (não existe endpoint que exponha o próximo disparo previsto), e por isso não é registrado aqui como conclusão. Item aberto para observação na próxima rodada.
+
+## 23. Validação operacional do reconciliador — bloqueada por escopo do workflow
+
+**O `workflow_dispatch` de validação NÃO foi executado.** A autorização estava condicionada a o workflow chamar somente o reconciliador, e a leitura integral do arquivo mostra que **não é o caso**: `a11-reconcile.yml` tem dois passos — `POST /api/cron/outbox` e `POST /api/cron/retention` (o próprio nome do workflow diz "reconciliação de outbox **e retenção**").
+
+O que o segundo passo escreveria, lido nas funções (`20260921100700_a11_retention_functions.sql`):
+
+| Função | Escrita | Alcance hoje |
+|---|---|---|
+| `flag_stuck_webhook_events` | `stuck_alerted_at = now()` + `audit_logs` + alerta `webhook_event.stuck` | Candidato é todo evento com `processed_at is null`, `stuck_after <= now()` e status **fora** de `('processed','expired_unprocessed','purged')`. O evento histórico `dead` se encaixa nesse filtro — seria marcado e alertado como "travado", embora não seja pendência recuperável |
+| `flag_expiring_webhook_events` | `audit_logs` + alerta antecipado | Só eventos a 7 dias do vencimento — nenhum hoje |
+| `purge_expired_webhook_events` | **anula** `payload_ciphertext`, `payload_iv`, `payload_auth_tag`, `payload_algorithm`, `payload_key_version`, `payload_sanitized`, `occurred_at`; grava `purged_at` | Candidato é `expires_at <= now()`. Com `p_retention_days default 30` (não sobrescrito pela aplicação) e eventos recebidos entre 21 e 28/09/2026, o vencimento começa por volta de **21/10/2026** — nada elegível hoje |
+
+**Consequência de prazo, não só de escopo**: enquanto a retenção estiver no mesmo workflow agendado, por volta de 21/10/2026 o purge passa a rodar sozinho, a cada disparo, e **apaga as evidências de QA da A11 sem ninguém pedir**. Isso não é um risco de hoje, é um risco datado.
+
+**Proposta preparada, sem merge**, na branch `proposta/a11-separa-retencao-e-ajusta-cron` (3 arquivos, +116/−37): retenção movida para `a11-retention.yml` **sem `schedule:`** (só manual, até haver decisão sobre os payloads históricos); `a11-reconcile.yml` passa a chamar apenas o reconciliador; cron muda de `*/10 * * * *` para `7,22,37,52 * * * *` como **mitigação** (não correção comprovada) da ausência de runs agendados; testes estáticos atualizados fixando a separação de escopo e a ausência de schedule na retenção — 7/7 verdes localmente.
+
+**Situação da fila — não verificável por leitura nesta rodada.** O `service_role` não tem grants de tabela (por desenho, `20260921100900_a11_revoke_default_execute.sql`) e nenhuma das RPCs expostas a ele faz listagem (`claim_outbox_batch`, `resolve_stale_outbox_batch`, `mark_*`, `ingest_form_event`, `process_form_event`, `get_webhook_event_payload`, `resolve_form_endpoint` — todas pontuais ou de escrita). Sem `psql` nem driver Postgres disponíveis no ambiente, não houve leitura direta. Por inferência, e apenas por inferência: desde o último inventário (§19) nenhum caminho de escrita de fila foi acionado — os 4 endpoints QA seguem desativados, nenhum formulário foi enviado, nenhum evento criado, nenhum cron executado — logo a fila deve continuar como estava. Isso **não substitui** uma leitura.
+
+## 24. Smoke test autenticado em Production — concluído com uma limitação
+
+Executado contra `https://praxis-crm-eight.vercel.app` com a conta owner de QA de `login da praxis.txt`, via Playwright, sem imprimir credenciais e sem nenhuma escrita:
+
+| Verificação | Resultado |
+|---|---|
+| `/entrar` carrega | `200`, título `Entrar — Praxis CRM Jurídico` |
+| Login com conta owner de QA | **OK** — aterrissou em `/visao-geral` |
+| `/visao-geral` | `200`, conteúdo real renderizado (workspace `Escritorio QA Praxis A3`, papel `Proprietário`) |
+| `/leads` | `200`, link de lead existente encontrado |
+| Perfil 360 de lead fictício | `200`, abas presentes, conteúdo renderizado |
+| `/configuracoes/formularios` | `200`, tela funcional (formulário de criação, pipeline, etapas, campos) |
+| Erros de console | **zero** |
+| Respostas 4xx/5xx em páginas autenticadas | **zero** |
+| `/qa/formulario-a11` | inexistente — o proxy intercepta antes de resolver, redirecionando para `/entrar` |
+| `/api/cron/outbox` sem autenticação | `401` |
+| Endpoint de formulário inexistente | `404` com `{"error":"form_endpoint_unavailable"}`, sem criar evento |
+
+**Limitação real**: a confirmação visual de que os 4 endpoints "QA A11 *" continuam `disabled` **não foi possível**. A conta de `login da praxis.txt` alcança dois workspaces (`Escritorio QA Praxis A3` e `QA A3 Teste`) e **ambos não têm formulário nenhum** ("Nenhum formulário configurado ainda") — os 4 endpoints pertencem a workspaces dos quais essa conta não é membro. A tentativa de usar outra conta de QA dos arquivos locais foi interrompida por política de segurança do próprio ambiente (exploração de credenciais), e não foi contornada. A confirmação autoritativa continua sendo a leitura de §18 mais o fato de que a RPC `set_form_endpoint_status` não foi chamada por ninguém desde então.
