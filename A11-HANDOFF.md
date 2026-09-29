@@ -950,6 +950,35 @@ Os 7 eventos somados (1 + 1 + 5) batem com o detalhamento de §19 (1/1/5/1): o o
 
 Nada foi alterado nesta conferência: "Reativar" e "Rotacionar chave" nunca foram acionados, nenhum membro ou permissão foi tocado, e a troca de workspace usou o seletor oficial.
 
+**QUARTO ENDPOINT CONFERIDO — pendência encerrada.** Com login manual no painel do Supabase (projeto `praxis-crm-dev`) e uma única consulta somente-leitura pelo ID exato, sem nenhuma escrita:
+
+```sql
+select e.id, e.name, e.status, w.name as workspace
+from public.form_endpoints e
+join public.workspaces w on w.id = e.workspace_id
+where e.id = 'fe1e82d2-8695-47fc-8389-28bd8bcfc3e7';
+```
+
+| id | name | status | workspace |
+|---|---|---|---|
+| `fe1e82d2-8695-47fc-8389-28bd8bcfc3e7` | QA A11 - Captacao institucional (editado) | **`disabled`** | **Escritório QA Praxis** |
+
+Isso substitui a inferência por eliminação por leitura verificada: o workspace é de fato "Escritório QA Praxis". **Os quatro endpoints "QA A11 *" estão confirmados como desativados** — três pela interface oficial do produto, um por leitura direta do banco. O item deixa de ser pendência.
+
+## 30. Agendamento: experimento de controle preparado (PR #19)
+
+A consulta em `2026-09-29T01:09:47Z` confirmou que o `a11-reconcile.yml` **continua sem nenhuma execução automática** — o único run do workflow segue sendo o `workflow_dispatch` de `00:17:51Z`. Dado adicional relevante: o filtro por `event=schedule` sem restringir workflow retorna vazio, isto é, **este repositório nunca teve nenhuma execução por `schedule`**, para nenhum workflow, em toda a sua história. O `a11-reconcile.yml` é o primeiro workflow agendado do projeto.
+
+Preparado em **PR #19** (branch `diagnostico/schedule-controle-temporario`, um arquivo novo, 51 linhas, `a11-reconcile.yml` intocado) um workflow de controle: um único job com `echo` + `date`, `permissions: {}`, **sem secrets**, sem chamada externa, sem acesso a Production e sem nenhuma escrita, com cron em minutos deslocados (`5,20,35,50`). Aguarda autorização de merge — não foi mesclado.
+
+**Leitura correta do experimento, registrada no próprio arquivo e na PR:**
+
+- se o controle executar por `schedule`, isso comprova **apenas** que o `schedule` é entregue **para ele**, e **não identifica por si só a causa** da ausência no `a11-reconcile.yml` — o controle difere do original em várias dimensões simultâneas (minutos do cron, conteúdo do job, uso de secrets, nome), logo um resultado positivo **não isola nenhuma variável**;
+- se o controle **não** executar em 30–45 minutos, o resultado é **inconclusivo**, não negativo: a documentação oficial admite atraso e descarte de execuções agendadas sob carga, sem prazo garantido;
+- **nenhuma causa é atribuída a característica do arquivo** (por exemplo, caracteres não-ASCII no `name`): não há evidência que sustente isso, e a hipótese fica registrada apenas como hipótese.
+
+O workflow temporário deve ser **removido por PR** depois de cumprir a finalidade. A causa da ausência de execução por `schedule` segue **não determinada**.
+
 ## 29. Agendamento: mais duas hipóteses descartadas, causa segue não determinada
 
 Novas verificações somente-leitura, sem tocar cron, sem desabilitar/reabilitar workflow e sem criar outro agendador.
