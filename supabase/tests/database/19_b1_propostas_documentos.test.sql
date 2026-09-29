@@ -12,7 +12,7 @@
 -- `set local role authenticated` + `throws_ok(..., '42501', ...)`.
 
 begin;
-select plan(41);
+select plan(51);
 
 -- Usuários fixos do seed (supabase/seed.sql, auth.users) — mesma
 -- convenção de todo o resto da suíte pgTAP (cada arquivo roda isolado em
@@ -347,6 +347,122 @@ select is(
 select ok(
   get_proposal_document_for_download(:'doc1_document_id'::uuid) ? 'storagePath',
   'v1, já ready antes da decisão, continua baixável depois de aceita — nada é revogado'
+);
+reset role;
+
+-- ---------------------------------------------------------------------
+-- 9) Perfil jurídico do escritório — GRANT de coluna (correção pós-
+--    validação hospedada). Diferente do resto deste arquivo, ISTO
+--    reproduz um defeito real: a policy `workspaces_update` (A2) nunca
+--    teve o GRANT de tabela que a torna utilizável — `authenticated` só
+--    tinha SELECT em `workspaces`. `updateWorkspaceLegalProfileAction`
+--    (Configurações → Escritório) falhava com "permission denied for
+--    table workspaces" em qualquer ambiente real, apesar de RLS e CI
+--    verdes — só apareceu ao validar contra o banco hospedado com sessão
+--    `authenticated` de verdade, não como superusuário de teste.
+-- ---------------------------------------------------------------------
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'dono', 'role', 'authenticated')::text, true);
+update public.workspaces set
+  legal_name = 'Escritório Teste B1 Ltda.',
+  cnpj = '12345678000199',
+  oab_uf = 'SP',
+  oab_number = '999999',
+  address_line = 'Rua de Teste, 1',
+  address_city = 'São Paulo',
+  address_uf = 'SP',
+  address_zip = '01000000'
+where id = :'ws'::uuid;
+reset role;
+
+select is(
+  (select jsonb_build_object(
+     'legal_name', legal_name, 'cnpj', cnpj, 'oab_uf', oab_uf, 'oab_number', oab_number,
+     'address_line', address_line, 'address_city', address_city, 'address_uf', address_uf, 'address_zip', address_zip
+   ) from public.workspaces where id = :'ws'::uuid),
+  jsonb_build_object(
+    'legal_name', 'Escritório Teste B1 Ltda.', 'cnpj', '12345678000199', 'oab_uf', 'SP', 'oab_number', '999999',
+    'address_line', 'Rua de Teste, 1', 'address_city', 'São Paulo', 'address_uf', 'SP', 'address_zip', '01000000'
+  ),
+  '`owner`, autenticado, salva o perfil jurídico e lê exatamente os mesmos valores de volta'
+);
+
+-- Demais papéis do MESMO workspace (nenhum é owner/admin — regra de
+-- workspace_legal_profile.manage em src/lib/roles.ts): RLS filtra a
+-- linha, UPDATE afeta 0 linhas, sem exceção.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'adv', 'role', 'authenticated')::text, true);
+select is(
+  (with upd as (update public.workspaces set legal_name = 'Tentativa Advogado' where id = :'ws'::uuid returning 1)
+   select count(*)::int from upd),
+  0, '`lawyer` não altera o perfil do escritório'
+);
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'adv2', 'role', 'authenticated')::text, true);
+select is(
+  (with upd as (update public.workspaces set legal_name = 'Tentativa Advogado 2' where id = :'ws'::uuid returning 1)
+   select count(*)::int from upd),
+  0, '`lawyer` (segundo, sem vínculo com o lead) também não altera o perfil do escritório'
+);
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'vendas', 'role', 'authenticated')::text, true);
+select is(
+  (with upd as (update public.workspaces set legal_name = 'Tentativa Vendas' where id = :'ws'::uuid returning 1)
+   select count(*)::int from upd),
+  0, '`sales` não altera o perfil do escritório'
+);
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'leitor', 'role', 'authenticated')::text, true);
+select is(
+  (with upd as (update public.workspaces set legal_name = 'Tentativa Viewer' where id = :'ws'::uuid returning 1)
+   select count(*)::int from upd),
+  0, '`viewer` não altera o perfil do escritório'
+);
+reset role;
+
+select is(
+  (select legal_name from public.workspaces where id = :'ws'::uuid),
+  'Escritório Teste B1 Ltda.', 'Nenhuma das 4 tentativas bloqueadas alterou o valor salvo pelo owner'
+);
+
+-- Isolamento entre workspaces: adv2 é OWNER de um segundo workspace, mas
+-- isso não vaza nenhum poder sobre o workspace 1 — a policy avalia o
+-- papel de adv2 DENTRO da linha alvo (ws), não em qualquer workspace.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'adv2', 'role', 'authenticated')::text, true);
+select (create_workspace_with_owner('Teste B1 — Outro Workspace', 'teste-b1-outro-workspace')).id as ws2 \gset
+select is(
+  (with upd as (update public.workspaces set legal_name = 'Vazamento entre tenants' where id = :'ws'::uuid returning 1)
+   select count(*)::int from upd),
+  0, 'Isolamento: ser owner do workspace 2 não dá poder de alterar o perfil do workspace 1'
+);
+reset role;
+
+-- GRANT é só nas 8 colunas do perfil — name/slug/created_by continuam
+-- inacessíveis a `authenticated`, mesmo para quem É owner/admin da linha.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'dono', 'role', 'authenticated')::text, true);
+select throws_ok(
+  format('update public.workspaces set name = %L where id = %L::uuid', 'Nome Trocado', :'ws'),
+  '42501', null,
+  '`owner` não pode alterar workspaces.name diretamente — sem GRANT nessa coluna'
+);
+select throws_ok(
+  format('update public.workspaces set slug = %L where id = %L::uuid', 'slug-trocado', :'ws'),
+  '42501', null,
+  '`owner` não pode alterar workspaces.slug diretamente — sem GRANT nessa coluna'
+);
+select throws_ok(
+  format('update public.workspaces set created_by = %L::uuid where id = %L::uuid', :'adv', :'ws'),
+  '42501', null,
+  '`owner` não pode alterar workspaces.created_by diretamente — sem GRANT nessa coluna'
 );
 reset role;
 
