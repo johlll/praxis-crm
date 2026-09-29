@@ -877,3 +877,57 @@ Executado contra `https://praxis-crm-eight.vercel.app` com a conta owner de QA d
 | Endpoint de formulário inexistente | `404` com `{"error":"form_endpoint_unavailable"}`, sem criar evento |
 
 **Limitação real**: a confirmação visual de que os 4 endpoints "QA A11 *" continuam `disabled` **não foi possível**. A conta de `login da praxis.txt` alcança dois workspaces (`Escritorio QA Praxis A3` e `QA A3 Teste`) e **ambos não têm formulário nenhum** ("Nenhum formulário configurado ainda") — os 4 endpoints pertencem a workspaces dos quais essa conta não é membro. A tentativa de usar outra conta de QA dos arquivos locais foi interrompida por política de segurança do próprio ambiente (exploração de credenciais), e não foi contornada. A confirmação autoritativa continua sendo a leitura de §18 mais o fato de que a RPC `set_form_endpoint_status` não foi chamada por ninguém desde então.
+
+## 25. Decisão: a retenção automática de 30 dias é mantida
+
+**Decisão explícita do responsável**: a política de retenção de 30 dias da A11 permanece automática, no workflow agendado, com a frequência atual de 10 minutos. A retenção **não** é convertida em tarefa exclusivamente manual para preservar payloads de QA.
+
+O que se preserva é o **relatório sanitizado e a evidência de validação** — este handoff, as contagens, os identificadores, os protocolos, os códigos de erro —, respeitando a política de retenção dos dados de origem. Nenhum dado pessoal e nenhum ciphertext é exportado como "backup de evidências".
+
+Sobre os oito payloads que ainda carregam conteúdo cifrado:
+
+- são **exclusivamente de QA**, todos pertencentes aos quatro `form_endpoints` "QA A11 *" (desativados desde §18). Nenhum é dado real de cliente;
+- **sete foram processados** e produziram os efeitos de negócio já registrados neste documento (contatos, leads, oportunidades, atividades, touchpoints, protocolos públicos) — efeitos que não dependem do ciphertext e continuam íntegros;
+- **um é a fixture inválida** (`2e038bb5-051a-43c0-b6c4-29eedd48f985`), criada com ciphertext deliberadamente inválido para exercitar o caminho de falha; escalou a `dead` após as 10 tentativas, como projetado, e nunca teve efeito comercial;
+- **a eliminação desses conteúdos ao vencerem os 30 dias é esperada e está autorizada pela política** — `purge_expired_webhook_events` anula as colunas de payload e grava `purged_at`, preservando a linha, o status, o protocolo, o `content_hash` e os vínculos de negócio;
+- **não é necessário conservar o payload bruto para comprovar os testes históricos**: a comprovação está nos relatórios sanitizados, nas contagens antes/depois e nos identificadores registrados aqui.
+
+Sobre o alerta da fixture `dead`: ele deve ser **identificado como proveniente do teste**, e não suprimido. Nenhuma supressão global de alertas de eventos `dead` foi introduzida — o mecanismo continua alertando qualquer evento não processado que ultrapasse `stuck_after`, que é exatamente o comportamento desejado em produção real. A identificação é nominal, por `webhook_event_id`, neste documento.
+
+A proposta `proposta/a11-separa-retencao-e-ajusta-cron` **não foi mesclada e não teve PR aberta**; a branch segue preservada no remoto, sem apagar trabalho, caso a separação seja retomada por outro motivo. `main` mantém o workflow atual com `*/10`.
+
+## 26. Execução manual do reconciliador em Production — os dois passos
+
+Uma única execução de `a11-reconcile.yml` em `main`, por `workflow_dispatch`, destino `https://praxis-crm-eight.vercel.app`, com os secrets já configurados no GitHub.
+
+Verificação prévia por leitura, antes de disparar: o prazo de retenção **não é sobrescrito em lugar nenhum** — `ingest_form_event` é chamado em `handler.ts:235-252` sem `p_retention_days` e sem `p_stuck_after_minutes`, usando os defaults SQL (30 dias / 60 min), e `purge_expired_webhook_events(p_limit)` não tem parâmetro de janela, selecionando estritamente `expires_at <= now()`. As rotas não leem nada da query string. As operações continuam sendo só estas: `resolve_stale_outbox_batch(200)`, `claim_outbox_batch(20,120)`, `mark_outbox_published`/`mark_outbox_failed` e a publicação no Inngest, do lado do outbox; `flag_stuck_webhook_events(100)`, `flag_expiring_webhook_events(100,7)` e `purge_expired_webhook_events(200)`, do lado da retenção. Nenhum grant foi ampliado e nenhum acesso foi contornado.
+
+**Run**: [`36502385256`](https://github.com/johlll/praxis-crm/actions/runs/36502385256) — `event=workflow_dispatch`, branch `main`, `conclusion: success`, `2026-09-29T00:17:51Z`.
+
+| Passo | HTTP | Resposta |
+|---|---|---|
+| `POST /api/cron/outbox` | **200** | `{"resolved":0,"claimed":0,"published":0,"failed":0}` |
+| `POST /api/cron/retention` | **200** | `{"stuck":1,"expiring":0,"purged":0,"expired_unprocessed":0}` |
+
+Leitura dos contadores:
+
+- **outbox, tudo zero — medido, não inferido.** Isto é a primeira prova operacional do reconciliador contra Production: chamada autenticada, `200`, e a confirmação de que a fila está de fato vazia (`resolved:0` = nenhuma outbox órfã; `claimed:0` = nada pendente ou elegível). Resolve por medição a lacuna registrada em §23, em que a fila não era legível.
+- **`stuck: 1` era previsto e está identificado por leitura, não por inferência.** O log de runtime da Vercel traz o alerta estruturado exato: `{"level":"warn","event":"a11.ingest.alert","kind":"stuck","webhook_event_id":"2e038bb5-051a-43c0-b6c4-29eedd48f985","workspace_id":"9c912c4e-0ebc-4c6e-a148-9e56a091781c"}` — é a fixture inválida de §16e, no workspace "QA A11 Validacao Visual". Não é pendência recuperável e não indica defeito: o filtro de `flag_stuck_webhook_events` exclui `processed`/`expired_unprocessed`/`purged`, e `dead` não está nessa lista, então um evento terminal por esgotamento de tentativas é legitimamente sinalizado. Como a função agora gravou `stuck_alerted_at`, e o filtro exige `stuck_alerted_at is null`, **o alerta não se repete** nas próximas execuções.
+- **`purged: 0` e `expired_unprocessed: 0`** confirmam que nada venceu ainda, coerente com a janela de 30 dias e eventos recebidos entre 21 e 28/09/2026 — o vencimento começa por volta de 21/10/2026.
+- **Nenhum erro interno mascarado por job verde**: as rotas devolvem `503` (`resolve_failed`/`claim_failed`/`retention_failed`) se qualquer RPC falhar, e ambas devolveram `200`; nos logs de runtime da Vercel não há nenhuma entrada de nível `error` nesta execução — a única entrada não-`info` é o `warn` do alerta acima, que é o comportamento pretendido.
+
+Nenhum evento novo foi enviado, nenhum endpoint foi reativado, nenhum SQL de limpeza foi executado por fora, nenhum prazo foi reduzido e nenhuma elegibilidade foi forçada.
+
+## 27. Agendamento: ainda sem nenhum run automático
+
+**A execução de §26 é manual (`workflow_dispatch`) e não prova o agendamento.** Consultado em `2026-09-29T00:18:55Z`: `gh run list --workflow=369575406 --event schedule` continua **vazio**, e o único run existente deste workflow é o manual. Decorridas ~2h15min desde o registro do workflow em `main` (`22:05:01Z`), com cron `*/10`, seriam esperados ~13 disparos automáticos.
+
+A frequência **não foi alterada por tentativa** e o workflow não foi desabilitado/reabilitado. As hipóteses estruturais seguem descartadas (§22) e a causa segue **não comprovada**. Pendência explícita e aberta: **observar um run real com `event=schedule`**. A A11 não pode ser declarada encerrada antes disso.
+
+## 28. Conferência dos 4 endpoints QA — workspace identificado, falta acesso
+
+O `workspace_id` que apareceu no alerta de §26 (`9c912c4e-0ebc-4c6e-a148-9e56a091781c`) é o workspace **"QA A11 Validacao Visual"**, criado pelo fluxo normal do app durante a A11 (§13) e onde vivem os endpoints de QA da A11.
+
+A conta de QA disponível localmente (`login da praxis.txt`) **não é membro desse workspace** — ela alcança só `Escritorio QA Praxis A3` e `QA A3 Teste`, ambos sem formulário algum (§24). A conta bloqueada pela política do ambiente **não foi tentada novamente**. Não existe sessão administrativa já autorizada com acesso de leitura ao banco: o `service_role` não tem grants de tabela (por desenho) e nenhuma RPC exposta a ele faz listagem de `form_endpoints` — `resolve_form_endpoint(text)` exige a chave pública do endpoint, que também não é legível.
+
+**O que falta, concretamente**: um login com acesso ao workspace "QA A11 Validacao Visual" para abrir `/configuracoes/formularios` e conferir o status dos quatro endpoints. Até então, a confirmação autoritativa continua sendo a leitura de §18 somada ao fato de que `set_form_endpoint_status` não foi chamada por ninguém desde então.
