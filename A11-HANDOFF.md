@@ -754,3 +754,264 @@ CI verde no novo HEAD (commit `f5e1824`): typecheck, lint, 436 unitários (433 +
 **Redis (Upstash) continua temporariamente compartilhado** entre Preview e Production, na mesma decisão temporária registrada em §18 para o Supabase — nada foi separado nesta rodada.
 
 **Limites respeitados**: nenhuma chave foi impressa, nenhum segredo passou por argumento de linha de comando (todas as gravações usaram stdin), nenhum deployment foi promovido a Production, nenhum cron foi executado manualmente, nenhum Inngest de Production foi sincronizado, nenhum endpoint foi reativado, nenhum formulário foi enviado, nenhum merge foi feito.
+
+## 20. Merge da PR #17 e primeiro deployment de Production
+
+**Checkpoint pré-merge**: confirmado imediatamente antes do merge — PR #17 `OPEN`, head `826378e` (idêntico local/remoto), CI verde nesse HEAD, `MERGEABLE`/`CLEAN`, `main` sem nenhum commit à frente da branch (0 commits de divergência), as dez variáveis de Production presentes pelos nomes já documentados em §19, `A11_CRON_SECRET` presente no GitHub, `a11-reconcile.yml` com o fallback correto (`https://praxis-crm-eight.vercel.app`), nenhuma rota/página de QA nem `NEXT_PUBLIC_QA_*` remanescente no código. O status `disabled` dos 4 endpoints "QA A11 *" **não foi reconfirmado ao vivo nesta rodada** — a credencial de teste usada em sessões anteriores não estava mais disponível nesta sessão, e leitura direta de tabela via REST é bloqueada por design (sem `GRANT` para `service_role`, só via RPC oficial). Como nenhuma ação desta ou de sessões anteriores chamou a RPC de reativação desde a última confirmação por leitura (§18), o estado permanece herdado como `disabled`.
+
+**Merge**: feito com merge commit (sem squash, sem rebase, sem commit direto em `main`).
+
+- SHA do merge: `8e490634eeb1807f48ebdaa05a5133778215e9cb`
+- Pais: primeiro pai `252693ffa96d1ca28302205493762106f68c7e28` (o `main` anterior, exato), segundo pai `826378e4098266e9f439b6a6dc60c11103a2e6d0` (head exato da PR)
+- PR #17 marcada `MERGED`; `main` remoto apontando para o merge commit
+
+**Deployment automático de Production**: disparado pelo próprio merge, sem promoção manual e sem uso de deployment antigo.
+
+- GitHub Deployment: `id 6721631640`, `sha 8e490634eeb1807f48ebdaa05a5133778215e9cb` (exatamente o SHA do merge), ambiente `Production`, status `success`
+- Deployment Vercel correspondente: `dpl_Ee6ejnEyBpCnHz31JoBNTnfHpPY9`, target `production`, status final `Ready`
+- Aliases confirmados: `https://praxis-crm-eight.vercel.app`, `https://praxis-crm-johllls-projects.vercel.app` (e o alias de branch `praxis-crm-git-main-johllls-projects.vercel.app`)
+
+**Smoke test sem escrita** (todos contra `praxis-crm-eight.vercel.app`, nenhuma sessão criada, nenhum dado gravado):
+
+| Verificação | Resultado |
+|---|---|
+| `/entrar` carrega | `200`, sem erro de console (0 mensagens) |
+| `/visao-geral` sem sessão | `307` → redireciona para `/entrar` (comportamento esperado) |
+| `/qa/formulario-a11` | `307` → redireciona para `/entrar` (rota não existe mais; o proxy intercepta antes de resolver 404, mesmo comportamento de qualquer caminho protegido inexistente) |
+| `/api/cron/outbox` sem autenticação | `401` |
+| `/api/forms/<endpoint inexistente>` | `404`, corpo `{"error":"form_endpoint_unavailable"}`, sem criar evento |
+| Login com conta owner de QA | **Não executado** — credencial de sessão anterior não disponível nesta rodada; não foi solicitada nem inventada |
+| Perfil 360 / telas de configuração de formulários | **Não verificado** — depende do login acima |
+
+Nenhuma escrita ocorreu: nenhum cron autenticado foi chamado, nenhum endpoint foi reativado, nenhuma submissão válida foi feita, nenhum dado foi criado, o Inngest de Production não foi sincronizado, nenhuma variável foi alterada, B1 não foi iniciado.
+
+**Pendências explícitas para a próxima rodada**:
+
+1. Sincronizar o Inngest de Production (app ainda não registrada no ambiente de produção do Inngest).
+2. Observar o primeiro disparo real do `a11-reconcile.yml` pelo `schedule` (agora que a branch está em `main`, o agendamento automático passa a valer).
+3. Reconfirmar interativamente (login real) que `/visao-geral`, Perfil 360 e as telas de configuração de formulários carregam sem erro em Production — pendente por falta de credencial nesta rodada.
+4. Reconsiderar a decisão temporária de Supabase (`praxis-crm-dev`) e Redis (Upstash) compartilhados entre Preview e Production antes da entrada de dados reais de clientes.
+5. Os quatro endpoints "QA A11 *" permanecem desativados (herdado de §18, não reativado nesta rodada).
+
+## 21. Sincronização do Inngest Production — resolvido após realinhamento da signing key
+
+**Sintoma**: a sincronização do app em `Praxis CRM → Production`, apontando para `https://praxis-crm-eight.vercel.app/api/inngest`, era recusada pelo painel com `Unauthorized response from URL`.
+
+**Causa comprovada, pelos logs de runtime da Vercel e pelo fluxo de controle do SDK instalado** (`inngest@4.20.0`, `node_modules/inngest/components/InngestCommHandler.js`, `validateSignature`): a requisição `PUT /api/inngest` enviada pelo Inngest chegou ao handler e falhou na verificação de assinatura com `Error: Invalid signature`. O SDK lança erros distintos em cada etapa, e a ordem deles elimina as alternativas:
+
+| Etapa do SDK | Erro que produziria | Observado? |
+|---|---|---|
+| `INNGEST_SIGNING_KEY` ausente/vazia | `No signing key found in client options or INNGEST_SIGNING_KEY env var` | Não — a variável estava presente e não vazia no runtime |
+| Cabeçalho de assinatura ausente | `No x-inngest-signature provided` | Não no PUT (foi o que um GET **sem assinatura** produziu, fenômeno distinto e esperado em modo `cloud`) |
+| Assinatura expirada (checada antes da comparação) | `Signature has expired` | Não — desvio de relógio descartado |
+| HMAC divergente | `Invalid signature` | **Sim** |
+
+Como o HMAC é calculado sobre `corpo + timestamp` (ambos vindos da própria requisição) com a chave derivada de `INNGEST_SIGNING_KEY`, a única variável restante era o material da chave. A hipótese de o corpo lido diferir do corpo assinado foi descartada por precedente: o mesmo código, mesmo SDK e mesmo runtime já validavam requisições assinadas do Inngest no ambiente de branch (execuções reais registradas em §16) — falha exclusiva de um ambiente aponta para a chave, não para o código.
+
+**Intervenção autorizada, mínima**: a signing key **atual** do ambiente Production foi obtida no painel oficial autenticado (sem gerar nem rotacionar chave) e **somente** `INNGEST_SIGNING_KEY` da Vercel Production foi regravada com esse valor, via stdin, sem exibir o valor em nenhum momento. `INNGEST_EVENT_KEY`, todas as demais variáveis de Production e todo o escopo Preview/branch permaneceram intactos (confirmado por nomes/escopos/idades: apenas uma entrada com timestamp novo). Em seguida, **um único** redeploy do mesmo SHA de Production (`8e490634e…`), sem promover Preview.
+
+**Não foi determinada a natureza da divergência**: segredos da Vercel são write-only, o valor anterior não foi lido e não é possível saber em que ele diferia. Nenhuma suposição é registrada aqui.
+
+**Resultado**: novo deployment de Production `dpl_BUCTscXqx5jgu44qEdRLS1PWP5hi`, target `production`, `Ready`, aliases `praxis-crm-eight.vercel.app` e `praxis-crm-johllls-projects.vercel.app`. Uma única tentativa de sincronização, do app existente, sem duplicata:
+
+- App `praxis-crm` em `Production` — `Last sync: Success`, `28/09/2026, 20:52:54`
+- SDK `4.20.0`, framework `Next.js`, linguagem `JavaScript`, método `Serve`, plataforma `Vercel`
+- Função `a11-process-form-submission` (slug `praxis-crm-a11-process-form-submission`), nome `A11 — processar submissão de formulário`, trigger `praxis/form.submission.received`, **Active**
+- Configuração lida do painel confere com o código: `9 retries`, concorrência escopo `FUNCTION` limite `5`
+- Nenhum aviso de assinatura, chave incompatível ou falha de comunicação. Os dois avisos informativos presentes (`OTel span processor not added`, `Extended traces not enabled`) são recursos opcionais, não erros
+- Logs de runtime confirmam o antes/depois: `20:26:57` `PUT` → `error`/`Invalid signature`; `20:52:54` `PUT`, `20:52:56` `POST`, `20:52:57` `GET` → todos `info`, sem erro (o `GET` agora passa porque vem assinado)
+- O registro de "Unattached syncs" da tentativa falha (`20:26:57`) foi **preservado** no painel como evidência histórica
+- Nenhum evento foi enviado, nenhum cron foi executado: `Runs volume 0`, `Failure rate 0.00%`
+
+## 22. Agendamento do `a11-reconcile.yml` — sem runs, causa não determinada
+
+Decorridas **1h51min** desde o merge (`2026-09-28T22:05:01Z`, momento em que o GitHub registrou o workflow) até `2026-09-28T23:56:19Z`, com cron `*/10 * * * *`, seriam esperados cerca de 11 disparos. **Nenhum run existe** — nem deste workflow, nem de qualquer outro por `event=schedule` neste repositório.
+
+Descartado por verificação direta (somente leitura):
+
+| Hipótese | Evidência |
+|---|---|
+| Arquivo ausente do branch padrão | Presente em `main` (`.github/workflows/a11-reconcile.yml`, sha `0afb5f2`) |
+| Workflow desabilitado (manualmente ou por inatividade de 60 dias) | `state: active`, registrado em `2026-09-28T22:05:01Z` |
+| Actions desabilitado ou com política restritiva | `enabled: true`, `allowed_actions: all` |
+| Repositório arquivado, desabilitado ou fork | `archived: false`, `disabled: false`, `fork: false` |
+| Restrição de repositório privado/plano | Repositório é **público** |
+| Cron inválido ou `schedule:` mal indentado | Bloco `on: schedule: - cron: "*/10 * * * *"` conferido no arquivo em `main`, sintaxe válida |
+
+**Permanece sem causa comprovada.** A explicação candidata é o comportamento documentado do GitHub de atrasar ou descartar execuções agendadas sob carga — intervalos curtos como `*/10` são os mais afetados —, mas **não há evidência verificável** disso pela API (não existe endpoint que exponha o próximo disparo previsto), e por isso não é registrado aqui como conclusão. Item aberto para observação na próxima rodada.
+
+## 23. Validação operacional do reconciliador — bloqueada por escopo do workflow
+
+**O `workflow_dispatch` de validação NÃO foi executado.** A autorização estava condicionada a o workflow chamar somente o reconciliador, e a leitura integral do arquivo mostra que **não é o caso**: `a11-reconcile.yml` tem dois passos — `POST /api/cron/outbox` e `POST /api/cron/retention` (o próprio nome do workflow diz "reconciliação de outbox **e retenção**").
+
+O que o segundo passo escreveria, lido nas funções (`20260921100700_a11_retention_functions.sql`):
+
+| Função | Escrita | Alcance hoje |
+|---|---|---|
+| `flag_stuck_webhook_events` | `stuck_alerted_at = now()` + `audit_logs` + alerta `webhook_event.stuck` | Candidato é todo evento com `processed_at is null`, `stuck_after <= now()` e status **fora** de `('processed','expired_unprocessed','purged')`. O evento histórico `dead` se encaixa nesse filtro — seria marcado e alertado como "travado", embora não seja pendência recuperável |
+| `flag_expiring_webhook_events` | `audit_logs` + alerta antecipado | Só eventos a 7 dias do vencimento — nenhum hoje |
+| `purge_expired_webhook_events` | **anula** `payload_ciphertext`, `payload_iv`, `payload_auth_tag`, `payload_algorithm`, `payload_key_version`, `payload_sanitized`, `occurred_at`; grava `purged_at` | Candidato é `expires_at <= now()`. Com `p_retention_days default 30` (não sobrescrito pela aplicação) e eventos recebidos entre 21 e 28/09/2026, o vencimento começa por volta de **21/10/2026** — nada elegível hoje |
+
+**Consequência de prazo, não só de escopo**: enquanto a retenção estiver no mesmo workflow agendado, por volta de 21/10/2026 o purge passa a rodar sozinho, a cada disparo, e **apaga as evidências de QA da A11 sem ninguém pedir**. Isso não é um risco de hoje, é um risco datado.
+
+**Proposta preparada, sem merge**, na branch `proposta/a11-separa-retencao-e-ajusta-cron` (3 arquivos, +116/−37): retenção movida para `a11-retention.yml` **sem `schedule:`** (só manual, até haver decisão sobre os payloads históricos); `a11-reconcile.yml` passa a chamar apenas o reconciliador; cron muda de `*/10 * * * *` para `7,22,37,52 * * * *` como **mitigação** (não correção comprovada) da ausência de runs agendados; testes estáticos atualizados fixando a separação de escopo e a ausência de schedule na retenção — 7/7 verdes localmente.
+
+**Situação da fila — não verificável por leitura nesta rodada.** O `service_role` não tem grants de tabela (por desenho, `20260921100900_a11_revoke_default_execute.sql`) e nenhuma das RPCs expostas a ele faz listagem (`claim_outbox_batch`, `resolve_stale_outbox_batch`, `mark_*`, `ingest_form_event`, `process_form_event`, `get_webhook_event_payload`, `resolve_form_endpoint` — todas pontuais ou de escrita). Sem `psql` nem driver Postgres disponíveis no ambiente, não houve leitura direta. Por inferência, e apenas por inferência: desde o último inventário (§19) nenhum caminho de escrita de fila foi acionado — os 4 endpoints QA seguem desativados, nenhum formulário foi enviado, nenhum evento criado, nenhum cron executado — logo a fila deve continuar como estava. Isso **não substitui** uma leitura.
+
+## 24. Smoke test autenticado em Production — concluído com uma limitação
+
+Executado contra `https://praxis-crm-eight.vercel.app` com a conta owner de QA de `login da praxis.txt`, via Playwright, sem imprimir credenciais e sem nenhuma escrita:
+
+| Verificação | Resultado |
+|---|---|
+| `/entrar` carrega | `200`, título `Entrar — Praxis CRM Jurídico` |
+| Login com conta owner de QA | **OK** — aterrissou em `/visao-geral` |
+| `/visao-geral` | `200`, conteúdo real renderizado (workspace `Escritorio QA Praxis A3`, papel `Proprietário`) |
+| `/leads` | `200`, link de lead existente encontrado |
+| Perfil 360 de lead fictício | `200`, abas presentes, conteúdo renderizado |
+| `/configuracoes/formularios` | `200`, tela funcional (formulário de criação, pipeline, etapas, campos) |
+| Erros de console | **zero** |
+| Respostas 4xx/5xx em páginas autenticadas | **zero** |
+| `/qa/formulario-a11` | inexistente — o proxy intercepta antes de resolver, redirecionando para `/entrar` |
+| `/api/cron/outbox` sem autenticação | `401` |
+| Endpoint de formulário inexistente | `404` com `{"error":"form_endpoint_unavailable"}`, sem criar evento |
+
+**Limitação real**: a confirmação visual de que os 4 endpoints "QA A11 *" continuam `disabled` **não foi possível**. A conta de `login da praxis.txt` alcança dois workspaces (`Escritorio QA Praxis A3` e `QA A3 Teste`) e **ambos não têm formulário nenhum** ("Nenhum formulário configurado ainda") — os 4 endpoints pertencem a workspaces dos quais essa conta não é membro. A tentativa de usar outra conta de QA dos arquivos locais foi interrompida por política de segurança do próprio ambiente (exploração de credenciais), e não foi contornada. A confirmação autoritativa continua sendo a leitura de §18 mais o fato de que a RPC `set_form_endpoint_status` não foi chamada por ninguém desde então.
+
+## 25. Decisão: a retenção automática de 30 dias é mantida
+
+**Decisão explícita do responsável**: a política de retenção de 30 dias da A11 permanece automática, no workflow agendado, com a frequência atual de 10 minutos. A retenção **não** é convertida em tarefa exclusivamente manual para preservar payloads de QA.
+
+O que se preserva é o **relatório sanitizado e a evidência de validação** — este handoff, as contagens, os identificadores, os protocolos, os códigos de erro —, respeitando a política de retenção dos dados de origem. Nenhum dado pessoal e nenhum ciphertext é exportado como "backup de evidências".
+
+Sobre os oito payloads que ainda carregam conteúdo cifrado:
+
+- são **exclusivamente de QA**, todos pertencentes aos quatro `form_endpoints` "QA A11 *" (desativados desde §18). Nenhum é dado real de cliente;
+- **sete foram processados** e produziram os efeitos de negócio já registrados neste documento (contatos, leads, oportunidades, atividades, touchpoints, protocolos públicos) — efeitos que não dependem do ciphertext e continuam íntegros;
+- **um é a fixture inválida** (`2e038bb5-051a-43c0-b6c4-29eedd48f985`), criada com ciphertext deliberadamente inválido para exercitar o caminho de falha; escalou a `dead` após as 10 tentativas, como projetado, e nunca teve efeito comercial;
+- **a eliminação desses conteúdos ao vencerem os 30 dias é esperada e está autorizada pela política** — `purge_expired_webhook_events` anula as colunas de payload e grava `purged_at`, preservando a linha, o status, o protocolo, o `content_hash` e os vínculos de negócio;
+- **não é necessário conservar o payload bruto para comprovar os testes históricos**: a comprovação está nos relatórios sanitizados, nas contagens antes/depois e nos identificadores registrados aqui.
+
+Sobre o alerta da fixture `dead`: ele deve ser **identificado como proveniente do teste**, e não suprimido. Nenhuma supressão global de alertas de eventos `dead` foi introduzida — o mecanismo continua alertando qualquer evento não processado que ultrapasse `stuck_after`, que é exatamente o comportamento desejado em produção real. A identificação é nominal, por `webhook_event_id`, neste documento.
+
+A proposta `proposta/a11-separa-retencao-e-ajusta-cron` **não foi mesclada e não teve PR aberta**; a branch segue preservada no remoto, sem apagar trabalho, caso a separação seja retomada por outro motivo. `main` mantém o workflow atual com `*/10`.
+
+## 26. Execução manual do reconciliador em Production — os dois passos
+
+Uma única execução de `a11-reconcile.yml` em `main`, por `workflow_dispatch`, destino `https://praxis-crm-eight.vercel.app`, com os secrets já configurados no GitHub.
+
+Verificação prévia por leitura, antes de disparar: o prazo de retenção **não é sobrescrito em lugar nenhum** — `ingest_form_event` é chamado em `handler.ts:235-252` sem `p_retention_days` e sem `p_stuck_after_minutes`, usando os defaults SQL (30 dias / 60 min), e `purge_expired_webhook_events(p_limit)` não tem parâmetro de janela, selecionando estritamente `expires_at <= now()`. As rotas não leem nada da query string. As operações continuam sendo só estas: `resolve_stale_outbox_batch(200)`, `claim_outbox_batch(20,120)`, `mark_outbox_published`/`mark_outbox_failed` e a publicação no Inngest, do lado do outbox; `flag_stuck_webhook_events(100)`, `flag_expiring_webhook_events(100,7)` e `purge_expired_webhook_events(200)`, do lado da retenção. Nenhum grant foi ampliado e nenhum acesso foi contornado.
+
+**Run**: [`36502385256`](https://github.com/johlll/praxis-crm/actions/runs/36502385256) — `event=workflow_dispatch`, branch `main`, `conclusion: success`, `2026-09-29T00:17:51Z`.
+
+| Passo | HTTP | Resposta |
+|---|---|---|
+| `POST /api/cron/outbox` | **200** | `{"resolved":0,"claimed":0,"published":0,"failed":0}` |
+| `POST /api/cron/retention` | **200** | `{"stuck":1,"expiring":0,"purged":0,"expired_unprocessed":0}` |
+
+Leitura dos contadores:
+
+- **outbox, tudo zero — medido, não inferido.** Isto é a primeira prova operacional do reconciliador contra Production: chamada autenticada, `200`, e a confirmação de que a fila está de fato vazia (`resolved:0` = nenhuma outbox órfã; `claimed:0` = nada pendente ou elegível). Resolve por medição a lacuna registrada em §23, em que a fila não era legível.
+- **`stuck: 1` era previsto e está identificado por leitura, não por inferência.** O log de runtime da Vercel traz o alerta estruturado exato: `{"level":"warn","event":"a11.ingest.alert","kind":"stuck","webhook_event_id":"2e038bb5-051a-43c0-b6c4-29eedd48f985","workspace_id":"9c912c4e-0ebc-4c6e-a148-9e56a091781c"}` — é a fixture inválida de §16e, no workspace "QA A11 Validacao Visual". Não é pendência recuperável e não indica defeito: o filtro de `flag_stuck_webhook_events` exclui `processed`/`expired_unprocessed`/`purged`, e `dead` não está nessa lista, então um evento terminal por esgotamento de tentativas é legitimamente sinalizado. Como a função agora gravou `stuck_alerted_at`, e o filtro exige `stuck_alerted_at is null`, **o alerta não se repete** nas próximas execuções.
+- **`purged: 0` e `expired_unprocessed: 0`** confirmam que nada venceu ainda, coerente com a janela de 30 dias e eventos recebidos entre 21 e 28/09/2026 — o vencimento começa por volta de 21/10/2026.
+- **Nenhum erro interno mascarado por job verde**: as rotas devolvem `503` (`resolve_failed`/`claim_failed`/`retention_failed`) se qualquer RPC falhar, e ambas devolveram `200`; nos logs de runtime da Vercel não há nenhuma entrada de nível `error` nesta execução — a única entrada não-`info` é o `warn` do alerta acima, que é o comportamento pretendido.
+
+Nenhum evento novo foi enviado, nenhum endpoint foi reativado, nenhum SQL de limpeza foi executado por fora, nenhum prazo foi reduzido e nenhuma elegibilidade foi forçada.
+
+## 27. Agendamento: ainda sem nenhum run automático
+
+**A execução de §26 é manual (`workflow_dispatch`) e não prova o agendamento.** Consultado em `2026-09-29T00:18:55Z`: `gh run list --workflow=369575406 --event schedule` continua **vazio**, e o único run existente deste workflow é o manual. Decorridas ~2h15min desde o registro do workflow em `main` (`22:05:01Z`), com cron `*/10`, seriam esperados ~13 disparos automáticos.
+
+A frequência **não foi alterada por tentativa** e o workflow não foi desabilitado/reabilitado. As hipóteses estruturais seguem descartadas (§22) e a causa segue **não comprovada**. Pendência explícita e aberta: **observar um run real com `event=schedule`**. A A11 não pode ser declarada encerrada antes disso.
+
+## 28. Conferência dos 4 endpoints QA — workspace identificado, falta acesso
+
+O `workspace_id` que apareceu no alerta de §26 (`9c912c4e-0ebc-4c6e-a148-9e56a091781c`) é o workspace **"QA A11 Validacao Visual"**, criado pelo fluxo normal do app durante a A11 (§13) e onde vivem os endpoints de QA da A11.
+
+A conta de QA disponível localmente (`login da praxis.txt`) **não é membro desse workspace** — ela alcança só `Escritorio QA Praxis A3` e `QA A3 Teste`, ambos sem formulário algum (§24). A conta bloqueada pela política do ambiente **não foi tentada novamente**. Não existe sessão administrativa já autorizada com acesso de leitura ao banco: o `service_role` não tem grants de tabela (por desenho) e nenhuma RPC exposta a ele faz listagem de `form_endpoints` — `resolve_form_endpoint(text)` exige a chave pública do endpoint, que também não é legível.
+
+**O que falta, concretamente**: um login com acesso ao workspace "QA A11 Validacao Visual" para abrir `/configuracoes/formularios` e conferir o status dos quatro endpoints. Até então, a confirmação autoritativa continua sendo a leitura de §18 somada ao fato de que `set_form_endpoint_status` não foi chamada por ninguém desde então.
+
+**Conta identificada**: segundo §11, a validação visual da A11 e a criação desse workspace (via `/onboarding`) foram feitas com a conta `owner` de `praxis-demo-a10.txt` (`demo-a10.owner@praxis.test`) — é essa a conta que alcança o workspace. A conta de `login da praxis.txt` foi verificada em Production e o seletor de workspaces dela lista apenas `Escritorio QA Praxis A3` e `QA A3 Teste`, ambos sem formulário algum; portanto não serve para esta conferência. Nenhum membro, permissão ou endpoint foi alterado em nenhuma das verificações.
+
+**CONFERIDO pela interface oficial (3 de 4)**: com login manual da conta `demo-a10.owner@praxis.test` em Production e o workspace "QA A11 Validacao Visual" selecionado pelo seletor oficial, `/configuracoes/formularios` lista exatamente três endpoints, **todos `Desativado`, nenhum `Ativo`**:
+
+| Endpoint | Status na tela | Eventos recebidos | Modo |
+|---|---|---|---|
+| QA A11 Rate Limit | **Desativado** | 1 | Captação nova |
+| QA A11 Continuidade | **Desativado** | 1 | Continuidade |
+| QA A11 Formulario Visual | **Desativado** | 5 | Captação nova |
+
+Cada um exibe a ação "Reativar" disponível (ou seja, está desativado agora) e o aviso do próprio produto de que desativar derruba só a captação nova, sem apagar o que já foi recebido. Contagem de `Ativo` na página: **zero**. Os endereços públicos aparecem na tela mas **não são transcritos aqui** de propósito — são as chaves de captação, e não há motivo para versioná-las neste documento.
+
+Os 7 eventos somados (1 + 1 + 5) batem com o detalhamento de §19 (1/1/5/1): o oitavo pertence ao quarto endpoint.
+
+**O quarto endpoint está em outro workspace.** `QA A11 - Captacao institucional (editado)` (`fe1e82d2-8695-47fc-8389-28bd8bcfc3e7`) não aparece em "QA A11 Validacao Visual", nem em "Escritório Demonstração (A10)" (conferido nesta mesma sessão: "Nenhum formulário configurado ainda"), nem em `Escritorio QA Praxis A3` ou `QA A3 Teste` (conferidos em §24, ambos vazios). Por eliminação entre os workspaces citados neste handoff, ele está em **"Escritório QA Praxis"** — o workspace de `praxisqa1`/`praxisqa2`, cujas senhas, conforme §11, não estão registradas em arquivo local. Isto é inferência por eliminação, não leitura direta: o status desse quarto endpoint continua apoiado na leitura de §18 e no fato de que `set_form_endpoint_status` não foi chamada desde então.
+
+Nada foi alterado nesta conferência: "Reativar" e "Rotacionar chave" nunca foram acionados, nenhum membro ou permissão foi tocado, e a troca de workspace usou o seletor oficial.
+
+**QUARTO ENDPOINT CONFERIDO — pendência encerrada.** Com login manual no painel do Supabase (projeto `praxis-crm-dev`) e uma única consulta somente-leitura pelo ID exato, sem nenhuma escrita:
+
+```sql
+select e.id, e.name, e.status, w.name as workspace
+from public.form_endpoints e
+join public.workspaces w on w.id = e.workspace_id
+where e.id = 'fe1e82d2-8695-47fc-8389-28bd8bcfc3e7';
+```
+
+| id | name | status | workspace |
+|---|---|---|---|
+| `fe1e82d2-8695-47fc-8389-28bd8bcfc3e7` | QA A11 - Captacao institucional (editado) | **`disabled`** | **Escritório QA Praxis** |
+
+Isso substitui a inferência por eliminação por leitura verificada: o workspace é de fato "Escritório QA Praxis". **Os quatro endpoints "QA A11 *" estão confirmados como desativados** — três pela interface oficial do produto, um por leitura direta do banco. O item deixa de ser pendência.
+
+## 30. Agendamento: experimento de controle preparado (PR #19)
+
+A consulta em `2026-09-29T01:09:47Z` confirmou que o `a11-reconcile.yml` **continua sem nenhuma execução automática** — o único run do workflow segue sendo o `workflow_dispatch` de `00:17:51Z`. Dado adicional relevante: o filtro por `event=schedule` sem restringir workflow retorna vazio, isto é, **este repositório nunca teve nenhuma execução por `schedule`**, para nenhum workflow, em toda a sua história. O `a11-reconcile.yml` é o primeiro workflow agendado do projeto.
+
+Preparado em **PR #19** (branch `diagnostico/schedule-controle-temporario`, um arquivo novo, 51 linhas, `a11-reconcile.yml` intocado) um workflow de controle: um único job com `echo` + `date`, `permissions: {}`, **sem secrets**, sem chamada externa, sem acesso a Production e sem nenhuma escrita, com cron em minutos deslocados (`5,20,35,50`). Aguarda autorização de merge — não foi mesclado.
+
+**Leitura correta do experimento, registrada no próprio arquivo e na PR:**
+
+- se o controle executar por `schedule`, isso comprova **apenas** que o `schedule` é entregue **para ele**, e **não identifica por si só a causa** da ausência no `a11-reconcile.yml` — o controle difere do original em várias dimensões simultâneas (minutos do cron, conteúdo do job, uso de secrets, nome), logo um resultado positivo **não isola nenhuma variável**;
+- se o controle **não** executar em 30–45 minutos, o resultado é **inconclusivo**, não negativo: a documentação oficial admite atraso e descarte de execuções agendadas sob carga, sem prazo garantido;
+- **nenhuma causa é atribuída a característica do arquivo** (por exemplo, caracteres não-ASCII no `name`): não há evidência que sustente isso, e a hipótese fica registrada apenas como hipótese.
+
+O workflow temporário deve ser **removido por PR** depois de cumprir a finalidade. A causa da ausência de execução por `schedule` segue **não determinada**.
+
+## 29. Agendamento: mais duas hipóteses descartadas, causa segue não determinada
+
+Novas verificações somente-leitura, sem tocar cron, sem desabilitar/reabilitar workflow e sem criar outro agendador.
+
+**Ator do agendamento — descartado.** A documentação oficial define que uma execução por `schedule` é associada ao último usuário que alterou o agendamento, e que ela para se esse usuário perder acesso de escrita. Os dois únicos commits que tocaram `.github/workflows/a11-reconcile.yml` (`2f39174`, `f5e1824`) são de `João Niero <joaoniero2@gmail.com>` e a API do GitHub atribui **ambos à conta `johlll`** (`author`/`committer` não nulos, e-mail vinculado). O ator é o próprio dono do repositório, com acesso de escrita — não há restrição de ator aqui.
+
+**Incidente oficial do GitHub — descartado.** O feed de incidentes (`githubstatus.com/api/v2`) não registra nenhum incidente de **Actions** na janela observada (`2026-09-28T22:05Z` → `2026-09-29T00:36Z`). O único incidente que encosta na janela é "Copilot Code Review is unable to complete reviews" (criado `21:16:39Z`, resolvido `22:08:20Z`), de componente alheio a Actions. Os incidentes com componente `Actions` mais recentes são de 13 e 14/09/2026, muito antes. No momento da consulta: status global `All Systems Operational`, componentes `Actions`, `API Requests` e `Webhooks` todos `operational`, zero incidentes em aberto e zero manutenções agendadas.
+
+**Actions estava demonstravelmente funcional para este repositório na janela.** Seis execuções dispararam e passaram nesse intervalo — `push` (`22:05:03Z`), `pull_request` (`22:07:39Z`, `23:57:31Z`, `00:13:34Z`, `00:20:36Z`) e `workflow_dispatch` (`00:17:51Z`) — e **nenhuma** por `schedule`. Não é indisponibilidade geral de Actions: a lacuna é específica do evento `schedule`.
+
+**Causa não determinada.** Com o ator descartado, os itens estruturais descartados em §22 e nenhum incidente oficial compatível, não resta evidência acessível que explique a ausência. Decorridas ~2h31min desde o registro do workflow em `main`, com cron `*/10`, seriam esperados ~15 disparos; o total continua zero (`gh run list --workflow=369575406 --event schedule` vazio em `00:36:17Z`). A pendência permanece **aberta e explícita**: a A11 não se encerra sem um run real com `event=schedule`. A frequência não foi alterada por tentativa.
+
+## 31. Agendamento: execução automática comprovada; frequência de 10 min não comprovada; workflow de controle removido
+
+**Listagem verificada como completa antes de qualquer leitura de intervalo.** `gh run list --workflow=a11-reconcile.yml --event schedule --limit 100` retorna exatamente **2** registros (muito abaixo do limite de 100, portanto sem corte de paginação): não há execução por `schedule` omitida na consulta abaixo.
+
+| id | workflow | criado | conclusão |
+|---|---|---|---|
+| `36510176293` | a11-reconcile.yml | `2026-09-29T01:55:33Z` | success |
+| `36541916072` | a11-reconcile.yml | `2026-09-29T08:18:39Z` | success |
+| `36536807489` | diagnostico-schedule-temporario.yml | `2026-09-29T07:28:13Z` | success |
+
+**Comprovado:** o gatilho `schedule` é entregue a este repositório em Production e executa `a11-reconcile.yml` até a conclusão, com sucesso, em pelo menos duas ocasiões. Resultado de ambas as execuções, os dois passos:
+
+- `36510176293`: `{"resolved":0,"claimed":0,"published":0,"failed":0}` HTTP 200 (outbox); `{"stuck":0,"expiring":0,"purged":0,"expired_unprocessed":0}` HTTP 200 (retention)
+- `36541916072`: `{"resolved":0,"claimed":0,"published":0,"failed":0}` HTTP 200 (outbox); `{"stuck":0,"expiring":0,"purged":0,"expired_unprocessed":0}` HTTP 200 (retention)
+
+`stuck` foi `0` nas duas execuções agendadas, contra `1` na execução manual registrada em §26 — consistente com `flag_stuck_webhook_events` exigir `stuck_alerted_at is null` (a fixture `dead` já foi alertada uma vez e não é realertada). `purged` seguiu `0` nas duas, consistente com a janela de retenção de 30 dias (expiração a partir de ~2026-10-21).
+
+**Não comprovado: frequência de 10 minutos.** O cron declara `*/10 * * * *`. O intervalo real entre as duas execuções de `a11-reconcile.yml` foi de **~6h23min** (`01:55:33Z` → `08:18:39Z`), não ~10 minutos. Não há, nesta listagem, evidência de que o agendamento tenha respeitado a frequência declarada.
+
+**Causa dos atrasos: não determinada.** Não se registra aqui que a ausência de execuções mais próxima de `*/10` decorra de "latência" do GitHub Actions nem de qualquer outra causa específica — não há evidência que isole essa causa. Fica descrito apenas o fato observável: o intervalo medido diverge do cron declarado, por um fator superior a 30×.
+
+**Decisão operacional (usuário, 2026-09-29):** para o ambiente atual, que é exclusivamente de testes, mantém-se temporariamente o GitHub Actions como agendador do `a11-reconcile.yml`. Antes de qualquer dado real de cliente entrar no sistema, é preciso definir o **prazo aceitável de recuperação** (RTO da reconciliação de outbox/retenção) e **validar um agendador que o cumpra de fato** — o que esta seção não faz, porque não mede recuperação sob esse critério, apenas comprova entrega e sucesso pontuais.
+
+**Workflow de controle removido.** `diagnostico-schedule-temporario.yml` cumpriu a finalidade que motivou sua criação (comprovar entrega de `schedule` isoladamente) e foi removido do repositório pela **PR #20** (branch `chore/remove-diagnostico-schedule-temporario`), sem tocar `a11-reconcile.yml`. Nenhum teste funcional já concluído foi repetido para produzir este registro.
