@@ -322,9 +322,14 @@ select is(
 --    (correção 4 — revisão comercial é proposta nova, não reescrita)
 -- ---------------------------------------------------------------------
 
+-- `proposals` não tem GRANT de tabela nenhum para authenticated (mesmo
+-- padrão de toda tabela de negócio desta base) — lock_version só é
+-- lido aqui como superusuário de teste, antes de trocar de role.
+select lock_version from public.proposals where id = :'proposal'::uuid \gset current_
+
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'dono', 'role', 'authenticated')::text, true);
-select decide_proposal(:'proposal'::uuid, (select lock_version from public.proposals where id = :'proposal'::uuid), 'aceita', null);
+select decide_proposal(:'proposal'::uuid, :'current_lock_version'::bigint, 'aceita', null);
 reset role;
 
 select throws_ok(
