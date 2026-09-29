@@ -14,11 +14,15 @@
 begin;
 select plan(41);
 
-\set dono    '20000000-0000-0000-0000-000000000021'
-\set adv     '20000000-0000-0000-0000-000000000022'
-\set adv2    '20000000-0000-0000-0000-000000000023'
-\set vendas  '20000000-0000-0000-0000-000000000024'
-\set leitor  '20000000-0000-0000-0000-000000000025'
+-- Usuários fixos do seed (supabase/seed.sql, auth.users) — mesma
+-- convenção de todo o resto da suíte pgTAP (cada arquivo roda isolado em
+-- begin/rollback, então reaproveitar os mesmos ids entre arquivos nunca
+-- colide).
+\set dono    '20000000-0000-0000-0000-000000000001'
+\set adv     '20000000-0000-0000-0000-000000000002'
+\set adv2    '20000000-0000-0000-0000-000000000003'
+\set vendas  '20000000-0000-0000-0000-000000000004'
+\set leitor  '20000000-0000-0000-0000-000000000005'
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'dono', 'role', 'authenticated')::text, true);
