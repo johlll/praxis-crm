@@ -19,6 +19,12 @@ import { StageProgressBar } from "@/components/leads/stage-progress-bar";
 import { StageMoveControl } from "@/components/leads/stage-move-control";
 import { listConversations } from "@/modules/conversations/queries";
 import { listProposalsForLead } from "@/modules/proposals/queries";
+import {
+  listProposalDocuments,
+  listProposalEmailSends,
+  listContactEmailsForProposal,
+  hasWorkspaceLegalProfile,
+} from "@/modules/proposals/documents-queries";
 import { getConflictCheck } from "@/modules/conflict-checks/queries";
 import { getLeadTimelinePage } from "@/modules/timeline/queries";
 import { LeadTimeline } from "@/components/leads/lead-timeline";
@@ -65,6 +71,9 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
   const canIssueContinuity = roleHasPermission(user.role, "continuity.issue");
   const canEditConflictCheck = roleHasPermission(user.role, "conflict_check.edit");
   const canEditLeadNotes = roleHasPermission(user.role, "lead_note.edit");
+  // B1: mais restrito que proposal.edit — quem gera/baixa/envia o PDF
+  // precisa enxergar o valor exato (sales fica de fora, ver src/lib/roles.ts).
+  const canManageProposalDocuments = roleHasPermission(user.role, "proposal_document.manage");
 
   const [
     members,
@@ -94,6 +103,19 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
   const activitiesHasMore = activitiesPage.hasMore;
   const conversations = conversationsPage.items;
   const conversationsHasMore = conversationsPage.page * conversationsPage.pageSize < conversationsPage.total;
+
+  // B1: documentos e envios por e-mail de cada proposta, mais os e-mails
+  // já conhecidos do contato (destinatário nunca é texto livre, correção
+  // 6) e se o perfil jurídico do escritório já tem razão social (só isso
+  // habilita o botão de envio real — motivo explicado na própria UI).
+  const [proposalDocumentsEntries, proposalEmailSendsEntries, contactEmails, hasLegalProfile] = await Promise.all([
+    Promise.all(proposals.map(async (p) => [p.id, await listProposalDocuments(p.id)] as const)),
+    Promise.all(proposals.map(async (p) => [p.id, await listProposalEmailSends(p.id)] as const)),
+    listContactEmailsForProposal(lead.contactId),
+    hasWorkspaceLegalProfile(workspaceId),
+  ]);
+  const proposalDocumentsByProposal = Object.fromEntries(proposalDocumentsEntries);
+  const proposalEmailSendsByProposal = Object.fromEntries(proposalEmailSendsEntries);
 
   // "Ver cliente" (item 1 do pedido da A8) — o vínculo de cliente da
   // oportunidade mais recente entre as já carregadas acima (não uma
@@ -241,6 +263,11 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
                 opportunityId={primaryOpportunityItem?.status === "open" ? primaryOpportunityItem.id : null}
                 proposals={proposals}
                 canEdit={canEditProposals}
+                canManageDocuments={canManageProposalDocuments}
+                documentsByProposal={proposalDocumentsByProposal}
+                emailSendsByProposal={proposalEmailSendsByProposal}
+                contactEmails={contactEmails}
+                hasWorkspaceLegalProfile={hasLegalProfile}
               />
             }
             origem={

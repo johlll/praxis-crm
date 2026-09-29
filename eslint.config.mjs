@@ -34,6 +34,16 @@ export default tseslint.config(
       "src/app/api/forms/**",
       "src/app/api/inngest/**",
       "src/server/supabase/admin.ts",
+      // B1: primeira exceção que NÃO é webhook/job sem sessão — é uma
+      // mutação autorizada por sessão de usuário, mas que precisa gravar
+      // em Storage e registrar resultado de forma não forjável por RPC
+      // (proposal_documents/proposal_email_sends têm GRANT só para
+      // service_role, de propósito — ver as migrations b1_*). Por isso a
+      // pasta fica isolada e estreita, nunca o restante de
+      // src/server/proposals/**: tudo que não precisa do service_role
+      // continua fora desta exceção, checando permissão pela sessão do
+      // usuário como o resto da base.
+      "src/server/proposals/admin/**",
     ],
     rules: {
       "no-restricted-imports": [
@@ -43,7 +53,7 @@ export default tseslint.config(
             {
               group: ["**/server/supabase/admin", "@/server/supabase/admin"],
               message:
-                "O cliente service_role ignora a RLS. Importe-o apenas em webhooks e jobs (src/app/api/webhooks/**, src/app/api/cron/**, src/app/api/forms/**, src/app/api/inngest/**).",
+                "O cliente service_role ignora a RLS. Importe-o apenas em webhooks e jobs (src/app/api/webhooks/**, src/app/api/cron/**, src/app/api/forms/**, src/app/api/inngest/**) ou em src/server/proposals/admin/** (B1, motivo documentado no arquivo).",
             },
           ],
         },

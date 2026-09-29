@@ -100,6 +100,14 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
     "Já existe um cliente ativo para este contato. Encerre ou suspenda o outro cadastro antes de reativar este.",
   client_merge_conflict_active_client:
     "Não é possível mesclar: os dois contatos têm cliente ativo. Encerre ou suspenda um deles antes de mesclar.",
+  // B1 — geração de PDF e envio real de proposta.
+  proposal_decided_no_new_document:
+    "Esta proposta já foi decidida. Para uma revisão comercial, crie uma nova proposta.",
+  document_not_ready: "O PDF ainda não terminou de ser gerado. Aguarde e tente novamente.",
+  workspace_profile_incomplete:
+    "Preencha a razão social do escritório em Configurações antes de enviar por e-mail.",
+  recipient_email_not_found: "Esse e-mail não está cadastrado para este contato.",
+  resend_not_configured: "Envio real por e-mail não está habilitado neste ambiente.",
 };
 
 /** update_lead_basic_fields()/assign_lead()/set_lead_status()/set_lead_value()

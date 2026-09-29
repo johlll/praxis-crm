@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Metadata, Route } from "next";
-import { Users, Workflow, MessageCircle, type LucideIcon } from "lucide-react";
+import { Users, Workflow, MessageCircle, Building2, type LucideIcon } from "lucide-react";
 
 import { Topbar } from "@/components/app-shell/topbar";
 import { getShellContext } from "@/modules/shell/queries";
@@ -28,6 +28,7 @@ export default async function ConfiguracoesPage() {
   const membership = await requireMembership();
   const canConfigurePipeline = roleHasPermission(membership.role, "pipeline.configure");
   const canUseSimulator = roleHasPermission(membership.role, "conversation.simulate");
+  const canManageLegalProfile = roleHasPermission(membership.role, "workspace_legal_profile.manage");
 
   // "Pipelines" só aparece para quem tem a permissão — diferente das
   // seções de fase futura abaixo (que todo mundo vê como "ainda não
@@ -40,6 +41,16 @@ export default async function ConfiguracoesPage() {
       title: "Equipe",
       description: "Membros, papéis e convites do workspace.",
     },
+    ...(canManageLegalProfile
+      ? [
+          {
+            href: "/configuracoes/escritorio" as Route,
+            icon: Building2,
+            title: "Escritório",
+            description: "Razão social, CNPJ, OAB e endereço — cabeçalho do PDF de proposta.",
+          },
+        ]
+      : []),
     ...(canConfigurePipeline
       ? [
           {
