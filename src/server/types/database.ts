@@ -3156,11 +3156,19 @@ export type Database = {
       create_workspace_with_owner: {
         Args: { p_name: string; p_slug: string }
         Returns: {
+          address_city: string | null
+          address_line: string | null
+          address_uf: string | null
+          address_zip: string | null
+          cnpj: string | null
           created_at: string
           created_by: string
           id: string
           is_demo: boolean
+          legal_name: string | null
           name: string
+          oab_number: string | null
+          oab_uf: string | null
           slug: string
           updated_at: string
         }
@@ -3209,11 +3217,6 @@ export type Database = {
         }
         Returns: undefined
       }
-      flag_expiring_webhook_events: {
-        Args: { p_days_before?: number; p_limit?: number }
-        Returns: Json
-      }
-      flag_stuck_webhook_events: { Args: { p_limit?: number }; Returns: Json }
       finalize_proposal_document: {
         Args: {
           p_actor_user_id: string
@@ -3223,6 +3226,11 @@ export type Database = {
         }
         Returns: undefined
       }
+      flag_expiring_webhook_events: {
+        Args: { p_days_before?: number; p_limit?: number }
+        Returns: Json
+      }
+      flag_stuck_webhook_events: { Args: { p_limit?: number }; Returns: Json }
       get_activity: { Args: { p_activity_id: string }; Returns: Json }
       get_activity_counts: { Args: { p_workspace_id: string }; Returns: Json }
       get_client: { Args: { p_client_id: string }; Returns: Json }
@@ -3413,7 +3421,10 @@ export type Database = {
           total_count: number
         }[]
       }
-      list_proposal_documents: { Args: { p_proposal_id: string }; Returns: Json }
+      list_proposal_documents: {
+        Args: { p_proposal_id: string }
+        Returns: Json
+      }
       list_proposal_email_sends: {
         Args: { p_proposal_id: string }
         Returns: Json
