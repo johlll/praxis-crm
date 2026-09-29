@@ -391,41 +391,39 @@ select is(
 -- Demais papéis do MESMO workspace (nenhum é owner/admin — regra de
 -- workspace_legal_profile.manage em src/lib/roles.ts): RLS filtra a
 -- linha, UPDATE afeta 0 linhas, sem exceção.
+--
+-- `with ... update ... returning` precisa ser o comando de MAIS ALTO
+-- NÍVEL da instrução — Postgres recusa uma CTE de escrita aninhada dentro
+-- do argumento de uma função (aqui, dentro de `is(...)`). Por isso cada
+-- tentativa vira uma instrução própria, capturada por \gset, e só depois
+-- comparada com `is()`.
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'adv', 'role', 'authenticated')::text, true);
-select is(
-  (with upd as (update public.workspaces set legal_name = 'Tentativa Advogado' where id = :'ws'::uuid returning 1)
-   select count(*)::int from upd),
-  0, '`lawyer` não altera o perfil do escritório'
-);
+with upd as (update public.workspaces set legal_name = 'Tentativa Advogado' where id = :'ws'::uuid returning 1)
+select count(*)::int as n from upd \gset lawyer_upd_
 reset role;
+select is(:'lawyer_upd_n'::int, 0, '`lawyer` não altera o perfil do escritório');
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'adv2', 'role', 'authenticated')::text, true);
-select is(
-  (with upd as (update public.workspaces set legal_name = 'Tentativa Advogado 2' where id = :'ws'::uuid returning 1)
-   select count(*)::int from upd),
-  0, '`lawyer` (segundo, sem vínculo com o lead) também não altera o perfil do escritório'
-);
+with upd as (update public.workspaces set legal_name = 'Tentativa Advogado 2' where id = :'ws'::uuid returning 1)
+select count(*)::int as n from upd \gset lawyer2_upd_
 reset role;
+select is(:'lawyer2_upd_n'::int, 0, '`lawyer` (segundo, sem vínculo com o lead) também não altera o perfil do escritório');
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'vendas', 'role', 'authenticated')::text, true);
-select is(
-  (with upd as (update public.workspaces set legal_name = 'Tentativa Vendas' where id = :'ws'::uuid returning 1)
-   select count(*)::int from upd),
-  0, '`sales` não altera o perfil do escritório'
-);
+with upd as (update public.workspaces set legal_name = 'Tentativa Vendas' where id = :'ws'::uuid returning 1)
+select count(*)::int as n from upd \gset sales_upd_
 reset role;
+select is(:'sales_upd_n'::int, 0, '`sales` não altera o perfil do escritório');
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'leitor', 'role', 'authenticated')::text, true);
-select is(
-  (with upd as (update public.workspaces set legal_name = 'Tentativa Viewer' where id = :'ws'::uuid returning 1)
-   select count(*)::int from upd),
-  0, '`viewer` não altera o perfil do escritório'
-);
+with upd as (update public.workspaces set legal_name = 'Tentativa Viewer' where id = :'ws'::uuid returning 1)
+select count(*)::int as n from upd \gset viewer_upd_
 reset role;
+select is(:'viewer_upd_n'::int, 0, '`viewer` não altera o perfil do escritório');
 
 select is(
   (select legal_name from public.workspaces where id = :'ws'::uuid),
@@ -438,12 +436,10 @@ select is(
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'adv2', 'role', 'authenticated')::text, true);
 select (create_workspace_with_owner('Teste B1 — Outro Workspace', 'teste-b1-outro-workspace')).id as ws2 \gset
-select is(
-  (with upd as (update public.workspaces set legal_name = 'Vazamento entre tenants' where id = :'ws'::uuid returning 1)
-   select count(*)::int from upd),
-  0, 'Isolamento: ser owner do workspace 2 não dá poder de alterar o perfil do workspace 1'
-);
+with upd as (update public.workspaces set legal_name = 'Vazamento entre tenants' where id = :'ws'::uuid returning 1)
+select count(*)::int as n from upd \gset isolation_upd_
 reset role;
+select is(:'isolation_upd_n'::int, 0, 'Isolamento: ser owner do workspace 2 não dá poder de alterar o perfil do workspace 1');
 
 -- GRANT é só nas 8 colunas do perfil — name/slug/created_by continuam
 -- inacessíveis a `authenticated`, mesmo para quem É owner/admin da linha.
