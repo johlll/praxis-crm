@@ -990,3 +990,28 @@ Novas verificações somente-leitura, sem tocar cron, sem desabilitar/reabilitar
 **Actions estava demonstravelmente funcional para este repositório na janela.** Seis execuções dispararam e passaram nesse intervalo — `push` (`22:05:03Z`), `pull_request` (`22:07:39Z`, `23:57:31Z`, `00:13:34Z`, `00:20:36Z`) e `workflow_dispatch` (`00:17:51Z`) — e **nenhuma** por `schedule`. Não é indisponibilidade geral de Actions: a lacuna é específica do evento `schedule`.
 
 **Causa não determinada.** Com o ator descartado, os itens estruturais descartados em §22 e nenhum incidente oficial compatível, não resta evidência acessível que explique a ausência. Decorridas ~2h31min desde o registro do workflow em `main`, com cron `*/10`, seriam esperados ~15 disparos; o total continua zero (`gh run list --workflow=369575406 --event schedule` vazio em `00:36:17Z`). A pendência permanece **aberta e explícita**: a A11 não se encerra sem um run real com `event=schedule`. A frequência não foi alterada por tentativa.
+
+## 31. Agendamento: execução automática comprovada; frequência de 10 min não comprovada; workflow de controle removido
+
+**Listagem verificada como completa antes de qualquer leitura de intervalo.** `gh run list --workflow=a11-reconcile.yml --event schedule --limit 100` retorna exatamente **2** registros (muito abaixo do limite de 100, portanto sem corte de paginação): não há execução por `schedule` omitida na consulta abaixo.
+
+| id | workflow | criado | conclusão |
+|---|---|---|---|
+| `36510176293` | a11-reconcile.yml | `2026-09-29T01:55:33Z` | success |
+| `36541916072` | a11-reconcile.yml | `2026-09-29T08:18:39Z` | success |
+| `36536807489` | diagnostico-schedule-temporario.yml | `2026-09-29T07:28:13Z` | success |
+
+**Comprovado:** o gatilho `schedule` é entregue a este repositório em Production e executa `a11-reconcile.yml` até a conclusão, com sucesso, em pelo menos duas ocasiões. Resultado de ambas as execuções, os dois passos:
+
+- `36510176293`: `{"resolved":0,"claimed":0,"published":0,"failed":0}` HTTP 200 (outbox); `{"stuck":0,"expiring":0,"purged":0,"expired_unprocessed":0}` HTTP 200 (retention)
+- `36541916072`: `{"resolved":0,"claimed":0,"published":0,"failed":0}` HTTP 200 (outbox); `{"stuck":0,"expiring":0,"purged":0,"expired_unprocessed":0}` HTTP 200 (retention)
+
+`stuck` foi `0` nas duas execuções agendadas, contra `1` na execução manual registrada em §26 — consistente com `flag_stuck_webhook_events` exigir `stuck_alerted_at is null` (a fixture `dead` já foi alertada uma vez e não é realertada). `purged` seguiu `0` nas duas, consistente com a janela de retenção de 30 dias (expiração a partir de ~2026-10-21).
+
+**Não comprovado: frequência de 10 minutos.** O cron declara `*/10 * * * *`. O intervalo real entre as duas execuções de `a11-reconcile.yml` foi de **~6h23min** (`01:55:33Z` → `08:18:39Z`), não ~10 minutos. Não há, nesta listagem, evidência de que o agendamento tenha respeitado a frequência declarada.
+
+**Causa dos atrasos: não determinada.** Não se registra aqui que a ausência de execuções mais próxima de `*/10` decorra de "latência" do GitHub Actions nem de qualquer outra causa específica — não há evidência que isole essa causa. Fica descrito apenas o fato observável: o intervalo medido diverge do cron declarado, por um fator superior a 30×.
+
+**Decisão operacional (usuário, 2026-09-29):** para o ambiente atual, que é exclusivamente de testes, mantém-se temporariamente o GitHub Actions como agendador do `a11-reconcile.yml`. Antes de qualquer dado real de cliente entrar no sistema, é preciso definir o **prazo aceitável de recuperação** (RTO da reconciliação de outbox/retenção) e **validar um agendador que o cumpra de fato** — o que esta seção não faz, porque não mede recuperação sob esse critério, apenas comprova entrega e sucesso pontuais.
+
+**Workflow de controle removido.** `diagnostico-schedule-temporario.yml` cumpriu a finalidade que motivou sua criação (comprovar entrega de `schedule` isoladamente) e foi removido do repositório pela **PR #20** (branch `chore/remove-diagnostico-schedule-temporario`), sem tocar `a11-reconcile.yml`. Nenhum teste funcional já concluído foi repetido para produzir este registro.
