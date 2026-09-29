@@ -42,6 +42,9 @@ create table public.proposal_documents (
     foreign key (workspace_id, proposal_id) references public.proposals (workspace_id, id) on delete cascade,
   constraint proposal_documents_proposal_version_key unique (proposal_id, version),
   constraint proposal_documents_storage_path_key unique (storage_path),
+  -- Necessária para a FK composta de proposal_email_sends.document_id
+  -- (mesmo motivo de proposals_workspace_id_id_key nesta mesma leva).
+  constraint proposal_documents_workspace_id_id_key unique (workspace_id, id),
   -- Campos de "pronto" só existem quando pronto; nunca um ready sem
   -- checksum/tamanho, nunca um pending com eles já preenchidos.
   constraint proposal_documents_status_fields_consistent check (
