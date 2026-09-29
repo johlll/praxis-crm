@@ -150,7 +150,7 @@ select is(
 
 select document_id, version, storage_path from begin_proposal_document(:'proposal'::uuid, :'dono'::uuid) \gset doc2_
 select is(:'doc2_version'::int, 2, 'Segunda geração recebe versão 2, não reaproveita a 1');
-select isnt(:'doc2_document_id', :'doc1_document_id', 'Versão 2 é uma linha nova, não a mesma da versão 1');
+select isnt(:'doc2_document_id'::uuid, :'doc1_document_id'::uuid, 'Versão 2 é uma linha nova, não a mesma da versão 1');
 
 -- ---------------------------------------------------------------------
 -- 4) Papel: geração/download exigem enxergar o valor exato — sales/
@@ -233,11 +233,11 @@ reset role;
 
 select send_id, status, is_new from queue_proposal_email(:'proposal'::uuid, :'doc1_document_id'::uuid, 'cliente@example.com', :'intent1'::uuid, :'dono'::uuid) \gset q1_
 select is(:'q1_is_new'::boolean, true, 'Primeira chamada com esta chave cria a linha (is_new=true)');
-select is(:'q1_status', 'queued', 'Linha nasce queued — clicar não é ter enviado (correção 5/2)');
+select is(:'q1_status'::text, 'queued'::text, 'Linha nasce queued — clicar não é ter enviado (correção 5/2)');
 
 select send_id, status, is_new from queue_proposal_email(:'proposal'::uuid, :'doc1_document_id'::uuid, 'cliente@example.com', :'intent1'::uuid, :'dono'::uuid) \gset q2_
 select is(:'q2_is_new'::boolean, false, 'Repetir a MESMA chave nunca cria uma segunda linha (correção 1)');
-select is(:'q2_send_id', :'q1_send_id', 'Repetir a mesma chave devolve o MESMO send_id');
+select is(:'q2_send_id'::uuid, :'q1_send_id'::uuid, 'Repetir a mesma chave devolve o MESMO send_id');
 
 select is(
   (select count(*)::int from public.proposal_email_sends where idempotency_key = :'intent1'::uuid),
