@@ -1,14 +1,20 @@
-name: A11 — reconciliação de outbox e retenção
+name: A11 — reconciliação de outbox
 
-# GitHub só avalia `schedule:` a partir do branch padrão (main). Enquanto
-# este arquivo viver só em feat/a11-forms-attribution, o disparo
-# automático NÃO ocorre — é preciso mergear para main para o agendamento
-# valer de fato. Até lá, use `workflow_dispatch` (manual) ou a estratégia
-# de teste descrita em A11-HANDOFF.md para provar o comportamento antes
-# do merge.
+# Este workflow chama SOMENTE o reconciliador de outbox. A retenção saiu
+# daqui para `a11-retention.yml` de propósito: ela apaga conteúdo pessoal
+# de forma irreversível e sinaliza eventos não processados, o que não tem
+# a mesma cadência nem o mesmo risco de uma reconciliação de fila.
+#
+# GitHub só avalia `schedule:` a partir do branch padrão (main).
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    # Minutos deslocados, intervalo de 15 min. Agendamentos alinhados ao
+    # topo do intervalo (`*/10`, que cai no minuto 0, 10, 20…) disputam a
+    # fila global do GitHub com todo mundo e são os primeiros a serem
+    # atrasados ou descartados sob carga. O reconciliador é rede de
+    # segurança — a publicação inline é o caminho primário —, então 15 min
+    # com deslocamento entrega a mesma garantia com muito menos disputa.
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
     inputs:
       target_url:
@@ -27,17 +33,6 @@ jobs:
           TARGET_URL: ${{ github.event.inputs.target_url || 'https://praxis-crm-eight.vercel.app' }}
         run: |
           curl -sf -X POST "${TARGET_URL}/api/cron/outbox?x-vercel-protection-bypass=${BYPASS_SECRET}" \
-            -H "Authorization: Bearer ${CRON_SECRET}" \
-            -H "x-vercel-set-bypass-cookie: true" \
-            -w "\nHTTP %{http_code}\n"
-
-      - name: Chamar /api/cron/retention
-        env:
-          CRON_SECRET: ${{ secrets.A11_CRON_SECRET }}
-          BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-          TARGET_URL: ${{ github.event.inputs.target_url || 'https://praxis-crm-eight.vercel.app' }}
-        run: |
-          curl -sf -X POST "${TARGET_URL}/api/cron/retention?x-vercel-protection-bypass=${BYPASS_SECRET}" \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             -H "x-vercel-set-bypass-cookie: true" \
             -w "\nHTTP %{http_code}\n"
