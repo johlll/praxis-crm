@@ -934,6 +934,22 @@ A conta de QA disponível localmente (`login da praxis.txt`) **não é membro de
 
 **Conta identificada**: segundo §11, a validação visual da A11 e a criação desse workspace (via `/onboarding`) foram feitas com a conta `owner` de `praxis-demo-a10.txt` (`demo-a10.owner@praxis.test`) — é essa a conta que alcança o workspace. A conta de `login da praxis.txt` foi verificada em Production e o seletor de workspaces dela lista apenas `Escritorio QA Praxis A3` e `QA A3 Teste`, ambos sem formulário algum; portanto não serve para esta conferência. Nenhum membro, permissão ou endpoint foi alterado em nenhuma das verificações.
 
+**CONFERIDO pela interface oficial (3 de 4)**: com login manual da conta `demo-a10.owner@praxis.test` em Production e o workspace "QA A11 Validacao Visual" selecionado pelo seletor oficial, `/configuracoes/formularios` lista exatamente três endpoints, **todos `Desativado`, nenhum `Ativo`**:
+
+| Endpoint | Status na tela | Eventos recebidos | Modo |
+|---|---|---|---|
+| QA A11 Rate Limit | **Desativado** | 1 | Captação nova |
+| QA A11 Continuidade | **Desativado** | 1 | Continuidade |
+| QA A11 Formulario Visual | **Desativado** | 5 | Captação nova |
+
+Cada um exibe a ação "Reativar" disponível (ou seja, está desativado agora) e o aviso do próprio produto de que desativar derruba só a captação nova, sem apagar o que já foi recebido. Contagem de `Ativo` na página: **zero**. Os endereços públicos aparecem na tela mas **não são transcritos aqui** de propósito — são as chaves de captação, e não há motivo para versioná-las neste documento.
+
+Os 7 eventos somados (1 + 1 + 5) batem com o detalhamento de §19 (1/1/5/1): o oitavo pertence ao quarto endpoint.
+
+**O quarto endpoint está em outro workspace.** `QA A11 - Captacao institucional (editado)` (`fe1e82d2-8695-47fc-8389-28bd8bcfc3e7`) não aparece em "QA A11 Validacao Visual", nem em "Escritório Demonstração (A10)" (conferido nesta mesma sessão: "Nenhum formulário configurado ainda"), nem em `Escritorio QA Praxis A3` ou `QA A3 Teste` (conferidos em §24, ambos vazios). Por eliminação entre os workspaces citados neste handoff, ele está em **"Escritório QA Praxis"** — o workspace de `praxisqa1`/`praxisqa2`, cujas senhas, conforme §11, não estão registradas em arquivo local. Isto é inferência por eliminação, não leitura direta: o status desse quarto endpoint continua apoiado na leitura de §18 e no fato de que `set_form_endpoint_status` não foi chamada desde então.
+
+Nada foi alterado nesta conferência: "Reativar" e "Rotacionar chave" nunca foram acionados, nenhum membro ou permissão foi tocado, e a troca de workspace usou o seletor oficial.
+
 ## 29. Agendamento: mais duas hipóteses descartadas, causa segue não determinada
 
 Novas verificações somente-leitura, sem tocar cron, sem desabilitar/reabilitar workflow e sem criar outro agendador.
