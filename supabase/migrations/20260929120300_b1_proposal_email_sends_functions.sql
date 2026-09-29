@@ -118,6 +118,11 @@ $body$;
 
 revoke all on function public.queue_proposal_email(uuid, uuid, text, uuid, uuid) from public;
 grant execute on function public.queue_proposal_email(uuid, uuid, text, uuid, uuid) to service_role;
+-- `revoke ... from public` NÃO retira a concessão automática que o
+-- Supabase dá a anon/authenticated em toda função nova do schema public
+-- (mesmo motivo documentado em 20260921100900_a11_revoke_default_execute.sql)
+-- — precisa da revogação explícita abaixo.
+revoke execute on function public.queue_proposal_email(uuid, uuid, text, uuid, uuid) from anon, authenticated;
 
 -- ---------------------------------------------------------------------
 -- mark_proposal_email_sent — "accepted", nunca "sent"/"delivered": só
@@ -198,6 +203,7 @@ $body$;
 
 revoke all on function public.mark_proposal_email_sent(uuid, text) from public;
 grant execute on function public.mark_proposal_email_sent(uuid, text) to service_role;
+revoke execute on function public.mark_proposal_email_sent(uuid, text) from anon, authenticated;
 
 -- ---------------------------------------------------------------------
 -- mark_proposal_email_failed — idempotente, nunca reescreve um resultado
@@ -244,6 +250,7 @@ $body$;
 
 revoke all on function public.mark_proposal_email_failed(uuid, text) from public;
 grant execute on function public.mark_proposal_email_failed(uuid, text) to service_role;
+revoke execute on function public.mark_proposal_email_failed(uuid, text) from anon, authenticated;
 
 -- ---------------------------------------------------------------------
 -- list_proposal_email_sends — leitura, mesma faixa de list_proposal_documents.

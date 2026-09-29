@@ -101,6 +101,12 @@ $body$;
 
 revoke all on function public.begin_proposal_document(uuid, uuid) from public;
 grant execute on function public.begin_proposal_document(uuid, uuid) to service_role;
+-- `revoke ... from public` NÃO retira a concessão automática que o
+-- Supabase dá a anon/authenticated em toda função nova do schema public
+-- (mesmo motivo documentado em 20260921100900_a11_revoke_default_execute.sql)
+-- — precisa da revogação explícita abaixo, senão a função fica chamável
+-- direto pelo navegador apesar do "revoke ... from public" acima.
+revoke execute on function public.begin_proposal_document(uuid, uuid) from anon, authenticated;
 
 -- ---------------------------------------------------------------------
 -- finalize_proposal_document — só vira 'ready' depois de confirmar,
@@ -173,6 +179,7 @@ $body$;
 
 revoke all on function public.finalize_proposal_document(uuid, text, bigint, uuid) from public;
 grant execute on function public.finalize_proposal_document(uuid, text, bigint, uuid) to service_role;
+revoke execute on function public.finalize_proposal_document(uuid, text, bigint, uuid) from anon, authenticated;
 
 -- ---------------------------------------------------------------------
 -- fail_proposal_document — idempotente: só transiciona pending→failed,
@@ -220,6 +227,7 @@ $body$;
 
 revoke all on function public.fail_proposal_document(uuid, text, uuid) from public;
 grant execute on function public.fail_proposal_document(uuid, text, uuid) to service_role;
+revoke execute on function public.fail_proposal_document(uuid, text, uuid) from anon, authenticated;
 
 -- ---------------------------------------------------------------------
 -- list_proposal_documents — leitura, projeção por papel. Nunca devolve
