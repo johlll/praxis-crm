@@ -76,7 +76,10 @@ begin
     raise exception 'proposal_decided_no_new_document';
   end if;
 
-  select coalesce(max(version), 0) + 1 into v_next_version
+  -- `version` bare seria ambíguo aqui: o parâmetro de saída de
+  -- `returns table (..., version integer, ...)` também se chama version e
+  -- fica em escopo na função inteira — daí a qualificação explícita.
+  select coalesce(max(proposal_documents.version), 0) + 1 into v_next_version
   from public.proposal_documents where proposal_id = p_proposal_id;
 
   v_storage_path := 'workspace/' || v_lead.workspace_id::text

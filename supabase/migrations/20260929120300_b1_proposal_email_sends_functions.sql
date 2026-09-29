@@ -47,8 +47,12 @@ begin
 
   select * into v_lead from public.leads where id = v_proposal.lead_id;
 
-  select role into v_role from public.memberships
-  where workspace_id = v_lead.workspace_id and user_id = p_actor_user_id and status = 'active';
+  -- `status` bare seria ambíguo com o parâmetro de saída desta função
+  -- (returns table (..., status ..., ...)) — mesmo motivo de
+  -- begin_proposal_document/version, daí a qualificação explícita aqui e
+  -- na consulta de proposal_documents logo abaixo.
+  select role into v_role from public.memberships m
+  where m.workspace_id = v_lead.workspace_id and m.user_id = p_actor_user_id and m.status = 'active';
 
   -- Mesmo nível de begin_proposal_document: quem despacha precisa
   -- enxergar o valor exato que está no PDF anexado.
@@ -60,8 +64,8 @@ begin
     raise exception 'lead_not_found';
   end if;
 
-  select * into v_document from public.proposal_documents
-  where id = p_document_id and proposal_id = p_proposal_id and status = 'ready';
+  select * into v_document from public.proposal_documents pd
+  where pd.id = p_document_id and pd.proposal_id = p_proposal_id and pd.status = 'ready';
   if v_document.id is null then
     raise exception 'document_not_ready';
   end if;
