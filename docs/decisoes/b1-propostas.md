@@ -194,3 +194,116 @@ vinculada ao `document_id` exato, idempotência confirmada, ator sem papel
 autorizado bloqueado; `authenticated` confirmado sem EXECUTE em nenhuma
 das 6 funções de escrita, mesmo sendo owner. Nenhum e-mail foi enviado
 (fila fica em `queued`).
+
+## 6. Segundo defeito real, encontrado validando o Preview pela interface
+
+A validação hospedada (§5) rodou o código de `src/server/proposals/admin/**`
+direto pelo Node/Vitest, nunca através do bundle real do Next.js. Ao
+clicar "Gerar PDF" pela primeira vez pela interface do Preview, a ação
+falhou com a mensagem genérica de erro (`GENERIC_MESSAGE` de
+`src/lib/errors.ts`), nunca vista antes.
+
+**Causa:** `adminBeginProposalDocument` (e todo o resto do módulo)
+reaproveitava `createAdminSupabaseClient()` de
+`src/server/supabase/admin.ts` — o cliente `service_role` da A11. A
+config desse cliente (`getIngestConfig()`) valida, **na mesma chamada
+Zod**, `SUPABASE_SECRET_KEY` **junto com** `TURNSTILE_SECRET_KEY`,
+`UPSTASH_REDIS_REST_URL/TOKEN`, `INNGEST_EVENT_KEY`/`INNGEST_SIGNING_KEY`,
+`CRON_SECRET` e as chaves de cifra de payload da A11 — nenhuma delas
+relacionada a propostas. Faltando qualquer uma, a validação inteira falha
+e `begin_proposal_document` nunca chega a ser chamado. Esse acoplamento
+não tinha como aparecer nem em CI (que configura o ambiente A11 completo)
+nem na validação hospedada direta (que chama o RPC pelo `service_role`
+puro, sem passar por `getIngestConfig()`).
+
+**Correção** (sem migration): novo `src/server/proposals/admin/supabase.ts`
+com um cliente `service_role` próprio, validado só com
+`SUPABASE_SECRET_KEY` + `NEXT_PUBLIC_SUPABASE_URL`. `documents.ts` e
+`email.ts` passam a importar dali, não mais de
+`src/server/supabase/admin.ts`. `eslint.config.mjs` ajustado: a exceção
+de lint para service_role fora de webhook/job passa a valer só para este
+arquivo novo (não a pasta `admin/**` inteira) — nenhum outro arquivo
+constrói um cliente cru.
+
+**Segunda causa, de infraestrutura, descoberta em seguida:** mesmo com o
+código corrigido, a geração continuou falhando — `SUPABASE_SECRET_KEY`
+simplesmente não existia no escopo Preview do Vercel para nenhum branch
+(nem genérico, nem específico). Adicionada, com autorização, só para
+`feat/b1-proposals-pdf` (`vercel env add ... preview feat/b1-proposals-pdf`,
+mesmo valor já usado em produção/local — nenhuma rotação, nenhuma conta
+nova), seguida de um redeploy do mesmo commit para captar a variável.
+Depois dos dois fixes juntos, a geração funcionou pela interface real
+(v17 e v18 desta rodada).
+
+## 7. Validação pela interface (Preview, commit `1551ca4`, dados fictícios)
+
+- **Perfil do escritório:** editado pela tela de Configurações → Escritório
+  (razão social alterada para incluir "(validado via UI)"), recarregada a
+  página, valor persistido idêntico.
+- **Duas versões novas geradas pela UI** (v17, v18) — PDFs abertos e
+  conferidos visualmente: cabeçalho do escritório completo (razão social,
+  CNPJ, OAB, endereço, CEP), número da proposta, cliente, objeto,
+  honorários com valor formatado, rodapé — uma única página, sem corte,
+  totalmente legível.
+- **Histórico de versões** na aba Propostas: lista completa (v1 a v18,
+  incluindo a v14 travada em "Gerando…" desde uma rodada anterior — nunca
+  virou `ready` sem o arquivo, confirmando de novo a garantia de
+  integridade).
+- **Timeline (aba Histórico):** um único evento para PROP-2026-0003,
+  refletindo o estado real (`rascunho`) — nada fabricado, nenhuma
+  duplicação.
+- **Bloqueio de download para sales e viewer:** logados pela tela normal
+  (senha de QA definida via API administrativa, só para teste), a aba
+  Propostas não mostra os botões "Gerar PDF"/"Enviar por e-mail" nem o
+  link "Baixar" para nenhuma versão; acesso direto à rota
+  `/api/proposals/documents/[id]/download` devolve **404** para os dois
+  papéis — nunca 403, como desenhado.
+
+## 8. Envio real por e-mail — levantamento antes de configurar (nada enviado)
+
+Nenhuma chamada ao Resend foi feita nesta rodada. Levantamento:
+
+- **Exigido pelo código:** `RESEND_API_KEY` e `RESEND_FROM_EMAIL`
+  (`src/server/proposals/env.ts`, `getResendConfig()`) — ausentes em todo
+  ambiente hoje (nem `.env.local`, nem nenhum escopo do Vercel).
+- **Conta/domínio já existentes** (`docs/decisoes/estabilizacao-pos-a9.md`
+  §7.2): Resend, domínio `mail.collios.cloud` (plano gratuito, região São
+  Paulo), DKIM/SPF/MX/DMARC já verificados por consulta DNS externa.
+  Hoje usado exclusivamente como SMTP do Supabase Auth
+  (`nao-responda@mail.collios.cloud`) — nenhuma API key de aplicação
+  existe ainda; a senha SMTP do Auth não deve ser reaproveitada aqui (é
+  outro uso, outro remetente).
+- **Pendente, fora do meu acesso nesta sessão:** eu não tenho login no
+  painel do Resend — não consegui listar as API keys nem os remetentes já
+  cadastrados na conta. Quem tiver acesso ao painel confirma diretamente.
+- **Procedimento proposto para um único envio controlado:**
+  1. No painel do Resend, criar uma **API key nova**, de aplicação (não a
+     senha SMTP do Auth), com o menor escopo necessário (só envio, restrita
+     ao domínio se a interface permitir). Não recria conta nem domínio —
+     usa o `mail.collios.cloud` já verificado.
+  2. Escolher um remetente distinto de `nao-responda@` no mesmo domínio já
+     verificado (ex.: `propostas@mail.collios.cloud`) — nenhum registro de
+     DNS novo é necessário, a verificação já é por domínio inteiro.
+  3. Configurar `RESEND_API_KEY`/`RESEND_FROM_EMAIL` **só no Preview desta
+     branch** (mesmo padrão usado para `SUPABASE_SECRET_KEY` acima),
+     redeploy para captar.
+  4. Usar a proposta fictícia já existente (`PROP-2026-0003`) e uma versão
+     de PDF já gerada e identificada nesta rodada (ex.: v18,
+     `e48c78fd-7a48-4c71-8836-2cf525e0abb6`) — nunca gerar uma versão nova
+     só para o teste de envio, para que o e-mail carregue exatamente o
+     conteúdo já conferido visualmente em §7.
+  5. Cadastrar o endereço de destino (a ser confirmado por quem pedir o
+     teste) em `contact_emails` do contato fictício, exatamente como o
+     fluxo real exige (correção 6 — nunca texto livre).
+  6. Clicar "Enviar por e-mail" pela interface, uma única vez, com essa
+     versão e esse destinatário.
+  7. **Distinguir os dois resultados, explicitamente:**
+     - **Aceito pelo Resend:** `queue_proposal_email`/`mark_proposal_email_sent`
+       confirmam `status = accepted` com um `provider_message_id` real —
+       visível na aba Propostas e na tabela `proposal_email_sends`. Prova
+       só que o Resend recebeu e aceitou a mensagem.
+     - **Recebido de fato na caixa de entrada:** só quem controla esse
+       endereço pode confirmar (inclusive checando spam) — não há webhook
+       de entrega implementado (fora do escopo da B1, `docs/decisoes/
+       b1-propostas.md §4`). As duas confirmações são independentes; uma
+       não implica a outra.
