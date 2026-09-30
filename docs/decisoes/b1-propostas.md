@@ -307,3 +307,55 @@ Nenhuma chamada ao Resend foi feita nesta rodada. Levantamento:
        de entrega implementado (fora do escopo da B1, `docs/decisoes/
        b1-propostas.md §4`). As duas confirmações são independentes; uma
        não implica a outra.
+
+## 9. Envio único controlado — executado (30/09/2026)
+
+Procedimento do §8 executado ponta a ponta, com autorização explícita para
+este envio específico. Nenhuma conta, domínio ou chave existente foi
+alterada; nenhum outro e-mail foi enviado.
+
+- **API key criada:** `praxis-crm-b1-propostas`, permissão **Sending
+  access** (não Full access), restrita ao domínio `mail.collios.cloud` —
+  distinta da `praxis-crm-smtp` usada pelo Auth (intocada).
+- **Remetente escolhido:** `propostas@mail.collios.cloud` (mesmo domínio
+  já verificado, sem alteração de DNS).
+- **Variáveis configuradas:** `RESEND_API_KEY` e `RESEND_FROM_EMAIL`, só
+  no Preview do branch `feat/b1-proposals-pdf` (mesmo padrão do
+  `SUPABASE_SECRET_KEY` em §6), seguido de redeploy do deployment vigente
+  para captar as duas.
+- **Achado ao localizar a proposta:** a proposta fictícia `PROP-2026-0003`
+  pertence ao lead **"Cliente A9 Revalidação (fictício)"** (não ao lead
+  esperado inicialmente) — confirmado navegando pela interface antes de
+  qualquer envio. O mesmo contato já tinha **6 tentativas anteriores**
+  registradas como "em andamento" (nunca `aceito` nem `falhou`) para
+  `cliente.b1.qa@example.com`, de testes de UI anteriores à correção do
+  cliente admin (§6) — ficaram nesse estado porque a falha ocorria antes
+  de `adminDispatchProposalEmail` ser chamado (download do PDF ou RPC de
+  sessão), então `mark_proposal_email_failed` nunca rodava. Não são
+  reprocessadas automaticamente (não há reconciliação para este caso);
+  ficaram como está, sem tentar corrigir por não ser o escopo desta
+  rodada — registrado aqui como pendência menor, não bloqueante.
+- **Pré-envio, conferido pela interface:** proposta fictícia
+  (`PROP-2026-0003`, R$ 1.234,00, rascunho); destinatário cadastrado em
+  `contact_emails` do contato fictício (`joaoniero2@gmail.com`, o
+  endereço confirmado por quem pediu o teste); documento anexado é a v18
+  já gerada e conferida visualmente em §7 (nenhuma versão nova gerada
+  para o teste).
+- **Envio disparado uma única vez** pela interface oficial ("Enviar por
+  e-mail" → selecionar destinatário → "Enviar"). Diálogo de confirmação
+  já deixa o texto "O CRM só registra 'aceito pelo provedor' — não
+  confirma que a caixa do cliente recebeu" antes do clique.
+- **Aceito pelo provedor:** confirmado em dois lugares independentes —
+  - Timeline do CRM: "Aceito pelo provedor de e-mail para
+    joaoniero2@gmail.com em 30/09/2026, 08:34".
+  - Painel do Resend (`/emails/01a0f217-dba7-717a-8589-6133ae4b77a9`):
+    From `propostas@mail.collios.cloud`, To `joaoniero2@gmail.com`,
+    Subject "Proposta de honorários PROP-2026-0003", anexo
+    `PROP-2026-0003.pdf`, eventos `sent` e **`delivered`** (aceite pelo
+    servidor de destino), ambos às 08:34.
+- **Recebido de fato na caixa de entrada:** **ainda não confirmado** —
+  pendente de quem controla `joaoniero2@gmail.com` verificar a chegada
+  (inclusive pasta de spam) e abrir o anexo. `delivered` no Resend
+  significa que o servidor de destino aceitou a mensagem; não é o mesmo
+  que "chegou na caixa de entrada e foi aberta" — essa confirmação
+  continua sendo a etapa separada e pendente.
