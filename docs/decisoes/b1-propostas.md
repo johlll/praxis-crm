@@ -149,3 +149,48 @@ fictício, é decisão e execução à parte.
   decisão própria.
 - **Template customizável por escritório** — fixo no código nesta fase, um
   único cliente.
+
+## 5. Correção pós-validação hospedada: GRANT do perfil do escritório
+
+A validação hospedada contra `praxis-crm-dev` (dados fictícios de QA, sem
+tocar o Resend) encontrou um defeito real antes do merge: a policy
+`workspaces_update` (A2, `20260907120200_a2_rls.sql`) restringe a
+owner/admin, mas nunca teve o GRANT de tabela que a torna utilizável —
+`authenticated` só tinha `SELECT` em `workspaces`
+(`20260908040000_a2_normalize_table_privileges.sql`). RLS decide **quais
+linhas** uma escrita permitida enxerga; sem o GRANT, a escrita nunca chega
+a ser avaliada. `updateWorkspaceLegalProfileAction` (Configurações →
+Escritório) falhava com "permission denied for table workspaces" em
+qualquer ambiente real — RLS e CI estavam verdes porque nenhum teste
+(pgTAP ou E2E) jamais exercitou uma escrita `authenticated` real contra
+`workspaces`.
+
+**Correção** (`20260929123000_b1_workspace_legal_profile_grant.sql`):
+GRANT de `UPDATE` só nas 8 colunas do perfil jurídico —
+`legal_name, cnpj, oab_uf, oab_number, address_line, address_city,
+address_uf, address_zip` — nunca a tabela inteira. `name`, `slug` e
+`created_by` continuam sem nenhum caminho de escrita direta para
+`authenticated`.
+
+**Cobertura adicionada** em `19_b1_propostas_documentos.test.sql` (10
+asserções novas, plan 41→51): owner salva e lê de volta os 8 campos;
+lawyer/lawyer2/sales/viewer bloqueados (RLS filtra a linha, 0 linhas
+afetadas, sem exceção); isolamento entre workspaces (ser owner de um
+segundo workspace não dá poder sobre o primeiro); `name`/`slug`/
+`created_by` continuam bloqueados mesmo para o owner (GRANT é só de
+coluna).
+
+**Validação hospedada, rodada após o fix** (dados fictícios da workspace
+QA "Escritorio QA Praxis A3", código real de `src/server/proposals/*`
+contra `praxis-crm-dev`, sem configurar nem chamar o Resend): perfil do
+escritório salvo via RLS real; duas versões de PDF geradas e finalizadas
+(Storage real); v1 permanece `ready` e com os mesmos bytes depois de v2
+existir; `list_proposal_documents`/`get_proposal_document_for_download`
+corretos por papel (owner/lawyer baixam, sales/viewer bloqueados,
+nenhuma chave vaza `storagePath`); download devolve exatamente os bytes
+da versão pedida; isolamento entre workspaces confirmado para listagem e
+download; fila de e-mail (`queue_proposal_email`) criada e permanece
+vinculada ao `document_id` exato, idempotência confirmada, ator sem papel
+autorizado bloqueado; `authenticated` confirmado sem EXECUTE em nenhuma
+das 6 funções de escrita, mesmo sendo owner. Nenhum e-mail foi enviado
+(fila fica em `queued`).
