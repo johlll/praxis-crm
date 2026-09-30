@@ -34,16 +34,6 @@ export default tseslint.config(
       "src/app/api/forms/**",
       "src/app/api/inngest/**",
       "src/server/supabase/admin.ts",
-      // B1: primeira exceção que NÃO é webhook/job sem sessão — é uma
-      // mutação autorizada por sessão de usuário, mas que precisa gravar
-      // em Storage e registrar resultado de forma não forjável por RPC
-      // (proposal_documents/proposal_email_sends têm GRANT só para
-      // service_role, de propósito — ver as migrations b1_*). Por isso a
-      // pasta fica isolada e estreita, nunca o restante de
-      // src/server/proposals/**: tudo que não precisa do service_role
-      // continua fora desta exceção, checando permissão pela sessão do
-      // usuário como o resto da base.
-      "src/server/proposals/admin/**",
     ],
     rules: {
       "no-restricted-imports": [
@@ -53,7 +43,37 @@ export default tseslint.config(
             {
               group: ["**/server/supabase/admin", "@/server/supabase/admin"],
               message:
-                "O cliente service_role ignora a RLS. Importe-o apenas em webhooks e jobs (src/app/api/webhooks/**, src/app/api/cron/**, src/app/api/forms/**, src/app/api/inngest/**) ou em src/server/proposals/admin/** (B1, motivo documentado no arquivo).",
+                "O cliente service_role da A11 (getIngestConfig) exige Turnstile/Upstash/Inngest junto — não serve para outra feature. Importe-o só em webhooks e jobs (src/app/api/webhooks/**, src/app/api/cron/**, src/app/api/forms/**, src/app/api/inngest/**). Para outro caminho autorizado por sessão que precise de service_role, crie um cliente próprio e isolado (ver src/server/proposals/admin/supabase.ts, motivo documentado no arquivo) — nunca reaproveite este.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    /**
+     * B1: `src/server/proposals/admin/supabase.ts` é o ÚNICO arquivo
+     * autorizado a construir um cliente `service_role` cru
+     * (`createClient` direto) fora dos webhooks/jobs — mutação autorizada
+     * por sessão de usuário, mas que precisa gravar em Storage e
+     * registrar resultado de forma não forjável por RPC
+     * (proposal_documents/proposal_email_sends têm GRANT só para
+     * service_role, de propósito — ver as migrations b1_*). Nenhum outro
+     * arquivo de src/server/proposals/** importa isto — cada um continua
+     * checando permissão pela sessão do usuário como o resto da base.
+     */
+    files: ["src/server/proposals/admin/**/*.{ts,tsx}"],
+    ignores: ["src/server/proposals/admin/supabase.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@supabase/supabase-js"],
+              importNames: ["createClient"],
+              message:
+                "Não construa outro cliente service_role aqui — importe createProposalsAdminSupabaseClient de ./supabase.",
             },
           ],
         },

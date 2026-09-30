@@ -1,4 +1,4 @@
-import { createAdminSupabaseClient } from "@/server/supabase/admin";
+import { createProposalsAdminSupabaseClient } from "@/server/proposals/admin/supabase";
 import { getResendConfig } from "@/server/proposals/env";
 
 /**
@@ -22,7 +22,7 @@ export async function adminQueueProposalEmail(params: {
   idempotencyKey: string;
   actorUserId: string;
 }): Promise<QueueProposalEmailResult> {
-  const admin = createAdminSupabaseClient();
+  const admin = createProposalsAdminSupabaseClient();
   const { data, error } = await admin.rpc("queue_proposal_email", {
     p_proposal_id: params.proposalId,
     p_document_id: params.documentId,
@@ -61,7 +61,7 @@ export async function adminDispatchProposalEmail(params: {
   subject: string;
   bodyText: string;
 }): Promise<{ providerMessageId: string }> {
-  const admin = createAdminSupabaseClient();
+  const admin = createProposalsAdminSupabaseClient();
   const resendConfig = getResendConfig();
 
   if (!resendConfig) {

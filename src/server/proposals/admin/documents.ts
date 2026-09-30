@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { createAdminSupabaseClient } from "@/server/supabase/admin";
+import { createProposalsAdminSupabaseClient } from "@/server/proposals/admin/supabase";
 
 /**
  * Único ponto de contato com o Storage/RPCs de proposal_documents que têm
@@ -24,7 +24,7 @@ export async function adminBeginProposalDocument(
   proposalId: string,
   actorUserId: string,
 ): Promise<BeginProposalDocumentResult> {
-  const admin = createAdminSupabaseClient();
+  const admin = createProposalsAdminSupabaseClient();
   const { data, error } = await admin.rpc("begin_proposal_document", {
     p_proposal_id: proposalId,
     p_actor_user_id: actorUserId,
@@ -42,7 +42,7 @@ export async function adminFailProposalDocument(
   errorCode: string,
   actorUserId: string,
 ): Promise<void> {
-  const admin = createAdminSupabaseClient();
+  const admin = createProposalsAdminSupabaseClient();
   // Best-effort: se isto também falhar, o documento fica 'pending' e
   // aparece como travado na listagem — nunca como 'ready' sem arquivo.
   await admin.rpc("fail_proposal_document", {
@@ -65,7 +65,7 @@ export async function adminUploadAndFinalizeProposalDocument(params: {
   pdfBytes: Buffer;
   actorUserId: string;
 }): Promise<void> {
-  const admin = createAdminSupabaseClient();
+  const admin = createProposalsAdminSupabaseClient();
   const checksum = createHash("sha256").update(params.pdfBytes).digest("hex");
 
   const { error: uploadError } = await admin.storage.from(BUCKET).upload(params.storagePath, params.pdfBytes, {
@@ -98,14 +98,14 @@ export async function adminUploadAndFinalizeProposalDocument(params: {
  * divergir do checksum gravado em finalize_proposal_document).
  */
 export async function adminDownloadProposalDocumentBytes(storagePath: string): Promise<Buffer> {
-  const admin = createAdminSupabaseClient();
+  const admin = createProposalsAdminSupabaseClient();
   const { data, error } = await admin.storage.from(BUCKET).download(storagePath);
   if (error || !data) throw new Error("proposal_document_download_failed");
   return Buffer.from(await data.arrayBuffer());
 }
 
 export async function adminCreateProposalDocumentDownloadUrl(storagePath: string): Promise<string> {
-  const admin = createAdminSupabaseClient();
+  const admin = createProposalsAdminSupabaseClient();
   const { data, error } = await admin.storage.from(BUCKET).createSignedUrl(storagePath, DOWNLOAD_URL_TTL_SECONDS);
   if (error || !data) {
     throw new Error("proposal_document_signed_url_failed");
