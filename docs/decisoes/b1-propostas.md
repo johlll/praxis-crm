@@ -715,7 +715,9 @@ Na proposta `PROP-2026-0003` (workspace de QA) há **cinco** envios para
   (fila fica em `queued`)"). Registrar a intenção sem despachar é o
   desenho: o status só sai de `queued` por `mark_proposal_email_accepted`
   ou `mark_proposal_email_failed`, chamados pelo despacho.
-- **Nunca foram despachados:** o painel do Resend (últimos 15 dias, que
+- **Sem indício de despacho (não é prova isolada):** a evidência é
+  convergente — o Resend não estava configurado quando foram criados, e
+  o painel do Resend (últimos 15 dias, que
   cobre todo o período da B1) não tem nenhum e-mail para esse endereço;
   os únicos para a proposta são os dois enviados a
   `joaoniero2@gmail.com`. O domínio `example.com` é reservado e não
@@ -766,12 +768,23 @@ da requisição — pode deixar:
    2. procurar no painel do Resend, pelo destinatário e pela janela de
       horário, um e-mail com o assunto da proposta; conferir se o anexo
       é o `document_id` da linha (SHA-256, como no §12);
-   3. **achou:** o envio aconteceu; registrar como aceito com o id do
+   3. **achou, com evidência de que é este envio** (destinatário,
+      assunto, horário compatível e anexo com o SHA-256 do `document_id`
+      da linha): o envio aconteceu; registrar como aceito com o id do
       provedor (`mark_proposal_email_accepted`, por RPC, com confirmação)
       e **não reenviar**;
-   4. **não achou:** o provedor nunca recebeu; registrar a falha
-      (`mark_proposal_email_failed`, código `interrompido`) e só então
-      um **novo** envio, decidido por uma pessoa, gera outra linha.
+   4. **não achou: isso, sozinho, não prova que falhou.** O painel tem
+      janela de retenção e filtros, o evento pode demorar a aparecer, a
+      busca pode estar no ambiente/chave errados, e uma chamada que
+      morreu no meio é exatamente o caso em que o provedor aceitou e nós
+      não registramos. Só vale como "não enviado" com **evidência
+      positiva** — por exemplo, o log da execução mostrando que a função
+      terminou antes de chamar o provedor, ou o provedor confirmando por
+      outro canal que não há mensagem com aquela `Idempotency-Key`.
+      **Sem evidência suficiente, o resultado permanece
+      indeterminado**: a linha continua `queued`, nada é marcado como
+      falha e **não há reenvio automático** — qualquer novo envio é uma
+      decisão humana explícita, assumindo o risco de duplicidade.
    Defesas existentes: a `idempotency_key` também vai ao Resend, que a
    honra por 24 h, e a mesma submissão repetida não chama o provedor duas
    vezes. Não existe cron de reconciliação nesta fase — é uma lacuna
@@ -813,13 +826,23 @@ Evidência: `praxis-crm-evidencias-b1/v20-redesign-preview.pdf` e
 duas páginas é coberta pela amostra longa aprovada e por
 `b1-proposal-pdf-layout.test.ts`, e não foi repetida no hospedado.
 
-### 13.6 Production: configuração do Resend (preparada, NÃO executada)
+### 13.6 Production: configuração do Resend (EXECUTADA em 01/10/2026)
 
-Hoje Production não tem `RESEND_API_KEY` nem `RESEND_FROM_EMAIL`
-(conferido pelos nomes; valores nunca lidos). Sem elas o app funciona e o
-botão "Enviar por e-mail" fica desabilitado com mensagem clara.
+Autorizada pelo João Niero. Até então Production não tinha
+`RESEND_API_KEY` nem `RESEND_FROM_EMAIL` (conferido pelos nomes; valores
+nunca lidos). **Criado:** a chave `praxis-crm-production` no Resend (só
+envio, restrita a `mail.collios.cloud`) e as duas variáveis **somente no
+ambiente Production** da Vercel. **Sem redeploy de Production, sem
+e-mail enviado, sem merge:** as variáveis só valem no próximo deploy.
 
-**O que será criado, exatamente:**
+O remetente `propostas@mail.collios.cloud` está confirmado
+**temporariamente, para testes controlados**. O remetente definitivo
+para clientes será definido com a Vizentini antes do uso real, e dados
+reais do escritório não foram preenchidos.
+
+O texto abaixo é o plano que foi autorizado e executado.
+
+**O que foi criado, exatamente:**
 
 | Onde | O quê | Detalhe |
 |---|---|---|
