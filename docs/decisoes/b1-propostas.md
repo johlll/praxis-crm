@@ -195,6 +195,18 @@ autorizado bloqueado; `authenticated` confirmado sem EXECUTE em nenhuma
 das 6 funções de escrita, mesmo sendo owner. Nenhum e-mail foi enviado
 (fila fica em `queued`).
 
+> **CORREÇÃO (30/09/2026), comprovada byte a byte — ver §10.** Onde este
+> parágrafo diz "duas versões de PDF geradas e finalizadas (Storage
+> real)", leia-se: **geradas, finalizadas e com bytes conferidos — mas o
+> conteúdo nunca foi aberto nem renderizado nesta rodada**. Todos os PDFs
+> produzidos por esta validação (v1 a v16 de `PROP-2026-0003`) são
+> **arquivos inválidos**: o fluxo de conteúdo não descomprime e a página
+> renderiza em branco. As asserções acima continuam todas verdadeiras —
+> elas comparavam tamanho, checksum e igualdade de bytes entre o que foi
+> renderizado e o que foi armazenado, nunca se o PDF abria. A geração
+> dentro da aplicação (Vercel) está correta: v17 e v18, geradas pela
+> interface real, são íntegras e legíveis (§7 permanece válido).
+
 ## 6. Segundo defeito real, encontrado validando o Preview pela interface
 
 A validação hospedada (§5) rodou o código de `src/server/proposals/admin/**`
@@ -359,3 +371,99 @@ alterada; nenhum outro e-mail foi enviado.
   significa que o servidor de destino aceitou a mensagem; não é o mesmo
   que "chegou na caixa de entrada e foi aberta" — essa confirmação
   continua sendo a etapa separada e pendente.
+
+> **O e-mail chegou, e o anexo abriu em branco.** O que isso revelou está
+> em §10. O registro de "aceito pelo provedor" acima continua correto; o
+> que estava errado era *qual arquivo* foi anexado, e o próprio arquivo.
+
+## 10. Anexo em branco — dois defeitos, comprovados byte a byte
+
+O destinatário confirmou o recebimento e o anexo abriu **em branco**.
+Investigação feita sobre os bytes, sem gerar versão nova e sem reenviar.
+Arquivos preservados como evidência em
+`C:\Users\niero\Desktop\Projetos\praxis-crm-evidencias-b1\` (fora do
+repositório, nunca commitados).
+
+### 10.1 Defeito A — o e-mail anexou a v1, não a v18
+
+Comparação direta:
+
+| | Anexo recebido | v18 no Storage |
+|---|---|---|
+| Tamanho | 2.735 bytes | 2.774 bytes |
+| SHA-256 | `e992ffe8701f3970…b699e51` | `306c4261376aa95f…0ba404d` |
+| `CreationDate` | `D:20260929200839Z` | `D:20260930025041Z` |
+| Fluxo de conteúdo | **não descomprime** | descomprime (7.658 bytes) |
+| Texto extraível | **nenhum** | 26 trechos, completos |
+
+O anexo é **byte a byte idêntico à v1** (mesmo SHA-256, mesmo tamanho,
+mesma data de criação). O próprio banco confirma: o registro em
+`proposal_email_sends` gravou
+`documentId = 44156d85-cd7b-43cb-9ee8-6570d87148a3`, que é a **v1**. O
+transporte foi fiel — o Resend entregou exatamente os bytes que a
+aplicação mandou.
+
+**Causa, no código** — `src/components/leads/proposals-section.tsx:509`:
+
+```js
+const readyDocument = [...documents].reverse().find((d) => d.status === "ready" && d.canDownload);
+```
+
+`list_proposal_documents` já devolve `order by d.version desc`
+(`20260929120200_b1_proposal_documents_functions.sql`). O `.reverse()`
+inverte para **ascendente**, e o `.find()` passa a devolver a versão
+pronta **mais antiga** — a v1 — em vez da mais recente. A lista exibida
+na tela usa o array original (descendente) e mostra v18 no topo, o que
+esconde a divergência: a tela mostra v18, o formulário envia v1.
+
+Isto é exatamente o que a **correção 1** da B1 existe para impedir
+("envio associado ao `document_id` exato, nunca recomputado"). A
+proteção do servidor está correta — o `document_id` trafega e é
+respeitado de ponta a ponta; quem escolheu o documento errado foi a tela.
+
+### 10.2 Defeito B — v1 a v16 são PDFs inválidos no próprio Storage
+
+Mesmo que a v18 tivesse sido anexada, a v1 continuaria quebrada. Teste de
+integridade de todas as versões armazenadas:
+
+| Versões | Criadas em | `/Length` vs. bytes reais | Descomprime | Bytes `0xFD` |
+|---|---|---|---|---|
+| v1–v16 | 29/09 20:08–20:19 UTC | 1199/1204 declarados vs. ~1150 reais | **falha** | ~510 cada |
+| v17, v18 | 30/09 02:50 UTC | 1189 vs. 1189 | OK | 7 (normal) |
+
+Os ~510 bytes `0xFD` por arquivo são a assinatura de bytes binários que
+passaram por uma decodificação de texto: `U+FFFD` (caractere de
+substituição) reduzido a um byte. A estrutura ASCII do PDF sobrevive
+intacta (por isso o arquivo "abre"), mas o fluxo comprimido é destruído —
+daí a página em branco.
+
+**O divisor é o runtime, não o código.** v1–v16 foram geradas pelo script
+de validação hospedada (§5), rodando em **Vitest/Node no Windows local**;
+v17 e v18 foram geradas pela **interface real no Vercel**. O próprio
+script afirmava `buf.equals(doc1.bytes)` — bytes baixados do Storage
+idênticos aos renderizados em memória — e essa asserção **passou**. Logo
+o upload foi fiel, e a corrupção já estava no `Buffer` devolvido por
+`renderProposalPdf` naquele ambiente local. A geração dentro da
+aplicação está correta.
+
+### 10.3 O que a validação anterior realmente conferiu
+
+A §7 declarou v17 e v18 legíveis. **Isso estava certo** e foi
+reconfirmado agora por caminho independente: a captura preservada
+(`v18.png`) mostra o visualizador aberto em `v18.pdf` com todo o
+conteúdo, a `CreationDate` da v18 (`20260930025041Z` = 29/09 23:50:41
+BRT) bate com o horário do arquivo de captura (23:51), e o fluxo de
+conteúdo descomprime com os 26 trechos de texto esperados ("Escritório
+Modelo QA B1 Ltda. (validado via UI)", "PROP-2026-0003", "R$ 1.234,00",
+rodapé). O que a validação **não** conferiu — e passou a conferir só
+agora — foram as 16 versões anteriores, geradas pelo script.
+
+### 10.4 Limitação de desenho que isto expôs
+
+`finalize_proposal_document` (correção 5) reconfere existência e
+**tamanho** no Storage contra o que a própria aplicação hasheou. Isso
+garante "o que gravamos é o que está lá" — e essa garantia funcionou,
+inclusive para os arquivos quebrados. O que ela **não** garante é que os
+bytes sejam um PDF válido: `ready` nunca significou "renderiza". Nenhuma
+camada da B1 valida o PDF produzido. Candidato a correção, não feito
+nesta investigação.
