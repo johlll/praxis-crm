@@ -46,3 +46,39 @@ export async function listMyWorkspaces(): Promise<WorkspaceOption[]> {
       role: row.role,
     }));
 }
+
+export type WorkspaceLegalProfile = {
+  legalName: string | null;
+  cnpj: string | null;
+  oabUf: string | null;
+  oabNumber: string | null;
+  addressLine: string | null;
+  addressCity: string | null;
+  addressUf: string | null;
+  addressZip: string | null;
+};
+
+/** Cabeçalho do PDF de proposta (B1). Leitura direta — workspaces_select
+ * já permite a qualquer membro ativo (A2), sem função nova. */
+export async function getWorkspaceLegalProfile(workspaceId: string): Promise<WorkspaceLegalProfile | null> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("workspaces")
+    .select("legal_name, cnpj, oab_uf, oab_number, address_line, address_city, address_uf, address_zip")
+    .eq("id", workspaceId)
+    .maybeSingle();
+
+  if (error) throw new DataLoadError(`o perfil jurídico do workspace ${workspaceId}`, error);
+  if (!data) return null;
+
+  return {
+    legalName: data.legal_name,
+    cnpj: data.cnpj,
+    oabUf: data.oab_uf,
+    oabNumber: data.oab_number,
+    addressLine: data.address_line,
+    addressCity: data.address_city,
+    addressUf: data.address_uf,
+    addressZip: data.address_zip,
+  };
+}

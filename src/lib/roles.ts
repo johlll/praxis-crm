@@ -127,7 +127,18 @@ export type Permission =
   // a oportunidade (quem já pode agir na demanda pode mandar um link para
   // o cliente continuá-la) — não a mesma faixa restrita de
   // attribution.correct, que reescreve número de painel.
-  | "continuity.issue";
+  | "continuity.issue"
+  // B1 — geração/download/envio real do PDF de proposta. Mais restrito
+  // que proposal.edit: o documento carrega o VALOR EXATO por definição,
+  // então `sales` (que só enxerga a faixa, nunca o valor — ver
+  // private.proposal_financial_projection) fica de fora, mesmo continuando
+  // a poder criar propostas e registrar envio manual. Mesmo nível de
+  // conflict_check.edit (owner/admin/manager/lawyer).
+  | "proposal_document.manage"
+  // B1 — perfil jurídico do escritório (razão social, CNPJ, OAB,
+  // endereço) exibido no cabeçalho do PDF. Mesmo nível administrativo de
+  // workspace.rename: só quem já pode alterar dados do próprio workspace.
+  | "workspace_legal_profile.manage";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -164,6 +175,8 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "form_endpoint.manage": new Set<Role>(["owner", "admin"]),
   "continuity.issue": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
   "attribution.correct": new Set<Role>(["owner", "admin", "manager"]),
+  "proposal_document.manage": new Set<Role>(["owner", "admin", "manager", "lawyer"]),
+  "workspace_legal_profile.manage": new Set<Role>(["owner", "admin"]),
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {

@@ -12,6 +12,9 @@ coverage/
 # Capturas de conferência visual
 *.png
 .playwright-cli/
+# ...menos os assets de origem do PDF de proposta, que são código-fonte
+# do documento, não captura de tela.
+!src/server/proposals/assets/*.png
 
 .DS_Store
 *.tsbuildinfo

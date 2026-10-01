@@ -1892,6 +1892,136 @@ export type Database = {
           },
         ]
       }
+      proposal_documents: {
+        Row: {
+          byte_size: number | null
+          checksum_sha256: string | null
+          error_code: string | null
+          id: string
+          proposal_id: string
+          requested_at: string
+          requested_by: string
+          resolved_at: string | null
+          status: Database["public"]["Enums"]["proposal_document_status"]
+          storage_path: string
+          version: number
+          workspace_id: string
+        }
+        Insert: {
+          byte_size?: number | null
+          checksum_sha256?: string | null
+          error_code?: string | null
+          id?: string
+          proposal_id: string
+          requested_at?: string
+          requested_by: string
+          resolved_at?: string | null
+          status?: Database["public"]["Enums"]["proposal_document_status"]
+          storage_path: string
+          version: number
+          workspace_id: string
+        }
+        Update: {
+          byte_size?: number | null
+          checksum_sha256?: string | null
+          error_code?: string | null
+          id?: string
+          proposal_id?: string
+          requested_at?: string
+          requested_by?: string
+          resolved_at?: string | null
+          status?: Database["public"]["Enums"]["proposal_document_status"]
+          storage_path?: string
+          version?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "proposal_documents_proposal_same_workspace_fkey"
+            columns: ["workspace_id", "proposal_id"]
+            isOneToOne: false
+            referencedRelation: "proposals"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "proposal_documents_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      proposal_email_sends: {
+        Row: {
+          caused_status_transition: boolean
+          document_id: string
+          error_code: string | null
+          id: string
+          idempotency_key: string
+          proposal_id: string
+          provider_message_id: string | null
+          requested_at: string
+          requested_by: string
+          resolved_at: string | null
+          status: Database["public"]["Enums"]["proposal_email_send_status"]
+          to_email: string
+          workspace_id: string
+        }
+        Insert: {
+          caused_status_transition?: boolean
+          document_id: string
+          error_code?: string | null
+          id?: string
+          idempotency_key: string
+          proposal_id: string
+          provider_message_id?: string | null
+          requested_at?: string
+          requested_by: string
+          resolved_at?: string | null
+          status?: Database["public"]["Enums"]["proposal_email_send_status"]
+          to_email: string
+          workspace_id: string
+        }
+        Update: {
+          caused_status_transition?: boolean
+          document_id?: string
+          error_code?: string | null
+          id?: string
+          idempotency_key?: string
+          proposal_id?: string
+          provider_message_id?: string | null
+          requested_at?: string
+          requested_by?: string
+          resolved_at?: string | null
+          status?: Database["public"]["Enums"]["proposal_email_send_status"]
+          to_email?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "proposal_email_sends_document_same_workspace_fkey"
+            columns: ["workspace_id", "document_id"]
+            isOneToOne: false
+            referencedRelation: "proposal_documents"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "proposal_email_sends_proposal_same_workspace_fkey"
+            columns: ["workspace_id", "proposal_id"]
+            isOneToOne: false
+            referencedRelation: "proposals"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "proposal_email_sends_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       proposal_number_counters: {
         Row: {
           last_value: number
@@ -2657,29 +2787,53 @@ export type Database = {
       }
       workspaces: {
         Row: {
+          address_city: string | null
+          address_line: string | null
+          address_uf: string | null
+          address_zip: string | null
+          cnpj: string | null
           created_at: string
           created_by: string
           id: string
           is_demo: boolean
+          legal_name: string | null
           name: string
+          oab_number: string | null
+          oab_uf: string | null
           slug: string
           updated_at: string
         }
         Insert: {
+          address_city?: string | null
+          address_line?: string | null
+          address_uf?: string | null
+          address_zip?: string | null
+          cnpj?: string | null
           created_at?: string
           created_by: string
           id?: string
           is_demo?: boolean
+          legal_name?: string | null
           name: string
+          oab_number?: string | null
+          oab_uf?: string | null
           slug: string
           updated_at?: string
         }
         Update: {
+          address_city?: string | null
+          address_line?: string | null
+          address_uf?: string | null
+          address_zip?: string | null
+          cnpj?: string | null
           created_at?: string
           created_by?: string
           id?: string
           is_demo?: boolean
+          legal_name?: string | null
           name?: string
+          oab_number?: string | null
+          oab_uf?: string | null
           slug?: string
           updated_at?: string
         }
@@ -2794,6 +2948,14 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      begin_proposal_document: {
+        Args: { p_actor_user_id: string; p_proposal_id: string }
+        Returns: {
+          document_id: string
+          storage_path: string
+          version: number
+        }[]
       }
       cancel_workspace_invitation: {
         Args: { p_invitation_id: string }
@@ -2994,11 +3156,19 @@ export type Database = {
       create_workspace_with_owner: {
         Args: { p_name: string; p_slug: string }
         Returns: {
+          address_city: string | null
+          address_line: string | null
+          address_uf: string | null
+          address_zip: string | null
+          cnpj: string | null
           created_at: string
           created_by: string
           id: string
           is_demo: boolean
+          legal_name: string | null
           name: string
+          oab_number: string | null
+          oab_uf: string | null
           slug: string
           updated_at: string
         }
@@ -3037,6 +3207,23 @@ export type Database = {
       }
       dismiss_duplicate_candidate: {
         Args: { p_candidate_id: string }
+        Returns: undefined
+      }
+      fail_proposal_document: {
+        Args: {
+          p_actor_user_id: string
+          p_document_id: string
+          p_error_code: string
+        }
+        Returns: undefined
+      }
+      finalize_proposal_document: {
+        Args: {
+          p_actor_user_id: string
+          p_byte_size: number
+          p_checksum_sha256: string
+          p_document_id: string
+        }
         Returns: undefined
       }
       flag_expiring_webhook_events: {
@@ -3101,6 +3288,10 @@ export type Database = {
       get_opportunity: { Args: { p_opportunity_id: string }; Returns: Json }
       get_pipeline_board: { Args: { p_pipeline_id: string }; Returns: Json }
       get_proposal: { Args: { p_proposal_id: string }; Returns: Json }
+      get_proposal_document_for_download: {
+        Args: { p_document_id: string }
+        Returns: Json
+      }
       get_stage_requirements_status: {
         Args: { p_opportunity_id: string; p_to_stage_id: string }
         Returns: Json
@@ -3230,6 +3421,14 @@ export type Database = {
           total_count: number
         }[]
       }
+      list_proposal_documents: {
+        Args: { p_proposal_id: string }
+        Returns: Json
+      }
+      list_proposal_email_sends: {
+        Args: { p_proposal_id: string }
+        Returns: Json
+      }
       list_proposals_for_lead: { Args: { p_lead_id: string }; Returns: Json }
       lose_opportunity: {
         Args: {
@@ -3251,6 +3450,14 @@ export type Database = {
       }
       mark_outbox_published: {
         Args: { p_outbox_id: string }
+        Returns: undefined
+      }
+      mark_proposal_email_failed: {
+        Args: { p_error_code: string; p_send_id: string }
+        Returns: undefined
+      }
+      mark_proposal_email_sent: {
+        Args: { p_provider_message_id: string; p_send_id: string }
         Returns: undefined
       }
       mark_webhook_event_failed: {
@@ -3314,6 +3521,20 @@ export type Database = {
       purge_expired_webhook_events: {
         Args: { p_limit?: number }
         Returns: Json
+      }
+      queue_proposal_email: {
+        Args: {
+          p_actor_user_id: string
+          p_document_id: string
+          p_idempotency_key: string
+          p_proposal_id: string
+          p_to_email: string
+        }
+        Returns: {
+          is_new: boolean
+          send_id: string
+          status: Database["public"]["Enums"]["proposal_email_send_status"]
+        }[]
       }
       reassign_activity: {
         Args: {
@@ -3786,6 +4007,8 @@ export type Database = {
         | "abandoned"
         | "resolved"
       proposal_channel: "email" | "whatsapp"
+      proposal_document_status: "pending" | "ready" | "failed"
+      proposal_email_send_status: "queued" | "accepted" | "failed"
       proposal_status: "rascunho" | "enviada" | "aceita" | "recusada"
       stage_requirement_type: "text" | "textarea" | "date" | "checkbox"
       touchpoint_link_action: "assign" | "unassign"
@@ -3985,6 +4208,8 @@ export const Constants = {
         "resolved",
       ],
       proposal_channel: ["email", "whatsapp"],
+      proposal_document_status: ["pending", "ready", "failed"],
+      proposal_email_send_status: ["queued", "accepted", "failed"],
       proposal_status: ["rascunho", "enviada", "aceita", "recusada"],
       stage_requirement_type: ["text", "textarea", "date", "checkbox"],
       touchpoint_link_action: ["assign", "unassign"],
