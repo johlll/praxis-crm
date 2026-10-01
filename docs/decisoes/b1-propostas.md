@@ -617,3 +617,49 @@ Exigiria uma migration nova com uma coluna de motivo em
 `PROP-2026-0003` na workspace de QA. Antes de qualquer execução: project
 ref, `--dry-run`, lista exata de migrations e confirmação explícita,
 como no `20260929123000`.
+
+## 12. Envio validado com a versão correta (30/09/2026, 23:42)
+
+Executado depois do CI verde no HEAD `17c1f35`, com autorização para um
+único envio. Procedimento do §11 seguido na ordem, pela interface do
+Preview correspondente a esse commit.
+
+1. **Indicação na tela, antes de qualquer coisa:** a aba Propostas
+   mostrava "Enviará a v18" — a versão mais recente pronta. Antes da
+   correção, a tela exibia v18 no topo e o formulário levava a v1 sem
+   nada denunciar.
+2. **Uma única versão nova gerada** pela interface: **v19**,
+   `15fd3d02-9ac8-46b4-9b25-1978d65feabd`. Virou `ready`, o que só
+   acontece agora se passar por `assertValidProposalPdf`.
+3. **Baixada e conferida:** 2.774 bytes, `/Length` declarado 1189 com
+   1190 bytes presentes, fluxo descomprime, 7 bytes `0xFD` (ruído normal
+   de binário, contra os ~510 dos arquivos quebrados), 26 trechos de
+   texto. Aberta em navegador: página única, legível, sem corte, todos os
+   campos corretos (`praxis-crm-evidencias-b1/visual-v19.png`).
+4. **Diálogo de envio conferido antes do clique:** "Vai anexada a versão
+   v19", campo oculto `documentId = 15fd3d02-…`, destinatário
+   `joaoniero2@gmail.com`.
+5. **Enviado uma única vez.**
+6. **Registro no banco:** `proposal_email_sends` gravou
+   `documentId = 15fd3d02-…` (v19), `status = accepted` — exatamente a
+   versão gerada no passo 2.
+7. **Painel do Resend** (`/emails/01a0f557-b872-72ac-abce-ae1d026cd6fd`):
+   From `propostas@mail.collios.cloud`, To `joaoniero2@gmail.com`,
+   Subject "Proposta de honorários PROP-2026-0003", anexo
+   `PROP-2026-0003.pdf`, eventos `sent` e `delivered`.
+8. **Anexo conferido nos bytes, não por suposição** — esta é a checagem
+   que faltou no envio anterior, quando "anexo íntegro" foi afirmado só
+   porque o painel listava um arquivo com o nome certo. O anexo
+   armazenado no Resend tem SHA-256
+   `79f4ed8470bb1806250eb02c914b61bd74419eae10b145c95d8ab7e3cf2c8a8b`,
+   **idêntico** ao da v19 no Storage, e descomprime.
+
+**Aceito pelo provedor e entregue ao servidor de destino: sim.**
+**Recebido na caixa de entrada e anexo aberto: pendente de confirmação**
+de quem controla o endereço — continuam sendo duas coisas distintas, e a
+segunda nunca foi declarada por mim.
+
+Preservado como evidência: as 16 versões quebradas, a v17/v18, os
+registros de envio anteriores (inclusive os cinco presos em `queued`) e o
+envio em branco da v1. Nenhuma migration criada ou aplicada, nenhum
+registro hospedado alterado, Production intocada.
