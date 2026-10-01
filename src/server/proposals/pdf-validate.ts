@@ -1,5 +1,7 @@
 import { inflateSync } from "node:zlib";
 
+import { extrairTextoDesenhado } from "@/server/proposals/pdf-text";
+
 /**
  * Validação do PDF gerado, ANTES de qualquer upload/finalize (B1,
  * correção 8).
@@ -79,47 +81,6 @@ function* fluxos(pdf: Buffer): Generator<FluxoBruto> {
   }
 }
 
-function desescapar(literal: string): string {
-  return literal.replace(/\\([nrtbf()\\]|[0-7]{1,3})/g, (_todo, grupo: string) => {
-    switch (grupo) {
-      case "n":
-        return "\n";
-      case "r":
-        return "\r";
-      case "t":
-        return "\t";
-      case "b":
-        return "\b";
-      case "f":
-        return "\f";
-      case "(":
-        return "(";
-      case ")":
-        return ")";
-      case "\\":
-        return "\\";
-      default:
-        return String.fromCharCode(parseInt(grupo, 8) & 0xff);
-    }
-  });
-}
-
-/** Texto desenhado pelos operadores Tj/TJ, na ordem em que aparece. */
-function extrairTexto(conteudo: string): string {
-  const partes: string[] = [];
-  const hexParaTexto = (hex: string) => Buffer.from(hex, "hex").toString("latin1");
-
-  for (const m of conteudo.matchAll(/\[([^\]]*)\]\s*TJ/g)) {
-    const interior = m[1] ?? "";
-    for (const h of interior.matchAll(/<([0-9A-Fa-f]*)>/g)) partes.push(hexParaTexto(h[1] ?? ""));
-    for (const l of interior.matchAll(/\(((?:[^()\\]|\\.)*)\)/g)) partes.push(desescapar(l[1] ?? ""));
-  }
-  for (const m of conteudo.matchAll(/<([0-9A-Fa-f]*)>\s*Tj/g)) partes.push(hexParaTexto(m[1] ?? ""));
-  for (const m of conteudo.matchAll(/\(((?:[^()\\]|\\.)*)\)\s*Tj/g)) partes.push(desescapar(m[1] ?? ""));
-
-  return partes.join("");
-}
-
 const semEspacos = (s: string) => s.replace(/\s+/g, "");
 
 /**
@@ -139,9 +100,10 @@ export function assertValidProposalPdf(pdf: Buffer, esperado: { proposalNumber: 
     throw new ProposalPdfInvalidError("pdf_sem_pagina");
   }
 
-  const conteudos: string[] = [];
+  let fluxosFlate = 0;
   for (const { dicionario, dados } of fluxos(pdf)) {
     if (!dicionario.includes("/FlateDecode")) continue;
+    fluxosFlate++;
 
     const declarado = Number(/\/Length (\d+)/.exec(dicionario)?.[1] ?? NaN);
     if (Number.isFinite(declarado) && dados.length < declarado) {
@@ -155,7 +117,9 @@ export function assertValidProposalPdf(pdf: Buffer, esperado: { proposalNumber: 
 
     const bruto = Number.isFinite(declarado) ? dados.subarray(0, declarado) : dados;
     try {
-      conteudos.push(inflateSync(bruto).toString("latin1"));
+      // Vale para TODO fluxo comprimido — conteúdo de página, fonte
+      // embutida, CMap. Qualquer um corrompido reprova o documento.
+      inflateSync(bruto);
     } catch (erro) {
       throw new ProposalPdfInvalidError(
         "pdf_fluxo_nao_descomprime",
@@ -164,11 +128,13 @@ export function assertValidProposalPdf(pdf: Buffer, esperado: { proposalNumber: 
     }
   }
 
-  if (conteudos.length === 0) {
+  if (fluxosFlate === 0) {
     throw new ProposalPdfInvalidError("pdf_sem_fluxo_de_conteudo");
   }
 
-  const texto = conteudos.map(extrairTexto).join("");
+  // Lê como um leitor de PDF leria: pelo `/ToUnicode`, não pelos códigos
+  // crus — senão o resultado dependeria de a fonte ser padrão ou embutida.
+  const texto = extrairTextoDesenhado(pdf);
   if (texto.trim().length === 0) {
     throw new ProposalPdfInvalidError("pdf_sem_texto");
   }
