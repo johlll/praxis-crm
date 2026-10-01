@@ -663,3 +663,100 @@ Preservado como evidência: as 16 versões quebradas, a v17/v18, os
 registros de envio anteriores (inclusive os cinco presos em `queued`) e o
 envio em branco da v1. Nenhuma migration criada ou aplicada, nenhum
 registro hospedado alterado, Production intocada.
+
+## 13. Redesign do PDF, aprovação visual e fechamento pré-merge (01/10/2026)
+
+### 13.1 Template final
+
+O template de `src/server/proposals/pdf-template.tsx` foi redesenhado com
+a identidade da Vizentini Advocacia e **aprovado visualmente** (amostra
+longa, `PROP-2026-0102`) em 01/10/2026. Passa a ser o template final da
+B1: logo oficial (`logo-vizentini-verde.png`, proporção 3,55:1 preservada),
+Manrope 400/600 embutida, verde `#082B24`, bronze `#A47C56` e marfim
+`#FAF9F6` — valores do código real do site, não aproximados. Marca fixa em
+`pdf-theme.ts` (dívida registrada: vira dado do workspace quando houver o
+segundo escritório).
+
+- O tamanho acompanha o conteúdo: proposta curta = 1 página; objeto longo
+  flui para a seguinte, sem espaço artificial e sem partir o bloco de
+  honorários. Coberto por `b1-proposal-pdf-layout.test.ts`.
+- Só dados existentes no CRM: nenhuma cláusula, prazo, condição de
+  pagamento, contato ou assinatura.
+- Rodapé informa "Documento com N páginas" (quando N > 1). A numeração
+  "1/N" não é possível porque a prop `render` do react-pdf 4.9.0 não
+  desenha; a limitação foi apresentada e a amostra aprovada com ela.
+- Assets embutidos em base64 (`assets-embutidos.ts`, gerado por
+  `scripts/gerar-assets-proposta.mjs`): `readFileSync` com caminho
+  montado em runtime não é rastreado pelo bundler e quebraria na Vercel.
+- O validador (`pdf-validate.ts`) passou a ler o texto pelo `/ToUnicode`
+  (`pdf-text.ts`), pois com fonte embutida os códigos do fluxo são
+  índices de glifo. Continua rejeitando o PDF corrompido da v1 e exigindo
+  o número da proposta; todas as correções de integridade, seleção de
+  versão, permissões, armazenamento e envio seguem intactas.
+- Nenhum PDF histórico foi regenerado ou sobrescrito: o redesign vale
+  para versões **novas**.
+
+Amostras aprovadas (fictícias, fora do repositório):
+`praxis-crm-evidencias-b1/amostras/`.
+
+### 13.2 Envios antigos em `queued` — análise concluída
+
+Na proposta `PROP-2026-0003` (workspace de QA) há **cinco** envios para
+`cliente.b1.qa@example.com` em `queued` ("em andamento…" na tela).
+
+- **Origem:** a validação da fila (`queue_proposal_email`) feita com o
+  Resend deliberadamente não configurado (§ "Nenhum e-mail foi enviado
+  (fila fica em `queued`)"). Registrar a intenção sem despachar é o
+  desenho: o status só sai de `queued` por `mark_proposal_email_accepted`
+  ou `mark_proposal_email_failed`, chamados pelo despacho.
+- **Nunca foram despachados:** o painel do Resend (últimos 15 dias, que
+  cobre todo o período da B1) não tem nenhum e-mail para esse endereço;
+  os únicos para a proposta são os dois enviados a
+  `joaoniero2@gmail.com`. O domínio `example.com` é reservado e não
+  recebe correio.
+- **Não podem ser despachados por engano:** a chave de idempotência é um
+  UUID gerado a cada submissão do formulário, e nenhuma rotina, cron ou
+  retry varre `queued`. Uma nova tentativa cria uma linha nova; não
+  "ressuscita" as antigas. Mesmo que fossem reaproveitadas, o despacho
+  revalida o PDF antes de chamar o provedor (§11.3).
+- **Efeito no produto:** são ruído de histórico, sem risco. A tela mostra
+  "em andamento…" para algo que nunca andou — inconsistência cosmética
+  de dados de QA.
+- **Decisão:** mantidas como evidência, **sem alteração**. Se quiserem
+  limpar, a via é `mark_proposal_email_failed` com um código como
+  `qa_abandonado` por RPC, com dry-run e confirmação — não feito aqui.
+- **Item correlato:** a v14 da mesma proposta ficou em `pending`
+  ("Gerando…") por uma geração interrompida antes de existir a rotina de
+  falha. Não é elegível para envio (só `ready` é) e permanece preservada.
+
+### 13.3 O que falta em Production antes de usar o envio real
+
+Nada abaixo foi feito; Production segue intocada.
+
+1. **Variáveis de ambiente.** Production hoje não tem `RESEND_API_KEY`
+   nem `RESEND_FROM_EMAIL` (conferido pelos nomes; valores nunca lidos).
+   Sem elas o app funciona e o botão "Enviar por e-mail" fica
+   desabilitado com mensagem clara — não quebra. Para habilitar: chave
+   própria da aplicação, só com permissão de envio e restrita a
+   `mail.collios.cloud`, e `RESEND_FROM_EMAIL` num remetente desse
+   domínio (no Preview: `propostas@mail.collios.cloud`). Não reutilizar
+   a credencial SMTP do Auth.
+2. **Migrations B1 no projeto Supabase de Production** (ainda não
+   aplicadas lá, a confirmar pelo `supabase migration list` contra o ref
+   de Production): `20260929115900`, `20260929120000`, `…120100`,
+   `…120200`, `…120300`, `…120400` (bucket privado), `…120500` e
+   `20260929123000`. Procedimento do `20260929123000`: project ref,
+   `--dry-run`, lista exata, confirmação explícita.
+3. **Perfil do escritório** (`workspaces.legal_name` etc.) preenchido no
+   workspace real da Vizentini — `queue_proposal_email` exige
+   `legal_name`.
+4. **Destinatário real:** o e-mail do contato real, vinculado ao contato
+   (o envio nunca aceita texto livre).
+5. **Teste de fumaça em Production** com um único envio a endereço
+   controlado, repetindo as conferências do §12 (versão indicada = versão
+   anexada, SHA-256 do anexo no Resend = Storage, "aceito pelo provedor"
+   separado de "recebido pelo destinatário").
+6. **Pendente de confirmação humana:** recebimento e abertura do anexo da
+   v19 (§12) — continua não declarado como recebido.
+
+Fora de escopo, sem mudança: B2, merge, DNS, rotação de chaves.
