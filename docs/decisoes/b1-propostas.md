@@ -12,7 +12,7 @@ Decisões posteriores respeitadas: PDF em B1, Google Agenda em B2, WhatsApp
 real em B3 — nenhuma delas foi tocada aqui. Assinatura eletrônica (§16,
 item 6 do plano) fica fora, como pergunta em aberto própria.
 
-## 2. Desenho revisado (sete correções sobre a primeira proposta)
+## 2. Desenho revisado (sete correções sobre a primeira proposta, mais uma oitava vinda de defeito real)
 
 ### 2.1 Versão enviada ≠ versão mais recente
 
@@ -38,11 +38,20 @@ reescrita de uma proposta já fechada.
 
 Duas fases: `begin_proposal_document` reserva a versão com `status='pending'`
 (lock de linha na proposta serializa concorrência — duas gerações
-simultâneas da mesma proposta nunca colidem); a aplicação gera o PDF e
-sobe para o Storage (`upsert: false`, nunca sobrescreve um objeto
-existente); `finalize_proposal_document` só confirma `status='ready'`
-depois de reconferir, lendo `storage.objects` na mesma base Postgres, que
-o arquivo existe com o tamanho esperado. Qualquer falha em qualquer passo
+simultâneas da mesma proposta nunca colidem); a aplicação gera o PDF,
+**confere que ele abre e contém o número da proposta**
+(`assertValidProposalPdf`, correção 8 — acrescentada depois do caso do
+§10) e só então sobe para o Storage (`upsert: false`, nunca sobrescreve
+um objeto existente); `finalize_proposal_document` confirma
+`status='ready'` depois de reconferir, lendo `storage.objects` na mesma
+base Postgres, que o arquivo existe com o tamanho esperado.
+
+As duas checagens respondem perguntas diferentes, e a distinção importa:
+`finalize` prova **"o que gravamos é o que está lá"** (integridade de
+bytes); `assertValidProposalPdf` prova **"o que gravamos é um PDF que
+abre e diz o que deveria dizer"** (validade do documento). Os 16 arquivos
+quebrados do §10 passavam na primeira — tamanho e checksum coerentes — e
+teriam sido recusados pela segunda. Qualquer falha em qualquer passo
 chama `fail_proposal_document` — nunca fica uma linha `ready` sem arquivo,
 nunca uma segunda finalização sobrescreve checksum/tamanho de uma linha já
 pronta. Sem cron de retomada: uma linha `pending` mais velha que alguns
@@ -121,6 +130,22 @@ some do documento. Para o ENVIO REAL, dois mínimos, checados em
 uma proposta sem nenhuma identificação de quem envia não é defensável) e o
 destinatário precisa ser um e-mail JÁ conhecido do contato
 (`contact_emails`) — nunca texto livre digitado na hora.
+
+### 2.8 Correção 8 — o PDF precisa abrir (acrescentada em 30/09/2026)
+
+As sete correções acima são do desenho original. Esta é a oitava, e
+nasceu de um defeito real: um envio de verdade chegou com o anexo em
+branco. As sete primeiras tratavam de **qual** documento é enviado, de
+**quem** pode enviar e de **o que** o registro afirma; nenhuma tratava de
+**se o arquivo abre**. `finalize_proposal_document` confere tamanho e
+checksum contra o que a própria aplicação calculou — então bytes já
+corrompidos antes do hash passavam, com todos os registros coerentes.
+
+Agora `assertValidProposalPdf` (`src/server/proposals/pdf-validate.ts`)
+roda antes de qualquer upload e, de novo, antes de anexar ao e-mail:
+descomprime cada fluxo, recusa `/Length` que não bate com os bytes
+presentes e exige o número da proposta no texto desenhado. Detalhe do
+caso, da causa e das provas em §10 e §11.
 
 ## 3. Infra de e-mail — reaproveitada, não recriada
 
