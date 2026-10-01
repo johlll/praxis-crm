@@ -655,9 +655,11 @@ Preview correspondente a esse commit.
    **idêntico** ao da v19 no Storage, e descomprime.
 
 **Aceito pelo provedor e entregue ao servidor de destino: sim.**
-**Recebido na caixa de entrada e anexo aberto: pendente de confirmação**
-de quem controla o endereço — continuam sendo duas coisas distintas, e a
-segunda nunca foi declarada por mim.
+**Recebido na caixa de entrada e anexo aberto: confirmado por quem
+controla o endereço** (João Niero, que enviou a imagem do PDF aberto
+como prova, em 01/10/2026, antes da aprovação visual do redesign). Os
+dois estados seguem registrados separadamente: o primeiro vem do Resend
+(`sent`/`delivered`), o segundo é declaração humana, com evidência.
 
 Preservado como evidência: as 16 versões quebradas, a v17/v18, os
 registros de envio anteriores (inclusive os cinco presos em `queued`) e o
@@ -682,9 +684,13 @@ segundo escritório).
   honorários. Coberto por `b1-proposal-pdf-layout.test.ts`.
 - Só dados existentes no CRM: nenhuma cláusula, prazo, condição de
   pagamento, contato ou assinatura.
-- Rodapé informa "Documento com N páginas" (quando N > 1). A numeração
-  "1/N" não é possível porque a prop `render` do react-pdf 4.9.0 não
-  desenha; a limitação foi apresentada e a amostra aprovada com ela.
+- Rodapé informa "Documento com N páginas" (quando N > 1), aprovado
+  assim. Limitação **reproduzida nesta implementação** (não uma
+  conclusão geral sobre o react-pdf): com `@react-pdf/renderer` 4.9.0 e
+  este template, a prop `render` não pintou nada nos testes feitos
+  (string e JSX, fluxo normal e `fixed`, em `Text` e em `View`). Não se
+  investigou outra versão nem outra forma de numerar; reabrir só se a
+  numeração "1/N" for exigida.
 - Assets embutidos em base64 (`assets-embutidos.ts`, gerado por
   `scripts/gerar-assets-proposta.mjs`): `readFileSync` com caminho
   montado em runtime não é rastreado pelo bundler e quebraria na Vercel.
@@ -729,34 +735,122 @@ Na proposta `PROP-2026-0003` (workspace de QA) há **cinco** envios para
   ("Gerando…") por uma geração interrompida antes de existir a rotina de
   falha. Não é elegível para envio (só `ready` é) e permanece preservada.
 
-### 13.3 O que falta em Production antes de usar o envio real
+### 13.3 Resíduos conhecidos e limitação operacional
 
-Nada abaixo foi feito; Production segue intocada.
+**Resíduos de QA, preservados de propósito** (nada foi alterado):
 
-1. **Variáveis de ambiente.** Production hoje não tem `RESEND_API_KEY`
-   nem `RESEND_FROM_EMAIL` (conferido pelos nomes; valores nunca lidos).
-   Sem elas o app funciona e o botão "Enviar por e-mail" fica
-   desabilitado com mensagem clara — não quebra. Para habilitar: chave
-   própria da aplicação, só com permissão de envio e restrita a
-   `mail.collios.cloud`, e `RESEND_FROM_EMAIL` num remetente desse
-   domínio (no Preview: `propostas@mail.collios.cloud`). Não reutilizar
-   a credencial SMTP do Auth.
-2. **Migrations B1 no projeto Supabase de Production** (ainda não
-   aplicadas lá, a confirmar pelo `supabase migration list` contra o ref
-   de Production): `20260929115900`, `20260929120000`, `…120100`,
-   `…120200`, `…120300`, `…120400` (bucket privado), `…120500` e
-   `20260929123000`. Procedimento do `20260929123000`: project ref,
-   `--dry-run`, lista exata, confirmação explícita.
-3. **Perfil do escritório** (`workspaces.legal_name` etc.) preenchido no
-   workspace real da Vizentini — `queue_proposal_email` exige
-   `legal_name`.
-4. **Destinatário real:** o e-mail do contato real, vinculado ao contato
-   (o envio nunca aceita texto livre).
-5. **Teste de fumaça em Production** com um único envio a endereço
-   controlado, repetindo as conferências do §12 (versão indicada = versão
-   anexada, SHA-256 do anexo no Resend = Storage, "aceito pelo provedor"
-   separado de "recebido pelo destinatário").
-6. **Pendente de confirmação humana:** recebimento e abertura do anexo da
-   v19 (§12) — continua não declarado como recebido.
+- cinco envios em `queued` para `cliente.b1.qa@example.com` (§13.2);
+- a v14 de `PROP-2026-0003` em `pending` ("Gerando…");
+- as 16 versões históricas inválidas (v1–v16, §11.3).
+
+Nenhum dos três afeta o uso: só versão `ready` é oferecida ao envio, e
+`queued` não é retomado por ninguém.
+
+**Limitação operacional (vale para Production também).** Uma interrupção
+real — função serverless morta por timeout, queda de rede, deploy no meio
+da requisição — pode deixar:
+
+1. **geração em `pending`**: a linha existe, o PDF talvez nem tenha subido
+   ao Storage. Não bloqueia nada. Como investigar: ver o status e
+   `created_at` da linha em `proposal_documents` e se há objeto no
+   Storage no `storage_path`. Remédio: **gerar uma versão nova**; a
+   pendente fica como histórico (marcá-la como falha exige RPC com
+   confirmação, não é necessário).
+2. **envio em `queued`**: este é o caso delicado, porque a linha é criada
+   **antes** de chamar o Resend. `queued` significa "não sei", não
+   "não enviou": se a função morreu depois de o provedor aceitar e antes
+   de gravar `accepted`, **o e-mail pode ter saído**. Nunca reenviar às
+   cegas. Investigar nesta ordem:
+   1. ler a linha (`to_email`, `document_id`, `created_at`,
+      `idempotency_key`) pela timeline/lista do envio;
+   2. procurar no painel do Resend, pelo destinatário e pela janela de
+      horário, um e-mail com o assunto da proposta; conferir se o anexo
+      é o `document_id` da linha (SHA-256, como no §12);
+   3. **achou:** o envio aconteceu; registrar como aceito com o id do
+      provedor (`mark_proposal_email_accepted`, por RPC, com confirmação)
+      e **não reenviar**;
+   4. **não achou:** o provedor nunca recebeu; registrar a falha
+      (`mark_proposal_email_failed`, código `interrompido`) e só então
+      um **novo** envio, decidido por uma pessoa, gera outra linha.
+   Defesas existentes: a `idempotency_key` também vai ao Resend, que a
+   honra por 24 h, e a mesma submissão repetida não chama o provedor duas
+   vezes. Não existe cron de reconciliação nesta fase — é uma lacuna
+   conhecida e aceita para o piloto, não um defeito escondido.
+
+### 13.4 Banco: Preview e Production no mesmo Supabase
+
+Preview e Production usam, temporariamente, o mesmo projeto
+`praxis-crm-dev` (ref `rgoeppjwnltcbeqipovh`). As oito migrations B1 já
+estão nele. Conferido em 01/10/2026 **somente por leitura**
+(`supabase migration list --linked`): todas as migrations locais
+aparecem também no remoto, incluindo `20260929115900`, `…120000`,
+`…120100`, `…120200`, `…120300`, `…120400`, `…120500` e `…123000`.
+**Não há migration pendente.** Nenhum `db push` foi executado.
+
+Consequência a ter em mente: um envio ou uma geração feita em Production
+grava no mesmo banco que o QA. Isso muda quando Production ganhar projeto
+próprio — nesse momento as oito migrations precisarão ser aplicadas lá
+(com ref, `--dry-run` e confirmação).
+
+### 13.5 Template final validado no Preview do HEAD atual
+
+Até aqui o template com logo e fontes só tinha sido validado localmente
+(a v19 é do template antigo). O Preview do HEAD `fbe965e` (deploy
+`Preview`, `sha` conferido) gerou, pela interface, **uma única versão
+de QA: v20**, `ebb8a95a-ae92-437a-ade1-a4f57d59c995`, `ready`.
+
+- baixada pelo endpoint do app: 21.167 bytes, `application/pdf`, SHA-256
+  `5c2d2ee499bc6966226e5ea6b7fef4fa23f0e78bfc1a6efa2d2a7ddde3831956`;
+- leitor independente (pdfjs): 1 página, 1 imagem (o logo), texto
+  completo e acentuado, fontes embutidas `Manrope-Regular` e
+  `Manrope-SemiBold`;
+- aberta no navegador e comparada com a amostra curta aprovada: logo,
+  tipografia, cores, margens, bloco de honorários e rodapé idênticos;
+- **nenhum e-mail enviado**, nenhuma versão antiga tocada.
+
+Evidência: `praxis-crm-evidencias-b1/v20-redesign-preview.pdf` e
+`v20-preview-pagina1.png`. É uma proposta de uma página; a quebra em
+duas páginas é coberta pela amostra longa aprovada e por
+`b1-proposal-pdf-layout.test.ts`, e não foi repetida no hospedado.
+
+### 13.6 Production: configuração do Resend (preparada, NÃO executada)
+
+Hoje Production não tem `RESEND_API_KEY` nem `RESEND_FROM_EMAIL`
+(conferido pelos nomes; valores nunca lidos). Sem elas o app funciona e o
+botão "Enviar por e-mail" fica desabilitado com mensagem clara.
+
+**O que será criado, exatamente:**
+
+| Onde | O quê | Detalhe |
+|---|---|---|
+| Resend | 1 API key nova `praxis-crm-production` | permissão **só envio**, restrita ao domínio `mail.collios.cloud` |
+| Vercel (`praxis-crm`) | `RESEND_API_KEY` no ambiente **Production** | tipo sensível; valor vai da área de transferência ao `vercel env add`, nunca impresso nem gravado |
+| Vercel (`praxis-crm`) | `RESEND_FROM_EMAIL` no ambiente **Production** | `propostas@mail.collios.cloud` (mesmo remetente do Preview) |
+
+**Como o que existe é preservado:**
+
+- **SMTP do Auth:** não é tocado. A chave e a configuração SMTP do
+  Supabase Auth ficam como estão; a chave nova é outra credencial, criada
+  só para a aplicação. Nada se edita no painel de Auth do Supabase.
+- **Preview:** as variáveis do Preview são escopadas à branch
+  `feat/b1-proposals-pdf`. Adicionar variáveis ao ambiente Production não
+  as altera. Conferência: `vercel env ls` antes e depois, comparando os
+  nomes e escopos do Preview.
+- **Chave do Preview:** não é rotacionada nem reutilizada em Production,
+  para poder revogar uma sem afetar a outra.
+- Nenhuma conta nova no Resend, nenhuma alteração de DNS.
+
+**Ordem e efeito:** variáveis de ambiente só valem para deploys
+posteriores. Production só ganha o código da B1 no deploy do merge; ele
+já sairá com as variáveis. Configurar antes do merge não afeta o
+Production atual (o código da `main` não as usa).
+
+**Antes de usar de verdade (não é configuração, é decisão):**
+`legal_name` e demais dados do escritório preenchidos no workspace real
+(`queue_proposal_email` exige `legal_name`); e confirmar que os e-mails
+às clientes devem sair de `propostas@mail.collios.cloud` (domínio da
+Colli OS) — mudar de remetente é só trocar `RESEND_FROM_EMAIL`, mas o
+domínio precisa estar verificado no Resend. Smoke test pós-merge: um
+único envio a endereço controlado, repetindo as conferências do §12.
 
 Fora de escopo, sem mudança: B2, merge, DNS, rotação de chaves.
