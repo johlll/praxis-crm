@@ -39,6 +39,20 @@ export async function adminQueueProposalEmail(params: {
 }
 
 /**
+ * Marca um envio já enfileirado como falho sem nunca ter chamado o
+ * provedor — usado quando a checagem do anexo recusa a versão antes do
+ * despacho. Evita a linha ficar presa em `queued` (estado ambíguo que
+ * não é reprocessado por ninguém).
+ */
+export async function adminFailProposalEmail(sendId: string, errorCode: string): Promise<void> {
+  const admin = createProposalsAdminSupabaseClient();
+  await admin.rpc("mark_proposal_email_failed", {
+    p_send_id: sendId,
+    p_error_code: errorCode.slice(0, 100),
+  });
+}
+
+/**
  * Só chamado quando queue retornou isNew=true — é isso que garante que a
  * MESMA intenção (mesma idempotency_key), repetida por retry de rede ou
  * duplo clique, nunca chega a chamar o Resend duas vezes (B1, correção 1).

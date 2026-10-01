@@ -323,12 +323,14 @@ function SendEmailDialogBody({
   leadId,
   proposalId,
   documentId,
+  documentVersion,
   contactEmails,
   onDone,
 }: {
   leadId: string;
   proposalId: string;
   documentId: string;
+  documentVersion: number | null;
   contactEmails: string[];
   onDone: () => void;
 }) {
@@ -388,8 +390,8 @@ function SendEmailDialogBody({
           </select>
         </FormField>
         <p className="text-meta text-text-tertiary">
-          O PDF vai anexado. O CRM só registra &ldquo;aceito pelo provedor&rdquo; — não confirma que a caixa do cliente
-          recebeu.
+          Vai anexada a <strong className="font-semibold text-text">versão v{documentVersion}</strong>, a mais recente
+          já gerada. O CRM só registra &ldquo;aceito pelo provedor&rdquo; — não confirma que a caixa do cliente recebeu.
         </p>
         {state.error ? (
           <Alert variant="danger">
@@ -410,12 +412,14 @@ function SendEmailDialog({
   leadId,
   proposalId,
   readyDocumentId,
+  readyDocumentVersion,
   contactEmails,
   hasWorkspaceLegalProfile,
 }: {
   leadId: string;
   proposalId: string;
   readyDocumentId: string | null;
+  readyDocumentVersion: number | null;
   contactEmails: string[];
   hasWorkspaceLegalProfile: boolean;
 }) {
@@ -444,16 +448,23 @@ function SendEmailDialog({
         if (next) setInstanceKey((k) => k + 1);
       }}
     >
-      <DialogTrigger asChild>
-        <Button size="sm" variant="secondary">
-          Enviar por e-mail
-        </Button>
-      </DialogTrigger>
+      <div className="flex flex-col gap-1">
+        <DialogTrigger asChild>
+          <Button size="sm" variant="secondary">
+            Enviar por e-mail
+          </Button>
+        </DialogTrigger>
+        {/* Qual versão será anexada, visível antes de abrir o diálogo —
+            sem isto, a tela listava v18 no topo e o formulário enviava
+            outra versão sem nada denunciar (B1, §10). */}
+        <span className="text-meta text-text-tertiary">Enviará a v{readyDocumentVersion}</span>
+      </div>
       <SendEmailDialogBody
         key={instanceKey}
         leadId={leadId}
         proposalId={proposalId}
         documentId={readyDocumentId}
+        documentVersion={readyDocumentVersion}
         contactEmails={contactEmails}
         onDone={() => setOpen(false)}
       />
@@ -506,7 +517,18 @@ export function ProposalsSection({
           {proposals.map((p) => {
             const documents = documentsByProposal[p.id] ?? [];
             const emailSends = emailSendsByProposal[p.id] ?? [];
-            const readyDocument = [...documents].reverse().find((d) => d.status === "ready" && d.canDownload);
+            // Maior `version`, explicitamente — nunca a posição na lista.
+            // O defeito corrigido aqui (B1, §10) era confiar na ordem:
+            // `list_proposal_documents` devolve `order by version desc`, e
+            // um `.reverse()` antes do `.find()` fazia o formulário enviar
+            // a versão pronta MAIS ANTIGA enquanto a tela exibia a mais
+            // recente. Comparar `version` não depende de ordenação nenhuma.
+            const readyDocument = documents
+              .filter((d) => d.status === "ready" && d.canDownload)
+              .reduce<(typeof documents)[number] | null>(
+                (maior, d) => (maior === null || d.version > maior.version ? d : maior),
+                null,
+              );
             const canGenerateNewDocument = canManageDocuments && p.status !== "aceita" && p.status !== "recusada";
 
             return (
@@ -537,6 +559,7 @@ export function ProposalsSection({
                       leadId={leadId}
                       proposalId={p.id}
                       readyDocumentId={readyDocument?.id ?? null}
+                      readyDocumentVersion={readyDocument?.version ?? null}
                       contactEmails={contactEmails}
                       hasWorkspaceLegalProfile={hasWorkspaceLegalProfile}
                     />

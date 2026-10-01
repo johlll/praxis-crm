@@ -153,3 +153,15 @@ superado pela decisão de infraestrutura acima.
 Nenhuma outra dependência nova nesta fase — kanban, dialogs e tabela
 reaproveitam Radix (`@/components/ui/dialog`) e os demais componentes de
 UI já instalados nas fases anteriores.
+
+## Dependência nova de B1 (correção §11) — verificação de 30/09/2026
+
+| Pacote | Escolhido | Última estável | Escopo | Motivo |
+|---|---|---|---|---|
+| pdfjs-dist | 6.3.289 | 6.3.289 | **devDependency** | Leitor de PDF independente para os testes. A validação de PDF em produção (`src/server/proposals/pdf-validate.ts`) usa só `node:zlib` — nenhuma dependência nova entra no runtime. O leitor existe para que os testes não confirmem a si mesmos: quem verifica o PDF gerado é um parser de terceiro (Mozilla), não o nosso. |
+
+Critérios conferidos: é `latest` (não canary/RC); `engines` declara
+`>=22.13.0 || >=24`, compatível com o Node 24 do projeto; mantido
+ativamente pela Mozilla; `npm view deprecated` vazio. Usado via
+`pdfjs-dist/legacy/build/pdf.mjs`, o build pensado para rodar fora do
+navegador.

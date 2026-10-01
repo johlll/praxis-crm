@@ -1,13 +1,24 @@
+/**
+ * @vitest-environment node
+ *
+ * Node, não jsdom: sob jsdom o pdfkit corrompe o fluxo comprimido
+ * (`Buffer instanceof Uint8Array` é `false` em outro realm — ver
+ * docs/decisoes/b1-propostas.md §10 e tests/unit/b1-proposal-pdf-validate.test.ts).
+ * Produção roda em Node; o teste precisa rodar onde a produção roda.
+ */
 import { describe, expect, it } from "vitest";
 
 import { renderProposalPdf, type ProposalPdfData } from "@/server/proposals/pdf-template";
+import { assertValidProposalPdf } from "@/server/proposals/pdf-validate";
 
 /**
  * B1, correção 6: nenhum campo de office/client é obrigatório. Um
  * escritório que ainda não preencheu OAB/endereço, ou um cliente sem
- * CPF/CNPJ capturado, continuam gerando PDF normalmente — a prova aqui é
- * que a renderização NUNCA lança com tudo nulo, produzindo um PDF real
- * (assinatura %PDF nos primeiros bytes).
+ * CPF/CNPJ capturado, continuam gerando PDF normalmente.
+ *
+ * A prova aqui era a assinatura `%PDF` nos primeiros bytes — e isso não
+ * provava nada: os 16 arquivos quebrados do §10 passavam nessa checagem.
+ * Agora a prova é o PDF abrir de verdade e conter o número da proposta.
  */
 
 const MINIMAL_DATA: ProposalPdfData = {
@@ -53,15 +64,13 @@ const FULL_DATA: ProposalPdfData = {
 };
 
 describe("renderProposalPdf — B1", () => {
-  it("gera um PDF válido mesmo com todos os campos opcionais ausentes", async () => {
+  it("gera um PDF que ABRE mesmo com todos os campos opcionais ausentes", async () => {
     const buffer = await renderProposalPdf(MINIMAL_DATA);
-    expect(buffer.subarray(0, 4).toString("latin1")).toBe("%PDF");
-    expect(buffer.byteLength).toBeGreaterThan(0);
+    expect(() => assertValidProposalPdf(buffer, { proposalNumber: "PROP-2026-0001" })).not.toThrow();
   });
 
-  it("gera um PDF válido com todos os campos opcionais preenchidos", async () => {
+  it("gera um PDF que ABRE com todos os campos opcionais preenchidos", async () => {
     const buffer = await renderProposalPdf(FULL_DATA);
-    expect(buffer.subarray(0, 4).toString("latin1")).toBe("%PDF");
-    expect(buffer.byteLength).toBeGreaterThan(0);
+    expect(() => assertValidProposalPdf(buffer, { proposalNumber: "PROP-2026-0002" })).not.toThrow();
   });
 });

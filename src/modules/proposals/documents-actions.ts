@@ -10,11 +10,17 @@ import { toUserMessage } from "@/lib/errors";
 import { uuidSchema } from "@/lib/uuid";
 import {
   adminBeginProposalDocument,
+  adminFailProposalDocument,
   adminUploadAndFinalizeProposalDocument,
   adminDownloadProposalDocumentBytes,
 } from "@/server/proposals/admin/documents";
-import { adminQueueProposalEmail, adminDispatchProposalEmail } from "@/server/proposals/admin/email";
+import {
+  adminQueueProposalEmail,
+  adminDispatchProposalEmail,
+  adminFailProposalEmail,
+} from "@/server/proposals/admin/email";
 import { renderProposalPdf, type ProposalPdfData } from "@/server/proposals/pdf-template";
+import { assertValidProposalPdf, ProposalPdfInvalidError } from "@/server/proposals/pdf-validate";
 import type { FeeModel } from "./queries";
 
 export type ProposalDocumentActionState = {
@@ -148,13 +154,27 @@ export async function generateProposalDocumentAction(
 
   try {
     const pdfBytes = await renderProposalPdf(context.pdfData);
+    // Antes de qualquer upload: o arquivo precisa abrir e conter o que
+    // deveria conter (B1, correção 8). Sem isto, bytes corrompidos
+    // viravam uma versão `ready` com checksum e tamanho coerentes — ver
+    // docs/decisoes/b1-propostas.md §10.
+    assertValidProposalPdf(pdfBytes, { proposalNumber: context.pdfData.proposal.number });
     await adminUploadAndFinalizeProposalDocument({
       documentId: begun.documentId,
       storagePath: begun.storagePath,
       pdfBytes,
       actorUserId: guard.ctx.userId,
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof ProposalPdfInvalidError) {
+      // Nada foi enviado ao Storage: a versão fica `failed`, com o
+      // motivo, em vez de presa em `pending` sem explicação.
+      await adminFailProposalDocument(begun.documentId, error.code, guard.ctx.userId);
+      return {
+        ok: false,
+        error: "O PDF gerado não passou na validação de conteúdo. Nenhuma versão foi publicada.",
+      };
+    }
     return { ok: false, error: "Não foi possível gerar o PDF. Tente novamente." };
   }
 
@@ -239,6 +259,24 @@ export async function dispatchProposalEmailAction(
     pdfBytes = await adminDownloadProposalDocumentBytes(storagePath);
   } catch {
     return { ok: false, error: "Não foi possível preparar o anexo. Tente novamente." };
+  }
+
+  // Versões gravadas ANTES da validação de geração existir podem estar
+  // corrompidas no Storage (B1, §10: 16 versões de PROP-2026-0003 estão).
+  // Revalidar aqui é o que as torna ineláveis para envio novo sem tocar
+  // em nenhum registro hospedado — o arquivo e o histórico ficam
+  // preservados como evidência, só o envio é recusado.
+  try {
+    assertValidProposalPdf(pdfBytes, { proposalNumber });
+  } catch (error) {
+    const codigo = error instanceof ProposalPdfInvalidError ? error.code : "pdf_invalido";
+    // A linha de envio já existe (queue acima). Marcar como falha evita
+    // o estado ambíguo 'queued' para sempre, visto em §10.
+    await adminFailProposalEmail(queued.sendId, codigo);
+    return {
+      ok: false,
+      error: "Esta versão do PDF não abre corretamente e não pode ser enviada. Gere uma versão nova.",
+    };
   }
 
   try {

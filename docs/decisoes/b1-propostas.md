@@ -467,3 +467,128 @@ inclusive para os arquivos quebrados. O que ela **não** garante é que os
 bytes sejam um PDF válido: `ready` nunca significou "renderiza". Nenhuma
 camada da B1 valida o PDF produzido. Candidato a correção, não feito
 nesta investigação.
+
+## 11. Correção dos dois bloqueadores do §10
+
+### 11.1 Defeito A — versão enviada
+
+**Reproduzido antes de corrigir.** `tests/unit/b1-proposal-send-version.test.tsx`
+monta a seção de propostas com três versões prontas entregues na **ordem
+real da RPC** (`version desc`: v18, v17, v1) e lê o `documentId` do
+formulário que de fato seria submetido — não o que a tela exibe. Contra o
+código antigo o teste falha com a mensagem exata do caso real:
+
+```
+expected '44156d85-…' (v1) to be 'e48c78fd-…' (v18)
+```
+
+**Correção** (`src/components/leads/proposals-section.tsx`): a seleção
+deixou de depender de posição na lista. Em vez de `[...documents].reverse().find(...)`,
+agora filtra as prontas e escolhe pela **maior `version`**. Ordenação da
+RPC pode mudar sem reintroduzir o defeito — dois dos testes provam isso
+entregando a lista em ordens opostas e exigindo o mesmo resultado.
+
+**Visibilidade:** o botão passou a declarar "Enviará a v18" ao lado, e o
+diálogo repete "Vai anexada a versão v18, a mais recente já gerada".
+Antes, tela e formulário podiam divergir sem nada denunciar.
+
+**Vínculo imutável preservado:** nada mudou no servidor. O `document_id`
+continua viajando no formulário, sendo validado por Zod, gravado por
+`queue_proposal_email` e usado por `get_proposal_document_for_download`
+para buscar os bytes daquela versão exata. A correção é só de escolha —
+a garantia de que o registro de envio aponta para o documento escolhido
+nunca dependeu da tela.
+
+### 11.2 Defeito B — PDF inválido
+
+**Operação exata, comprovada.** Não é "diferença entre runtimes". O
+mesmo arquivo (`pdfkit.node.mjs`) corrompe sob `jsdom` e funciona sob
+`node`, e o mecanismo é este, em `_write`:
+
+```js
+_write(data) {
+  if (!(data instanceof Uint8Array)) data = fromBinaryString(data + '\n');
+  ...
+}
+```
+
+Sob `environment: "jsdom"`, `globalThis.Uint8Array` é o construtor do
+realm do jsdom, então o `Buffer` devolvido por `zlib.deflateSync` **falha
+no `instanceof`** (medido: `false` sob jsdom, `true` sob node). O código
+cai no desvio e faz `data + '\n'`, que invoca `Buffer.prototype.toString()`
+— decodificação **UTF-8** de bytes binários. Todo byte >= 0x80 que não
+forma sequência válida vira `U+FFFD`; `fromBinaryString` então aplica
+`& 0xff` e grava **0xFD**. Sequências multibyte colapsam, então o fluxo
+também encolhe — e o `/Length` já tinha sido escrito com o tamanho de
+antes.
+
+Reprodução isolada, com os bytes reais do início do fluxo da v18:
+
+| | bytes |
+|---|---|
+| antes | `78 9c 65 8d bd 0e c2 40` |
+| depois | `78 fd 65 fd fd 0e fd 40` |
+
+Idêntico ao que está gravado nas 16 versões quebradas. ASCII intacto,
+todo byte alto virando `0xFD`.
+
+**Validação antes de `ready`** (`src/server/proposals/pdf-validate.ts`,
+correção 8): `assertValidProposalPdf` roda **antes de qualquer upload**.
+Confere cabeçalho e `%%EOF`, exige pelo menos uma página, e então —
+o que cabeçalho/tamanho/checksum não fazem — **descomprime cada fluxo
+`FlateDecode`**, recusa quando o `/Length` declarado não bate com os
+bytes presentes (`pdf_fluxo_truncado`, a assinatura exata deste defeito),
+extrai o texto desenhado pelos operadores `Tj`/`TJ` e exige que o
+**número da proposta** esteja lá (`pdf_conteudo_essencial_ausente`). Só
+`node:zlib` — nenhuma dependência nova em produção, nenhum serviço novo.
+
+Falhou, a versão vira `failed` com o código do motivo (via
+`fail_proposal_document`) em vez de ficar presa em `pending`, e **nada
+sobe para o Storage**.
+
+**Leitor independente nos testes:** `pdfjs-dist` (Mozilla, devDependency)
+extrai o texto nos testes, para que a verificação não seja o nosso
+parser confirmando a si mesmo. Os testes conferem o PDF gerado agora **e**
+o PDF gerado pelo **build real de produção** (a v18, incluída como
+fixture): ambos trazem escritório, cliente, número e valor. No arquivo
+corrompido o leitor independente não acha texto nenhum.
+
+**Ambiente dos testes de PDF:** passaram a declarar
+`@vitest-environment node` — é onde a produção roda (Node, na Vercel).
+Rodar no `jsdom` padrão era o que fabricava PDFs quebrados em silêncio.
+Além disso, `tests/unit/b1-proposal-pdf-validate-jsdom.test.ts` roda de
+propósito no jsdom e garante a invariante que interessa: **não existe PDF
+ilegível e aceito** — se o ambiente corromper, o validador recusa.
+
+**Conferência visual:** PDF gerado após a correção aberto em navegador e
+conferido — cabeçalho do escritório, número, cliente, objeto, honorários
+e rodapé, uma página, legível
+(`praxis-crm-evidencias-b1/visual-pos-correcao.png`). O par com o anexo
+corrompido (`visual-anexo-corrompido.png`, página vazia) ficou lado a
+lado como evidência.
+
+### 11.3 Versões históricas inválidas
+
+As 16 versões quebradas **continuam no Storage e no banco, intactas**,
+com os registros de envio anteriores — são a evidência do caso.
+
+O que as torna inelegíveis para envio novo é uma revalidação no despacho:
+`dispatchProposalEmailAction` roda `assertValidProposalPdf` nos bytes
+baixados **antes** de chamar o provedor. PDF que não abre não é enviado,
+e a linha de envio é marcada como falha (`adminFailProposalEmail`) em vez
+de ficar presa em `queued` — o estado ambíguo encontrado na investigação.
+Coberto por `tests/unit/b1-proposal-send-blocks-invalid-pdf.test.ts`, que
+usa os bytes reais da v1 corrompida e da v18 íntegra.
+
+**Nenhuma migration foi criada nem aplicada, e nenhum registro hospedado
+foi alterado.** Essa escolha é deliberada: a revalidação no envio resolve
+o risco sem tocar em dado histórico.
+
+**Proposta, para decisão à parte** (não executada): marcar as 16 versões
+como inválidas no banco faria a UI parar de oferecê-las para download e
+deixaria o motivo explícito no histórico, em vez de só recusar no envio.
+Exigiria uma migration nova com uma coluna de motivo em
+`proposal_documents` e um `UPDATE` pontual nessas 16 linhas de
+`PROP-2026-0003` na workspace de QA. Antes de qualquer execução: project
+ref, `--dry-run`, lista exata de migrations e confirmação explícita,
+como no `20260929123000`.
