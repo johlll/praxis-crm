@@ -877,3 +877,66 @@ domínio precisa estar verificado no Resend. Smoke test pós-merge: um
 único envio a endereço controlado, repetindo as conferências do §12.
 
 Fora de escopo, sem mudança: B2, merge, DNS, rotação de chaves.
+
+## 14. Fechamento da B1 (01/10/2026)
+
+### 14.1 Merge e deploy
+
+PR #21 mesclada por merge commit em `3a1ccb7977f06437a4d592a4e7a9a25dd168a71c`
+(pais `179237bb…` e `77fd9bfe…`), com o HEAD exato `77fd9bf`, checks
+verdes e sem conflitos. O deploy de Production ficou Ready e o alias
+`praxis-crm-eight.vercel.app` aponta para ele. Nenhuma migration foi
+reaplicada (§13.4).
+
+### 14.2 Configuração em Production
+
+Chave Resend `praxis-crm-production` (só envio, restrita a
+`mail.collios.cloud`) e `RESEND_API_KEY`/`RESEND_FROM_EMAIL` no ambiente
+Production da Vercel. SMTP do Auth e variáveis do Preview não foram
+alterados.
+
+### 14.3 Envio de fumaça em Production (v21)
+
+Feito pela interface, uma única vez, no workspace e nos dados fictícios de
+QA (`PROP-2026-0003`):
+
+- versão gerada: **v21**, `0a6e9687-e38e-4f7b-a3dc-a26628a0e9b4`, template
+  final; 21.167 bytes, SHA-256
+  `2781a5e55c3ff537b218d558438735efb177b335a5fa8aec80193d61861fe8de`;
+  leitor independente: 1 página, logo e texto completos; conferida
+  visualmente antes do envio;
+- diálogo: "Vai anexada a versão v21" e `documentId` igual ao da v21;
+- `proposal_email_sends`: `documentId = 0a6e9687-…`, `accepted`;
+- Resend `01a0f9f2-fc26-7a85-bd58-697d9420ba0e`: `Sent` e `Delivered`;
+  SHA-256 do anexo **idêntico** ao do arquivo no Storage.
+
+**Aceito pelo provedor: sim. Recebido e aberto: confirmado por João
+Niero** (layout correto, conteúdo legível, SHA-256 igual ao registrado).
+Dois estados, registrados separadamente.
+
+### 14.4 Ocorrências
+
+- **Credencial em snapshots:** snapshots locais do navegador chegaram a
+  conter string no formato de chave da API (Preview em 30/09; Production em
+  01/10, apagados). Busca em todos os arquivos versionados e no histórico
+  git de todas as refs: nada. Sem evidência de saída da máquina; **sem
+  rotação por hipótese**. Três snapshots de 30/09 seguem em pasta local
+  ignorada pelo git.
+- **Senha da conta de QA:** a senha de `…praxisqaa3` foi redefinida pela
+  API administrativa do Auth, com autorização expressa, a partir de arquivo
+  local. A senha não é registrada.
+
+### 14.5 Pendências conhecidas (nenhuma bloqueia o fechamento)
+
+1. Remetente `propostas@mail.collios.cloud` é **temporário**; o definitivo
+   será definido com a Vizentini antes do uso real.
+2. Dados reais do escritório (`legal_name` etc.) **não** preenchidos.
+3. Preview e Production compartilham o Supabase `praxis-crm-dev`; o
+   envio e a v21 gravaram nesse banco de QA.
+4. Resíduos preservados: 5 envios QA em `queued`, v14 `pending`, v1–v16
+   inválidas (§13.2–13.3). Sem reconciliação automática de `queued`.
+5. Rodapé sem "1/N" (limitação reproduzida, §13.1); marca fixa em
+   `pdf-theme.ts` até o segundo escritório.
+6. Seletor de destinatário lista o mesmo e-mail de QA várias vezes e vem
+   pré-selecionado nele; ajuste cosmético futuro.
+7. B2 não iniciada.
