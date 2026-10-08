@@ -19,7 +19,7 @@ select plan(52);
 -- Chaves de assinatura do cabeçalho (uma por ambiente) e um montador de
 -- cabeçalho ASSINADO — o que o servidor do CRM faz de verdade. A ameaça
 -- (cabeçalho forjado por um usuário) é coberta em 21_b2_environment_trust.
-insert into private.calendar_environment_keys (environment, signing_key) values
+insert into public.calendar_environment_keys (environment, signing_key) values
   ('production', 'chave-de-producao-de-teste-0123456789ab'),
   ('preview', 'chave-de-preview-de-teste-0123456789abcd');
 
@@ -27,7 +27,7 @@ create function pg_temp.hdr(p_env text, p_key_env text default null, p_expires b
 returns text language sql as $f$
   select json_build_object('x-praxis-env', p_env || '.' || e.x || '.' || private.environment_signature(p_env, e.x, k.signing_key))::text
   from (select coalesce(p_expires, extract(epoch from now())::bigint + 600) as x) e,
-       (select signing_key from private.calendar_environment_keys
+       (select signing_key from public.calendar_environment_keys
          where environment = coalesce(p_key_env, p_env)::public.calendar_environment) k
 $f$;
 

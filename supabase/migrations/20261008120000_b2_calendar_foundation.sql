@@ -12,7 +12,7 @@
 -- PostgREST direto, sem passar pelo servidor do CRM, enviaria o mesmo
 -- texto. Por isso o valor é ASSINADO: `<ambiente>.<expira>.<hmac-sha256>`,
 -- com uma chave por ambiente que só o servidor daquele ambiente (variável
--- da Vercel com escopo próprio) e este banco (tabela privada) conhecem. O
+-- da Vercel com escopo próprio) e este banco (tabela sem acesso) conhecem. O
 -- banco só aceita o ambiente se a assinatura confere e não expirou
 -- (validade curta). Cabeçalho ausente, forjado, de outra chave ou vencido
 -- vale como "sem ambiente".
@@ -48,15 +48,26 @@ create type public.calendar_link_status as enum (
 -- ninguém e sem função que as defina: provisionadas por quem administra o
 -- banco. Rotação = substituir a linha (a validade curta do cabeçalho dispensa
 -- sobreposição).
-create table private.calendar_environment_keys (
+create table public.calendar_environment_keys (
   environment public.calendar_environment primary key,
   signing_key text not null check (char_length(signing_key) >= 32),
   updated_at timestamptz not null default now()
 );
 
-alter table private.calendar_environment_keys enable row level security;
-alter table private.calendar_environment_keys force row level security;
-revoke all on table private.calendar_environment_keys from public, anon, authenticated;
+alter table public.calendar_environment_keys enable row level security;
+alter table public.calendar_environment_keys force row level security;
+revoke all on table public.calendar_environment_keys from public, anon, authenticated;
+
+-- Fica em `public` (o schema `private` é só de funções, por design — ver
+-- 04_security_hardening), mas inacessível: RLS forçada, deny-all e nenhum
+-- GRANT. Só as funções SECURITY DEFINER daqui a leem.
+create policy calendar_environment_keys_select_deny on public.calendar_environment_keys for select to authenticated using (false);
+create policy calendar_environment_keys_insert_deny on public.calendar_environment_keys for insert to authenticated with check (false);
+create policy calendar_environment_keys_update_deny on public.calendar_environment_keys for update to authenticated using (false);
+create policy calendar_environment_keys_delete_deny on public.calendar_environment_keys for delete to authenticated using (false);
+
+comment on table public.calendar_environment_keys is
+  'Chaves que assinam o cabeçalho de ambiente (B2). Sem GRANT, sem policy permissiva e sem função que as defina: provisionadas à mão, uma linha por ambiente.';
 
 create function private.environment_signature(p_environment text, p_expires bigint, p_key text)
 returns text
@@ -117,7 +128,7 @@ begin
   end if;
 
   select k.signing_key into v_key
-  from private.calendar_environment_keys k
+  from public.calendar_environment_keys k
   where k.environment = v_env::public.calendar_environment;
   if v_key is null then
     return null;

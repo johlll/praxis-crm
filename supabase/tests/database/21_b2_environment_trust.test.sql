@@ -25,7 +25,7 @@ select plan(23);
 \set adv2   '20000000-0000-0000-0000-000000000003'
 \set leitor '20000000-0000-0000-0000-000000000005'
 
-insert into private.calendar_environment_keys (environment, signing_key) values
+insert into public.calendar_environment_keys (environment, signing_key) values
   ('production', 'chave-de-producao-de-teste-0123456789ab'),
   ('preview', 'chave-de-preview-de-teste-0123456789abcd');
 
@@ -33,7 +33,7 @@ create function pg_temp.hdr(p_env text, p_key_env text default null, p_expires b
 returns text language sql as $f$
   select json_build_object('x-praxis-env', p_env || '.' || e.x || '.' || private.environment_signature(p_env, e.x, k.signing_key))::text
   from (select coalesce(p_expires, extract(epoch from now())::bigint + 600) as x) e,
-       (select signing_key from private.calendar_environment_keys
+       (select signing_key from public.calendar_environment_keys
          where environment = coalesce(p_key_env, p_env)::public.calendar_environment) k
 $f$;
 
@@ -91,14 +91,14 @@ select is(
 -- ---------------------------------------------------------------------
 
 select is(
-  has_table_privilege('authenticated', 'private.calendar_environment_keys', 'select')
-    or has_table_privilege('anon', 'private.calendar_environment_keys', 'select'),
+  has_table_privilege('authenticated', 'public.calendar_environment_keys', 'select')
+    or has_table_privilege('anon', 'public.calendar_environment_keys', 'select'),
   false, 'anon/authenticated não têm SELECT na tabela de chaves'
 );
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'dono', 'role', 'authenticated')::text, true);
-select throws_ok($i$ select * from private.calendar_environment_keys $i$, '42501', null, 'o usuário autenticado não lê as chaves');
+select throws_ok($i$ select * from public.calendar_environment_keys $i$, '42501', null, 'o usuário autenticado não lê as chaves');
 select throws_ok($i$ select private.request_environment() $i$, '42501', null, 'o usuário autenticado não chama o verificador de ambiente');
 reset role;
 

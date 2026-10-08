@@ -268,7 +268,7 @@ O Supabase é compartilhado, então o isolamento é de duas camadas:
      uma chave **por ambiente**:
      - o servidor assina com `CALENDAR_ENV_SIGNING_KEY` (≥ 32 caracteres,
        valor **diferente** em Preview e Production, escopo da Vercel);
-     - o banco guarda as duas chaves em `private.calendar_environment_keys`
+     - o banco guarda as duas chaves em `public.calendar_environment_keys`
        (sem GRANT para ninguém e **sem RPC que as defina**: provisionadas à
        mão, uma vez por ambiente, por quem administra o banco) e só aceita o
        ambiente se a assinatura confere (comparação por HMAC) e o cabeçalho
@@ -482,7 +482,7 @@ Cada etapa em PR própria, com CI verde e sem merge sem autorização.
   B2 no hospedado (ref, `--dry-run`, confirmação); (2) gerar duas chaves de
   assinatura distintas (≥ 32 caracteres) e gravar uma em cada ambiente da
   Vercel como `CALENDAR_ENV_SIGNING_KEY`; (3) inserir as MESMAS duas chaves,
-  por SQL, em `private.calendar_environment_keys` (uma linha por ambiente);
+  por SQL, em `public.calendar_environment_keys` (uma linha por ambiente);
   (4) gerar as chaves de cifra dos tokens (`CALENDAR_TOKEN_*`), também
   distintas por ambiente. Até a migration ser aplicada, a tela de Integrações
   mostra "não configurada" e não consulta nada de B2.
