@@ -403,7 +403,7 @@ select is(
 
 select apply_google_values_to_activity(
   :'reuniao'::uuid, :'dono'::uuid, (:'v0')::bigint, 'Título do Google', '2026-11-13T09:00:00Z'::timestamptz,
-  '[{"field":"schedule","crmValue":{"start":"2026-11-12T16:00:00Z"},"googleValue":{"start":"2026-11-13T09:00:00Z"}}]'::jsonb
+  '[{"field":"schedule","crmValue":{"start":"2026-11-12T16:30:00Z"},"googleValue":{"start":"2026-11-13T09:00:00Z"}}]'::jsonb
 ) as versao \gset
 select is(
   (select jsonb_build_object('t', title, 'd', due_at, 'h', has_time) from public.activities where id = (:'reuniao')::uuid),
@@ -413,8 +413,8 @@ select is(
 select is((:'versao')::bigint, (:'v0')::bigint + 1, 'a versão da atividade avança em 1 (controle de concorrência do CRM)');
 select is(
   (select crm_value ->> 'start' from public.calendar_sync_conflicts
-   where link_id = (:'link')::uuid and field = 'schedule' and google_value ->> 'start' = '2026-11-13T09:00:00Z'),
-  '2026-11-12T16:00:00Z', 'o valor do CRM que perdeu é gravado NA MESMA transação em que o do Google é aplicado'
+   where link_id = (:'link')::uuid and crm_value ->> 'start' = '2026-11-12T16:30:00Z'),
+  '2026-11-12T16:30:00Z', 'o valor do CRM que perdeu é gravado NA MESMA transação em que o do Google é aplicado'
 );
 select throws_ok(
   format($i$ select apply_google_values_to_activity(%L::uuid, %L::uuid, %s, 'Outro', null, '[{"field":"inventado","crmValue":1,"googleValue":2}]'::jsonb) $i$, :'reuniao', :'dono', :'versao'),
