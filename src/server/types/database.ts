@@ -237,7 +237,15 @@ export type Database = {
           user_id?: string
           workspace_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "calendar_connections_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       calendar_event_links: {
         Row: {
@@ -279,7 +287,29 @@ export type Database = {
           updated_at?: string
           workspace_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "calendar_event_links_activity_fkey"
+            columns: ["workspace_id", "activity_id"]
+            isOneToOne: false
+            referencedRelation: "activities"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "calendar_event_links_connection_fkey"
+            columns: ["workspace_id", "connection_id"]
+            isOneToOne: false
+            referencedRelation: "calendar_connections"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "calendar_event_links_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       client_handoffs: {
         Row: {
@@ -3072,6 +3102,19 @@ export type Database = {
         Args: { p_activity_id: string; p_lock_version: number }
         Returns: undefined
       }
+      connect_calendar_account: {
+        Args: {
+          p_access_token_ciphertext: string
+          p_access_token_expires_at: string
+          p_actor_user_id: string
+          p_google_account_email: string
+          p_key_version: string
+          p_refresh_token_ciphertext: string
+          p_scopes: string[]
+          p_workspace_id: string
+        }
+        Returns: string
+      }
       contact_has_sensitive: {
         Args: { p_contact_id: string }
         Returns: boolean
@@ -3097,6 +3140,15 @@ export type Database = {
           p_priority?: Database["public"]["Enums"]["lead_priority"]
           p_title: string
           p_type: Database["public"]["Enums"]["activity_type"]
+        }
+        Returns: string
+      }
+      create_calendar_event_link: {
+        Args: {
+          p_activity_id: string
+          p_actor_user_id: string
+          p_connection_id: string
+          p_event_id: string
         }
         Returns: string
       }
@@ -3304,6 +3356,10 @@ export type Database = {
         Args: { p_requirement_id: string }
         Returns: undefined
       }
+      disconnect_calendar_connection: {
+        Args: { p_actor_user_id: string; p_connection_id: string }
+        Returns: undefined
+      }
       dismiss_duplicate_candidate: {
         Args: { p_candidate_id: string }
         Returns: undefined
@@ -3332,6 +3388,17 @@ export type Database = {
       flag_stuck_webhook_events: { Args: { p_limit?: number }; Returns: Json }
       get_activity: { Args: { p_activity_id: string }; Returns: Json }
       get_activity_counts: { Args: { p_workspace_id: string }; Returns: Json }
+      get_calendar_connection_secrets: {
+        Args: { p_actor_user_id: string; p_connection_id: string }
+        Returns: {
+          access_token_ciphertext: string
+          access_token_expires_at: string
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          key_version: string
+          refresh_token_ciphertext: string
+          status: Database["public"]["Enums"]["calendar_connection_status"]
+        }[]
+      }
       get_client: { Args: { p_client_id: string }; Returns: Json }
       get_conflict_check: { Args: { p_lead_id: string }; Returns: Json }
       get_contact_merge_history: {
@@ -3383,53 +3450,6 @@ export type Database = {
           has_more: boolean
           items: Json
         }[]
-      }
-      connect_calendar_account: {
-        Args: {
-          p_access_token_ciphertext: string
-          p_access_token_expires_at: string
-          p_actor_user_id: string
-          p_google_account_email: string
-          p_key_version: string
-          p_refresh_token_ciphertext: string
-          p_scopes: string[]
-          p_workspace_id: string
-        }
-        Returns: string
-      }
-      create_calendar_event_link: {
-        Args: {
-          p_activity_id: string
-          p_actor_user_id: string
-          p_connection_id: string
-          p_event_id: string
-        }
-        Returns: string
-      }
-      disconnect_calendar_connection: {
-        Args: { p_actor_user_id: string; p_connection_id: string }
-        Returns: undefined
-      }
-      get_calendar_connection_secrets: {
-        Args: { p_actor_user_id: string; p_connection_id: string }
-        Returns: {
-          access_token_ciphertext: string
-          access_token_expires_at: string
-          environment: Database["public"]["Enums"]["calendar_environment"]
-          key_version: string
-          refresh_token_ciphertext: string
-          status: Database["public"]["Enums"]["calendar_connection_status"]
-        }[]
-      }
-      list_calendar_connections: { Args: { p_workspace_id: string }; Returns: Json }
-      set_calendar_connection_calendar: {
-        Args: {
-          p_actor_user_id: string
-          p_calendar_id: string
-          p_calendar_summary: string
-          p_connection_id: string
-        }
-        Returns: undefined
       }
       get_opportunity: { Args: { p_opportunity_id: string }; Returns: Json }
       get_pipeline_board: { Args: { p_pipeline_id: string }; Returns: Json }
@@ -3493,6 +3513,10 @@ export type Database = {
           items: Json
           total_count: number
         }[]
+      }
+      list_calendar_connections: {
+        Args: { p_workspace_id: string }
+        Returns: Json
       }
       list_clients: {
         Args: {
@@ -3788,6 +3812,15 @@ export type Database = {
           p_channels: Database["public"]["Enums"]["proposal_channel"][]
           p_lock_version: number
           p_proposal_id: string
+        }
+        Returns: undefined
+      }
+      set_calendar_connection_calendar: {
+        Args: {
+          p_actor_user_id: string
+          p_calendar_id: string
+          p_calendar_summary: string
+          p_connection_id: string
         }
         Returns: undefined
       }
@@ -4098,14 +4131,6 @@ export type Database = {
       }
     }
     Enums: {
-      calendar_connection_status: "active" | "needs_reauth" | "disconnected"
-      calendar_environment: "production" | "preview"
-      calendar_link_status:
-        | "linked"
-        | "missing_in_google"
-        | "cancelled_in_google"
-        | "unlinked"
-        | "needs_attention"
       activity_assignee_rule: "unassigned" | "lead_owner"
       activity_source:
         | "manual"
@@ -4114,6 +4139,14 @@ export type Database = {
         | "form_intake"
       activity_status: "pending" | "done"
       activity_type: "call" | "meeting" | "task" | "email" | "deadline"
+      calendar_connection_status: "active" | "needs_reauth" | "disconnected"
+      calendar_environment: "production" | "preview"
+      calendar_link_status:
+        | "linked"
+        | "missing_in_google"
+        | "cancelled_in_google"
+        | "unlinked"
+        | "needs_attention"
       client_status: "ativo" | "encerrado" | "suspenso"
       conflict_check_status:
         | "nao_verificado"
@@ -4301,15 +4334,6 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      calendar_connection_status: ["active", "needs_reauth", "disconnected"],
-      calendar_environment: ["production", "preview"],
-      calendar_link_status: [
-        "linked",
-        "missing_in_google",
-        "cancelled_in_google",
-        "unlinked",
-        "needs_attention",
-      ],
       activity_assignee_rule: ["unassigned", "lead_owner"],
       activity_source: [
         "manual",
@@ -4319,6 +4343,15 @@ export const Constants = {
       ],
       activity_status: ["pending", "done"],
       activity_type: ["call", "meeting", "task", "email", "deadline"],
+      calendar_connection_status: ["active", "needs_reauth", "disconnected"],
+      calendar_environment: ["production", "preview"],
+      calendar_link_status: [
+        "linked",
+        "missing_in_google",
+        "cancelled_in_google",
+        "unlinked",
+        "needs_attention",
+      ],
       client_status: ["ativo", "encerrado", "suspenso"],
       conflict_check_status: [
         "nao_verificado",
