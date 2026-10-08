@@ -127,7 +127,7 @@ select is(
 
 select set_config('request.headers', '{"x-praxis-env":"preview"}', true);
 select connect_calendar_account(:'ws'::uuid, :'dono'::uuid, 'dono@v.test', array['escopo'], 'refresh-prev', 'access-prev', now(), '1') as conn_prev \gset
-select isnt(:'conn_prev', :'conn_prod', 'o mesmo usuário tem conexão SEPARADA em preview');
+select isnt((:'conn_prev')::uuid, (:'conn_prod')::uuid, 'o mesmo usuário tem conexão SEPARADA em preview');
 
 select is(
   (select count(*)::int from public.calendar_connections where user_id = :'dono'::uuid and status <> 'disconnected'),
