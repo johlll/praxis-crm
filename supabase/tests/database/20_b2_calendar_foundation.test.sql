@@ -342,6 +342,7 @@ select lives_ok(
   'sem vínculo ativo, a atividade deixa de pertencer ao ambiente de production'
 );
 
+select set_config('request.headers', '{"x-praxis-env":"production"}', true);
 select throws_ok(
   format($i$ select * from get_calendar_connection_secrets(%L::uuid, %L::uuid) $i$, :'conn_prod', :'dono'),
   'P0001', 'connection_not_found', 'conexão desconectada não entrega segredos'
