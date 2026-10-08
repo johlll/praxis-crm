@@ -62,9 +62,9 @@ create function private.environment_signature(p_environment text, p_expires bigi
 returns text
 language sql
 immutable
-set search_path = 
+set search_path = ''
 as $body$
-  select encode(extensions.hmac(p_environment || . || p_expires::text, p_key, sha256), hex);
+  select encode(extensions.hmac(p_environment || '.' || p_expires::text, p_key, 'sha256'), 'hex');
 $body$;
 
 -- Ambiente AUTENTICADO da requisição, ou NULL. Nunca devolve um ambiente só
@@ -74,10 +74,10 @@ returns text
 language plpgsql
 stable
 security definer
-set search_path = 
+set search_path = ''
 as $body$
 declare
-  v_raw text := current_setting(request.headers, true);
+  v_raw text := current_setting('request.headers', true);
   v_value text;
   v_env text;
   v_expires_txt text;
@@ -87,11 +87,11 @@ declare
   v_key text;
   v_expected text;
 begin
-  if v_raw is null or btrim(v_raw) =  then
+  if v_raw is null or btrim(v_raw) = '' then
     return null;
   end if;
   begin
-    v_value := (v_raw::jsonb) ->> x-praxis-env;
+    v_value := (v_raw::jsonb) ->> 'x-praxis-env';
   exception when others then
     return null;
   end;
@@ -99,13 +99,13 @@ begin
     return null;
   end if;
 
-  v_env := split_part(v_value, ., 1);
-  v_expires_txt := split_part(v_value, ., 2);
-  v_signature := split_part(v_value, ., 3);
+  v_env := split_part(v_value, '.', 1);
+  v_expires_txt := split_part(v_value, '.', 2);
+  v_signature := split_part(v_value, '.', 3);
 
-  if v_env not in (production, preview)
-     or v_expires_txt !~ ^[0-9]1
-     or v_signature !~ ^[0-9a-f]{64} then
+  if v_env not in ('production', 'preview')
+     or v_expires_txt !~ '^[0-9]{1,12}$'
+     or v_signature !~ '^[0-9a-f]{64}$' then
     return null;
   end if;
 
@@ -126,7 +126,7 @@ begin
   v_expected := private.environment_signature(v_env, v_expires, v_key);
   -- Comparação por HMAC das duas assinaturas: não depende do primeiro byte
   -- que difere.
-  if extensions.hmac(v_signature, v_key, sha256) <> extensions.hmac(v_expected, v_key, sha256) then
+  if extensions.hmac(v_signature, v_key, 'sha256') <> extensions.hmac(v_expected, v_key, 'sha256') then
     return null;
   end if;
 
