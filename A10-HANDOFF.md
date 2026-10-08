@@ -1,6 +1,10 @@
 # A10 — Visão geral com dados reais · Handoff
 
-Branch `feat/a10-dashboard` · PR #15 (aberta, **não mesclada**). A11 não iniciada.
+Branch `feat/a10-dashboard` · PR #15 **mesclada** em `main` por merge commit
+`252693ffa96d1ca28302205493762106f68c7e28` (topo da PR no momento do merge:
+`824d2a9badeb223b77d022e36dd333276bf207d5`; pais do merge commit:
+`22b9bacb712fd4cbd3464cdd4b931571ff5a0e7c` + `824d2a9b...`). Deploy de
+produção correspondente confirmado (§6). A11 não iniciada.
 
 ## 1. O que foi entregue
 
@@ -241,3 +245,39 @@ commit está registrado na PR.
   `private.office_timezone`).
 - Fora da fase: origem e atribuição (A11), primeira resposta, recebidos,
   metas, personalização e `/relatorios`.
+
+## 6. Merge e deploy de produção
+
+- **Merge:** PR #15 mesclada por merge commit em 2026-09-17
+  (`252693ffa96d1ca28302205493762106f68c7e28`), com os checks obrigatórios
+  (`Vercel`, `Vercel Preview Comments`, `verificar`) verdes e sem conflitos
+  (`mergeStateStatus: CLEAN`) no topo exato autorizado (`824d2a9b...`).
+- **Deploy de produção:** disparado automaticamente pelo merge, status
+  `Ready` (`vercel inspect`), `target: production`, deployment
+  `dpl_HonU4BdX9Y48hEV1K8kmxpqqGKLw`, aliasado em
+  `praxis-crm-eight.vercel.app` (e demais aliases de produção do projeto).
+  O GitHub Deployments API confirma o mesmo commit (`sha: 252693ff...`,
+  `environment: Production`).
+- **Achado operacional a registrar:** login com as contas do escritório
+  demonstrativo (criadas no `praxis-crm-dev`) funcionou direto em produção
+  — ou seja, **hoje o ambiente de produção usa o mesmo projeto Supabase que
+  o `praxis-crm-dev`**. O plano original (`docs/decisoes` / arquitetura)
+  prevê projetos separados por ambiente; essa separação ainda não foi
+  implementada. Registrado aqui para não ser confundido com bug: os dados
+  demonstrativos e o escritório "Escritório Demonstração (A10)" estão
+  visíveis em produção porque é o mesmo banco, não porque algo vazou entre
+  ambientes.
+- **Checagem pós-deploy (escritório demonstrativo, produção):**
+
+  | Verificação | Papel | Resultado |
+  |---|---|---|
+  | Login | owner, sales, viewer | os três autenticaram e chegaram a `/visao-geral` |
+  | Funil (30 dias) | owner | passagens 29/26/24/20/16/12/8/4 e "seguiu" 89,7/92,3/83,3/80/75/75/62,5/25% — idêntico ao validado antes do merge |
+  | Tabela da equipe | owner | Advogado 8/5/2/5, Atendimento 7/0/0/6, Proprietária 8/5/2/5, Sem responsável 7/5/1/5 — soma de leads 8+7+8+7=30, igual ao indicador geral; nenhuma linha "Fora da equipe" (a membership removida durante a validação anterior já tinha sido recriada) |
+  | Aplicar/limpar filtro de período | owner | `periodo=7` aplicado (8 leads) e "Limpar filtros" volta a 30 dias (30 leads), seletor e URL sempre juntos |
+  | Payload de atendimento (RPC `get_dashboard` direta, via token da própria conta) | sales | zero chaves terminadas em `_cents` em todo o payload; `attention.items[].value_band` presente (ex.: "R$ 10.000–25.000", "Acima de R$ 25.000"); `funnel.stages[]` sem `value_sum_cents`; `positions`/`period_metrics` sem nenhuma chave monetária |
+  | Payload de visualizador (RPC direta) | viewer | zero chaves `_cents` **e** zero `value_band` em todo o payload — nenhum dado financeiro, nem faixa |
+  | Console do navegador | owner, sales, viewer | 0 mensagens (erros e avisos) nas três sessões, inclusive depois de aplicar/limpar filtro — nenhum erro de hidratação |
+  | Respostas de rede | owner, sales, viewer | nenhuma resposta 4xx/5xx nas três sessões |
+
+  Nenhuma escrita foi feita em produção durante a checagem: só login, navegação (GET) e a chamada direta da RPC de leitura com o token da própria conta de QA.
