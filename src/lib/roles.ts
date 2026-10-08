@@ -138,7 +138,14 @@ export type Permission =
   // B1 — perfil jurídico do escritório (razão social, CNPJ, OAB,
   // endereço) exibido no cabeçalho do PDF. Mesmo nível administrativo de
   // workspace.rename: só quem já pode alterar dados do próprio workspace.
-  | "workspace_legal_profile.manage";
+  | "workspace_legal_profile.manage"
+  // B2 — Google Agenda (docs/decisoes/b2-google-agenda.md §8). Conectar,
+  // escolher a agenda e desconectar a PRÓPRIA conta: mesma faixa de
+  // activity.edit (todos menos viewer), pois o compromisso nasce de uma
+  // atividade. Administrar conexões de OUTROS usuários (ver a saúde de
+  // todas, desconectar a de alguém) é só owner/admin — nunca lê tokens.
+  | "calendar.connect_own"
+  | "calendar.manage";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -177,6 +184,8 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "attribution.correct": new Set<Role>(["owner", "admin", "manager"]),
   "proposal_document.manage": new Set<Role>(["owner", "admin", "manager", "lawyer"]),
   "workspace_legal_profile.manage": new Set<Role>(["owner", "admin"]),
+  "calendar.connect_own": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
+  "calendar.manage": new Set<Role>(["owner", "admin"]),
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {

@@ -80,4 +80,31 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    /**
+     * B2: `src/server/calendar/admin/supabase.ts` é o ÚNICO arquivo do
+     * módulo de calendário autorizado a construir um cliente `service_role`
+     * cru. As funções de escrita de conexão e vínculo têm GRANT só para
+     * service_role (nenhum usuário autenticado fabrica conexão por RPC), e
+     * o cliente envia sempre o cabeçalho de ambiente que o banco usa no
+     * isolamento Preview × Production.
+     */
+    files: ["src/server/calendar/admin/**/*.{ts,tsx}"],
+    ignores: ["src/server/calendar/admin/supabase.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@supabase/supabase-js"],
+              importNames: ["createClient"],
+              message:
+                "Não construa outro cliente service_role aqui — importe createCalendarAdminSupabaseClient de ./supabase.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 );

@@ -231,8 +231,8 @@ pelo mesmo caminho de escrita com `If-Match`. Por campo:
 O Supabase é compartilhado, então o isolamento é de duas camadas:
 
 1. **Ambiente determinado pelo servidor.** O módulo do Google deriva o
-   ambiente de `VERCEL_ENV` (`production` | `preview`; nunca de parâmetro,
-   cabeçalho ou campo do cliente) e o passa a cada RPC. Toda RPC valida
+   ambiente de `VERCEL_ENV` (`production` | `preview`; nunca de parâmetro
+   ou campo do cliente) e o envia **assinado** a cada requisição. Toda RPC valida
    `environment` da conexão, do canal e do vínculo contra o ambiente do
    chamador e **recusa** divergência.
 2. **Compromissos e atividades vinculados: recusa total, antes de qualquer
@@ -242,26 +242,53 @@ O Supabase é compartilhado, então o isolamento é de duas camadas:
    **recusada por inteiro**: nenhuma alteração no compromisso, na atividade,
    no vínculo, na base, no canal ou na conexão, **nenhum efeito externo
    enfileirado** e nenhuma chamada ao Google. Não existe modo "grava só o
-   efeito local". A recusa é auditada (sem conteúdo do evento).
+   efeito local". A recusa **aborta a transação**, então não pode ser auditada
+   no próprio banco (o registro seria desfeito junto): quem registra é o
+   servidor, em log estruturado com o código `calendar_environment_mismatch`
+   e ids internos, sem conteúdo do evento (nas ações de calendário já na
+   fundação; nas de atividade, quando a etapa 2 passar a vinculá-las).
    - **Onde fica o controle (no banco, não só na aplicação):** o cliente de
-     servidor envia o ambiente em cabeçalho de requisição próprio
-     (`X-Praxis-Env`, preenchido a partir de `VERCEL_ENV` no servidor, nunca
-     por dado do usuário), lido no banco via `request.headers`. Um gatilho
+     servidor envia o ambiente em cabeçalho próprio (`X-Praxis-Env`),
+     lido no banco via `request.headers`. Um gatilho
      `BEFORE UPDATE OR DELETE` em `activities` consulta o vínculo ativo da
-     linha e **aborta a transação** se o ambiente informado for diferente do
-     do vínculo — ou se o cabeçalho estiver ausente (falha fechada). Como o
-     gatilho é de linha, cobre **todos** os caminhos, inclusive os que já
-     existem (`update_activity`, `reschedule_activity`, `reassign_activity`,
-     `complete_activity`, `delete_activity`) e exclusões em cascata por lead
-     ou oportunidade, mescla de contatos e qualquer função futura. Os
-     caminhos existentes não precisam mudar de assinatura nem de migration já
-     aplicada: a proteção entra por migration nova.
+     linha e **aborta a transação** se o ambiente **autenticado** for
+     diferente do do vínculo — ou se não houver ambiente autenticado (falha
+     fechada). Como o gatilho é de linha, cobre **todos** os caminhos,
+     inclusive os que já existem (`update_activity`, `reschedule_activity`,
+     `reassign_activity`, `complete_activity`, `delete_activity`) e
+     exclusões em cascata por lead ou oportunidade, mescla de contatos e
+     qualquer função futura. Os caminhos existentes não mudam de assinatura:
+     a proteção entra por migration nova.
+   - **O ambiente é AUTENTICADO, não apenas declarado.** Um usuário
+     autenticado que chame o PostgREST direto, sem passar pelo servidor do
+     CRM, enviaria o mesmo cabeçalho (achado de revisão da PR #24,
+     reproduzido em `21_b2_environment_trust.test.sql`: com o cabeçalho
+     lido em texto simples, a atividade vinculada a production era alterada).
+     Por isso o valor é `<ambiente>.<expira>.<hmac-sha256>`, assinado com
+     uma chave **por ambiente**:
+     - o servidor assina com `CALENDAR_ENV_SIGNING_KEY` (≥ 32 caracteres,
+       valor **diferente** em Preview e Production, escopo da Vercel);
+     - o banco guarda as duas chaves em `public.calendar_environment_keys`
+       (sem GRANT para ninguém e **sem RPC que as defina**: provisionadas à
+       mão, uma vez por ambiente, por quem administra o banco) e só aceita o
+       ambiente se a assinatura confere (comparação por HMAC) e o cabeçalho
+       não venceu (validade de 10 min; o banco recusa mais de 1 h);
+     - cabeçalho ausente, sem assinatura, com assinatura inventada, assinado
+       pela chave do **outro** ambiente, vencido ou com validade absurda vale
+       como "sem ambiente";
+     - um usuário não tem a chave (não lê a tabela nem chama o verificador),
+       e o Preview não tem a chave de Production, então não consegue afirmar
+       `production`;
+     - sem a variável configurada, o servidor não envia cabeçalho e o banco
+       recusa tudo o que depende de ambiente (as funcionalidades de agenda
+       ficam indisponíveis; atividades sem vínculo não são afetadas);
+     - as verificações de usuário, papel e alcance das funções existentes
+       continuam valendo, na ordem em que já estavam (provado em pgTAP).
+     Limite assumido: um possuidor da chave de service role já tem acesso
+     total ao banco; o alvo desta barreira é o usuário autenticado e o
+     acidente entre ambientes, não o comprometimento do servidor.
    - O mesmo vale para as tabelas de vínculo, conexão, canal, estado e
      conflito: a RPC recusa quando o ambiente informado difere do da linha.
-   - Modelo de ameaça: protege contra operação acidental de outro ambiente
-     (o caso real, com banco compartilhado). Não pretende conter um usuário
-     autenticado que forje o cabeçalho chamando a API diretamente; esse risco
-     é o mesmo de qualquer RPC e fica fora desta barreira.
    - A mudança vinda do Google só é aplicada à atividade pelo ambiente dono do
      vínculo (processamento do próprio ambiente, com o mesmo controle).
    - **Testes de Preview usam registros próprios de QA**, criados pelo teste
@@ -451,5 +478,13 @@ Cada etapa em PR própria, com CI verde e sem merge sem autorização.
   compartilhada; dispensa de verificação do app interno; frequência mínima e
   alertas do cron do Inngest e consumo real de execuções; plano atual da
   Vercel; bypass de proteção do Preview para o webhook.
+- **Passos para execução posterior (nada feito):** (1) aplicar a migration da
+  B2 no hospedado (ref, `--dry-run`, confirmação); (2) gerar duas chaves de
+  assinatura distintas (≥ 32 caracteres) e gravar uma em cada ambiente da
+  Vercel como `CALENDAR_ENV_SIGNING_KEY`; (3) inserir as MESMAS duas chaves,
+  por SQL, em `public.calendar_environment_keys` (uma linha por ambiente);
+  (4) gerar as chaves de cifra dos tokens (`CALENDAR_TOKEN_*`), também
+  distintas por ambiente. Até a migration ser aplicada, a tela de Integrações
+  mostra "não configurada" e não consulta nada de B2.
 - Nenhuma credencial, usuário, licença ou serviço externo foi criado ou
   contratado nesta etapa.

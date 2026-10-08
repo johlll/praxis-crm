@@ -108,6 +108,16 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
     "Preencha a razão social do escritório em Configurações antes de enviar por e-mail.",
   recipient_email_not_found: "Esse e-mail não está cadastrado para este contato.",
   resend_not_configured: "Envio real por e-mail não está habilitado neste ambiente.",
+  // B2 — Google Agenda.
+  calendar_environment_mismatch:
+    "Este registro está vinculado a uma agenda de outro ambiente e não pode ser alterado aqui.",
+  environment_required: "Não foi possível identificar o ambiente. Tente novamente.",
+  connection_not_found: "Conexão de agenda não encontrada.",
+  connection_not_active: "A conexão com a agenda precisa ser reautorizada.",
+  calendar_id_required: "Escolha uma agenda.",
+  calendar_not_selected: "Escolha a agenda da conexão antes de vincular compromissos.",
+  activity_not_appointment: "Só compromissos com horário (reuniões) podem ser vinculados à agenda.",
+  calendar_provider_not_configured: "A integração com o Google Agenda não está configurada neste ambiente.",
 };
 
 /** update_lead_basic_fields()/assign_lead()/set_lead_status()/set_lead_value()
