@@ -126,9 +126,16 @@ escolhida, e a filtragem é nossa, **em memória, durante o processamento**:
    ou se traz a marca de **este** ambiente (reconexão), é processado; senão é
    **descartado**: não é gravado, não é logado, não vai para erro, fila nem
    observabilidade. Logs carregam só IDs internos e códigos.
-3. Para um evento vinculado com mudança, o conteúdo completo é lido com
-   `events.get` (campos do vínculo apenas: título, início, fim, status,
-   conferência).
+3. **Só depois** de o evento ser identificado como vinculado ao CRM — pelo
+   registro local `(calendar_id, event_id)` (ou, na reconexão, pela marca do
+   ambiente) e pelas verificações pertinentes (ambiente, conexão e calendário
+   coerentes com o vínculo, marca coerente quando presente, evento não
+   recorrente) — buscam-se com `events.get` os detalhes necessários à
+   sincronização: **título** e **conferência/Meet**, além de início, fim e
+   status. Esses são os **campos sincronizados** (§6.3). Descrição, local e
+   convidados não são lidos. Para evento **não** identificado como vinculado
+   nada é buscado, persistido nem logado: o conteúdo de eventos externos nunca
+   é guardado, nem em log, erro, fila ou observabilidade.
 4. Disponibilidade para agendar vem de `freebusy` (intervalos ocupados, sem
    título), consultada na hora, sem persistir.
 5. **Avanço do token:** o `nextSyncToken` só é gravado como `sync_token` depois
@@ -228,13 +235,40 @@ O Supabase é compartilhado, então o isolamento é de duas camadas:
    cabeçalho ou campo do cliente) e o passa a cada RPC. Toda RPC valida
    `environment` da conexão, do canal e do vínculo contra o ambiente do
    chamador e **recusa** divergência.
-2. **Efeitos sobre compromissos e atividades.** `activities` é dado de
-   negócio compartilhado; por isso o **efeito externo** é de quem é dono do
-   vínculo. Uma operação no Preview sobre um compromisso cujo vínculo é de
-   Production: grava a mudança local normalmente (é o QA no próprio banco),
-   mas **não chama o Google, não altera o vínculo, a base nem o canal** e
-   registra "efeito externo suprimido (ambiente)". A mudança vinda do Google
-   só é aplicada à atividade pelo ambiente dono do vínculo.
+2. **Compromissos e atividades vinculados: recusa total, antes de qualquer
+   alteração.** `activities` é dado de negócio compartilhado, e uma atividade
+   com vínculo ativo pertence ao ambiente do vínculo. Uma operação do Preview
+   sobre um compromisso ou atividade cujo vínculo é de Production é
+   **recusada por inteiro**: nenhuma alteração no compromisso, na atividade,
+   no vínculo, na base, no canal ou na conexão, **nenhum efeito externo
+   enfileirado** e nenhuma chamada ao Google. Não existe modo "grava só o
+   efeito local". A recusa é auditada (sem conteúdo do evento).
+   - **Onde fica o controle (no banco, não só na aplicação):** o cliente de
+     servidor envia o ambiente em cabeçalho de requisição próprio
+     (`X-Praxis-Env`, preenchido a partir de `VERCEL_ENV` no servidor, nunca
+     por dado do usuário), lido no banco via `request.headers`. Um gatilho
+     `BEFORE UPDATE OR DELETE` em `activities` consulta o vínculo ativo da
+     linha e **aborta a transação** se o ambiente informado for diferente do
+     do vínculo — ou se o cabeçalho estiver ausente (falha fechada). Como o
+     gatilho é de linha, cobre **todos** os caminhos, inclusive os que já
+     existem (`update_activity`, `reschedule_activity`, `reassign_activity`,
+     `complete_activity`, `delete_activity`) e exclusões em cascata por lead
+     ou oportunidade, mescla de contatos e qualquer função futura. Os
+     caminhos existentes não precisam mudar de assinatura nem de migration já
+     aplicada: a proteção entra por migration nova.
+   - O mesmo vale para as tabelas de vínculo, conexão, canal, estado e
+     conflito: a RPC recusa quando o ambiente informado difere do da linha.
+   - Modelo de ameaça: protege contra operação acidental de outro ambiente
+     (o caso real, com banco compartilhado). Não pretende conter um usuário
+     autenticado que forje o cabeçalho chamando a API diretamente; esse risco
+     é o mesmo de qualquer RPC e fica fora desta barreira.
+   - A mudança vinda do Google só é aplicada à atividade pelo ambiente dono do
+     vínculo (processamento do próprio ambiente, com o mesmo controle).
+   - **Testes de Preview usam registros próprios de QA**, criados pelo teste
+     (workspace de QA, atividades e vínculos criados na hora) e **nunca
+     modificam registros vinculados em Production**. O caso "vínculo de
+     Production" é simulado criando, no próprio teste, uma atividade de QA
+     cujo vínculo tem `environment = production`.
 3. **Barreiras físicas, independentes do código:** chaves de cifra de tokens
    **distintas por ambiente** (um ambiente não decifra o token do outro);
    clientes OAuth distintos; webhook com endereço do próprio ambiente e
@@ -245,9 +279,13 @@ O Supabase é compartilhado, então o isolamento é de duas camadas:
    funcionar, o Preview opera só por polling (§9) e o webhook é validado em
    Production com a conta de teste.
 
-Critério de teste: um teste automatizado tenta, com ambiente `preview`,
-alterar vínculo, canal, conexão e compromisso de `production` e exige recusa
-ou efeito suprimido, sem nenhuma chamada ao Google.
+Critério de teste: um teste automatizado, com registros próprios de QA,
+tenta com ambiente `preview` alterar e excluir (por cada caminho existente de
+atividade e por cascata) um compromisso/atividade vinculado a `production`, e
+altera vínculo, canal e conexão de `production`. Exige **recusa total**: nada
+mudou, nenhum efeito foi enfileirado e não houve nenhuma chamada ao Google.
+Exige também que, sem o cabeçalho de ambiente, a mutação de atividade
+vinculada seja recusada, e que atividade **sem** vínculo continue editável.
 
 ## 8. Papéis (conferido em `src/lib/roles.ts`)
 
@@ -373,9 +411,11 @@ e reportados como medição, não como promessa.
 13. Renovação: `renew_at` pela duração efetiva; TTL < 24 h não renova a cada
     execução; duas execuções simultâneas renovam uma vez; sobreposição sem
     perder nem duplicar notificação.
-14. **Isolamento:** operações do Preview não alteram compromisso, vínculo,
-    canal nem conexão de Production e não geram efeito na agenda real
-    (teste automatizado, §7).
+14. **Isolamento:** operações do Preview sobre compromisso, atividade,
+    vínculo, canal ou conexão de Production são **recusadas antes de qualquer
+    alteração**, sem enfileirar efeito externo e sem chamar o Google, em todos
+    os caminhos existentes de edição/exclusão de atividades e em cascata
+    (teste automatizado com registros próprios de QA, §7).
 15. Permissões por papel conforme §8, RLS forçada e teste de isolamento entre
     workspaces; auditoria das ações; logs sem conteúdo de eventos.
 16. Webhook: 2xx rápido para canal conhecido do ambiente; rejeita canal,
