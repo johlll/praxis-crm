@@ -31,7 +31,8 @@ vi.mock("@/modules/shell/queries", () => ({
   getShellContext: async () => ({ user: { name: "Teste" }, activeWorkspace: { id: "ws-1" } }),
 }));
 vi.mock("@/server/authz/permissions", async () => {
-  const roles = await vi.importActual<typeof import("@/lib/roles")>("@/lib/roles");
+  const roles: { roleHasPermission: (role: string, permission: string) => boolean } =
+    await vi.importActual("@/lib/roles");
   return {
     requireMembership: async () => ({ role: "owner", userId: "u-1", workspaceId: "ws-1", membershipId: "m-1" }),
     roleHasPermission: roles.roleHasPermission,
