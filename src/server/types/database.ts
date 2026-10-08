@@ -247,6 +247,24 @@ export type Database = {
           },
         ]
       }
+      calendar_environment_keys: {
+        Row: {
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          signing_key: string
+          updated_at: string
+        }
+        Insert: {
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          signing_key: string
+          updated_at?: string
+        }
+        Update: {
+          environment?: Database["public"]["Enums"]["calendar_environment"]
+          signing_key?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       calendar_event_links: {
         Row: {
           activity_id: string | null
