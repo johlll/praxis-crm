@@ -8,13 +8,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { roleHasPermission, ROLES } from "@/lib/roles";
-import { CALENDAR_ENV_HEADER, calendarEnvHeaders, getCalendarEnvironment } from "@/server/calendar/environment";
+import {
+  CALENDAR_ENV_HEADER,
+  CALENDAR_ENV_HEADER_TTL_SECONDS,
+  calendarEnvHeaders,
+  getCalendarEnvironment,
+  signCalendarEnvironment,
+} from "@/server/calendar/environment";
 import { decryptCalendarToken, encryptCalendarToken } from "@/server/calendar/token-crypto";
 import { getCalendarProvider, usesSimulatedCalendarProvider } from "@/server/calendar/provider";
 import { SimulatedCalendarProvider } from "@/server/calendar/simulated-provider";
 
 const KEY_A = Buffer.alloc(32, 1).toString("base64");
 const KEY_B = Buffer.alloc(32, 2).toString("base64");
+const SIGNING_KEY = "chave-de-teste-b2-0123456789-abcdef";
 
 function useKeys(keys: Record<string, string>, active: string) {
   vi.stubEnv("CALENDAR_TOKEN_KEY_VERSIONS", JSON.stringify(keys));
@@ -39,11 +46,43 @@ describe("ambiente vem do servidor e falha fechada para Production", () => {
     expect(getCalendarEnvironment()).toBe("preview");
   });
 
-  it("o cabeçalho enviado ao banco reflete o ambiente do servidor", () => {
+  it("o cabeçalho enviado ao banco é ASSINADO: ambiente.expira.hmac, sem a chave", () => {
     vi.stubEnv("VERCEL_ENV", "production");
-    expect(calendarEnvHeaders()).toEqual({ [CALENDAR_ENV_HEADER]: "production" });
+    vi.stubEnv("CALENDAR_ENV_SIGNING_KEY", SIGNING_KEY);
+    const header = calendarEnvHeaders(1_800_000_000_000)[CALENDAR_ENV_HEADER]!;
+    const [env, expires, signature] = header.split(".");
+    expect(env).toBe("production");
+    expect(Number(expires)).toBe(1_800_000_000 + CALENDAR_ENV_HEADER_TTL_SECONDS);
+    expect(signature).toBe(signCalendarEnvironment("production", Number(expires), SIGNING_KEY));
+    expect(header).not.toContain(SIGNING_KEY);
+  });
+
+  it("a assinatura é a MESMA que o banco calcula (vetor compartilhado com o pgTAP)", () => {
+    expect(signCalendarEnvironment("production", 4102444800, SIGNING_KEY)).toBe(
+      "82f3a8b1e7357ce1e497589faa6cb83466404c45e1143fb84d8316fda4cadcc4",
+    );
+  });
+
+  it("ambientes e chaves diferentes produzem assinaturas diferentes", () => {
+    const prod = signCalendarEnvironment("production", 4102444800, SIGNING_KEY);
+    expect(signCalendarEnvironment("preview", 4102444800, SIGNING_KEY)).not.toBe(prod);
+    expect(signCalendarEnvironment("production", 4102444800, SIGNING_KEY + "x")).not.toBe(prod);
+  });
+
+  it("sem chave (ou chave curta) nenhum cabeçalho é enviado: o banco trata como sem ambiente", () => {
+    vi.stubEnv("VERCEL_ENV", "production");
+    vi.stubEnv("CALENDAR_ENV_SIGNING_KEY", "");
+    expect(calendarEnvHeaders()).toEqual({});
+    vi.stubEnv("CALENDAR_ENV_SIGNING_KEY", "curta");
+    expect(calendarEnvHeaders()).toEqual({});
+  });
+
+  it("o ambiente assinado reflete VERCEL_ENV do servidor, nunca outro valor", () => {
+    vi.stubEnv("CALENDAR_ENV_SIGNING_KEY", SIGNING_KEY);
     vi.stubEnv("VERCEL_ENV", "preview");
-    expect(calendarEnvHeaders()).toEqual({ [CALENDAR_ENV_HEADER]: "preview" });
+    expect(calendarEnvHeaders()[CALENDAR_ENV_HEADER]).toMatch(/^preview./);
+    vi.stubEnv("VERCEL_ENV", "production");
+    expect(calendarEnvHeaders()[CALENDAR_ENV_HEADER]).toMatch(/^production./);
   });
 });
 

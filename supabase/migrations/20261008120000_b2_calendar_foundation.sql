@@ -6,15 +6,27 @@
 --
 -- ISOLAMENTO (§7). Preview e Production compartilham o mesmo Supabase. O
 -- ambiente que está operando é informado pelo servidor num cabeçalho de
--- requisição (`X-Praxis-Env`, preenchido a partir de VERCEL_ENV — nunca
--- por dado do usuário) e lido aqui via `request.headers` do PostgREST.
+-- requisição (`X-Praxis-Env`) lido aqui via `request.headers` do PostgREST.
+--
+-- O cabeçalho NÃO pode ser só declarado: um usuário autenticado que chame o
+-- PostgREST direto, sem passar pelo servidor do CRM, enviaria o mesmo
+-- texto. Por isso o valor é ASSINADO: `<ambiente>.<expira>.<hmac-sha256>`,
+-- com uma chave por ambiente que só o servidor daquele ambiente (variável
+-- da Vercel com escopo próprio) e este banco (tabela privada) conhecem. O
+-- banco só aceita o ambiente se a assinatura confere e não expirou
+-- (validade curta). Cabeçalho ausente, forjado, de outra chave ou vencido
+-- vale como "sem ambiente".
+--
 -- Uma atividade com vínculo ativo pertence ao ambiente do vínculo: toda
--- tentativa de UPDATE/DELETE vinda de outro ambiente — ou sem o cabeçalho
--- (falha fechada) — é RECUSADA por inteiro, antes de qualquer alteração.
--- É um gatilho de LINHA, então cobre todos os caminhos (as funções de
--- atividade que já existem, exclusão em cascata por lead/oportunidade,
--- mescla de contatos e qualquer função futura) sem mexer em migration já
--- aplicada.
+-- tentativa de UPDATE/DELETE sem um ambiente AUTENTICADO igual ao do
+-- vínculo é RECUSADA por inteiro, antes de qualquer alteração (falha
+-- fechada). É um gatilho de LINHA, então cobre todos os caminhos (as
+-- funções de atividade que já existem, exclusão em cascata por
+-- lead/oportunidade, mescla de contatos e qualquer função futura) sem
+-- mexer em migration já aplicada.
+--
+-- As chaves são provisionadas à mão no banco, uma vez por ambiente (não há
+-- RPC para defini-las, de propósito): ver docs/decisoes/b2-google-agenda.md §7.
 --
 -- Manutenção: um superusuário que precise alterar uma atividade vinculada
 -- sem passar pelo servidor deve fazê-lo de forma explícita
@@ -32,30 +44,98 @@ create type public.calendar_link_status as enum (
 -- Ambiente da requisição
 -- ---------------------------------------------------------------------
 
+-- Chaves de assinatura do cabeçalho, uma por ambiente. Sem GRANT para
+-- ninguém e sem função que as defina: provisionadas por quem administra o
+-- banco. Rotação = substituir a linha (a validade curta do cabeçalho dispensa
+-- sobreposição).
+create table private.calendar_environment_keys (
+  environment public.calendar_environment primary key,
+  signing_key text not null check (char_length(signing_key) >= 32),
+  updated_at timestamptz not null default now()
+);
+
+alter table private.calendar_environment_keys enable row level security;
+alter table private.calendar_environment_keys force row level security;
+revoke all on table private.calendar_environment_keys from public, anon, authenticated;
+
+create function private.environment_signature(p_environment text, p_expires bigint, p_key text)
+returns text
+language sql
+immutable
+set search_path = 
+as $body$
+  select encode(extensions.hmac(p_environment || . || p_expires::text, p_key, sha256), hex);
+$body$;
+
+-- Ambiente AUTENTICADO da requisição, ou NULL. Nunca devolve um ambiente só
+-- porque o cabeçalho o declara.
 create function private.request_environment()
 returns text
 language plpgsql
 stable
-set search_path = ''
+security definer
+set search_path = 
 as $body$
 declare
-  v_raw text := current_setting('request.headers', true);
+  v_raw text := current_setting(request.headers, true);
+  v_value text;
   v_env text;
+  v_expires_txt text;
+  v_signature text;
+  v_expires bigint;
+  v_now bigint := extract(epoch from now())::bigint;
+  v_key text;
+  v_expected text;
 begin
-  if v_raw is null or btrim(v_raw) = '' then
+  if v_raw is null or btrim(v_raw) =  then
     return null;
   end if;
   begin
-    v_env := lower(btrim(coalesce((v_raw::jsonb) ->> 'x-praxis-env', '')));
+    v_value := (v_raw::jsonb) ->> x-praxis-env;
   exception when others then
     return null;
   end;
-  if v_env in ('production', 'preview') then
-    return v_env;
+  if v_value is null then
+    return null;
   end if;
-  return null;
+
+  v_env := split_part(v_value, ., 1);
+  v_expires_txt := split_part(v_value, ., 2);
+  v_signature := split_part(v_value, ., 3);
+
+  if v_env not in (production, preview)
+     or v_expires_txt !~ ^[0-9]1
+     or v_signature !~ ^[0-9a-f]{64} then
+    return null;
+  end if;
+
+  v_expires := v_expires_txt::bigint;
+  -- Vencido, ou com validade absurda (um cabeçalho eterno vazado valeria
+  -- para sempre).
+  if v_expires < v_now or v_expires > v_now + 3600 then
+    return null;
+  end if;
+
+  select k.signing_key into v_key
+  from private.calendar_environment_keys k
+  where k.environment = v_env::public.calendar_environment;
+  if v_key is null then
+    return null;
+  end if;
+
+  v_expected := private.environment_signature(v_env, v_expires, v_key);
+  -- Comparação por HMAC das duas assinaturas: não depende do primeiro byte
+  -- que difere.
+  if extensions.hmac(v_signature, v_key, sha256) <> extensions.hmac(v_expected, v_key, sha256) then
+    return null;
+  end if;
+
+  return v_env;
 end;
 $body$;
+
+revoke all on function private.request_environment() from public, anon, authenticated;
+revoke all on function private.environment_signature(text, bigint, text) from public, anon, authenticated;
 
 create function private.require_request_environment()
 returns public.calendar_environment

@@ -25,6 +25,27 @@ export default async function IntegracoesPage() {
   if (!roleHasPermission(membership.role, "calendar.connect_own")) notFound();
 
   const provider = await getCalendarProvider();
+
+  // Integração DESATIVADA: nada de B2 é consultado no banco. Importa em
+  // deployment que antecede a aplicação da migration da B2 no hospedado —
+  // as RPCs de calendário ainda não existem lá, e a tela precisa chegar ao
+  // aviso em vez de quebrar. Com a integração HABILITADA o contrário vale:
+  // erro de banco sobe (error.tsx) e nunca é mascarado como "sem conexões".
+  if (!provider) {
+    return (
+      <>
+        <Topbar title="Integrações" subtitle="Google Agenda" user={user} />
+        <main className="flex-1 overflow-y-auto p-5">
+          <div className="mx-auto flex max-w-[560px] flex-col gap-4">
+            <div className="rounded-lg border border-border bg-surface p-4 text-body">
+              A integração com o Google Agenda ainda não está configurada neste ambiente.
+            </div>
+          </div>
+        </main>
+      </>
+    );
+  }
+
   const connections = await listCalendarConnections(activeWorkspace.id);
   const mine = connections.find((c) => c.isMine);
   const canManage = roleHasPermission(membership.role, "calendar.manage");
@@ -43,12 +64,6 @@ export default async function IntegracoesPage() {
       <Topbar title="Integrações" subtitle="Google Agenda" user={user} />
       <main className="flex-1 overflow-y-auto p-5">
         <div className="mx-auto flex max-w-[560px] flex-col gap-4">
-          {!provider ? (
-            <div className="rounded-lg border border-border bg-surface p-4 text-body">
-              A integração com o Google Agenda ainda não está configurada neste ambiente.
-            </div>
-          ) : null}
-
           {mine ? (
             <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
               <div>
@@ -68,11 +83,11 @@ export default async function IntegracoesPage() {
               ) : null}
               <DisconnectCalendarForm connectionId={mine.id} />
             </div>
-          ) : provider ? (
+          ) : (
             <div className="rounded-lg border border-border bg-surface p-4">
               <ConnectCalendarForm />
             </div>
-          ) : null}
+          )}
 
           {canManage && connections.some((c) => !c.isMine) ? (
             <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-4">

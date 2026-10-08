@@ -16,6 +16,21 @@
 begin;
 select plan(52);
 
+-- Chaves de assinatura do cabeçalho (uma por ambiente) e um montador de
+-- cabeçalho ASSINADO — o que o servidor do CRM faz de verdade. A ameaça
+-- (cabeçalho forjado por um usuário) é coberta em 21_b2_environment_trust.
+insert into private.calendar_environment_keys (environment, signing_key) values
+  (production, chave-de-producao-de-teste-0123456789ab),
+  (preview, chave-de-preview-de-teste-0123456789abcd);
+
+create function pg_temp.hdr(p_env text, p_key_env text default null, p_expires bigint default null)
+returns text language sql as $f$
+  select json_build_object(x-praxis-env, p_env || . || e.x || . || private.environment_signature(p_env, e.x, k.signing_key))::text
+  from (select coalesce(p_expires, extract(epoch from now())::bigint + 600) as x) e,
+       (select signing_key from private.calendar_environment_keys
+         where environment = coalesce(p_key_env, p_env)::public.calendar_environment) k
+$f$;
+
 \set dono    '20000000-0000-0000-0000-000000000001'
 \set adv     '20000000-0000-0000-0000-000000000002'
 \set adv2    '20000000-0000-0000-0000-000000000003'
@@ -96,13 +111,13 @@ select throws_ok(
   'P0001', 'environment_required', 'sem o cabeçalho de ambiente, conectar é recusado (falha fechada)'
 );
 
-select set_config('request.headers', '{"x-praxis-env":"staging"}', true);
+select set_config('request.headers', pg_temp.hdr('staging', 'production'), true);
 select throws_ok(
   format($i$ select connect_calendar_account(%L::uuid, %L::uuid, 'dono@v.test', array['s'], 'r', 'a', now(), '1') $i$, :'ws', :'dono'),
   'P0001', 'environment_required', 'ambiente desconhecido no cabeçalho também é recusado'
 );
 
-select set_config('request.headers', '{"x-praxis-env":"production"}', true);
+select set_config('request.headers', pg_temp.hdr('production'), true);
 select throws_ok(
   format($i$ select connect_calendar_account(%L::uuid, %L::uuid, 'v@v.test', array['s'], 'r', 'a', now(), '1') $i$, :'ws', :'leitor'),
   'P0001', 'insufficient_permission', 'viewer não conecta conta (calendar.connect_own)'
@@ -125,7 +140,7 @@ select is(
   (:'conn_prod')::uuid, 'reconectar no mesmo ambiente reaproveita a MESMA conexão'
 );
 
-select set_config('request.headers', '{"x-praxis-env":"preview"}', true);
+select set_config('request.headers', pg_temp.hdr('preview'), true);
 select connect_calendar_account(:'ws'::uuid, :'dono'::uuid, 'dono@v.test', array['escopo'], 'refresh-prev', 'access-prev', now(), '1') as conn_prev \gset
 select isnt((:'conn_prev')::uuid, (:'conn_prod')::uuid, 'o mesmo usuário tem conexão SEPARADA em preview');
 
@@ -134,7 +149,7 @@ select is(
   2, 'uma conexão ativa por usuário em cada ambiente'
 );
 
-select set_config('request.headers', '{"x-praxis-env":"production"}', true);
+select set_config('request.headers', pg_temp.hdr('production'), true);
 select connect_calendar_account(:'ws'::uuid, :'adv'::uuid, 'adv@v.test', array['escopo'], 'refresh-adv', 'access-adv', now(), '1') as conn_adv \gset
 select ok(:'conn_adv' is not null, 'advogado conecta a PRÓPRIA conta');
 
@@ -147,7 +162,7 @@ select throws_ok(
   'P0001', 'connection_not_found', 'outro usuário não escolhe a agenda da conexão alheia'
 );
 
-select set_config('request.headers', '{"x-praxis-env":"preview"}', true);
+select set_config('request.headers', pg_temp.hdr('preview'), true);
 select throws_ok(
   format($i$ select set_calendar_connection_calendar(%L::uuid, %L::uuid, 'cal@x', 'Principal') $i$, :'conn_prod', :'dono'),
   'P0001', 'calendar_environment_mismatch', 'preview não escolhe agenda de conexão de production'
@@ -158,7 +173,7 @@ select throws_ok(
 );
 select set_calendar_connection_calendar(:'conn_prev'::uuid, :'dono'::uuid, 'cal-prev@x', 'Agenda de teste');
 
-select set_config('request.headers', '{"x-praxis-env":"production"}', true);
+select set_config('request.headers', pg_temp.hdr('production'), true);
 select set_calendar_connection_calendar(:'conn_prod'::uuid, :'dono'::uuid, 'cal-prod@x', 'Agenda de produção');
 select is(
   (select calendar_id from public.calendar_connections where id = (:'conn_prod')::uuid),
@@ -222,7 +237,7 @@ reset role;
 -- 5) Vínculo atividade ↔ evento
 -- ---------------------------------------------------------------------
 
-select set_config('request.headers', '{"x-praxis-env":"production"}', true);
+select set_config('request.headers', pg_temp.hdr('production'), true);
 select throws_ok(
   format($i$ select create_calendar_event_link(%L::uuid, %L::uuid, %L::uuid, 'ev-tarefa') $i$, :'conn_prod', :'tarefa', :'dono'),
   'P0001', 'activity_not_appointment', 'só reunião com horário vira compromisso vinculável'
@@ -240,7 +255,7 @@ select throws_ok(
   '23505', null, 'no máximo um vínculo ativo por atividade'
 );
 
-select set_config('request.headers', '{"x-praxis-env":"preview"}', true);
+select set_config('request.headers', pg_temp.hdr('preview'), true);
 select throws_ok(
   format($i$ select create_calendar_event_link(%L::uuid, %L::uuid, %L::uuid, 'evento-prev-1') $i$, :'conn_prev', :'reuniao', :'dono'),
   'P0001', 'calendar_environment_mismatch', 'preview não vincula atividade que já pertence a um vínculo de production'
@@ -250,13 +265,13 @@ select throws_ok(
 -- 6) BARREIRA: atividade vinculada só muda no ambiente dono do vínculo
 -- ---------------------------------------------------------------------
 
-select set_config('request.headers', '{"x-praxis-env":"production"}', true);
+select set_config('request.headers', pg_temp.hdr('production'), true);
 select lives_ok(
   format($i$ update public.activities set notes = 'ok em production' where id = %L::uuid $i$, :'reuniao'),
   'production altera a atividade vinculada a production'
 );
 
-select set_config('request.headers', '{"x-praxis-env":"preview"}', true);
+select set_config('request.headers', pg_temp.hdr('preview'), true);
 select throws_ok(
   format($i$ update public.activities set notes = 'invasão' where id = %L::uuid $i$, :'reuniao'),
   'P0001', 'calendar_environment_mismatch', 'preview NÃO altera atividade vinculada a production'
@@ -299,13 +314,13 @@ select lives_ok(
 -- 7) Desconexão
 -- ---------------------------------------------------------------------
 
-select set_config('request.headers', '{"x-praxis-env":"preview"}', true);
+select set_config('request.headers', pg_temp.hdr('preview'), true);
 select throws_ok(
   format($i$ select disconnect_calendar_connection(%L::uuid, %L::uuid) $i$, :'conn_prod', :'dono'),
   'P0001', 'calendar_environment_mismatch', 'preview não desconecta conexão de production'
 );
 
-select set_config('request.headers', '{"x-praxis-env":"production"}', true);
+select set_config('request.headers', pg_temp.hdr('production'), true);
 select throws_ok(
   format($i$ select disconnect_calendar_connection(%L::uuid, %L::uuid) $i$, :'conn_prod', :'vendas'),
   'P0001', 'connection_not_found', 'atendimento não desconecta a conexão de outro usuário'
@@ -336,13 +351,13 @@ select is(
   1, 'desconectar NÃO apaga a atividade do CRM'
 );
 
-select set_config('request.headers', '{"x-praxis-env":"preview"}', true);
+select set_config('request.headers', pg_temp.hdr('preview'), true);
 select lives_ok(
   format($i$ update public.activities set notes = 'livre depois de desvincular' where id = %L::uuid $i$, :'reuniao'),
   'sem vínculo ativo, a atividade deixa de pertencer ao ambiente de production'
 );
 
-select set_config('request.headers', '{"x-praxis-env":"production"}', true);
+select set_config('request.headers', pg_temp.hdr('production'), true);
 select throws_ok(
   format($i$ select * from get_calendar_connection_secrets(%L::uuid, %L::uuid) $i$, :'conn_prod', :'dono'),
   'P0001', 'connection_not_found', 'conexão desconectada não entrega segredos'
