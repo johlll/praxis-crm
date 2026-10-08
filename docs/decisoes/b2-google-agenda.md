@@ -242,7 +242,11 @@ O Supabase é compartilhado, então o isolamento é de duas camadas:
    **recusada por inteiro**: nenhuma alteração no compromisso, na atividade,
    no vínculo, na base, no canal ou na conexão, **nenhum efeito externo
    enfileirado** e nenhuma chamada ao Google. Não existe modo "grava só o
-   efeito local". A recusa é auditada (sem conteúdo do evento).
+   efeito local". A recusa **aborta a transação**, então não pode ser auditada
+   no próprio banco (o registro seria desfeito junto): quem registra é o
+   servidor, em log estruturado com o código `calendar_environment_mismatch`
+   e ids internos, sem conteúdo do evento (nas ações de calendário já na
+   fundação; nas de atividade, quando a etapa 2 passar a vinculá-las).
    - **Onde fica o controle (no banco, não só na aplicação):** o cliente de
      servidor envia o ambiente em cabeçalho de requisição próprio
      (`X-Praxis-Env`, preenchido a partir de `VERCEL_ENV` no servidor, nunca

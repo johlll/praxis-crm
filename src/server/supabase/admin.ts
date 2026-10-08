@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
+import { calendarEnvHeaders } from "@/server/calendar/environment";
 import { getIngestConfig } from "@/server/ingest/config";
 import type { Database } from "@/server/types/database";
 
@@ -24,5 +25,6 @@ export function createAdminSupabaseClient(): SupabaseClient<Database> {
   const config = getIngestConfig();
   return createClient<Database>(config.NEXT_PUBLIC_SUPABASE_URL, config.SUPABASE_SECRET_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: calendarEnvHeaders() },
   });
 }

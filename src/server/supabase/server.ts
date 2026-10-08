@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 
 import type { Database } from "@/server/types/database";
 import { getEnv } from "@/server/env";
+import { calendarEnvHeaders } from "@/server/calendar/environment";
 
 /**
  * Cliente com a sessão do usuário — para Server Components, Server Actions
@@ -21,6 +22,9 @@ export async function createServerSupabaseClient() {
     env.NEXT_PUBLIC_SUPABASE_URL,
     env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
     {
+      // Ambiente que está operando (B2, isolamento Preview × Production no
+      // banco compartilhado) — vem do servidor, nunca do usuário.
+      global: { headers: calendarEnvHeaders() },
       cookies: {
         getAll() {
           return cookieStore.getAll();

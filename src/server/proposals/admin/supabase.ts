@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
+import { calendarEnvHeaders } from "@/server/calendar/environment";
 import type { Database } from "@/server/types/database";
 
 /**
@@ -32,5 +33,6 @@ export function createProposalsAdminSupabaseClient(): SupabaseClient<Database> {
   });
   return createClient<Database>(parsed.NEXT_PUBLIC_SUPABASE_URL, parsed.SUPABASE_SECRET_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: calendarEnvHeaders() },
   });
 }

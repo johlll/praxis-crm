@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Metadata, Route } from "next";
-import { Users, Workflow, MessageCircle, Building2, type LucideIcon } from "lucide-react";
+import { Users, Workflow, MessageCircle, Building2, CalendarDays, type LucideIcon } from "lucide-react";
 
 import { Topbar } from "@/components/app-shell/topbar";
 import { getShellContext } from "@/modules/shell/queries";
@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 const FUTURE_SECTIONS = [
   {
     title: "Integrações",
-    description: "Google Agenda; conexão real com a WhatsApp Cloud API (hoje, só o simulador).",
+    description: "Conexão real com a WhatsApp Cloud API (hoje, só o simulador).",
     phase: "B",
   },
   {
@@ -29,6 +29,7 @@ export default async function ConfiguracoesPage() {
   const canConfigurePipeline = roleHasPermission(membership.role, "pipeline.configure");
   const canUseSimulator = roleHasPermission(membership.role, "conversation.simulate");
   const canManageLegalProfile = roleHasPermission(membership.role, "workspace_legal_profile.manage");
+  const canConnectCalendar = roleHasPermission(membership.role, "calendar.connect_own");
 
   // "Pipelines" só aparece para quem tem a permissão — diferente das
   // seções de fase futura abaixo (que todo mundo vê como "ainda não
@@ -41,6 +42,16 @@ export default async function ConfiguracoesPage() {
       title: "Equipe",
       description: "Membros, papéis e convites do workspace.",
     },
+    ...(canConnectCalendar
+      ? [
+          {
+            href: "/configuracoes/integracoes" as Route,
+            icon: CalendarDays,
+            title: "Google Agenda",
+            description: "Conectar sua conta e escolher a agenda vinculada aos compromissos.",
+          },
+        ]
+      : []),
     ...(canManageLegalProfile
       ? [
           {

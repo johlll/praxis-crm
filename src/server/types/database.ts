@@ -182,6 +182,105 @@ export type Database = {
           },
         ]
       }
+      calendar_connections: {
+        Row: {
+          access_token_ciphertext: string | null
+          access_token_expires_at: string | null
+          calendar_id: string | null
+          calendar_summary: string | null
+          created_at: string
+          disconnected_at: string | null
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          google_account_email: string
+          id: string
+          key_version: string | null
+          refresh_token_ciphertext: string | null
+          scopes: string[]
+          status: Database["public"]["Enums"]["calendar_connection_status"]
+          updated_at: string
+          user_id: string
+          workspace_id: string
+        }
+        Insert: {
+          access_token_ciphertext?: string | null
+          access_token_expires_at?: string | null
+          calendar_id?: string | null
+          calendar_summary?: string | null
+          created_at?: string
+          disconnected_at?: string | null
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          google_account_email: string
+          id?: string
+          key_version?: string | null
+          refresh_token_ciphertext?: string | null
+          scopes: string[]
+          status?: Database["public"]["Enums"]["calendar_connection_status"]
+          updated_at?: string
+          user_id: string
+          workspace_id: string
+        }
+        Update: {
+          access_token_ciphertext?: string | null
+          access_token_expires_at?: string | null
+          calendar_id?: string | null
+          calendar_summary?: string | null
+          created_at?: string
+          disconnected_at?: string | null
+          environment?: Database["public"]["Enums"]["calendar_environment"]
+          google_account_email?: string
+          id?: string
+          key_version?: string | null
+          refresh_token_ciphertext?: string | null
+          scopes?: string[]
+          status?: Database["public"]["Enums"]["calendar_connection_status"]
+          updated_at?: string
+          user_id?: string
+          workspace_id?: string
+        }
+        Relationships: []
+      }
+      calendar_event_links: {
+        Row: {
+          activity_id: string | null
+          calendar_id: string
+          connection_id: string
+          created_at: string
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          event_id: string
+          generation: number
+          id: string
+          status: Database["public"]["Enums"]["calendar_link_status"]
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          activity_id?: string | null
+          calendar_id: string
+          connection_id: string
+          created_at?: string
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          event_id: string
+          generation?: number
+          id?: string
+          status?: Database["public"]["Enums"]["calendar_link_status"]
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          activity_id?: string | null
+          calendar_id?: string
+          connection_id?: string
+          created_at?: string
+          environment?: Database["public"]["Enums"]["calendar_environment"]
+          event_id?: string
+          generation?: number
+          id?: string
+          status?: Database["public"]["Enums"]["calendar_link_status"]
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: []
+      }
       client_handoffs: {
         Row: {
           attempts: number
@@ -3285,6 +3384,53 @@ export type Database = {
           items: Json
         }[]
       }
+      connect_calendar_account: {
+        Args: {
+          p_access_token_ciphertext: string
+          p_access_token_expires_at: string
+          p_actor_user_id: string
+          p_google_account_email: string
+          p_key_version: string
+          p_refresh_token_ciphertext: string
+          p_scopes: string[]
+          p_workspace_id: string
+        }
+        Returns: string
+      }
+      create_calendar_event_link: {
+        Args: {
+          p_activity_id: string
+          p_actor_user_id: string
+          p_connection_id: string
+          p_event_id: string
+        }
+        Returns: string
+      }
+      disconnect_calendar_connection: {
+        Args: { p_actor_user_id: string; p_connection_id: string }
+        Returns: undefined
+      }
+      get_calendar_connection_secrets: {
+        Args: { p_actor_user_id: string; p_connection_id: string }
+        Returns: {
+          access_token_ciphertext: string
+          access_token_expires_at: string
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          key_version: string
+          refresh_token_ciphertext: string
+          status: Database["public"]["Enums"]["calendar_connection_status"]
+        }[]
+      }
+      list_calendar_connections: { Args: { p_workspace_id: string }; Returns: Json }
+      set_calendar_connection_calendar: {
+        Args: {
+          p_actor_user_id: string
+          p_calendar_id: string
+          p_calendar_summary: string
+          p_connection_id: string
+        }
+        Returns: undefined
+      }
       get_opportunity: { Args: { p_opportunity_id: string }; Returns: Json }
       get_pipeline_board: { Args: { p_pipeline_id: string }; Returns: Json }
       get_proposal: { Args: { p_proposal_id: string }; Returns: Json }
@@ -3952,6 +4098,14 @@ export type Database = {
       }
     }
     Enums: {
+      calendar_connection_status: "active" | "needs_reauth" | "disconnected"
+      calendar_environment: "production" | "preview"
+      calendar_link_status:
+        | "linked"
+        | "missing_in_google"
+        | "cancelled_in_google"
+        | "unlinked"
+        | "needs_attention"
       activity_assignee_rule: "unassigned" | "lead_owner"
       activity_source:
         | "manual"
@@ -4147,6 +4301,15 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      calendar_connection_status: ["active", "needs_reauth", "disconnected"],
+      calendar_environment: ["production", "preview"],
+      calendar_link_status: [
+        "linked",
+        "missing_in_google",
+        "cancelled_in_google",
+        "unlinked",
+        "needs_attention",
+      ],
       activity_assignee_rule: ["unassigned", "lead_owner"],
       activity_source: [
         "manual",
