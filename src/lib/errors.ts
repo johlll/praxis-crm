@@ -117,6 +117,12 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   calendar_id_required: "Escolha uma agenda.",
   calendar_not_selected: "Escolha a agenda da conexão antes de vincular compromissos.",
   activity_not_appointment: "Só compromissos com horário (reuniões) podem ser vinculados à agenda.",
+  invites_require_confirmation: "Confirme explicitamente o envio dos convites antes de convidar alguém.",
+  invalid_duration: "Informe uma duração entre 15 e 480 minutos.",
+  not_linked: "Este compromisso ainda não está vinculado à agenda.",
+  link_not_found: "Vínculo com a agenda não encontrado.",
+  intent_not_found: "Operação de agenda não encontrada.",
+  key_version_mismatch: "Não foi possível renovar a autorização desta conexão. Reconecte a agenda.",
   calendar_provider_not_configured: "A integração com o Google Agenda não está configurada neste ambiente.",
 };
 

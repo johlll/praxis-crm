@@ -1,0 +1,73 @@
+import { createCalendarAdminSupabaseClient } from "@/server/calendar/admin/supabase";
+import type { Json } from "@/server/types/database";
+import type { LinkRecord, LinkState, SyncStore } from "@/server/calendar/sync/types";
+
+/**
+ * Adaptador de persistência da sincronização: só chama as RPCs de
+ * calendário (GRANT só a service_role), sempre em nome do usuário que a
+ * sessão já autorizou. Banco e ambiente decidem por dentro (papel, alcance,
+ * dono da conexão, ambiente autenticado).
+ */
+export function createSupabaseSyncStore(actorUserId: string): SyncStore {
+  const admin = createCalendarAdminSupabaseClient();
+
+  return {
+    async getLink(activityId) {
+      const { data, error } = await admin.rpc("get_calendar_link", {
+        p_activity_id: activityId,
+        p_actor_user_id: actorUserId,
+      });
+      if (error) throw new Error(error.message);
+      return (data as unknown as LinkRecord | null) ?? null;
+    },
+
+    async beginEffect({ connectionId, activityId, operation, expected }) {
+      const { data, error } = await admin.rpc("begin_calendar_effect", {
+        p_connection_id: connectionId,
+        p_activity_id: activityId,
+        p_actor_user_id: actorUserId,
+        p_operation: operation,
+        p_expected: expected as Json,
+      });
+      if (error) throw new Error(error.message);
+      return data;
+    },
+
+    async resolveEffect({ intentId, status, errorCode, state }) {
+      const { data, error } = await admin.rpc("resolve_calendar_effect", {
+        p_intent_id: intentId,
+        p_actor_user_id: actorUserId,
+        p_status: status,
+        p_error_code: errorCode ?? "",
+        p_state: (state ?? {}) as unknown as Json,
+      });
+      if (error) throw new Error(error.message);
+      return data ?? null;
+    },
+
+    async recordConflict({ linkId, field, crmValue, googleValue, resolution }) {
+      const { error } = await admin.rpc("record_calendar_conflict", {
+        p_link_id: linkId,
+        p_actor_user_id: actorUserId,
+        p_field: field,
+        p_crm_value: (crmValue ?? null) as Json,
+        p_google_value: (googleValue ?? null) as Json,
+        p_resolution: resolution,
+      });
+      if (error) throw new Error(error.message);
+    },
+
+    async applyGoogleToActivity({ activityId, title, dueAt }) {
+      const { data, error } = await admin.rpc("apply_google_values_to_activity", {
+        p_activity_id: activityId,
+        p_actor_user_id: actorUserId,
+        p_title: title ?? "",
+        p_due_at: dueAt ?? (null as unknown as string),
+      });
+      if (error) throw new Error(error.message);
+      return data;
+    },
+  };
+}
+
+export type { LinkState };

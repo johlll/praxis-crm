@@ -38,7 +38,12 @@ export async function adminConnectCalendar(params: {
   return data;
 }
 
-export type DecryptedConnectionTokens = { accessToken: string; refreshToken: string };
+export type DecryptedConnectionTokens = {
+  accessToken: string;
+  refreshToken: string;
+  accessTokenExpiresAt: Date | null;
+  keyVersion: string;
+};
 
 /** Só o DONO da conexão obtém os tokens (a RPC recusa qualquer outro, e
  * recusa conexão de outro ambiente). */
@@ -61,6 +66,8 @@ export async function adminGetConnectionTokens(params: {
   return {
     refreshToken: decryptCalendarToken(row.refresh_token_ciphertext, row.key_version, ctx),
     accessToken: decryptCalendarToken(row.access_token_ciphertext, row.key_version, ctx),
+    accessTokenExpiresAt: row.access_token_expires_at ? new Date(row.access_token_expires_at) : null,
+    keyVersion: row.key_version,
   };
 }
 
@@ -85,6 +92,29 @@ export async function adminDisconnectCalendar(params: { connectionId: string; ac
   const { error } = await admin.rpc("disconnect_calendar_connection", {
     p_connection_id: params.connectionId,
     p_actor_user_id: params.actorUserId,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** Guarda o novo token de acesso, cifrado com a MESMA versão de chave da
+ * conexão (refresh e acesso são lidos com a mesma versão). */
+export async function adminStoreAccessToken(params: {
+  connectionId: string;
+  workspaceId: string;
+  actorUserId: string;
+  accessToken: string;
+  accessTokenExpiresAt: Date;
+  keyVersion: string;
+}): Promise<void> {
+  const ctx = tokenContext(params.workspaceId, params.actorUserId);
+  const encrypted = encryptCalendarToken(params.accessToken, ctx, params.keyVersion);
+  const admin = createCalendarAdminSupabaseClient();
+  const { error } = await admin.rpc("store_calendar_access_token", {
+    p_connection_id: params.connectionId,
+    p_actor_user_id: params.actorUserId,
+    p_access_token_ciphertext: encrypted.ciphertextBase64,
+    p_access_token_expires_at: params.accessTokenExpiresAt.toISOString(),
+    p_key_version: encrypted.keyVersion,
   });
   if (error) throw new Error(error.message);
 }

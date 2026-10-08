@@ -3120,6 +3120,60 @@ export type Database = {
         Args: { p_activity_id: string; p_lock_version: number }
         Returns: undefined
       }
+      apply_google_values_to_activity: {
+        Args: {
+          p_activity_id: string
+          p_actor_user_id: string
+          p_due_at: string
+          p_title: string
+        }
+        Returns: number
+      }
+      begin_calendar_effect: {
+        Args: {
+          p_activity_id: string
+          p_actor_user_id: string
+          p_connection_id: string
+          p_expected: Json
+          p_operation: string
+        }
+        Returns: string
+      }
+      get_calendar_link: {
+        Args: { p_activity_id: string; p_actor_user_id: string }
+        Returns: Json
+      }
+      record_calendar_conflict: {
+        Args: {
+          p_actor_user_id: string
+          p_crm_value: Json
+          p_field: string
+          p_google_value: Json
+          p_link_id: string
+          p_resolution: string
+        }
+        Returns: string
+      }
+      resolve_calendar_effect: {
+        Args: {
+          p_actor_user_id: string
+          p_error_code: string
+          p_intent_id: string
+          p_state: Json
+          p_status: string
+        }
+        Returns: string
+      }
+      store_calendar_access_token: {
+        Args: {
+          p_access_token_ciphertext: string
+          p_access_token_expires_at: string
+          p_actor_user_id: string
+          p_connection_id: string
+          p_key_version: string
+        }
+        Returns: undefined
+      }
       connect_calendar_account: {
         Args: {
           p_access_token_ciphertext: string
