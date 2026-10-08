@@ -102,7 +102,7 @@ select throws_ok(
   'P0001', 'environment_required', 'ambiente desconhecido no cabeçalho também é recusado'
 );
 
-select set_config('request.headers', '{"X-Praxis-Env":"production"}', true);
+select set_config('request.headers', '{"x-praxis-env":"production"}', true);
 select throws_ok(
   format($i$ select connect_calendar_account(%L::uuid, %L::uuid, 'v@v.test', array['s'], 'r', 'a', now(), '1') $i$, :'ws', :'leitor'),
   'P0001', 'insufficient_permission', 'viewer não conecta conta (calendar.connect_own)'
