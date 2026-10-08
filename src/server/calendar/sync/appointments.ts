@@ -68,6 +68,22 @@ function addMinutes(iso: string, minutes: number): string {
   return new Date(Date.parse(iso) + minutes * 60_000).toISOString();
 }
 
+/** Duração do evento no Google em minutos; `null` se não tem início e fim com hora. */
+function durationOf(event: { start?: { dateTime?: string | undefined } | undefined; end?: { dateTime?: string | undefined } | undefined }): number | null {
+  const start = event.start?.dateTime;
+  const end = event.end?.dateTime;
+  if (!start || !end) return null;
+  const minutes = Math.round((Date.parse(end) - Date.parse(start)) / 60_000);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
+}
+
+/** O banco só guarda 15–480; um evento do Google fora disso ainda é respeitado
+ * ao reagendar (usa-se a duração real do evento), mas o vínculo guarda um
+ * valor válido. */
+function clampDuration(minutes: number): number {
+  return Math.min(MAX_DURATION, Math.max(MIN_DURATION, Math.round(minutes)));
+}
+
 function meetOf(event: CalendarEvent): MeetInfo {
   const entry = event.conferenceData?.entryPoints?.[0];
   if (entry) return { status: "success", url: entry.uri };
@@ -110,7 +126,7 @@ function linkStateFrom(
     end: event.end?.dateTime ?? null,
     cancelled: event.status === "cancelled",
     hasMeet: meet.status !== null,
-    meetStatus: meet.status ?? undefined,
+    meetStatus: meet.status,
     meetUrl: meet.url,
     meetRequestId: extra.meetRequestId ?? null,
     durationMinutes: extra.durationMinutes,
@@ -139,6 +155,17 @@ function assertConnectionEnvironment(deps: SyncDeps, conn: ConnectionContext): v
 
 function assertLinkEnvironment(deps: SyncDeps, link: LinkRecord): void {
   if (link.environment !== deps.environment) throw new CalendarSyncError("calendar_environment_mismatch");
+}
+
+/**
+ * O vínculo manda: o compromisso só é operado pela conexão e pela agenda que
+ * o criaram. Conferido ANTES de qualquer chamada ao Google — procurar o
+ * evento numa agenda que não é a dele devolveria "não existe", o que seria
+ * lido como evento apagado.
+ */
+function assertLinkOwnedBy(link: LinkRecord, conn: ConnectionContext): void {
+  if (link.connectionId !== conn.connectionId) throw new CalendarSyncError("link_connection_mismatch");
+  if (link.calendarId !== conn.calendarId) throw new CalendarSyncError("link_calendar_mismatch");
 }
 
 function validateDuration(minutes: number): void {
@@ -355,31 +382,39 @@ export async function createAppointment(
 
 type UpdateKind = "update" | "meet";
 
+type UpdateRequest = {
+  kind: UpdateKind;
+  /** Duração pedida explicitamente. Sem ela, vale a que o evento tem no Google. */
+  explicitDuration: number | null;
+  /** O que o CRM quer, a partir da atividade ATUAL (relida se mudou). */
+  want: (activity: ActivitySnapshot, durationMinutes: number) => Wanted;
+};
+
 async function pushUpdate(
   deps: SyncDeps,
   conn: ConnectionContext,
-  activity: ActivitySnapshot,
-  wanted: Wanted,
-  kind: UpdateKind,
-  durationMinutes: number | null,
+  initial: ActivitySnapshot,
+  req: UpdateRequest,
 ): Promise<UpdateAppointmentResult> {
   assertConnectionEnvironment(deps, conn);
 
-  const link = await deps.store.getLink(activity.id);
+  const link = await deps.store.getLink(initial.id);
   if (!link) throw new CalendarSyncError("not_linked");
   assertLinkEnvironment(deps, link);
+  assertLinkOwnedBy(link, conn); // antes da intenção e de qualquer chamada externa
   if (link.status === "cancelled_in_google" || link.status === "missing_in_google") {
     return { status: "cancelled_in_google" };
   }
 
-  const duration = durationMinutes ?? link.durationMinutes;
   const base = stateOfBase(link);
+  let activity = initial;
 
+  const expected = req.want(activity, req.explicitDuration ?? link.durationMinutes);
   const intentId = await deps.store.beginEffect({
     connectionId: conn.connectionId,
     activityId: activity.id,
-    operation: kind,
-    expected: { title: wanted.title ?? null, schedule: wanted.schedule ?? null, meet: wanted.meet ?? false },
+    operation: req.kind,
+    expected: { title: expected.title ?? null, schedule: expected.schedule ?? null, meet: expected.meet ?? false },
   });
 
   const finish = async (status: "failed" | "uncertain", code: string) => {
@@ -398,6 +433,12 @@ async function pushUpdate(
       throw error;
     }
 
+    // Sem duração pedida, o evento mantém a que tem no Google: o CRM só conhece
+    // o início, então reagendar não pode encurtar nem alongar o evento.
+    const googleDuration = req.explicitDuration === null && google ? durationOf(google) : null;
+    const duration = req.explicitDuration ?? googleDuration ?? link.durationMinutes;
+    const wanted = req.want(activity, duration);
+
     // Evento apagado no Google: cancelado lá. A edição do CRM vira conflito
     // registrado, nunca descartada em silêncio.
     if (!google || google.status === "cancelled") {
@@ -415,7 +456,7 @@ async function pushUpdate(
         intentId,
         status: "succeeded",
         state: {
-          ...stateFromLink(link, duration, activity.lockVersion),
+          ...stateFromLink(link, req.explicitDuration ?? link.durationMinutes, activity.lockVersion),
           cancelled: true,
           etag: google?.etag ?? link.baseEtag,
           linkStatus: "cancelled_in_google",
@@ -424,25 +465,58 @@ async function pushUpdate(
       return { status: "cancelled_in_google" };
     }
 
-    const plan = mergeFields(base, wanted, stateOfEvent(google));
+    // Sem duração pedida, o horário é comparado pelo INÍCIO: uma mudança só de
+    // duração no Google não conflita com o CRM remarcar.
+    const baseForMerge: SyncState =
+      googleDuration !== null && base.start !== null ? { ...base, end: addMinutes(base.start, googleDuration) } : base;
+    const plan = mergeFields(baseForMerge, wanted, stateOfEvent(google));
 
-    // Conflito: o Google prevalece e o CRM converge, mas o valor do CRM é
-    // GRAVADO antes de ser sobrescrito.
-    for (const conflict of plan.conflicts) {
+    // Conflito: o Google prevalece e o CRM converge. O valor do CRM é gravado
+    // na MESMA transação em que o do Google é aplicado, e só se a atividade
+    // ainda está na versão lida.
+    const googleWins = plan.conflicts.filter((c) => c.field === "title" || c.field === "schedule");
+    const titleWins = googleWins.some((c) => c.field === "title");
+    const scheduleWins = googleWins.some((c) => c.field === "schedule");
+    if (googleWins.length > 0) {
+      const applied = await deps.store.applyGoogleToActivity({
+        activityId: activity.id,
+        expectedVersion: activity.lockVersion,
+        title: titleWins ? (google.summary ?? undefined) : undefined,
+        dueAt: scheduleWins ? google.start?.dateTime : undefined,
+        conflicts: googleWins.map((c) => ({
+          field: c.field as "title" | "schedule",
+          // O que o CRM tem é o início; o fim registrado usa a duração que o
+          // próprio CRM conhece, não a do Google.
+          crmValue:
+            c.field === "schedule" && wanted.schedule
+              ? { start: wanted.schedule.start, end: addMinutes(wanted.schedule.start, req.explicitDuration ?? link.durationMinutes) }
+              : c.crmValue,
+          googleValue: c.googleValue,
+        })),
+      });
+      if (applied === null) {
+        // O CRM foi editado depois da leitura: nada foi sobrescrito. Relê a
+        // atividade e reavalia tudo (inclusive o conflito) com o que ela tem agora.
+        const fresh = await deps.loadActivity(activity.id);
+        if (!fresh) throw new CalendarSyncError("activity_not_found");
+        if (req.kind === "update") assertAppointment(fresh);
+        activity = fresh;
+        continue;
+      }
+      activity = {
+        ...activity,
+        title: titleWins ? (google.summary ?? activity.title) : activity.title,
+        dueAt: scheduleWins ? (google.start?.dateTime ?? activity.dueAt) : activity.dueAt,
+        lockVersion: applied,
+      };
+    }
+    for (const conflict of plan.conflicts.filter((c) => c.field !== "title" && c.field !== "schedule")) {
       await deps.store.recordConflict({
         linkId: link.id,
-        field: conflict.field as "title" | "schedule" | "cancellation" | "meet",
+        field: conflict.field,
         crmValue: conflict.crmValue,
         googleValue: conflict.googleValue,
         resolution: "google_prevails",
-      });
-    }
-    const googleWins = plan.conflicts.filter((c) => c.field === "title" || c.field === "schedule");
-    if (googleWins.length > 0) {
-      await deps.store.applyGoogleToActivity({
-        activityId: activity.id,
-        title: googleWins.some((c) => c.field === "title") ? (google.summary ?? undefined) : undefined,
-        dueAt: googleWins.some((c) => c.field === "schedule") ? google.start?.dateTime : undefined,
       });
     }
 
@@ -477,6 +551,9 @@ async function pushUpdate(
     // fica para a sincronização de entrada, em vez de ser engolido aqui.
     const next = nextBase(base, stateOfEvent(latest), plan.reconciled);
     const meet = meetOf(latest);
+    // Horário reconciliado: a duração do vínculo é a do evento que ficou (a do
+    // Google, se ele venceu), para início, fim e duração permanecerem coerentes.
+    const settledDuration = plan.reconciled.includes("schedule") ? durationOf(latest) : null;
     await deps.store.resolveEffect({
       intentId,
       status: "succeeded",
@@ -488,10 +565,11 @@ async function pushUpdate(
         end: next.end,
         cancelled: next.cancelled,
         hasMeet: next.hasMeet,
-        meetStatus: meet.status ?? undefined,
+        // Explícitos: `null` grava "sem Meet" quando o Google o removeu.
+        meetStatus: meet.status,
         meetUrl: meet.url,
         meetRequestId: plan.push.meet ? requestId : link.meetRequestId,
-        durationMinutes: duration,
+        durationMinutes: clampDuration(settledDuration ?? req.explicitDuration ?? link.durationMinutes),
         crmVersion: activity.lockVersion,
         linkStatus: "linked",
       },
@@ -504,10 +582,11 @@ async function pushUpdate(
   }
 
   // Muita disputa: não insiste. Fica sinalizado para atenção, com registro.
+  const last = req.want(activity, req.explicitDuration ?? link.durationMinutes);
   await deps.store.recordConflict({
     linkId: link.id,
-    field: wanted.schedule ? "schedule" : wanted.title !== undefined ? "title" : "meet",
-    crmValue: { title: wanted.title ?? null, schedule: wanted.schedule ?? null },
+    field: last.schedule ? "schedule" : last.title !== undefined ? "title" : "meet",
+    crmValue: { title: last.title ?? null, schedule: last.schedule ?? null },
     googleValue: null,
     resolution: "needs_attention",
   });
@@ -524,7 +603,7 @@ function stateFromLink(link: LinkRecord, durationMinutes: number, crmVersion: nu
     end: link.baseEnd,
     cancelled: link.baseCancelled,
     hasMeet: link.baseHasMeet,
-    meetStatus: link.meetStatus ?? undefined,
+    meetStatus: link.meetStatus,
     meetUrl: link.meetUrl,
     meetRequestId: link.meetRequestId,
     durationMinutes,
@@ -616,16 +695,14 @@ export async function rescheduleAppointment(
   assertAppointment(activity);
   if (options.durationMinutes !== undefined) validateDuration(options.durationMinutes);
 
-  const link = await deps.store.getLink(activity.id);
-  if (!link) throw new CalendarSyncError("not_linked");
-  const duration = options.durationMinutes ?? link.durationMinutes;
-
-  const start = new Date(activity.dueAt).toISOString();
-  const wanted: Wanted = {
-    title: activity.title,
-    schedule: { start, end: addMinutes(start, duration) },
-  };
-  return pushUpdate(deps, conn, activity, wanted, "update", options.durationMinutes ?? null);
+  return pushUpdate(deps, conn, activity, {
+    kind: "update",
+    explicitDuration: options.durationMinutes ?? null,
+    want: (current, durationMinutes) => {
+      const start = new Date(current.dueAt).toISOString();
+      return { title: current.title, schedule: { start, end: addMinutes(start, durationMinutes) } };
+    },
+  });
 }
 
 /** Adiciona Meet a um compromisso já vinculado (opcional, por pedido). */
@@ -634,7 +711,7 @@ export async function addMeetToAppointment(
   conn: ConnectionContext,
   activity: ActivitySnapshot,
 ): Promise<UpdateAppointmentResult> {
-  return pushUpdate(deps, conn, activity, { meet: true }, "meet", null);
+  return pushUpdate(deps, conn, activity, { kind: "meet", explicitDuration: null, want: () => ({ meet: true }) });
 }
 
 // ---------------------------------------------------------------------
@@ -656,6 +733,7 @@ export async function cancelAppointment(
   const link = await deps.store.getLink(activity.id);
   if (!link) throw new CalendarSyncError("not_linked");
   assertLinkEnvironment(deps, link);
+  assertLinkOwnedBy(link, conn); // antes da intenção e de qualquer chamada externa
 
   const base = stateOfBase(link);
   const intentId = await deps.store.beginEffect({

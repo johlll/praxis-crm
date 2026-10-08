@@ -226,6 +226,34 @@ pelo mesmo caminho de escrita com `If-Match`. Por campo:
   à base → repete com `If-Match`; outro → reaplica a regra 6.3); exclusão:
   `events.get` (404/cancelado → sucesso). Intenção sem desfecho vira alerta.
 
+### 6.8 Regras fixadas na revisão da etapa 2
+Quatro pontos da revisão da PR #25 foram reproduzidos com teste e passaram a
+ser regra:
+
+- **O vínculo manda na conexão e na agenda.** Reagendar, adicionar Meet e
+  cancelar só valem para a conexão **e** a agenda que criaram o vínculo; isso
+  é conferido antes de abrir intenção e de qualquer chamada ao Google
+  (`link_connection_mismatch`, `link_calendar_mismatch`; no banco,
+  `calendar_link_mismatch`). Procurar o evento em outra agenda devolveria "não
+  existe", e isso seria lido como evento apagado. Trocar a agenda selecionada
+  não move compromissos já criados: a operação é **recusada**, não redirecionada.
+  *Decisão de produto em aberto:* se, depois da troca, o CRM deve operar o
+  evento na agenda original da mesma conexão (ou oferecer "desvincular").
+- **Aplicar o valor do Google exige a versão lida da atividade.**
+  `apply_google_values_to_activity` compara `lock_version`; se o CRM mudou
+  depois da leitura, não aplica nada, não grava conflito e devolve `null`. O
+  orquestrador relê a atividade pela sessão e reavalia tudo. O valor do CRM
+  que perdeu é gravado na **mesma transação** da aplicação.
+- **Meet: chave ausente preserva, `null` remove.** No estado enviado a
+  `resolve_calendar_effect`, `meetStatus`, `meetUrl` e `meetRequestId` só
+  mantêm o valor guardado quando a chave não vem; com `null`, o Google
+  informou que o Meet foi removido.
+- **Duração coerente.** O CRM só conhece o início. Sem duração pedida, o
+  evento mantém a duração que tem no Google, e uma mudança só de duração no
+  Google não conflita com o CRM remarcar. Quando o horário é reconciliado, a
+  duração do vínculo passa a ser a do evento que ficou (limitada a 15–480 no
+  vínculo; o evento do Google nunca é encurtado para caber).
+
 ## 7. Isolamento entre ambientes
 
 O Supabase é compartilhado, então o isolamento é de duas camadas:

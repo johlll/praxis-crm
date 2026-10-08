@@ -1,5 +1,6 @@
 import type { CalendarEnvironment } from "@/server/calendar/environment";
 import type {
+  ActivitySnapshot,
   ConflictResolution,
   EffectOperation,
   LinkRecord,
@@ -36,6 +37,11 @@ export class MemoryStore implements SyncStore {
   intents: StoredIntent[] = [];
   conflicts: StoredConflict[] = [];
   appliedToActivity: Array<{ activityId: string; title?: string | undefined; dueAt?: string | undefined }> = [];
+  /** Toda tentativa de aplicar valores do Google, com a versão esperada. */
+  applyAttempts: Array<{ activityId: string; expectedVersion: number | undefined; applied: boolean }> = [];
+  /** Atividades do CRM simuladas (só as registradas têm controle de versão). */
+  activities = new Map<string, ActivitySnapshot>();
+  private beforeApply: (() => void) | undefined;
   private seq = 0;
 
   constructor(
@@ -74,8 +80,12 @@ export class MemoryStore implements SyncStore {
     intent.errorCode = params.errorCode;
     if (params.status !== "succeeded" || !params.state) return null;
 
-    const s = params.state;
+    // Como no banco: o estado viaja como JSON — chave AUSENTE preserva o valor
+    // guardado; chave presente (inclusive null) o substitui.
+    const s = JSON.parse(JSON.stringify(params.state)) as LinkState;
     const existing = [...this.links.values()].find((l) => l.eventId === s.eventId);
+    const pick = <K extends "meetRequestId" | "meetStatus" | "meetUrl">(key: K, fallback: LinkRecord[K] | undefined): LinkRecord[K] =>
+      (key in s ? (s[key] ?? null) : (fallback ?? null)) as LinkRecord[K];
     const next = {
       status: s.linkStatus,
       durationMinutes: s.durationMinutes,
@@ -86,9 +96,9 @@ export class MemoryStore implements SyncStore {
       baseCancelled: s.cancelled,
       baseHasMeet: s.hasMeet,
       baseCrmVersion: s.crmVersion,
-      meetRequestId: s.meetRequestId ?? existing?.meetRequestId ?? null,
-      meetStatus: s.meetStatus ?? existing?.meetStatus ?? null,
-      meetUrl: s.meetUrl ?? existing?.meetUrl ?? null,
+      meetRequestId: pick("meetRequestId", existing?.meetRequestId),
+      meetStatus: pick("meetStatus", existing?.meetStatus),
+      meetUrl: pick("meetUrl", existing?.meetUrl),
     };
     if (existing) {
       Object.assign(existing, next);
@@ -121,11 +131,43 @@ export class MemoryStore implements SyncStore {
 
   async applyGoogleToActivity(params: {
     activityId: string;
+    expectedVersion: number;
     title?: string | undefined;
     dueAt?: string | undefined;
-  }): Promise<number> {
-    this.appliedToActivity.push(params);
+    conflicts: Array<{ field: "title" | "schedule"; crmValue: unknown; googleValue: unknown }>;
+  }): Promise<number | null> {
+    const hook = this.beforeApply;
+    this.beforeApply = undefined;
+    hook?.();
+
+    const current = this.activities.get(params.activityId);
+    const stale = current !== undefined && params.expectedVersion !== undefined && current.lockVersion !== params.expectedVersion;
+    this.applyAttempts.push({ activityId: params.activityId, expectedVersion: params.expectedVersion, applied: !stale });
+    // Como no banco: versão diferente da esperada NÃO aplica nada e NÃO grava conflito.
+    if (stale) return null;
+
+    const link = [...this.links.values()].find((l) => l.activityId === params.activityId && l.status !== "unlinked");
+    for (const c of params.conflicts ?? []) {
+      this.conflicts.push({ linkId: link?.id ?? "sem-vinculo", field: c.field, crmValue: c.crmValue, googleValue: c.googleValue, resolution: "google_prevails" });
+    }
+    this.appliedToActivity.push({ activityId: params.activityId, title: params.title, dueAt: params.dueAt });
+    if (current) {
+      if (params.title !== undefined) current.title = params.title;
+      if (params.dueAt !== undefined) current.dueAt = params.dueAt;
+      current.lockVersion += 1;
+      return current.lockVersion;
+    }
     return this.appliedToActivity.length;
+  }
+
+  /** Registra (ou substitui) a atividade do CRM, com controle de versão. */
+  setActivity(activity: ActivitySnapshot): void {
+    this.activities.set(activity.id, { ...activity });
+  }
+
+  /** Simula uma edição do CRM entre a leitura e a aplicação dos valores do Google. */
+  onceBeforeApply(fn: () => void): void {
+    this.beforeApply = fn;
   }
 
   /** Planta um vínculo pronto, como se criado antes (outro ambiente, etc.). */

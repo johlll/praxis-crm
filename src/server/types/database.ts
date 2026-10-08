@@ -3219,7 +3219,9 @@ export type Database = {
         Args: {
           p_activity_id: string
           p_actor_user_id: string
+          p_conflicts?: Json
           p_due_at: string
+          p_expected_version: number
           p_title: string
         }
         Returns: number

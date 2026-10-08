@@ -55,6 +55,25 @@ function logRefusal(error: unknown, ctx: { userId: string; workspaceId: string }
   }
 }
 
+type ActivityDetail = NonNullable<Awaited<ReturnType<typeof getActivity>>>;
+
+function snapshotOf(detail: ActivityDetail): ActivitySnapshot {
+  return {
+    id: detail.id,
+    title: detail.title,
+    dueAt: detail.dueAt,
+    hasTime: detail.hasTime,
+    type: detail.type,
+    lockVersion: detail.lockVersion,
+  };
+}
+
+/** Relê a atividade pela SESSÃO do usuário (RLS e alcance de verdade). */
+async function loadActivityFromSession(activityId: string): Promise<ActivitySnapshot | null> {
+  const detail = await getActivity(activityId);
+  return detail ? snapshotOf(detail) : null;
+}
+
 async function prepare(activityId: string | null): Promise<
   | { ok: false; error: string }
   | { ok: true; prepared: Omit<Prepared, "activity"> & { activity: ActivitySnapshot | null }; ctx: { userId: string; workspaceId: string } }
@@ -80,21 +99,19 @@ async function prepare(activityId: string | null): Promise<
   if (activityId) {
     const detail = await getActivity(activityId);
     if (!detail) return { ok: false, error: toUserMessage(new Error("activity_not_found")) };
-    activity = {
-      id: detail.id,
-      title: detail.title,
-      dueAt: detail.dueAt,
-      hasTime: detail.hasTime,
-      type: detail.type,
-      lockVersion: detail.lockVersion,
-    };
+    activity = snapshotOf(detail);
   }
 
   return {
     ok: true,
     ctx: { userId: auth.ctx.userId, workspaceId: auth.ctx.workspaceId },
     prepared: {
-      deps: { api: provider, store: createSupabaseSyncStore(auth.ctx.userId), environment: getCalendarEnvironment() },
+      deps: {
+        api: provider,
+        store: createSupabaseSyncStore(auth.ctx.userId),
+        environment: getCalendarEnvironment(),
+        loadActivity: loadActivityFromSession,
+      },
       conn,
       activity,
     },

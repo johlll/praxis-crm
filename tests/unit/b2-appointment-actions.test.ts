@@ -146,6 +146,29 @@ describe("resultados e recusas", () => {
     warn.mockRestore();
   });
 
+  it.each([
+    ["link_connection_mismatch", "outra conexão"],
+    ["link_calendar_mismatch", "outra agenda"],
+  ])("vínculo de outra conexão/agenda (%s): mensagem clara, sem tratar como evento apagado", async (code, trecho) => {
+    m.reschedule.mockRejectedValue(new CalendarSyncError(code as "link_connection_mismatch"));
+    const r = await rescheduleAppointmentAction({ ok: false }, form({ activityId: ACT }));
+    expect(r).toEqual({ ok: false, error: expect.stringContaining(trecho) });
+  });
+
+  it("o orquestrador relê a atividade pela SESSÃO (mesmo alcance e RLS da leitura inicial)", async () => {
+    m.reschedule.mockResolvedValue({ status: "unchanged", meet: { status: null, url: null } });
+    await rescheduleAppointmentAction({ ok: false }, form({ activityId: ACT }));
+    const deps = m.reschedule.mock.calls[0]![0];
+    m.getActivity.mockClear();
+    m.getActivity.mockResolvedValue({ id: ACT, title: "Editada", dueAt: "2026-11-11T10:00:00.000Z", hasTime: true, type: "meeting", lockVersion: 7 });
+
+    expect(await deps.loadActivity(ACT)).toEqual({ id: ACT, title: "Editada", dueAt: "2026-11-11T10:00:00.000Z", hasTime: true, type: "meeting", lockVersion: 7 });
+    expect(m.getActivity).toHaveBeenCalledWith(ACT);
+
+    m.getActivity.mockResolvedValue(null);
+    expect(await deps.loadActivity(ACT)).toBeNull();
+  });
+
   it("Meet criado: devolve o link", async () => {
     m.addMeet.mockResolvedValue({ status: "updated", meet: { status: "success", url: "https://meet.simulated/x" } });
     expect(await addMeetAction({ ok: false }, form({ activityId: ACT }))).toEqual({

@@ -9,7 +9,7 @@
 -- aqui como o servidor faz).
 
 begin;
-select plan(46);
+select plan(62);
 
 \set dono   '20000000-0000-0000-0000-000000000001'
 \set adv    '20000000-0000-0000-0000-000000000002'
@@ -98,7 +98,7 @@ select throws_ok(
   '42501', null, 'authenticated NÃO executa record_calendar_conflict'
 );
 select throws_ok(
-  format($i$ select apply_google_values_to_activity(%L::uuid, %L::uuid, 'x', null) $i$, :'reuniao', :'dono'),
+  format($i$ select apply_google_values_to_activity(%L::uuid, %L::uuid, 1, 'x', null) $i$, :'reuniao', :'dono'),
   '42501', null, 'authenticated NÃO executa apply_google_values_to_activity'
 );
 select throws_ok(
@@ -249,6 +249,89 @@ select is(
 );
 
 -- ---------------------------------------------------------------------
+-- 5b) Meet: chave AUSENTE preserva; chave com null é remoção explícita
+-- ---------------------------------------------------------------------
+
+select begin_calendar_effect(:'conn_prod'::uuid, :'reuniao'::uuid, :'dono'::uuid, 'update', '{}'::jsonb) as intent_meet \gset
+select resolve_calendar_effect(
+  :'intent_meet'::uuid, :'dono'::uuid, 'succeeded', '',
+  jsonb_build_object('eventId', 'evento-1', 'etag', '"9b"', 'title', 'Reunião B2', 'cancelled', false, 'hasMeet', true,
+    'meetStatus', null, 'meetUrl', null, 'durationMinutes', 90, 'crmVersion', 4, 'linkStatus', 'linked')
+);
+select is(
+  (select jsonb_build_object('s', meet_status, 'u', meet_url) from public.calendar_event_links where event_id = 'evento-1'),
+  jsonb_build_object('s', null, 'u', null),
+  'Meet removido no Google (null explícito) limpa status e URL do vínculo'
+);
+select is(
+  (select meet_request_id from public.calendar_event_links where event_id = 'evento-1'),
+  'req-1', 'o pedido de Meet (chave ausente) continua guardado'
+);
+
+select begin_calendar_effect(:'conn_prod'::uuid, :'reuniao'::uuid, :'dono'::uuid, 'meet', '{}'::jsonb) as intent_meet2 \gset
+select resolve_calendar_effect(
+  :'intent_meet2'::uuid, :'dono'::uuid, 'succeeded', '',
+  jsonb_build_object('eventId', 'evento-1', 'etag', '"9c"', 'title', 'Reunião B2', 'cancelled', false, 'hasMeet', true,
+    'meetStatus', 'success', 'meetUrl', 'https://meet.simulated/evento-1b', 'meetRequestId', 'req-2',
+    'durationMinutes', 90, 'crmVersion', 4, 'linkStatus', 'linked')
+);
+select is(
+  (select jsonb_build_object('s', meet_status, 'u', meet_url, 'r', meet_request_id) from public.calendar_event_links where event_id = 'evento-1'),
+  jsonb_build_object('s', 'success', 'u', 'https://meet.simulated/evento-1b', 'r', 'req-2'),
+  'um Meet novo (chaves presentes) substitui o valor guardado'
+);
+
+-- ---------------------------------------------------------------------
+-- 5c) O vínculo manda na conexão e na agenda
+-- ---------------------------------------------------------------------
+
+select connect_calendar_account(:'ws'::uuid, :'adv'::uuid, 'adv@v.test', array['escopo'], 'refresh-adv', 'access-adv', now() + interval '1 hour', '1') as conn_adv \gset
+select set_calendar_connection_calendar(:'conn_adv'::uuid, :'adv'::uuid, 'cal-adv@x', 'Agenda do advogado');
+select count(*)::int as intents_antes from public.calendar_effect_intents \gset
+
+select throws_ok(
+  format($i$ select begin_calendar_effect(%L::uuid, %L::uuid, %L::uuid, 'update', '{}'::jsonb) $i$, :'conn_adv', :'reuniao', :'adv'),
+  'P0001', 'calendar_link_mismatch', 'conexão de OUTRO usuário não opera o compromisso vinculado pela conexão do dono'
+);
+
+select set_calendar_connection_calendar(:'conn_prod'::uuid, :'dono'::uuid, 'cal-prod-2@x', 'Outra agenda');
+select throws_ok(
+  format($i$ select begin_calendar_effect(%L::uuid, %L::uuid, %L::uuid, 'delete', '{}'::jsonb) $i$, :'conn_prod', :'reuniao', :'dono'),
+  'P0001', 'calendar_link_mismatch', 'o mesmo usuário com OUTRA agenda selecionada também não opera o vínculo'
+);
+select is(
+  (select count(*)::int from public.calendar_effect_intents),
+  :'intents_antes'::int, 'as recusas não criam intenção'
+);
+
+-- Uma intenção aberta ANTES da troca de agenda é resolvida no MESMO vínculo.
+select set_calendar_connection_calendar(:'conn_prod'::uuid, :'dono'::uuid, 'cal-prod@x', 'Agenda de produção');
+select begin_calendar_effect(:'conn_prod'::uuid, :'reuniao'::uuid, :'dono'::uuid, 'update', '{}'::jsonb) as intent_troca \gset
+select set_calendar_connection_calendar(:'conn_prod'::uuid, :'dono'::uuid, 'cal-prod-2@x', 'Outra agenda');
+select resolve_calendar_effect(
+  :'intent_troca'::uuid, :'dono'::uuid, 'succeeded', '',
+  jsonb_build_object('eventId', 'evento-1', 'etag', '"9d"', 'title', 'Reunião B2', 'cancelled', false, 'hasMeet', true,
+    'durationMinutes', 90, 'crmVersion', 4, 'linkStatus', 'linked')
+);
+select is(
+  (select count(*)::int from public.calendar_event_links where activity_id = (:'reuniao')::uuid and status <> 'unlinked'),
+  1, 'resolver depois da troca de agenda NÃO cria um segundo vínculo'
+);
+select is(
+  (select calendar_id from public.calendar_event_links where event_id = 'evento-1'),
+  'cal-prod@x', 'o vínculo continua na agenda original'
+);
+select set_calendar_connection_calendar(:'conn_prod'::uuid, :'dono'::uuid, 'cal-prod@x', 'Agenda de produção');
+
+-- Defesa em profundidade: intenção de outra conexão não grava no vínculo alheio.
+insert into public.calendar_effect_intents (workspace_id, connection_id, activity_id, environment, operation, created_by)
+values (:'ws'::uuid, (:'conn_adv')::uuid, (:'reuniao')::uuid, 'production', 'update', :'adv') returning id as intent_alheia \gset
+select throws_ok(
+  format($i$ select resolve_calendar_effect(%L::uuid, %L::uuid, 'succeeded', '', '{"eventId":"evento-1","cancelled":true}'::jsonb) $i$, :'intent_alheia', :'adv'),
+  'P0001', 'calendar_link_mismatch', 'resolver não grava no vínculo de outra conexão'
+);
+
+-- ---------------------------------------------------------------------
 -- 6) Conflitos: o valor perdedor é guardado, a auditoria não tem valores
 -- ---------------------------------------------------------------------
 
@@ -283,24 +366,67 @@ select throws_ok(
 -- 7) apply_google_values_to_activity: passa pelo gatilho do ambiente
 -- ---------------------------------------------------------------------
 
+select lock_version as v0 from public.activities where id = (:'reuniao')::uuid \gset
+
 select throws_ok(
-  format($i$ select apply_google_values_to_activity(%L::uuid, %L::uuid, 'Título do Google', null) $i$, :'reuniao', :'dono'),
+  format($i$ select apply_google_values_to_activity(%L::uuid, %L::uuid, %s, 'Título do Google', null) $i$, :'reuniao', :'dono', :'v0'),
   'P0001', 'calendar_environment_mismatch', 'preview não altera atividade vinculada a production'
 );
 select set_config('request.headers', :'h_prod', true);
 select throws_ok(
-  format($i$ select apply_google_values_to_activity(%L::uuid, %L::uuid, 'x', null) $i$, :'tarefa', :'dono'),
+  format($i$ select apply_google_values_to_activity(%L::uuid, %L::uuid, 1, 'x', null) $i$, :'tarefa', :'dono'),
   'P0001', 'calendar_environment_mismatch', 'atividade sem vínculo não recebe valores do Google'
 );
-select apply_google_values_to_activity(:'reuniao'::uuid, :'dono'::uuid, 'Título do Google', '2026-11-13T09:00:00Z'::timestamptz) as versao \gset
+select throws_ok(
+  format($i$ select apply_google_values_to_activity(%L::uuid, %L::uuid, null, 'x', null) $i$, :'reuniao', :'dono'),
+  'P0001', 'expected_version_required', 'sem a versão lida, nada é aplicado'
+);
+
+-- Edição do CRM depois da leitura: a versão esperada já não vale.
+select count(*)::int as conflitos_antes from public.calendar_sync_conflicts \gset
+select is(
+  apply_google_values_to_activity(
+    :'reuniao'::uuid, :'dono'::uuid, (:'v0')::bigint - 1, 'Sobrescrita indevida', '2026-12-01T10:00:00Z'::timestamptz,
+    '[{"field":"title","crmValue":"x","googleValue":"y"}]'::jsonb
+  ),
+  null::bigint, 'versão desatualizada: devolve null e não aplica'
+);
+select is(
+  (select jsonb_build_object('t', title, 'v', lock_version) from public.activities where id = (:'reuniao')::uuid),
+  jsonb_build_object('t', 'Reunião B2', 'v', (:'v0')::bigint),
+  'a edição do CRM (título e versão) permanece intacta'
+);
+select is(
+  (select count(*)::int from public.calendar_sync_conflicts),
+  :'conflitos_antes'::int, 'versão desatualizada não grava conflito'
+);
+
+select apply_google_values_to_activity(
+  :'reuniao'::uuid, :'dono'::uuid, (:'v0')::bigint, 'Título do Google', '2026-11-13T09:00:00Z'::timestamptz,
+  '[{"field":"schedule","crmValue":{"start":"2026-11-12T16:00:00Z"},"googleValue":{"start":"2026-11-13T09:00:00Z"}}]'::jsonb
+) as versao \gset
 select is(
   (select jsonb_build_object('t', title, 'd', due_at, 'h', has_time) from public.activities where id = (:'reuniao')::uuid),
   jsonb_build_object('t', 'Título do Google', 'd', '2026-11-13T09:00:00+00:00'::timestamptz, 'h', true),
   'o valor do Google é aplicado à atividade (título e horário)'
 );
-select ok((:'versao')::bigint >= 1, 'a versão da atividade avança (controle de concorrência do CRM)');
+select is((:'versao')::bigint, (:'v0')::bigint + 1, 'a versão da atividade avança em 1 (controle de concorrência do CRM)');
+select is(
+  (select crm_value ->> 'start' from public.calendar_sync_conflicts
+   where link_id = (:'link')::uuid and field = 'schedule' and google_value ->> 'start' = '2026-11-13T09:00:00Z'),
+  '2026-11-12T16:00:00Z', 'o valor do CRM que perdeu é gravado NA MESMA transação em que o do Google é aplicado'
+);
 select throws_ok(
-  format($i$ select apply_google_values_to_activity(%L::uuid, %L::uuid, 'x', null) $i$, :'reuniao', :'adv2'),
+  format($i$ select apply_google_values_to_activity(%L::uuid, %L::uuid, %s, 'Outro', null, '[{"field":"inventado","crmValue":1,"googleValue":2}]'::jsonb) $i$, :'reuniao', :'dono', :'versao'),
+  '23514', null, 'conflito inválido aborta a aplicação inteira'
+);
+select is(
+  (select jsonb_build_object('t', title, 'v', lock_version) from public.activities where id = (:'reuniao')::uuid),
+  jsonb_build_object('t', 'Título do Google', 'v', (:'versao')::bigint),
+  'e a atividade fica como estava (nada de aplicação pela metade)'
+);
+select throws_ok(
+  format($i$ select apply_google_values_to_activity(%L::uuid, %L::uuid, %s, 'x', null) $i$, :'reuniao', :'adv2', :'versao'),
   'P0001', 'activity_not_found', 'sem alcance ao lead, nada é aplicado'
 );
 

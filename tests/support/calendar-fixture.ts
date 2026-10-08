@@ -12,7 +12,15 @@ export async function makeFixture(environment: CalendarEnvironment = "preview") 
   const provider = new SimulatedCalendarProvider();
   const tokens = await provider.exchangeAuthorization("teste.qa@exemplo.test");
   const store = new MemoryStore(environment, CALENDAR_ID);
-  const deps: SyncDeps = { api: provider, store, environment };
+  const deps: SyncDeps = {
+    api: provider,
+    store,
+    environment,
+    loadActivity: async (id) => {
+      const found = store.activities.get(id);
+      return found ? { ...found } : null;
+    },
+  };
   const conn: ConnectionContext = {
     connectionId: "conn-1",
     calendarId: CALENDAR_ID,

@@ -180,6 +180,17 @@ begin
     raise exception 'calendar_environment_mismatch';
   end if;
 
+  -- O vínculo ativo manda: só a conexão e a agenda que o criaram o operam.
+  -- Outra conexão (de outro usuário) ou outra agenda da mesma conexão procuraria
+  -- o evento no lugar errado e leria "não existe" como evento apagado.
+  if exists (
+    select 1 from public.calendar_event_links l
+    where l.activity_id = v_activity.id and l.status <> 'unlinked'
+      and (l.connection_id <> v_conn.id or l.calendar_id is distinct from v_conn.calendar_id)
+  ) then
+    raise exception 'calendar_link_mismatch';
+  end if;
+
   insert into public.calendar_effect_intents (workspace_id, connection_id, activity_id, environment, operation, expected, created_by)
   values (v_conn.workspace_id, v_conn.id, v_activity.id, v_env, p_operation, coalesce(p_expected, '{}'::jsonb), p_actor_user_id)
   returning id into v_id;
@@ -196,7 +207,8 @@ revoke execute on function public.begin_calendar_effect(uuid, uuid, uuid, text, 
 -- resolve_calendar_effect — fecha a intenção e, no mesmo passo, grava o
 -- vínculo e a nova base. p_state: { eventId, etag, title, start, end,
 -- cancelled, hasMeet, meetStatus, meetUrl, meetRequestId, durationMinutes,
--- crmVersion, linkStatus }.
+-- crmVersion, linkStatus }. Nos três campos do Meet, chave ausente preserva o
+-- valor e chave com null o remove.
 -- ---------------------------------------------------------------------
 
 create function public.resolve_calendar_effect(
@@ -249,8 +261,18 @@ begin
   select * into v_conn from public.calendar_connections c where c.id = v_intent.connection_id;
   v_status := coalesce(nullif(p_state ->> 'linkStatus', ''), 'linked')::public.calendar_link_status;
 
+  -- O vínculo ativo da atividade manda (mesmo que a agenda selecionada da
+  -- conexão tenha mudado): ele só é gravado pela conexão que o criou.
   select * into v_link from public.calendar_event_links l
-  where l.environment = v_env and l.calendar_id = v_conn.calendar_id and l.event_id = p_state ->> 'eventId';
+  where l.activity_id = v_intent.activity_id and l.status <> 'unlinked';
+  if v_link.id is not null then
+    if v_link.connection_id <> v_conn.id then
+      raise exception 'calendar_link_mismatch';
+    end if;
+  else
+    select * into v_link from public.calendar_event_links l
+    where l.environment = v_env and l.calendar_id = v_conn.calendar_id and l.event_id = p_state ->> 'eventId';
+  end if;
 
   if v_link.id is null then
     insert into public.calendar_event_links (
@@ -275,9 +297,11 @@ begin
       base_cancelled = coalesce((p_state ->> 'cancelled')::boolean, false),
       base_has_meet = coalesce((p_state ->> 'hasMeet')::boolean, false),
       base_crm_version = (p_state ->> 'crmVersion')::bigint,
-      meet_request_id = coalesce(p_state ->> 'meetRequestId', meet_request_id),
-      meet_status = coalesce(p_state ->> 'meetStatus', meet_status),
-      meet_url = coalesce(p_state ->> 'meetUrl', meet_url),
+      -- Chave AUSENTE preserva o valor guardado; chave presente — inclusive
+      -- null, que é o Google informando que o Meet foi removido — o substitui.
+      meet_request_id = case when p_state ? 'meetRequestId' then p_state ->> 'meetRequestId' else meet_request_id end,
+      meet_status = case when p_state ? 'meetStatus' then p_state ->> 'meetStatus' else meet_status end,
+      meet_url = case when p_state ? 'meetUrl' then p_state ->> 'meetUrl' else meet_url end,
       last_synced_at = now(),
       updated_at = now()
     where id = v_link.id
@@ -412,13 +436,22 @@ revoke execute on function public.record_calendar_conflict(uuid, uuid, text, jso
 -- apply_google_values_to_activity — aplica o valor do Google à atividade
 -- quando ele prevalece num conflito. Passa pelo gatilho de ambiente como
 -- qualquer outra alteração. Só título e horário.
+--
+-- Controle de concorrência: só aplica se a atividade ainda está em
+-- `p_expected_version` (a versão que a aplicação LEU). Se o CRM foi editado
+-- depois da leitura, NÃO aplica nada, NÃO grava conflito e devolve null —
+-- quem chamou relê a atividade e reavalia. Os conflitos (o valor do CRM que
+-- perdeu) são gravados na MESMA transação em que o valor do Google é
+-- aplicado: ou acontecem os dois, ou nenhum.
 -- ---------------------------------------------------------------------
 
 create function public.apply_google_values_to_activity(
   p_activity_id uuid,
   p_actor_user_id uuid,
+  p_expected_version bigint,
   p_title text,
-  p_due_at timestamptz
+  p_due_at timestamptz,
+  p_conflicts jsonb default '[]'::jsonb
 )
 returns bigint
 language plpgsql
@@ -428,18 +461,23 @@ as $body$
 declare
   v_env public.calendar_environment := private.require_request_environment();
   v_activity public.activities;
-  v_link_env public.calendar_environment;
+  v_link public.calendar_event_links;
   v_version bigint;
+  v_conflict jsonb;
 begin
+  if p_expected_version is null then
+    raise exception 'expected_version_required';
+  end if;
+
   select * into v_activity from public.activities a where a.id = p_activity_id;
   if v_activity.id is null then
     raise exception 'activity_not_found';
   end if;
   v_activity := private.assert_can_sync_activity(v_activity.workspace_id, p_activity_id, p_actor_user_id);
 
-  select l.environment into v_link_env from public.calendar_event_links l
+  select * into v_link from public.calendar_event_links l
   where l.activity_id = p_activity_id and l.status <> 'unlinked';
-  if v_link_env is null or v_link_env <> v_env then
+  if v_link.id is null or v_link.environment <> v_env then
     raise exception 'calendar_environment_mismatch';
   end if;
 
@@ -449,16 +487,35 @@ begin
     has_time = case when p_due_at is not null then true else has_time end,
     lock_version = lock_version + 1,
     updated_at = now()
-  where id = p_activity_id
+  where id = p_activity_id and lock_version = p_expected_version
   returning lock_version into v_version;
+
+  if v_version is null then
+    -- Versão diferente da lida: o CRM mudou no meio. Nada é aplicado.
+    return null;
+  end if;
+
+  for v_conflict in
+    select c.value from jsonb_array_elements(coalesce(p_conflicts, '[]'::jsonb)) as c(value)
+  loop
+    insert into public.calendar_sync_conflicts (workspace_id, link_id, environment, field, crm_value, google_value, resolution, created_by)
+    values (v_link.workspace_id, v_link.id, v_env, v_conflict ->> 'field', v_conflict -> 'crmValue', v_conflict -> 'googleValue', 'google_prevails', p_actor_user_id);
+
+    -- A auditoria guarda só o fato, nunca os valores.
+    insert into public.audit_logs (workspace_id, actor_user_id, action, resource_type, resource_id, metadata)
+    values (
+      v_link.workspace_id, p_actor_user_id, 'calendar.conflict.recorded', 'calendar_event_link', v_link.id,
+      jsonb_build_object('environment', v_env, 'field', v_conflict ->> 'field', 'resolution', 'google_prevails')
+    );
+  end loop;
 
   return v_version;
 end;
 $body$;
 
-revoke all on function public.apply_google_values_to_activity(uuid, uuid, text, timestamptz) from public;
-grant execute on function public.apply_google_values_to_activity(uuid, uuid, text, timestamptz) to service_role;
-revoke execute on function public.apply_google_values_to_activity(uuid, uuid, text, timestamptz) from anon, authenticated;
+revoke all on function public.apply_google_values_to_activity(uuid, uuid, bigint, text, timestamptz, jsonb) from public;
+grant execute on function public.apply_google_values_to_activity(uuid, uuid, bigint, text, timestamptz, jsonb) to service_role;
+revoke execute on function public.apply_google_values_to_activity(uuid, uuid, bigint, text, timestamptz, jsonb) from anon, authenticated;
 
 -- ---------------------------------------------------------------------
 -- store_calendar_access_token — guarda o novo token de acesso (já cifrado

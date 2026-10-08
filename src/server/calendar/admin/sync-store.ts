@@ -57,15 +57,22 @@ export function createSupabaseSyncStore(actorUserId: string): SyncStore {
       if (error) throw new Error(error.message);
     },
 
-    async applyGoogleToActivity({ activityId, title, dueAt }) {
+    async applyGoogleToActivity({ activityId, expectedVersion, title, dueAt, conflicts }) {
       const { data, error } = await admin.rpc("apply_google_values_to_activity", {
         p_activity_id: activityId,
         p_actor_user_id: actorUserId,
+        p_expected_version: expectedVersion,
         p_title: title ?? "",
         p_due_at: dueAt ?? (null as unknown as string),
+        p_conflicts: conflicts.map((c) => ({
+          field: c.field,
+          crmValue: c.crmValue ?? null,
+          googleValue: c.googleValue ?? null,
+        })) as unknown as Json,
       });
       if (error) throw new Error(error.message);
-      return data;
+      // `null`: a atividade mudou depois da leitura e nada foi aplicado.
+      return data ?? null;
     },
   };
 }
