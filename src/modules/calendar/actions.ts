@@ -7,6 +7,7 @@ import { requirePermissionSafe } from "@/server/authz/safe";
 import { toUserMessage } from "@/lib/errors";
 import { uuidSchema } from "@/lib/uuid";
 import { getCalendarProvider } from "@/server/calendar/provider";
+import { adminListOwnChannels } from "@/server/calendar/admin/inbound-store";
 import {
   adminConnectCalendar,
   adminDisconnectCalendar,
@@ -142,6 +143,15 @@ export async function disconnectCalendarAction(
           workspaceId: auth.ctx.workspaceId,
           actorUserId: auth.ctx.userId,
         });
+        // Canais encerrados no Google ENQUANTO ainda há token (§6.5). Falha
+        // num deles não impede a desconexão: o banco os encerra e o webhook
+        // passa a ignorá-los; no Google, vencem sozinhos.
+        const channels = await adminListOwnChannels({ connectionId: parsed.data.connectionId, actorUserId: auth.ctx.userId }).catch(
+          () => [],
+        );
+        for (const channel of channels) {
+          await provider.stopChannel(tokens.accessToken, { id: channel.channelId, resourceId: channel.resourceId }).catch(() => {});
+        }
         await provider.revoke(tokens.refreshToken);
       } catch {
         // Conexão de outro usuário, ou token já inválido: a desconexão

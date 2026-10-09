@@ -504,6 +504,162 @@ export type Database = {
           },
         ]
       }
+      calendar_sync_state: {
+        Row: {
+          calendar_id: string
+          connection_id: string
+          created_at: string
+          dirty_at: string | null
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          full_sync_at: string | null
+          id: string
+          last_error: string | null
+          last_error_at: string | null
+          last_run_at: string | null
+          lease_id: string | null
+          lease_started_at: string | null
+          lease_until: string | null
+          sync_token: string | null
+          sync_token_at: string | null
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          calendar_id: string
+          connection_id: string
+          created_at?: string
+          dirty_at?: string | null
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          full_sync_at?: string | null
+          id?: string
+          last_error?: string | null
+          last_error_at?: string | null
+          last_run_at?: string | null
+          lease_id?: string | null
+          lease_started_at?: string | null
+          lease_until?: string | null
+          sync_token?: string | null
+          sync_token_at?: string | null
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          calendar_id?: string
+          connection_id?: string
+          created_at?: string
+          dirty_at?: string | null
+          environment?: Database["public"]["Enums"]["calendar_environment"]
+          full_sync_at?: string | null
+          id?: string
+          last_error?: string | null
+          last_error_at?: string | null
+          last_run_at?: string | null
+          lease_id?: string | null
+          lease_started_at?: string | null
+          lease_until?: string | null
+          sync_token?: string | null
+          sync_token_at?: string | null
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "calendar_sync_state_connection_fkey"
+            columns: ["workspace_id", "connection_id"]
+            isOneToOne: false
+            referencedRelation: "calendar_connections"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "calendar_sync_state_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      calendar_watch_channels: {
+        Row: {
+          calendar_id: string
+          channel_id: string
+          connection_id: string
+          created_at: string
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          expires_at: string | null
+          id: string
+          last_message_number: number | null
+          last_notified_at: string | null
+          renew_at: string | null
+          renewing_until: string | null
+          resource_id: string | null
+          status: string
+          stop_reason: string | null
+          stopped_at: string | null
+          sync_received_at: string | null
+          token_hash: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          calendar_id: string
+          channel_id: string
+          connection_id: string
+          created_at?: string
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          expires_at?: string | null
+          id?: string
+          last_message_number?: number | null
+          last_notified_at?: string | null
+          renew_at?: string | null
+          renewing_until?: string | null
+          resource_id?: string | null
+          status?: string
+          stop_reason?: string | null
+          stopped_at?: string | null
+          sync_received_at?: string | null
+          token_hash: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          calendar_id?: string
+          channel_id?: string
+          connection_id?: string
+          created_at?: string
+          environment?: Database["public"]["Enums"]["calendar_environment"]
+          expires_at?: string | null
+          id?: string
+          last_message_number?: number | null
+          last_notified_at?: string | null
+          renew_at?: string | null
+          renewing_until?: string | null
+          resource_id?: string | null
+          status?: string
+          stop_reason?: string | null
+          stopped_at?: string | null
+          sync_received_at?: string | null
+          token_hash?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "calendar_watch_channels_connection_fkey"
+            columns: ["workspace_id", "connection_id"]
+            isOneToOne: false
+            referencedRelation: "calendar_connections"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "calendar_watch_channels_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       client_handoffs: {
         Row: {
           attempts: number
@@ -3185,6 +3341,17 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      activate_calendar_channel: {
+        Args: {
+          p_actor_user_id: string
+          p_channel_id: string
+          p_expires_at: string
+          p_polling_only: boolean
+          p_renew_at: string
+          p_resource_id: string
+        }
+        Returns: undefined
+      }
       add_contact_email: {
         Args: {
           p_contact_id: string
@@ -3232,6 +3399,19 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      apply_google_inbound_change: {
+        Args: {
+          p_actor_user_id: string
+          p_conflicts: Json
+          p_due_at: string
+          p_expected_base_etag: string
+          p_expected_version: number
+          p_link_id: string
+          p_state: Json
+          p_title: string
+        }
+        Returns: Json
       }
       apply_google_values_to_activity: {
         Args: {
@@ -3282,6 +3462,16 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      begin_calendar_channel: {
+        Args: {
+          p_actor_user_id: string
+          p_calendar_id: string
+          p_channel_id: string
+          p_connection_id: string
+          p_token_hash: string
+        }
+        Returns: string
+      }
       begin_calendar_effect: {
         Args: {
           p_activity_id: string
@@ -3305,6 +3495,23 @@ export type Database = {
       cancel_workspace_invitation: {
         Args: { p_invitation_id: string }
         Returns: undefined
+      }
+      claim_calendar_channel_renewal: {
+        Args: {
+          p_actor_user_id: string
+          p_channel_id: string
+          p_lock_seconds?: number
+        }
+        Returns: boolean
+      }
+      claim_calendar_sync: {
+        Args: {
+          p_actor_user_id: string
+          p_calendar_id: string
+          p_connection_id: string
+          p_lease_seconds?: number
+        }
+        Returns: Json
       }
       claim_outbox_batch: {
         Args: { p_limit?: number; p_lock_seconds?: number }
@@ -3597,6 +3804,17 @@ export type Database = {
         }
         Returns: undefined
       }
+      finish_calendar_sync: {
+        Args: {
+          p_actor_user_id: string
+          p_error: string
+          p_full: boolean
+          p_lease_id: string
+          p_outcome: string
+          p_sync_token: string
+        }
+        Returns: boolean
+      }
       flag_expiring_webhook_events: {
         Args: { p_days_before?: number; p_limit?: number }
         Returns: Json
@@ -3746,6 +3964,18 @@ export type Database = {
         Args: { p_workspace_id: string }
         Returns: Json
       }
+      list_calendar_links_for_sync: {
+        Args: {
+          p_actor_user_id: string
+          p_calendar_id: string
+          p_connection_id: string
+        }
+        Returns: Json
+      }
+      list_calendar_maintenance: {
+        Args: { p_limit?: number }
+        Returns: Json
+      }
       list_clients: {
         Args: {
           p_page?: number
@@ -3819,6 +4049,10 @@ export type Database = {
           total_count: number
         }[]
       }
+      list_own_calendar_channels: {
+        Args: { p_actor_user_id: string; p_connection_id: string }
+        Returns: Json
+      }
       list_proposal_documents: {
         Args: { p_proposal_id: string }
         Returns: Json
@@ -3837,6 +4071,14 @@ export type Database = {
           p_opportunity_id: string
         }
         Returns: Json
+      }
+      mark_calendar_connection_needs_reauth: {
+        Args: {
+          p_actor_user_id: string
+          p_connection_id: string
+          p_reason: string
+        }
+        Returns: undefined
       }
       mark_calendar_link_pending: {
         Args: {
@@ -3961,6 +4203,17 @@ export type Database = {
         }
         Returns: string
       }
+      record_calendar_notification: {
+        Args: {
+          p_channel_id: string
+          p_expires_at: string
+          p_message_number: number
+          p_resource_id: string
+          p_resource_state: string
+          p_token_hash: string
+        }
+        Returns: string
+      }
       register_contact_consent: {
         Args: {
           p_accepted_text?: string
@@ -3991,6 +4244,10 @@ export type Database = {
           p_lock_version: number
         }
         Returns: undefined
+      }
+      reset_calendar_sync_token: {
+        Args: { p_actor_user_id: string; p_lease_id: string }
+        Returns: boolean
       }
       resolve_calendar_effect: {
         Args: {
@@ -4153,6 +4410,14 @@ export type Database = {
           p_wa_message_id: string
         }
         Returns: Json
+      }
+      stop_calendar_channel: {
+        Args: {
+          p_actor_user_id: string
+          p_channel_id: string
+          p_reason: string
+        }
+        Returns: undefined
       }
       store_calendar_access_token: {
         Args: {

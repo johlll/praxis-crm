@@ -6,7 +6,8 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { connectMock, tokensMock, setCalendarMock, disconnectMock, providerMock } = vi.hoisted(() => ({
+const { connectMock, tokensMock, setCalendarMock, disconnectMock, providerMock, channelsMock } = vi.hoisted(() => ({
+  channelsMock: vi.fn(),
   connectMock: vi.fn(),
   tokensMock: vi.fn(),
   setCalendarMock: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock("@/server/calendar/admin/connections", () => ({
   adminSetConnectionCalendar: setCalendarMock,
   adminDisconnectCalendar: disconnectMock,
 }));
+vi.mock("@/server/calendar/admin/inbound-store", () => ({ adminListOwnChannels: channelsMock }));
 
 import { connectCalendarAction, disconnectCalendarAction, selectCalendarAction } from "@/modules/calendar/actions";
 
@@ -41,6 +43,7 @@ function form(values: Record<string, string>) {
 beforeEach(() => {
   vi.clearAllMocks();
   permission = CTX;
+  channelsMock.mockResolvedValue([]);
 });
 
 describe("connectCalendarAction", () => {
@@ -121,6 +124,31 @@ describe("disconnectCalendarAction", () => {
     expect(r.ok).toBe(true);
     expect(revoke).toHaveBeenCalledWith("r");
     expect(disconnectMock).toHaveBeenCalledWith({ connectionId: CONN, actorUserId: CTX.ctx.userId });
+  });
+
+  it("encerra no Google os canais da própria conexão ANTES de revogar; falha num canal não impede", async () => {
+    const order: string[] = [];
+    const stopChannel = vi.fn(async (_token: string, ch: { id: string }) => {
+      order.push(`stop:${ch.id}`);
+      if (ch.id === "canal-2") throw new Error("rede");
+    });
+    const revoke = vi.fn(async () => {
+      order.push("revoke");
+    });
+    providerMock.mockResolvedValue({ revoke, stopChannel });
+    tokensMock.mockResolvedValue({ accessToken: "a", refreshToken: "r" });
+    channelsMock.mockResolvedValue([
+      { channelId: "canal-1", resourceId: "res-1" },
+      { channelId: "canal-2", resourceId: "res-2" },
+    ]);
+
+    const r = await disconnectCalendarAction({ ok: false }, form({ connectionId: CONN }));
+
+    expect(r.ok).toBe(true);
+    expect(channelsMock).toHaveBeenCalledWith({ connectionId: CONN, actorUserId: CTX.ctx.userId });
+    expect(stopChannel).toHaveBeenCalledWith("a", { id: "canal-1", resourceId: "res-1" });
+    expect(order).toEqual(["stop:canal-1", "stop:canal-2", "revoke"]);
+    expect(disconnectMock).toHaveBeenCalledTimes(1);
   });
 
   it("conexão de outro usuário: não lê token alheio, só desconecta localmente", async () => {

@@ -338,6 +338,72 @@ Google, e as telas ganharam os controles. Tudo com o provedor **simulado**.
   estado, se é do usuário, duração, Meet e sincronização — nunca título, etag,
   ids de agenda/evento, e-mail da conta nem token.
 
+### 6.10 Google → CRM (etapa 3)
+Implementado com o provedor **simulado** (migration
+`20261011100000_b2_google_to_crm_sync`, não aplicada ao hospedado).
+
+- **Só eventos vinculados.** A listagem (`events.list`, `fields` mínimo, sem
+  título) traz a agenda inteira; cada item é reconhecido pelo vínculo local
+  `(agenda, evento)` do ambiente e da conexão. Sem vínculo: descartado em
+  memória — não é lido em detalhe, gravado, logado nem contado. Só o evento
+  vinculado é lido com `events.get` (título e Meet).
+- **Por (conexão, agenda) com vínculo ativo**, inclusive agendas que não são
+  mais a selecionada (o compromisso continua na agenda em que nasceu).
+- **Uma execução por vez** (`claim_calendar_sync`, trava com validade). O
+  `syncToken` novo só é gravado por quem ainda detém a trava, depois de
+  **todas** as páginas e de todos os itens vinculados aplicados; qualquer
+  falha mantém o anterior e a execução é refeita — o processamento é
+  idempotente (o eco e o já aplicado são reconhecidos pelo `etag` da base).
+- **`410`:** o token é descartado na hora (`reset_calendar_sync_token`) e a
+  listagem completa é refeita; nada do CRM é apagado. Na listagem completa,
+  vínculo ausente é confirmado com `get` e com o acesso à agenda antes de
+  virar `missing_in_google`.
+- **Regra por campo contra a base** (§6.3/6.4), aplicada por
+  `apply_google_inbound_change` numa única transação (atividade, conflitos
+  e base), só se a base e a versão da atividade são as lidas — senão relê e
+  reavalia (até 3 vezes; depois, o token não avança):
+  - mudou só no Google → aplicado no CRM; nos dois para valores diferentes →
+    o Google prevalece e o valor do CRM fica gravado; só no CRM → o CRM não é
+    sobrescrito e a base desse campo não avança;
+  - horário: o CRM recebe o início; a duração do vínculo é a real;
+  - cancelado no Google → vínculo `cancelled_in_google`, atividade mantida;
+  - Meet: o do Google é adotado (removido lá, removido aqui; nunca recriado);
+  - série/instância de série ou marca de outro compromisso/ambiente →
+    `needs_attention`, nada aplicado.
+- **Autorização:** tudo roda em nome do **dono da conexão**; se ele não
+  alcança mais a atividade (papel ou lead), nada é aplicado e o vínculo vai
+  para atenção (`owner_lost_access`). **Isolamento:** todas as RPCs exigem o
+  ambiente autenticado; a atividade passa pelo gatilho de ambiente.
+- **Perda de acesso** (401/403/404 na listagem): pendência explícita nos
+  vínculos da agenda, token mantido; a próxima listagem bem-sucedida prova o
+  acesso e os devolve a `linked`. **Refresh token inválido:** conexão
+  `needs_reauth`, sem novas tentativas em laço.
+- **Canais:** linha `creating` com o **hash** do segredo gravada antes do
+  `watch`; `renew_at` pela vida efetiva (§9.4); trava atômica de renovação;
+  o novo é criado antes de o velho (`retiring`) ser parado, o que acontece
+  depois da primeira mensagem do novo ou de 10 min; vida < 45 min →
+  `polling_only`, sem laço por 24 h; resposta do `watch` perdida → a primeira
+  mensagem revela o recurso e o canal é ativado (sem criar outro), ou é
+  abandonado depois de 10 min; canal de agenda sem vínculo ou vencido é
+  encerrado. Desconectar encerra os canais no Google (enquanto há token) e
+  no banco.
+- **Webhook** (`/api/calendar/webhook`, público no proxy): só cabeçalhos;
+  canal do ambiente + segredo + recurso conferidos no banco; só marca a
+  agenda para sincronizar (`dirty_at`). 200 aceito/encerrado, 404
+  desconhecido, 400 malformado. Sem provedor configurado: 404 sem tocar no
+  banco.
+- **Manutenção** (`/api/cron/calendar`, segredo dos crons da A11): por alvo,
+  cuida do canal e sincroniza com dica do webhook, a cada 15 min (polling) e
+  com listagem completa a cada 24 h. Idempotente e segura em paralelo.
+  Responde só contagens. Sem provedor configurado, não toca em nada.
+- **Endereço do webhook:** `CALENDAR_WEBHOOK_URL` (https) por ambiente; sem
+  ela, só polling. Não configurada.
+- **Fora desta etapa (pendente):** quem chama a manutenção (função agendada
+  do Inngest, recuperação adicional — o workflow da A11 não muda), batimento
+  e alertas (§9.3), reencontrar vínculos pela marca ao reconectar, ação de
+  restaurar o valor do CRM e entrada na timeline do lead (§6.4). E tudo o que
+  depende do Google real (§12).
+
 ## 7. Isolamento entre ambientes
 
 O Supabase é compartilhado, então o isolamento é de duas camadas:
