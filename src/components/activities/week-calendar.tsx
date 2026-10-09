@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import type { ActivityListItem } from "@/modules/activities/queries";
 import type { TeamMember } from "@/modules/team/queries";
 import { TIMEZONE, formatTime } from "@/lib/timezone";
+import { CalendarBadge } from "@/components/calendar/calendar-badge";
 import { ACTIVITY_TYPE_LABEL } from "./labels";
 import { ActivityRowActions } from "./activity-row-actions";
 
@@ -93,6 +94,7 @@ export function WeekCalendar({
                     <span className="text-label text-text-tertiary">
                       {ACTIVITY_TYPE_LABEL[item.type]} · {item.contactName}
                     </span>
+                    <CalendarBadge info={item.calendar} />
                     {canEdit ? <ActivityRowActions activity={item} members={members} /> : null}
                   </li>
                 ))}

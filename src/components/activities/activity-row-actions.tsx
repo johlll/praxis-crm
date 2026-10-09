@@ -12,6 +12,8 @@ import {
 } from "@/modules/activities/actions";
 import type { ActivityListItem } from "@/modules/activities/queries";
 import type { TeamMember } from "@/modules/team/queries";
+import { CalendarRowActions } from "@/components/calendar/calendar-row-actions";
+import { useCalendarCapabilities } from "@/components/calendar/calendar-capabilities";
 import { EditActivityDialog } from "./edit-activity-dialog";
 import { RescheduleActivityDialog } from "./reschedule-activity-dialog";
 
@@ -24,6 +26,7 @@ export function ActivityRowActions({
 }) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const caps = useCalendarCapabilities();
 
   const scope = {
     leadId: activity.leadId,
@@ -47,11 +50,16 @@ export function ActivityRowActions({
   }
 
   function handleDelete() {
-    if (!window.confirm(`Excluir "${activity.title}"? Esta ação não pode ser desfeita.`)) return;
+    const alsoGoogle = caps.enabled && activity.calendar?.isMine === true
+      ? " O evento também será removido do Google Agenda."
+      : "";
+    if (!window.confirm(`Excluir "${activity.title}"? Esta ação não pode ser desfeita.${alsoGoogle}`)) return;
     setError(null);
     startTransition(async () => {
       const result = await deleteActivityAction(activity.id, scope);
       if (!result.ok) setError(result.error ?? "Não foi possível excluir.");
+      // A linha some depois da exclusão: um aviso sobre a agenda precisa ser lido agora.
+      else if (result.calendar?.level === "warning") window.alert(result.calendar.message);
     });
   }
 
@@ -90,6 +98,7 @@ export function ActivityRowActions({
 
         {activity.status === "pending" ? <RescheduleActivityDialog activity={activity} /> : null}
         <EditActivityDialog activity={activity} />
+        <CalendarRowActions activity={activity} />
         <Button
           variant="ghost"
           size="sm"

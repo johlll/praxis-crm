@@ -1,6 +1,7 @@
 import type { ActivityListItem } from "@/modules/activities/queries";
 import type { TeamMember } from "@/modules/team/queries";
 import { formatDue } from "@/lib/timezone";
+import { CalendarBadge } from "@/components/calendar/calendar-badge";
 import { ACTIVITY_TYPE_LABEL } from "./labels";
 import { ActivityRowActions } from "./activity-row-actions";
 import { CreateActivityDialog } from "./create-activity-dialog";
@@ -59,6 +60,7 @@ export function ActivitiesSection({
                   </span>
                   <span className="text-meta text-text-tertiary">{activity.assignedToName ?? "Sem responsável"}</span>
                 </div>
+                <CalendarBadge info={activity.calendar} />
                 {canEdit ? <ActivityRowActions activity={activity} members={members} /> : null}
               </li>
             );

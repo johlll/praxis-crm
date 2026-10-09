@@ -261,6 +261,39 @@ ser regra (duas decisões de produto fecharam a revisão):
   ficou, inclusive de evento externo fora de 15–480 (a constraint do banco
   exige apenas `> 0`).
 
+### 6.9 Interface de atividades (etapa 2b)
+As ações de atividade que já existiam passaram a levar o compromisso ao
+Google, e as telas ganharam os controles. Tudo com o provedor **simulado**.
+
+- **Integração desligada = tela idêntica à anterior.** Sem provedor
+  configurado (hoje, em Preview e Production), nenhuma função de B2 é chamada
+  pelas telas de atividade: a lista não lê vínculos, o layout não lê conexões e
+  as ações de atividade não tocam em nada de calendário. Por isso o código
+  pode ser publicado antes das migrations de B2.
+- **O CRM é a fonte da verdade e a agenda é um aviso.** Criar, editar,
+  reagendar e excluir concluem no CRM; o que aconteceu no Google volta como
+  `CalendarNotice` (sucesso ou aviso), nunca como falha de uma ação já
+  concluída. Exceção deliberada: **excluir**.
+- **Excluir atividade vinculada: Google primeiro.** O vínculo se perde com a
+  atividade, então o evento é removido antes. Se a agenda não puder ser
+  alcançada (acesso perdido, falha ou resultado incerto), a atividade **não é
+  excluída** e o motivo aparece. Evento editado no Google desde a última
+  sincronização é mantido lá, e a exclusão segue com aviso.
+- **Criar já na agenda: tudo que dá para conferir antes, é conferido antes de
+  criar** — tipo (reunião com horário), duração 15–480, e-mails e confirmação
+  de convite, conexão pronta e, se pedido, horário livre. Convidados exigem
+  confirmação explícita e nunca vêm marcados; Meet é opcional.
+- **Vínculo de outra pessoa:** o CRM muda normalmente e o Google **não** é
+  tocado, com aviso claro. *Decisão de produto em aberto:* se isso deve, em vez
+  disso, bloquear a alteração (ou marcar o vínculo como pendente para a
+  sincronização de entrada da etapa 3 reconciliar).
+- **Duração:** o diálogo de reagendar só envia a duração quando o usuário a
+  altera (15–480); sem alteração vale a duração real do evento no Google,
+  inclusive de evento externo fora desse intervalo.
+- **Leitura do vínculo pela tela:** `list_activity_calendar_links` devolve só
+  estado, se é do usuário, duração e link do Meet — nunca título, etag, ids de
+  agenda/evento, e-mail da conta nem token.
+
 ## 7. Isolamento entre ambientes
 
 O Supabase é compartilhado, então o isolamento é de duas camadas:

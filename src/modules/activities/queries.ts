@@ -2,6 +2,8 @@ import { createServerSupabaseClient } from "@/server/supabase/server";
 import { DataLoadError, isExpectedAbsence } from "@/server/data/load-error";
 import type { Database } from "@/server/types/database";
 import type { ACTIVITY_FILTERS } from "./schema";
+import { attachCalendarInfo } from "@/modules/calendar/activity-links";
+import type { ActivityCalendarInfo } from "@/modules/calendar/types";
 
 export type ActivityFilter = (typeof ACTIVITY_FILTERS)[number];
 
@@ -40,6 +42,8 @@ export type ActivityListItem = {
    * revalidação), mesmo comportamento do resto da tela.
    */
   isOverdue: boolean;
+  /** Estado do vínculo com o Google Agenda (só quando a integração está ligada e há vínculo). */
+  calendar?: ActivityCalendarInfo | null | undefined;
 };
 
 export type ActivityCounts = {
@@ -144,7 +148,11 @@ async function fetchActivitiesPage(workspaceId: string, filters: ListActivitiesF
   const row = data[0]!;
   const items = (row.items as unknown as Array<Record<string, unknown>> | null) ?? [];
 
-  return { items: items.map(mapActivityRow), total: row.total_count, counts: mapCounts(row.counts) };
+  return {
+    items: await attachCalendarInfo(items.map(mapActivityRow)),
+    total: row.total_count,
+    counts: mapCounts(row.counts),
+  };
 }
 
 /**

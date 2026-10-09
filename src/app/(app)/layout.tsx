@@ -3,6 +3,8 @@ import type { ReactNode } from "react";
 import { AppShell } from "@/components/app-shell/app-shell";
 import { getShellContext } from "@/modules/shell/queries";
 import { getActivityCounts } from "@/modules/activities/queries";
+import { getCalendarCapabilities } from "@/modules/calendar/capabilities";
+import { CalendarCapabilitiesProvider } from "@/components/calendar/calendar-capabilities";
 
 /**
  * Sessão e workspace ativo resolvidos aqui, antes de qualquer página
@@ -17,11 +19,15 @@ import { getActivityCounts } from "@/modules/activities/queries";
  */
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const { activeWorkspace, workspaces } = await getShellContext();
-  const activityCounts = await getActivityCounts(activeWorkspace.id);
+  const [activityCounts, calendarCapabilities] = await Promise.all([
+    getActivityCounts(activeWorkspace.id),
+    // Com a integração desligada devolve tudo falso sem tocar no banco.
+    getCalendarCapabilities({ workspaceId: activeWorkspace.id, role: activeWorkspace.role }),
+  ]);
 
   return (
     <AppShell activeWorkspace={activeWorkspace} workspaces={workspaces} overdueActivitiesCount={activityCounts.overdue}>
-      {children}
+      <CalendarCapabilitiesProvider value={calendarCapabilities}>{children}</CalendarCapabilitiesProvider>
     </AppShell>
   );
 }

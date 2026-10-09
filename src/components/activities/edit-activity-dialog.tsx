@@ -15,6 +15,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { CalendarNoticeAlert } from "@/components/calendar/calendar-notice";
 import { updateActivityAction, type ActivityActionState } from "@/modules/activities/actions";
 import { ACTIVITY_TYPES } from "@/modules/activities/schema";
 import { LEAD_PRIORITIES } from "@/modules/leads/schema";
@@ -57,6 +58,7 @@ function EditActivityDialogBody({ activity, onDone }: { activity: ActivityListIt
         <Alert variant="success">
           <AlertDescription>As alterações foram salvas.</AlertDescription>
         </Alert>
+        <CalendarNoticeAlert notice={state.calendar} />
         <DialogFooter>
           <Button type="button" onClick={onDone}>
             Concluir

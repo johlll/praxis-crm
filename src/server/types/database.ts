@@ -3714,6 +3714,10 @@ export type Database = {
           total_count: number
         }[]
       }
+      list_activity_calendar_links: {
+        Args: { p_activity_ids: string[] }
+        Returns: Json
+      }
       list_calendar_connections: {
         Args: { p_workspace_id: string }
         Returns: Json

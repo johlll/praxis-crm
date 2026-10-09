@@ -16,6 +16,9 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { CalendarNoticeAlert } from "@/components/calendar/calendar-notice";
+import { CalendarOptionsFields } from "@/components/calendar/calendar-options-fields";
+import { useCalendarCapabilities } from "@/components/calendar/calendar-capabilities";
 import { createActivityAction, type ActivityActionState } from "@/modules/activities/actions";
 import { ACTIVITY_TYPES } from "@/modules/activities/schema";
 import { LEAD_PRIORITIES } from "@/modules/leads/schema";
@@ -81,6 +84,11 @@ function CreateActivityDialogBody({
   onDone: () => void;
 }) {
   const [state, formAction, pending] = useActionState(createActivityAction, INITIAL_STATE);
+  const caps = useCalendarCapabilities();
+  // O Google Agenda só se aplica a reunião com horário: acompanha o que o usuário digita.
+  const [type, setType] = useState("task");
+  const [time, setTime] = useState("");
+  const offerCalendar = caps.enabled && caps.canUse && type === "meeting" && time !== "";
 
   if (state.ok) {
     return (
@@ -91,6 +99,7 @@ function CreateActivityDialogBody({
         <Alert variant="success">
           <AlertDescription>A atividade já aparece na Central de Atividades.</AlertDescription>
         </Alert>
+        <CalendarNoticeAlert notice={state.calendar} />
         <DialogFooter>
           <Button type="button" onClick={onDone}>
             Concluir
@@ -138,6 +147,7 @@ function CreateActivityDialogBody({
             id="activity-type"
             name="type"
             defaultValue="task"
+            onChange={(e) => setType(e.target.value)}
             className="h-9 rounded-input border border-border-input bg-surface px-3 text-body text-text"
           >
             {ACTIVITY_TYPES.map((type) => (
@@ -160,7 +170,7 @@ function CreateActivityDialogBody({
           </FormField>
           <FormField>
             <FormLabel htmlFor="activity-due-time">Horário (opcional)</FormLabel>
-            <Input id="activity-due-time" name="dueTime" type="time" />
+            <Input id="activity-due-time" name="dueTime" type="time" onChange={(e) => setTime(e.target.value)} />
           </FormField>
         </div>
 
@@ -197,6 +207,23 @@ function CreateActivityDialogBody({
             </select>
           </FormField>
         </div>
+
+        {offerCalendar && caps.hasConnection ? (
+          <CalendarOptionsFields
+            idPrefix="activity"
+            getSlot={(form) => {
+              const data = new FormData(form);
+              const dueDate = String(data.get("dueDate") ?? "");
+              const dueTime = String(data.get("dueTime") ?? "");
+              return dueDate && dueTime ? { dueDate, dueTime } : null;
+            }}
+          />
+        ) : null}
+        {offerCalendar && !caps.hasConnection ? (
+          <p className="text-small text-text-secondary">
+            Para adicionar este compromisso ao Google Agenda, conecte a sua agenda em Configurações → Google Agenda.
+          </p>
+        ) : null}
 
         <FormField>
           <FormLabel htmlFor="activity-notes">Notas (opcional)</FormLabel>
