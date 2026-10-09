@@ -195,6 +195,8 @@ select is(
 );
 update public.calendar_event_links set status = 'linked' where id = (:'link_b')::uuid;
 select stop_calendar_channel('canal-b', :'dono'::uuid, 'teste');
+
+select set_config('request.headers', :'h_prev', true);
 select throws_ok(
   format($i$ select list_calendar_links_for_sync(%L::uuid, 'cal-a@x', %L::uuid) $i$, :'conn', :'dono'),
   'P0001', 'calendar_environment_mismatch', 'o preview não lê os vínculos de production'

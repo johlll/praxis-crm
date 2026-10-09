@@ -147,6 +147,15 @@ jobs:
       - name: Testes e2e (login, workspace, convite, troca, logout)
         run: npm run test:e2e
 
+      - name: Teste de concorrência real (B2 — trava da sincronização de agenda)
+        # pgTAP roda numa sessão só: prova a trava em sequência. Aqui, duas
+        # sessões psql com transações abertas ao mesmo tempo provam que quem
+        # aplica com a trava bloqueia a troca dela até terminar, e que quem a
+        # perdeu espera e é recusado — ver scripts/b2-sync-lease-concurrency-check.sh.
+        # Cria um workspace próprio; roda depois do e2e porque o passo
+        # seguinte recria o banco local.
+        run: bash scripts/b2-sync-lease-concurrency-check.sh
+
       - name: Atualização a partir da versão anterior (numeração de propostas)
         # "Aplicar migrations do zero" já valida a criação do banco; este
         # passo valida a ATUALIZAÇÃO com dados emitidos pela versão anterior.
