@@ -10,11 +10,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ACTIVITY_ID, CALENDAR_ID, activity, makeFixture } from "../support/calendar-fixture";
 import { InboundMemoryStore } from "../support/calendar-inbound-store";
+import { MemorySchedulerStore } from "../support/calendar-scheduler-store";
 
 const m = vi.hoisted(() => ({
   provider: { value: null as unknown },
   store: { value: null as unknown },
   storeCreated: vi.fn(),
+  scheduler: { value: null as unknown },
+  schedulerCreated: vi.fn(),
   accessToken: { value: "" },
 }));
 
@@ -32,6 +35,13 @@ vi.mock("@/server/calendar/admin/inbound-store", () => ({
     return m.store.value;
   },
 }));
+vi.mock("@/server/calendar/admin/scheduler-store", () => ({
+  createSupabaseSchedulerStore: () => {
+    m.schedulerCreated();
+    return m.scheduler.value;
+  },
+  createResendAlertSender: () => null,
+}));
 vi.mock("@/server/calendar/connection-context", () => ({
   loadConnectionContext: async () => ({ accessToken: m.accessToken.value }),
 }));
@@ -41,13 +51,15 @@ import { POST as webhook } from "@/app/api/calendar/webhook/route";
 import { createAppointment } from "@/server/calendar/sync/appointments";
 import { isPublicPath } from "@/proxy";
 
-const cronRequest = (auth?: string) =>
-  new Request("https://crm.exemplo.test/api/cron/calendar", { method: "POST", headers: auth ? { authorization: auth } : {} });
+const cronRequest = (auth?: string, query = "") =>
+  new Request(`https://crm.exemplo.test/api/cron/calendar${query}`, { method: "POST", headers: auth ? { authorization: auth } : {} });
 
 beforeEach(() => {
   m.provider.value = null;
   m.store.value = null;
   m.storeCreated.mockClear();
+  m.scheduler.value = null;
+  m.schedulerCreated.mockClear();
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
@@ -63,6 +75,7 @@ describe("/api/cron/calendar", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ enabled: false });
     expect(m.storeCreated).not.toHaveBeenCalled();
+    expect(m.schedulerCreated).not.toHaveBeenCalled(); // nem o batimento
   });
 
   it("ligada (simulado): roda a manutenção e devolve só contagens, nunca conteúdo de evento", async () => {
@@ -73,15 +86,52 @@ describe("/api/cron/calendar", () => {
     f.provider.externalEdit(CALENDAR_ID, created.eventId, { summary: "Título sigiloso do Google" });
     m.provider.value = f.provider;
     m.store.value = new InboundMemoryStore(f.store, () => new Date());
+    const scheduler = new MemorySchedulerStore(() => new Date());
+    m.scheduler.value = scheduler;
     m.accessToken.value = f.conn.accessToken;
 
     const res = await cron(cronRequest("Bearer segredo-de-teste"));
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body).toMatchObject({ enabled: true, targets: 1, synced: 1 });
+    expect(body).toMatchObject({ enabled: true, outcome: "ok", detector: null, targets: 1, synced: 1 });
     expect(JSON.stringify(body)).not.toMatch(/sigiloso|Reunião/);
     expect(f.store.activities.get(ACTIVITY_ID)!.title).toBe("Título sigiloso do Google");
+    // Chamada avulsa: batimento "manual", que não conta como agendador automático.
+    expect([...scheduler.heartbeats.keys()]).toEqual(["manual"]);
+  });
+
+  it("rodada em que a agenda falha: 503 com as contagens e batimento de falha (não é \"ok\")", async () => {
+    const f = await makeFixture();
+    f.store.setActivity(activity());
+    const created = await createAppointment(f.deps, f.conn, activity());
+    if (created.status !== "created") throw new Error("setup");
+    f.provider.injectFault({ operation: "list", kind: "status", status: 503 });
+    m.provider.value = f.provider;
+    m.store.value = new InboundMemoryStore(f.store, () => new Date());
+    const scheduler = new MemorySchedulerStore(() => new Date());
+    m.scheduler.value = scheduler;
+    m.accessToken.value = f.conn.accessToken;
+
+    const res = await cron(cronRequest("Bearer segredo-de-teste"));
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ enabled: true, outcome: "failed", targets: 1, synced: 0, failed: 1 });
+    expect(scheduler.heartbeats.get("manual")).toMatchObject({ lastOutcome: "failed", lastSuccessAt: null, report: { failed: 1 } });
+  });
+
+  it("source=github: batimento da recuperação adicional e Detector 1 (principal desligado por padrão: nada a vigiar)", async () => {
+    const f = await makeFixture();
+    m.provider.value = f.provider;
+    m.store.value = new InboundMemoryStore(f.store, () => new Date());
+    const scheduler = new MemorySchedulerStore(() => new Date());
+    m.scheduler.value = scheduler;
+
+    const body = await (await cron(cronRequest("Bearer segredo-de-teste", "?source=github"))).json();
+
+    expect(body).toMatchObject({ enabled: true, detector: "scheduler_disabled" });
+    expect([...scheduler.heartbeats.keys()]).toEqual(["github"]);
+    expect(scheduler.alerts).toEqual([]);
   });
 });
 

@@ -518,9 +518,15 @@ async function pushUpdate(
       if (!reachable) return accessLost();
     }
 
-    // Sem duração pedida, o evento mantém a que tem no Google: o CRM só conhece
-    // o início, então reagendar não pode encurtar nem alongar o evento.
-    const googleDuration = req.explicitDuration === null && google ? durationOf(google) : null;
+    // Sem duração pedida, a duração que o Google MUDOU desde a base é mantida:
+    // o CRM só conhece o início, então reagendar não encurta nem alonga o que
+    // foi mudado lá. Se o Google não mudou a duração, vale a do vínculo — a
+    // mesma da base, salvo quando o CRM a fixou (restauração de um conflito
+    // de horário), e assim ela sobrevive a uma nova tentativa.
+    const eventDuration = google ? durationOf(google) : null;
+    const baseDuration = base.start && base.end ? durationOf({ start: { dateTime: base.start }, end: { dateTime: base.end } }) : null;
+    const googleDuration =
+      req.explicitDuration === null && eventDuration !== null && eventDuration !== baseDuration ? eventDuration : null;
     const duration = req.explicitDuration ?? googleDuration ?? link.durationMinutes;
     const wanted = req.want(activity, duration);
 

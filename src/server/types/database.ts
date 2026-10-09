@@ -360,6 +360,7 @@ export type Database = {
           meet_request_id: string | null
           meet_status: string | null
           meet_url: string | null
+          recovery_pending_at: string | null
           status: Database["public"]["Enums"]["calendar_link_status"]
           sync_error: string | null
           sync_operation: string | null
@@ -389,6 +390,7 @@ export type Database = {
           meet_request_id?: string | null
           meet_status?: string | null
           meet_url?: string | null
+          recovery_pending_at?: string | null
           status?: Database["public"]["Enums"]["calendar_link_status"]
           sync_error?: string | null
           sync_operation?: string | null
@@ -418,6 +420,7 @@ export type Database = {
           meet_request_id?: string | null
           meet_status?: string | null
           meet_url?: string | null
+          recovery_pending_at?: string | null
           status?: Database["public"]["Enums"]["calendar_link_status"]
           sync_error?: string | null
           sync_operation?: string | null
@@ -450,6 +453,81 @@ export type Database = {
           },
         ]
       }
+      calendar_scheduler_alerts: {
+        Row: {
+          created_at: string
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          error: string | null
+          finished_at: string | null
+          id: string
+          kind: string
+          recipients: number
+          scheduler: string
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          kind: string
+          recipients?: number
+          scheduler: string
+          status?: string
+        }
+        Update: {
+          created_at?: string
+          environment?: Database["public"]["Enums"]["calendar_environment"]
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          kind?: string
+          recipients?: number
+          scheduler?: string
+          status?: string
+        }
+        Relationships: []
+      }
+      calendar_scheduler_heartbeats: {
+        Row: {
+          created_at: string
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          id: string
+          last_outcome: string
+          last_report: Json
+          last_run_at: string
+          last_success_at: string | null
+          runs: number
+          scheduler: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          id?: string
+          last_outcome: string
+          last_report?: Json
+          last_run_at: string
+          last_success_at?: string | null
+          runs?: number
+          scheduler: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          environment?: Database["public"]["Enums"]["calendar_environment"]
+          id?: string
+          last_outcome?: string
+          last_report?: Json
+          last_run_at?: string
+          last_success_at?: string | null
+          runs?: number
+          scheduler?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       calendar_sync_conflicts: {
         Row: {
           created_at: string
@@ -461,6 +539,9 @@ export type Database = {
           id: string
           link_id: string
           resolution: string
+          restored_activity_version: number | null
+          restored_at: string | null
+          restored_by: string | null
           workspace_id: string
         }
         Insert: {
@@ -473,6 +554,9 @@ export type Database = {
           id?: string
           link_id: string
           resolution: string
+          restored_activity_version?: number | null
+          restored_at?: string | null
+          restored_by?: string | null
           workspace_id: string
         }
         Update: {
@@ -485,6 +569,9 @@ export type Database = {
           id?: string
           link_id?: string
           resolution?: string
+          restored_activity_version?: number | null
+          restored_at?: string | null
+          restored_by?: string | null
           workspace_id?: string
         }
         Relationships: [
@@ -3512,6 +3599,14 @@ export type Database = {
         Args: { p_limit?: number }
         Returns: Json
       }
+      claim_calendar_scheduler_alert: {
+        Args: {
+          p_cooldown_minutes?: number
+          p_kind: string
+          p_scheduler: string
+        }
+        Returns: Json
+      }
       claim_calendar_sync: {
         Args: {
           p_actor_user_id: string
@@ -3812,6 +3907,18 @@ export type Database = {
         }
         Returns: undefined
       }
+      finish_calendar_link_recovery: {
+        Args: {
+          p_actor_user_id: string
+          p_connection_id: string
+          p_link_id: string
+        }
+        Returns: boolean
+      }
+      finish_calendar_scheduler_alert: {
+        Args: { p_alert_id: string; p_error: string; p_status: string }
+        Returns: undefined
+      }
       finish_calendar_sync: {
         Args: {
           p_actor_user_id: string
@@ -3843,6 +3950,10 @@ export type Database = {
       }
       get_calendar_link: {
         Args: { p_activity_id: string; p_actor_user_id: string }
+        Returns: Json
+      }
+      get_calendar_sync_health: {
+        Args: { p_workspace_id: string }
         Returns: Json
       }
       get_client: { Args: { p_client_id: string }; Returns: Json }
@@ -3980,6 +4091,7 @@ export type Database = {
         }
         Returns: Json
       }
+      list_calendar_scheduler_heartbeats: { Args: never; Returns: Json }
       list_clients: {
         Args: {
           p_page?: number
@@ -4057,6 +4169,14 @@ export type Database = {
         Args: { p_actor_user_id: string; p_connection_id: string }
         Returns: Json
       }
+      list_own_calendar_sync_targets: {
+        Args: { p_actor_user_id: string; p_connection_id: string }
+        Returns: Json
+      }
+      list_pending_calendar_recoveries: {
+        Args: { p_actor_user_id: string; p_connection_id: string }
+        Returns: Json
+      }
       list_proposal_documents: {
         Args: { p_proposal_id: string }
         Returns: Json
@@ -4066,6 +4186,10 @@ export type Database = {
         Returns: Json
       }
       list_proposals_for_lead: { Args: { p_lead_id: string }; Returns: Json }
+      list_recoverable_calendar_links: {
+        Args: { p_actor_user_id: string; p_connection_id: string }
+        Returns: Json
+      }
       lose_opportunity: {
         Args: {
           p_followup_date?: string
@@ -4218,6 +4342,10 @@ export type Database = {
         }
         Returns: string
       }
+      record_calendar_scheduler_heartbeat: {
+        Args: { p_outcome: string; p_report: Json; p_scheduler: string }
+        Returns: undefined
+      }
       register_contact_consent: {
         Args: {
           p_accepted_text?: string
@@ -4227,6 +4355,14 @@ export type Database = {
           p_legal_basis: Database["public"]["Enums"]["consent_legal_basis"]
           p_purpose: string
           p_purpose_code?: Database["public"]["Enums"]["consent_purpose"]
+        }
+        Returns: string
+      }
+      relink_recovered_calendar_link: {
+        Args: {
+          p_actor_user_id: string
+          p_connection_id: string
+          p_link_id: string
         }
         Returns: string
       }
@@ -4274,6 +4410,10 @@ export type Database = {
       }
       resolve_form_endpoint: { Args: { p_public_key: string }; Returns: Json }
       resolve_stale_outbox_batch: { Args: { p_limit?: number }; Returns: Json }
+      restore_calendar_conflict: {
+        Args: { p_actor_user_id: string; p_conflict_id: string }
+        Returns: Json
+      }
       reveal_contact_cpf_cnpj: {
         Args: { p_contact_id: string; p_reason?: string }
         Returns: {

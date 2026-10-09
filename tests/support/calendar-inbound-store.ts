@@ -22,6 +22,8 @@ import type { MemoryStore } from "./calendar-memory-store";
  * pgTAP (`24_b2_google_to_crm_sync`).
  */
 
+type MemoryLink = MemoryStore["links"] extends Map<string, infer L> ? L : never;
+
 type Connection = { id: string; userId: string; workspaceId: string; status: "active" | "needs_reauth" | "disconnected" };
 
 type StateRow = {
@@ -65,6 +67,8 @@ export class InboundMemoryStore implements InboundStore {
   audit: Array<{ action: string; metadata: Record<string, unknown> }> = [];
   /** Toda aplicação pedida (para provar o que NÃO foi aplicado). */
   applyCalls: Array<{ linkId: string; status: string }> = [];
+  /** `recovery_pending_at` dos vínculos revinculados (id → instante). */
+  recoveryPending = new Map<string, number>();
   private beforeApply: (() => void | Promise<void>) | undefined;
   private seq = 0;
 
@@ -363,6 +367,81 @@ export class InboundMemoryStore implements InboundStore {
     if (!c || c.userId !== actor || c.status === "disconnected") throw new Error("connection_not_found");
     c.status = "needs_reauth";
     this.audit.push({ action: "calendar.connection.needs_reauth", metadata: { reason } });
+  }
+
+  async listOwnSyncTargets(actor: string, connectionId: string) {
+    this.ownActive(actor, connectionId);
+    const calendars = new Set(
+      [...this.base.links.values()]
+        .filter((l) => l.connectionId === connectionId && l.status !== "unlinked" && l.environment === this.base.environment)
+        .map((l) => l.calendarId),
+    );
+    return [...calendars].sort().map((calendarId) => {
+      const s = this.states.get(this.key(connectionId, calendarId));
+      return {
+        calendarId,
+        lastRunAt: s?.lastRunAt ?? null,
+        leaseUntil: s?.leaseUntil ? new Date(s.leaseUntil).toISOString() : null,
+      };
+    });
+  }
+
+  /** Como `private.recoverable_link`. */
+  private recoverable(link: MemoryLink, conn: Connection): boolean {
+    const old = this.connections.get(link.connectionId);
+    return (
+      link.status === "unlinked" &&
+      !!link.activityId &&
+      link.environment === this.base.environment &&
+      link.connectionId !== conn.id &&
+      old?.userId === conn.userId &&
+      old.status === "disconnected" &&
+      this.base.activities.has(link.activityId) &&
+      ![...this.base.links.values()].some((o) => o !== link && o.activityId === link.activityId && o.status !== "unlinked")
+    );
+  }
+
+  async listRecoverableLinks(actor: string, connectionId: string) {
+    const conn = this.ownActive(actor, connectionId);
+    return [...this.base.links.values()]
+      .filter((l) => this.recoverable(l, conn))
+      .map((l) => ({ id: l.id, activityId: l.activityId, calendarId: l.calendarId, eventId: l.eventId }));
+  }
+
+  async relinkRecovered(actor: string, linkId: string, connectionId: string): Promise<"relinked" | "not_recoverable"> {
+    const conn = this.ownActive(actor, connectionId);
+    const link = this.base.links.get(linkId);
+    if (!link || !this.recoverable(link, conn)) return "not_recoverable";
+    Object.assign(link, { connectionId, status: "linked", syncState: "pending", syncError: "reconnected" });
+    this.recoveryPending.set(link.id, this.t());
+    this.audit.push({ action: "calendar.link.recovered", metadata: {} });
+    return "relinked";
+  }
+
+  /** Como `list_pending_calendar_recoveries`. */
+  async listPendingRecoveries(actor: string, connectionId: string) {
+    const conn = this.ownActive(actor, connectionId);
+    return [...this.base.links.values()]
+      .filter(
+        (l) =>
+          l.connectionId === conn.id &&
+          l.environment === this.base.environment &&
+          l.status !== "unlinked" &&
+          !!l.activityId &&
+          this.recoveryPending.has(l.id),
+      )
+      .sort((a, b) => this.recoveryPending.get(a.id)! - this.recoveryPending.get(b.id)! || a.id.localeCompare(b.id))
+      .map((l) => ({ id: l.id, activityId: l.activityId, calendarId: l.calendarId, eventId: l.eventId }));
+  }
+
+  /** Como `finish_calendar_link_recovery`. */
+  async finishRecovery(actor: string, linkId: string, connectionId: string): Promise<boolean> {
+    const conn = this.ownActive(actor, connectionId);
+    const link = this.base.links.get(linkId);
+    if (!link || link.connectionId !== conn.id || !this.recoveryPending.has(linkId)) return false;
+    this.recoveryPending.delete(linkId);
+    this.audit.push({ action: "calendar.link.recovery_completed", metadata: {} });
+    return true;
   }
 
   async beginChannel(actor: string, params: { connectionId: string; calendarId: string; channelId: string; tokenHash: string }): Promise<void> {

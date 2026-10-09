@@ -121,6 +121,7 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   invalid_duration: "Informe uma duração entre 15 e 480 minutos.",
   not_linked: "Este compromisso ainda não está vinculado à agenda.",
   link_not_found: "Vínculo com a agenda não encontrado.",
+  conflict_not_found: "Conflito de agenda não encontrado.",
   link_connection_mismatch:
     "Este compromisso foi criado na agenda de outra conexão. Use a conexão que o criou para alterá-lo.",
   calendar_link_mismatch: "Este compromisso está vinculado à conexão de outra pessoa e não pode ser alterado por esta.",

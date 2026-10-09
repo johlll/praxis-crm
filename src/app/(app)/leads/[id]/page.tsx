@@ -65,6 +65,8 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
   const canEdit = roleHasPermission(user.role, "lead.edit");
   const canEditOpportunities = roleHasPermission(user.role, "opportunity.edit");
   const canEditActivities = roleHasPermission(user.role, "activity.edit");
+  // Restaurar o valor do CRM num conflito de agenda (o servidor confere o resto).
+  const canRestoreCalendar = roleHasPermission(user.role, "calendar.connect_own");
   const canEditProposals = roleHasPermission(user.role, "proposal.edit");
   // A11: corrigir vínculo de atribuição é ação sensível (owner/admin/manager).
   const canCorrectAttribution = roleHasPermission(user.role, "attribution.correct");
@@ -239,6 +241,7 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
                     initialItems={timeline.items}
                     initialHasMore={timeline.hasMore}
                     members={members}
+                    canRestoreCalendar={canRestoreCalendar}
                   />
                 </section>
               </div>
@@ -292,6 +295,7 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
                 initialHasMore={timeline.hasMore}
                 members={members}
                 showFilters={false}
+                canRestoreCalendar={canRestoreCalendar}
               />
             }
           />

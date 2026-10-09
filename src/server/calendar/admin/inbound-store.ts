@@ -94,6 +94,53 @@ export function createSupabaseInboundStore(): InboundStore {
       check(error);
     },
 
+    async listOwnSyncTargets(actorUserId, connectionId) {
+      const { data, error } = await admin.rpc("list_own_calendar_sync_targets", {
+        p_connection_id: connectionId,
+        p_actor_user_id: actorUserId,
+      });
+      check(error);
+      return (data as unknown as Array<{ calendarId: string; lastRunAt: string | null; leaseUntil: string | null }> | null) ?? [];
+    },
+
+    async listRecoverableLinks(actorUserId, connectionId) {
+      const { data, error } = await admin.rpc("list_recoverable_calendar_links", {
+        p_connection_id: connectionId,
+        p_actor_user_id: actorUserId,
+      });
+      check(error);
+      return (data as unknown as Array<{ id: string; activityId: string; calendarId: string; eventId: string }> | null) ?? [];
+    },
+
+    async relinkRecovered(actorUserId, linkId, connectionId) {
+      const { data, error } = await admin.rpc("relink_recovered_calendar_link", {
+        p_link_id: linkId,
+        p_connection_id: connectionId,
+        p_actor_user_id: actorUserId,
+      });
+      check(error);
+      return data === "relinked" ? "relinked" : "not_recoverable";
+    },
+
+    async listPendingRecoveries(actorUserId, connectionId) {
+      const { data, error } = await admin.rpc("list_pending_calendar_recoveries", {
+        p_connection_id: connectionId,
+        p_actor_user_id: actorUserId,
+      });
+      check(error);
+      return (data as unknown as Array<{ id: string; activityId: string; calendarId: string; eventId: string }> | null) ?? [];
+    },
+
+    async finishRecovery(actorUserId, linkId, connectionId) {
+      const { data, error } = await admin.rpc("finish_calendar_link_recovery", {
+        p_link_id: linkId,
+        p_connection_id: connectionId,
+        p_actor_user_id: actorUserId,
+      });
+      check(error);
+      return data === true;
+    },
+
     async beginChannel(actorUserId, params) {
       const { error } = await admin.rpc("begin_calendar_channel", {
         p_connection_id: params.connectionId,

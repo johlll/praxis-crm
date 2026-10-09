@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   connectCalendarAction,
   disconnectCalendarAction,
+  recoverCalendarLinksAction,
   selectCalendarAction,
   type CalendarActionState,
 } from "@/modules/calendar/actions";
@@ -19,6 +20,15 @@ function ErrorLine({ state }: { state: CalendarActionState }) {
   return (
     <Alert variant="danger">
       <AlertDescription>{state.error}</AlertDescription>
+    </Alert>
+  );
+}
+
+function MessageLine({ state }: { state: CalendarActionState }) {
+  if (!state.ok || !state.message) return null;
+  return (
+    <Alert variant="success">
+      <AlertDescription>{state.message}</AlertDescription>
     </Alert>
   );
 }
@@ -91,6 +101,27 @@ export function DisconnectCalendarForm({ connectionId }: { connectionId: string 
       <p className="text-meta text-text-tertiary">
         Os tokens deste ambiente são apagados. Nenhum evento do Google nem compromisso do CRM é removido.
       </p>
+      <ErrorLine state={state} />
+    </form>
+  );
+}
+
+/**
+ * Reconexão (§6.5): ao conectar e escolher a agenda, os compromissos de uma
+ * desconexão anterior são reencontrados automaticamente. Este botão repete a
+ * busca e mostra o resultado (o Google pode ter falhado na primeira vez).
+ */
+export function RecoverCalendarLinksForm() {
+  const [state, action, pending] = useActionState(recoverCalendarLinksAction, INITIAL);
+  return (
+    <form action={action} className="flex flex-col gap-2">
+      <Button type="submit" variant="secondary" disabled={pending}>
+        Reencontrar compromissos
+      </Button>
+      <p className="text-meta text-text-tertiary">
+        Volta a vincular, depois de conferir no Google, os compromissos de uma conexão anterior desta conta.
+      </p>
+      <MessageLine state={state} />
       <ErrorLine state={state} />
     </form>
   );

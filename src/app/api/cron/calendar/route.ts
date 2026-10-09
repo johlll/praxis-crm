@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { runEnvironmentCalendarMaintenance } from "@/server/calendar/background";
+import { runScheduledCalendarMaintenance } from "@/server/calendar/background";
+import type { SchedulerSource } from "@/server/calendar/sync/scheduled";
 import { getIngestConfig, IngestConfigError } from "@/server/ingest/config";
 
 export const runtime = "nodejs";
@@ -16,7 +17,17 @@ export const dynamic = "force-dynamic";
  *
  * Sem provedor configurado (hoje, em Preview e Production) não toca em nada.
  * A resposta tem só contagens, nunca conteúdo de evento.
+ *
+ * `?source=` diz quem chamou, para o batimento (§9.3): `github` (a
+ * recuperação adicional, que também confere o agendador principal —
+ * Detector 1) ou `manual` (padrão). O agendador principal (Inngest) não usa
+ * esta rota: chama a mesma rotina por dentro.
  */
+
+function sourceOf(request: Request): SchedulerSource {
+  const source = new URL(request.url).searchParams.get("source");
+  return source === "github" ? "github" : "manual";
+}
 
 function authorized(request: Request): boolean {
   let secret: string;
@@ -34,9 +45,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   try {
-    const report = await runEnvironmentCalendarMaintenance();
-    if (!report) return NextResponse.json({ enabled: false });
-    return NextResponse.json({ enabled: true, ...report });
+    const result = await runScheduledCalendarMaintenance(sourceOf(request));
+    if (!result) return NextResponse.json({ enabled: false });
+    // `outcome`: ok | partial | failed (rodada desta chamada); `detector`: o
+    // agendador principal (só com source=github). Rodada que falhou responde
+    // 503 — com as contagens — para quem chamou não a tomar por sucesso.
+    return NextResponse.json(
+      { enabled: true, outcome: result.outcome, detector: result.detector, ...(result.report ?? {}) },
+      { status: result.outcome === "failed" ? 503 : 200 },
+    );
   } catch (error) {
     // Só o código: a mensagem original não sai daqui.
     console.error(JSON.stringify({ event: "calendar_maintenance_failed", code: error instanceof Error ? error.name : "unknown" }));

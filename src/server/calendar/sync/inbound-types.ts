@@ -142,6 +142,27 @@ export interface InboundStore {
 
   markNeedsReauth(actorUserId: string, connectionId: string, reason: string): Promise<void>;
 
+  /** Sob demanda: agendas da PRÓPRIA conexão com vínculo ativo. */
+  listOwnSyncTargets(
+    actorUserId: string,
+    connectionId: string,
+  ): Promise<Array<{ calendarId: string; lastRunAt: string | null; leaseUntil: string | null }>>;
+
+  /** Reconexão: vínculos desfeitos por desconexão anterior do mesmo usuário. */
+  listRecoverableLinks(
+    actorUserId: string,
+    connectionId: string,
+  ): Promise<Array<{ id: string; activityId: string; calendarId: string; eventId: string }>>;
+  /** Revincula; a recuperação fica PENDENTE no vínculo até `finishRecovery`. */
+  relinkRecovered(actorUserId: string, linkId: string, connectionId: string): Promise<"relinked" | "not_recoverable">;
+  /** Recuperações da própria conexão revinculadas e ainda não concluídas (desta tentativa ou de uma anterior). */
+  listPendingRecoveries(
+    actorUserId: string,
+    connectionId: string,
+  ): Promise<Array<{ id: string; activityId: string; calendarId: string; eventId: string }>>;
+  /** Entrada e saída concluídas. `false` = não estava pendente. */
+  finishRecovery(actorUserId: string, linkId: string, connectionId: string): Promise<boolean>;
+
   beginChannel(actorUserId: string, params: { connectionId: string; calendarId: string; channelId: string; tokenHash: string }): Promise<void>;
   activateChannel(
     actorUserId: string,

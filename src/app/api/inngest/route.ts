@@ -1,6 +1,7 @@
 import { serve } from "inngest/next";
 
 import { createAdminSupabaseClient } from "@/server/supabase/admin";
+import { calendarInngestFunctions } from "@/server/calendar/inngest";
 import { getIngestConfig, IngestConfigError } from "@/server/ingest/config";
 import { FORM_EVENT_NAME, inngestClient } from "@/server/ingest/publisher";
 import { processWebhookEvent } from "@/server/ingest/worker";
@@ -74,7 +75,9 @@ const processFormSubmission = client.createFunction(
   },
 );
 
-const handlers = serve({ client, functions: [processFormSubmission] });
+// B2: a função agendada da agenda só entra com CALENDAR_SCHEDULER_ENABLED=true
+// (desligada por padrão — ver src/server/calendar/inngest.ts).
+const handlers = serve({ client, functions: [processFormSubmission, ...calendarInngestFunctions(client)] });
 
 /**
  * Falha FECHADA por requisição: sem configuração obrigatória, a rota

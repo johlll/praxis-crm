@@ -5,8 +5,11 @@ import { Topbar } from "@/components/app-shell/topbar";
 import {
   ConnectCalendarForm,
   DisconnectCalendarForm,
+  RecoverCalendarLinksForm,
   SelectCalendarForm,
 } from "@/components/calendar/calendar-connection-forms";
+import { CalendarHealthNotices } from "@/components/calendar/calendar-health-notices";
+import { loadCalendarHealthNotices } from "@/modules/calendar/automation";
 import { getShellContext } from "@/modules/shell/queries";
 import { listCalendarConnections, listChoosableCalendars } from "@/modules/calendar/queries";
 import { requireMembership, roleHasPermission } from "@/server/authz/permissions";
@@ -49,6 +52,8 @@ export default async function IntegracoesPage() {
   const connections = await listCalendarConnections(activeWorkspace.id);
   const mine = connections.find((c) => c.isMine);
   const canManage = roleHasPermission(membership.role, "calendar.manage");
+  // Detector 2 (§9.3): sincronização automática atrasada, para owner/admin.
+  const healthNotices = canManage ? await loadCalendarHealthNotices(activeWorkspace.id) : [];
 
   const calendars =
     mine && mine.status === "active" && !mine.calendarId
@@ -64,6 +69,7 @@ export default async function IntegracoesPage() {
       <Topbar title="Integrações" subtitle="Google Agenda" user={user} />
       <main className="flex-1 overflow-y-auto p-5">
         <div className="mx-auto flex max-w-[560px] flex-col gap-4">
+          <CalendarHealthNotices notices={healthNotices} />
           {mine ? (
             <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
               <div>
@@ -81,6 +87,7 @@ export default async function IntegracoesPage() {
                   calendars={calendars.map((c) => ({ id: c.id, summary: c.summary }))}
                 />
               ) : null}
+              {mine.status === "active" && mine.calendarId ? <RecoverCalendarLinksForm /> : null}
               <DisconnectCalendarForm connectionId={mine.id} />
             </div>
           ) : (
