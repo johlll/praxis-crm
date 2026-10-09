@@ -247,6 +247,73 @@ export type Database = {
           },
         ]
       }
+      calendar_effect_intents: {
+        Row: {
+          activity_id: string | null
+          connection_id: string
+          created_at: string
+          created_by: string
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          error_code: string | null
+          expected: Json
+          id: string
+          operation: string
+          resolved_at: string | null
+          status: string
+          workspace_id: string
+        }
+        Insert: {
+          activity_id?: string | null
+          connection_id: string
+          created_at?: string
+          created_by: string
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          error_code?: string | null
+          expected?: Json
+          id?: string
+          operation: string
+          resolved_at?: string | null
+          status?: string
+          workspace_id: string
+        }
+        Update: {
+          activity_id?: string | null
+          connection_id?: string
+          created_at?: string
+          created_by?: string
+          environment?: Database["public"]["Enums"]["calendar_environment"]
+          error_code?: string | null
+          expected?: Json
+          id?: string
+          operation?: string
+          resolved_at?: string | null
+          status?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "calendar_effect_intents_activity_fkey"
+            columns: ["workspace_id", "activity_id"]
+            isOneToOne: false
+            referencedRelation: "activities"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "calendar_effect_intents_connection_fkey"
+            columns: ["workspace_id", "connection_id"]
+            isOneToOne: false
+            referencedRelation: "calendar_connections"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "calendar_effect_intents_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       calendar_environment_keys: {
         Row: {
           environment: Database["public"]["Enums"]["calendar_environment"]
@@ -268,39 +335,75 @@ export type Database = {
       calendar_event_links: {
         Row: {
           activity_id: string | null
+          base_cancelled: boolean
+          base_crm_version: number | null
+          base_end: string | null
+          base_etag: string | null
+          base_has_meet: boolean
+          base_start: string | null
+          base_title: string | null
           calendar_id: string
           connection_id: string
           created_at: string
+          duration_minutes: number
           environment: Database["public"]["Enums"]["calendar_environment"]
           event_id: string
           generation: number
           id: string
+          last_synced_at: string | null
+          meet_request_id: string | null
+          meet_status: string | null
+          meet_url: string | null
           status: Database["public"]["Enums"]["calendar_link_status"]
           updated_at: string
           workspace_id: string
         }
         Insert: {
           activity_id?: string | null
+          base_cancelled?: boolean
+          base_crm_version?: number | null
+          base_end?: string | null
+          base_etag?: string | null
+          base_has_meet?: boolean
+          base_start?: string | null
+          base_title?: string | null
           calendar_id: string
           connection_id: string
           created_at?: string
+          duration_minutes?: number
           environment: Database["public"]["Enums"]["calendar_environment"]
           event_id: string
           generation?: number
           id?: string
+          last_synced_at?: string | null
+          meet_request_id?: string | null
+          meet_status?: string | null
+          meet_url?: string | null
           status?: Database["public"]["Enums"]["calendar_link_status"]
           updated_at?: string
           workspace_id: string
         }
         Update: {
           activity_id?: string | null
+          base_cancelled?: boolean
+          base_crm_version?: number | null
+          base_end?: string | null
+          base_etag?: string | null
+          base_has_meet?: boolean
+          base_start?: string | null
+          base_title?: string | null
           calendar_id?: string
           connection_id?: string
           created_at?: string
+          duration_minutes?: number
           environment?: Database["public"]["Enums"]["calendar_environment"]
           event_id?: string
           generation?: number
           id?: string
+          last_synced_at?: string | null
+          meet_request_id?: string | null
+          meet_status?: string | null
+          meet_url?: string | null
           status?: Database["public"]["Enums"]["calendar_link_status"]
           updated_at?: string
           workspace_id?: string
@@ -322,6 +425,60 @@ export type Database = {
           },
           {
             foreignKeyName: "calendar_event_links_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      calendar_sync_conflicts: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          crm_value: Json | null
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          field: string
+          google_value: Json | null
+          id: string
+          link_id: string
+          resolution: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          crm_value?: Json | null
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          field: string
+          google_value?: Json | null
+          id?: string
+          link_id: string
+          resolution: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          crm_value?: Json | null
+          environment?: Database["public"]["Enums"]["calendar_environment"]
+          field?: string
+          google_value?: Json | null
+          id?: string
+          link_id?: string
+          resolution?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "calendar_sync_conflicts_link_id_fkey"
+            columns: ["link_id"]
+            isOneToOne: false
+            referencedRelation: "calendar_event_links"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "calendar_sync_conflicts_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
@@ -3058,6 +3215,17 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      apply_google_values_to_activity: {
+        Args: {
+          p_activity_id: string
+          p_actor_user_id: string
+          p_conflicts?: Json
+          p_due_at: string
+          p_expected_version: number
+          p_title: string
+        }
+        Returns: number
+      }
       apply_message_status_event: {
         Args: {
           p_error_code?: string
@@ -3095,6 +3263,16 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      begin_calendar_effect: {
+        Args: {
+          p_activity_id: string
+          p_actor_user_id: string
+          p_connection_id: string
+          p_expected: Json
+          p_operation: string
+        }
+        Returns: string
       }
       begin_proposal_document: {
         Args: { p_actor_user_id: string; p_proposal_id: string }
@@ -3417,6 +3595,10 @@ export type Database = {
           status: Database["public"]["Enums"]["calendar_connection_status"]
         }[]
       }
+      get_calendar_link: {
+        Args: { p_activity_id: string; p_actor_user_id: string }
+        Returns: Json
+      }
       get_client: { Args: { p_client_id: string }; Returns: Json }
       get_conflict_check: { Args: { p_lead_id: string }; Returns: Json }
       get_contact_merge_history: {
@@ -3732,6 +3914,17 @@ export type Database = {
         }
         Returns: undefined
       }
+      record_calendar_conflict: {
+        Args: {
+          p_actor_user_id: string
+          p_crm_value: Json
+          p_field: string
+          p_google_value: Json
+          p_link_id: string
+          p_resolution: string
+        }
+        Returns: string
+      }
       register_contact_consent: {
         Args: {
           p_accepted_text?: string
@@ -3762,6 +3955,16 @@ export type Database = {
           p_lock_version: number
         }
         Returns: undefined
+      }
+      resolve_calendar_effect: {
+        Args: {
+          p_actor_user_id: string
+          p_error_code: string
+          p_intent_id: string
+          p_state: Json
+          p_status: string
+        }
+        Returns: string
       }
       resolve_conversation_link: {
         Args: {
@@ -3914,6 +4117,16 @@ export type Database = {
           p_wa_message_id: string
         }
         Returns: Json
+      }
+      store_calendar_access_token: {
+        Args: {
+          p_access_token_ciphertext: string
+          p_access_token_expires_at: string
+          p_actor_user_id: string
+          p_connection_id: string
+          p_key_version: string
+        }
+        Returns: undefined
       }
       transfer_client_owner: {
         Args: {

@@ -226,6 +226,41 @@ pelo mesmo caminho de escrita com `If-Match`. Por campo:
   à base → repete com `If-Match`; outro → reaplica a regra 6.3); exclusão:
   `events.get` (404/cancelado → sucesso). Intenção sem desfecho vira alerta.
 
+### 6.8 Regras fixadas na revisão da etapa 2
+Quatro pontos da revisão da PR #25 foram reproduzidos com teste e passaram a
+ser regra (duas decisões de produto fecharam a revisão):
+
+- **O vínculo manda na conexão; a agenda selecionada afeta só compromissos
+  novos.** Reagendar, adicionar Meet e cancelar só valem para a conexão que
+  criou o vínculo — conferido antes de abrir intenção e de qualquer chamada ao
+  Google (`link_connection_mismatch`; no banco, `calendar_link_mismatch`).
+  Conexão de outro usuário é recusada. Trocar a agenda selecionada **não move
+  nem desvincula** nada: o compromisso existente continua operando no
+  `calendar_id` original do vínculo, pela mesma conexão autorizada.
+- **Perda de acesso é pendência explícita, nunca "evento apagado".** `401`/`403`
+  — ou um `get` que volta "não existe" com a agenda já inacessível
+  (`calendarAccessible` = falso) — encerra a operação como `access_lost`: o
+  vínculo vira `needs_attention` (auditado), nada é cancelado nem desvinculado,
+  e a próxima operação, com o acesso restabelecido, devolve o vínculo a
+  `linked`. "Não existe" com a agenda acessível continua sendo cancelamento no
+  Google.
+- **Aplicar o valor do Google exige a versão lida da atividade.**
+  `apply_google_values_to_activity` compara `lock_version`; se o CRM mudou
+  depois da leitura, não aplica nada, não grava conflito e devolve `null`. O
+  orquestrador relê a atividade pela sessão e reavalia tudo. O valor do CRM
+  que perdeu é gravado na **mesma transação** da aplicação.
+- **Meet: chave ausente preserva, `null` remove.** No estado enviado a
+  `resolve_calendar_effect`, `meetStatus`, `meetUrl` e `meetRequestId` só
+  mantêm o valor guardado quando a chave não vem; com `null`, o Google
+  informou que o Meet foi removido.
+- **Duração real, sem clamp.** Padrão de 60 min; o campo editável da interface
+  aceita 15–480 (validado na aplicação, sobre o que o usuário digita). O CRM só
+  conhece o início: sem duração pedida, o evento mantém a que tem no Google, e
+  uma mudança só de duração no Google não conflita com o CRM remarcar. Quando o
+  horário é reconciliado, a duração do vínculo é a **real** do evento que
+  ficou, inclusive de evento externo fora de 15–480 (a constraint do banco
+  exige apenas `> 0`).
+
 ## 7. Isolamento entre ambientes
 
 O Supabase é compartilhado, então o isolamento é de duas camadas:

@@ -72,17 +72,22 @@ function aad(ctx: TokenContext): Buffer {
 
 export type EncryptedToken = { ciphertextBase64: string; keyVersion: string };
 
-export function encryptCalendarToken(plain: string, ctx: TokenContext): EncryptedToken {
+/** `keyVersion` fixa a versão (renovar o token de acesso de uma conexão que
+ * ainda usa a versão antiga); sem ele, usa a ativa. */
+export function encryptCalendarToken(plain: string, ctx: TokenContext, keyVersion?: string): EncryptedToken {
   const { activeVersion, keys } = getCalendarTokenKeys();
+  const version = keyVersion ?? activeVersion;
+  const key = keys[version];
+  if (!key) throw new Error(`Nenhuma chave de token de calendário para a versão "${version}".`);
   const iv = randomBytes(IV_LENGTH);
-  const cipher = createCipheriv("aes-256-gcm", keys[activeVersion]!, iv);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
   cipher.setAAD(aad(ctx));
   const encrypted = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
   const authTag = cipher.getAuthTag();
   if (authTag.length !== AUTH_TAG_LENGTH) throw new Error("Tamanho de authTag inesperado.");
   return {
     ciphertextBase64: Buffer.concat([iv, authTag, encrypted]).toString("base64"),
-    keyVersion: activeVersion,
+    keyVersion: version,
   };
 }
 

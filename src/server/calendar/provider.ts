@@ -19,10 +19,14 @@ export type ProviderCalendar = {
   owned: boolean;
 };
 
-export interface CalendarProvider {
+import type { CalendarEventsApi } from "@/server/calendar/events-api";
+
+export interface CalendarProvider extends CalendarEventsApi {
   /** Troca o resultado do consentimento por tokens (OAuth). */
   exchangeAuthorization(authorization: string): Promise<ProviderTokens>;
   listCalendars(accessToken: string): Promise<ProviderCalendar[]>;
+  /** Novo token de acesso a partir do refresh token (OAuth). */
+  refreshAccessToken(refreshToken: string): Promise<{ accessToken: string; accessTokenExpiresAt: Date }>;
   revoke(token: string): Promise<void>;
 }
 
