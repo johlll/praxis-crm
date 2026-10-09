@@ -137,6 +137,6 @@ FINISH_OLD="$( (echo "$HEADERS_SQL"; echo "select finish_calendar_sync('$OLD'::u
 FINAL="$(psql_as b2_main -c "select a.title || '|' || a.lock_version || '|' || l.base_etag || '|' || coalesce(s.sync_token, '-') || '|' || (s.lease_id is not null and s.lease_id::text <> '$OLD')
   from public.activities a, public.calendar_event_links l, public.calendar_sync_state s
   where a.id = '$REUNIAO' and l.id = '$LINK' and s.connection_id = '$CONN' and s.calendar_id = '$CAL'")"
-[ "$FINAL" = "Título de A|$((V0 + 1))|\"2\"|-|t" ] || fail "estado final inesperado: $FINAL"
+[ "$FINAL" = "Título de A|$((V0 + 1))|\"2\"|-|true" ] || fail "estado final inesperado: $FINAL"
 echo "   ok: só a escrita feita com a trava válida ficou; token intacto; a trava é de quem assumiu"
 echo "== trava sob concorrência real: OK"

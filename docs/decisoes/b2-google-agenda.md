@@ -362,7 +362,10 @@ Primeira parte (**3a**), implementada com o provedor **simulado** (migration
   transação: nenhuma outra execução assume entre a conferência e a escrita.
   Ordem de bloqueio estado → vínculo nas duas funções que tocam os dois.
   Quem perdeu a trava não altera atividade, vínculo, conflito, token nem
-  auditoria, e o orquestrador para no ato (`lease_lost`).
+  auditoria, e o orquestrador para no ato (`lease_lost`). Provado em
+  sequência no pgTAP e sob concorrência real no CI
+  (`scripts/b2-sync-lease-concurrency-check.sh`: duas sessões com
+  transações abertas ao mesmo tempo).
 - **Paginação:** a consulta inicial (`syncToken`, `showDeleted`,
   `singleEvents`, `maxResults`) é repetida em **todas** as páginas; só o
   `pageToken` é acrescentado. O simulador recusa página de consulta
