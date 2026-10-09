@@ -163,13 +163,13 @@ describe("Detector 2: avisos de saúde", () => {
     expect(syncHealthNotices(health(), { now, schedulerEnabled: true })[0]).toMatchObject({ level: "warning", message: expect.stringMatching(/nenhuma execução/) });
     const at = (minutes: number) => new Date(now.getTime() - minutes * 60_000).toISOString();
     expect(
-      syncHealthNotices(health({ schedulers: [{ scheduler: "inngest", lastRunAt: at(61), lastOutcome: "ok" }] }), { now, schedulerEnabled: true })[0],
+      syncHealthNotices(health({ schedulers: [{ scheduler: "inngest", lastRunAt: at(61), lastOutcome: "ok", lastSuccessAt: at(61) }] }), { now, schedulerEnabled: true })[0],
     ).toMatchObject({ message: expect.stringMatching(/há 61 minutos/) });
     expect(
-      syncHealthNotices(health({ schedulers: [{ scheduler: "github", lastRunAt: at(10), lastOutcome: "ok" }] }), { now, schedulerEnabled: true }),
+      syncHealthNotices(health({ schedulers: [{ scheduler: "github", lastRunAt: at(10), lastOutcome: "ok", lastSuccessAt: at(10) }] }), { now, schedulerEnabled: true }),
     ).toEqual([]);
     expect(
-      syncHealthNotices(health({ schedulers: [{ scheduler: "manual", lastRunAt: at(1), lastOutcome: "ok" }] }), { now, schedulerEnabled: true })[0],
+      syncHealthNotices(health({ schedulers: [{ scheduler: "manual", lastRunAt: at(1), lastOutcome: "ok", lastSuccessAt: at(1) }] }), { now, schedulerEnabled: true })[0],
     ).toMatchObject({ level: "warning" });
   });
 

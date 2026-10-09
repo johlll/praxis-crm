@@ -67,6 +67,8 @@ export class InboundMemoryStore implements InboundStore {
   audit: Array<{ action: string; metadata: Record<string, unknown> }> = [];
   /** Toda aplicação pedida (para provar o que NÃO foi aplicado). */
   applyCalls: Array<{ linkId: string; status: string }> = [];
+  /** `recovery_pending_at` dos vínculos revinculados (id → instante). */
+  recoveryPending = new Map<string, number>();
   private beforeApply: (() => void | Promise<void>) | undefined;
   private seq = 0;
 
@@ -411,8 +413,35 @@ export class InboundMemoryStore implements InboundStore {
     const link = this.base.links.get(linkId);
     if (!link || !this.recoverable(link, conn)) return "not_recoverable";
     Object.assign(link, { connectionId, status: "linked", syncState: "pending", syncError: "reconnected" });
+    this.recoveryPending.set(link.id, this.t());
     this.audit.push({ action: "calendar.link.recovered", metadata: {} });
     return "relinked";
+  }
+
+  /** Como `list_pending_calendar_recoveries`. */
+  async listPendingRecoveries(actor: string, connectionId: string) {
+    const conn = this.ownActive(actor, connectionId);
+    return [...this.base.links.values()]
+      .filter(
+        (l) =>
+          l.connectionId === conn.id &&
+          l.environment === this.base.environment &&
+          l.status !== "unlinked" &&
+          !!l.activityId &&
+          this.recoveryPending.has(l.id),
+      )
+      .sort((a, b) => this.recoveryPending.get(a.id)! - this.recoveryPending.get(b.id)! || a.id.localeCompare(b.id))
+      .map((l) => ({ id: l.id, activityId: l.activityId, calendarId: l.calendarId, eventId: l.eventId }));
+  }
+
+  /** Como `finish_calendar_link_recovery`. */
+  async finishRecovery(actor: string, linkId: string, connectionId: string): Promise<boolean> {
+    const conn = this.ownActive(actor, connectionId);
+    const link = this.base.links.get(linkId);
+    if (!link || link.connectionId !== conn.id || !this.recoveryPending.has(linkId)) return false;
+    this.recoveryPending.delete(linkId);
+    this.audit.push({ action: "calendar.link.recovery_completed", metadata: {} });
+    return true;
   }
 
   async beginChannel(actor: string, params: { connectionId: string; calendarId: string; channelId: string; tokenHash: string }): Promise<void> {

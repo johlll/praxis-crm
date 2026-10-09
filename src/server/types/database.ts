@@ -360,6 +360,7 @@ export type Database = {
           meet_request_id: string | null
           meet_status: string | null
           meet_url: string | null
+          recovery_pending_at: string | null
           status: Database["public"]["Enums"]["calendar_link_status"]
           sync_error: string | null
           sync_operation: string | null
@@ -389,6 +390,7 @@ export type Database = {
           meet_request_id?: string | null
           meet_status?: string | null
           meet_url?: string | null
+          recovery_pending_at?: string | null
           status?: Database["public"]["Enums"]["calendar_link_status"]
           sync_error?: string | null
           sync_operation?: string | null
@@ -418,6 +420,7 @@ export type Database = {
           meet_request_id?: string | null
           meet_status?: string | null
           meet_url?: string | null
+          recovery_pending_at?: string | null
           status?: Database["public"]["Enums"]["calendar_link_status"]
           sync_error?: string | null
           sync_operation?: string | null
@@ -494,6 +497,7 @@ export type Database = {
           last_outcome: string
           last_report: Json
           last_run_at: string
+          last_success_at: string | null
           runs: number
           scheduler: string
           updated_at: string
@@ -505,6 +509,7 @@ export type Database = {
           last_outcome: string
           last_report?: Json
           last_run_at: string
+          last_success_at?: string | null
           runs?: number
           scheduler: string
           updated_at?: string
@@ -516,6 +521,7 @@ export type Database = {
           last_outcome?: string
           last_report?: Json
           last_run_at?: string
+          last_success_at?: string | null
           runs?: number
           scheduler?: string
           updated_at?: string
@@ -3901,6 +3907,14 @@ export type Database = {
         }
         Returns: undefined
       }
+      finish_calendar_link_recovery: {
+        Args: {
+          p_actor_user_id: string
+          p_connection_id: string
+          p_link_id: string
+        }
+        Returns: boolean
+      }
       finish_calendar_scheduler_alert: {
         Args: { p_alert_id: string; p_error: string; p_status: string }
         Returns: undefined
@@ -4156,6 +4170,10 @@ export type Database = {
         Returns: Json
       }
       list_own_calendar_sync_targets: {
+        Args: { p_actor_user_id: string; p_connection_id: string }
+        Returns: Json
+      }
+      list_pending_calendar_recoveries: {
         Args: { p_actor_user_id: string; p_connection_id: string }
         Returns: Json
       }

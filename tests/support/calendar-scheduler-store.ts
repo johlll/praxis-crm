@@ -1,4 +1,4 @@
-import type { AlertClaim, Heartbeat, SchedulerSource, SchedulerStore } from "@/server/calendar/sync/scheduled";
+import type { AlertClaim, Heartbeat, RunOutcome, SchedulerSource, SchedulerStore } from "@/server/calendar/sync/scheduled";
 
 /**
  * Batimento e alertas em memória, com a mesma semântica das RPCs da
@@ -15,20 +15,27 @@ export class MemorySchedulerStore implements SchedulerStore {
 
   constructor(readonly now: () => Date) {}
 
-  async recordHeartbeat(scheduler: SchedulerSource, outcome: "ok" | "failed", report: Record<string, number>): Promise<void> {
+  async recordHeartbeat(scheduler: SchedulerSource, outcome: RunOutcome, report: Record<string, number>): Promise<void> {
     const numeric = Object.fromEntries(Object.entries(report).filter(([, v]) => typeof v === "number"));
     const previous = this.heartbeats.get(scheduler);
     this.heartbeats.set(scheduler, {
       scheduler,
       lastRunAt: this.now().toISOString(),
       lastOutcome: outcome,
+      // Como no banco: só rodada `ok` avança o último sucesso.
+      lastSuccessAt: outcome === "ok" ? this.now().toISOString() : (previous?.lastSuccessAt ?? null),
       report: numeric,
       runs: (previous?.runs ?? 0) + 1,
     });
   }
 
   async listHeartbeats(): Promise<Heartbeat[]> {
-    return [...this.heartbeats.values()].map(({ scheduler, lastRunAt, lastOutcome }) => ({ scheduler, lastRunAt, lastOutcome }));
+    return [...this.heartbeats.values()].map(({ scheduler, lastRunAt, lastOutcome, lastSuccessAt }) => ({
+      scheduler,
+      lastRunAt,
+      lastOutcome,
+      lastSuccessAt,
+    }));
   }
 
   async claimAlert(_kind: "scheduler_stale", _scheduler: SchedulerSource, cooldownMinutes: number): Promise<AlertClaim | null> {

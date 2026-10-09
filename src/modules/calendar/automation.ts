@@ -74,13 +74,32 @@ export async function recoverOwnCalendarLinks(session: Session): Promise<Reconne
   }
 }
 
-/** Texto do resultado da recuperação, para a tela de Integrações. */
+/**
+ * Texto do resultado da recuperação, para a tela de Integrações. Conta o que
+ * de fato terminou: revincular sem concluir a sincronização é "pendente".
+ */
 export function describeRecovery(report: ReconnectReport | null): string | null {
-  if (!report || report.candidates === 0) return null;
-  const parts = [`${report.relinked} compromisso(s) reencontrado(s) no Google Agenda e vinculado(s) de novo.`];
-  if (report.gone > 0) parts.push(`${report.gone} não existe(m) mais no Google: a atividade continua no CRM, sem vínculo.`);
+  if (!report || (report.candidates === 0 && report.resumed === 0)) return null;
+  const parts: string[] = [];
+  if (report.relinked > 0) parts.push(`${report.relinked} compromisso(s) reencontrado(s) no Google Agenda e vinculado(s) de novo.`);
+  if (report.resumed > 0) parts.push(`${report.resumed} recuperação(ões) pendente(s) de uma tentativa anterior retomada(s).`);
+  if (report.completed > 0) {
+    parts.push(`${report.completed} recuperação(ões) concluída(s): o que mudou no Google e no CRM durante a desconexão foi sincronizado.`);
+  }
+  if (report.pending > 0) {
+    parts.push(
+      `${report.pending} ficou(aram) pendente(s): o Google não respondeu ou outra sincronização estava em andamento. Use “Reencontrar compromissos” de novo para concluir.`,
+    );
+  }
+  if (report.accessLost > 0) {
+    parts.push(
+      `${report.accessLost} ficou(aram) pendente(s) porque esta conta não alcança a agenda; com o acesso de volta, use “Reencontrar compromissos”.`,
+    );
+  }
+  if (report.gone > 0) parts.push(`${report.gone} não existe(m) mais no Google: a atividade continua no CRM.`);
   if (report.unreachable > 0) parts.push(`${report.unreachable} está(ão) numa agenda que esta conta não alcança.`);
   if (report.refused > 0) parts.push(`${report.refused} não foi(ram) vinculado(s): o evento no Google não é deste compromisso.`);
   if (report.failed > 0) parts.push(`${report.failed} não pôde(puderam) ser conferido(s) agora; use “Reencontrar compromissos” de novo.`);
-  return parts.join(" ");
+  if (report.notAppointment > 0) parts.push(`${report.notAppointment} deixou(aram) de ser reunião com horário e não volta(m) à agenda.`);
+  return parts.length > 0 ? parts.join(" ") : null;
 }

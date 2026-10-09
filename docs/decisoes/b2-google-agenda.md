@@ -473,20 +473,38 @@ continua desligado depois do merge.**
   `CRON_SECRET` do ambiente; ainda não existe). Chama
   `/api/cron/calendar?source=github`. Agendá-lo é decisão da etapa 4.
 - **Batimento** (`calendar_scheduler_heartbeats`): toda rodada — Inngest,
-  recuperação adicional ou chamada manual — grava quando rodou, se deu
-  certo e só contagens (o banco descarta qualquer valor que não seja
-  número). Rodada que falha também grava ("rodou e falhou" ≠ "não rodou").
+  recuperação adicional ou chamada manual — grava quando rodou, o desfecho
+  e só contagens (o banco descarta qualquer valor que não seja número).
+  "Executou recentemente" (`last_run_at`) e "sincronizou com sucesso"
+  (`last_success_at`, só rodada `ok`) são datas separadas. Desfecho:
+  - `ok`: toda agenda tentada sincronizou;
+  - `partial`: parte das agendas falhou (`failed > 0` e `synced > 0`);
+  - `failed`: a rodada lançou erro, ou houve falha e nenhuma agenda
+    sincronizou.
+  Agenda ocupada por outra execução, sem acesso ou conexão a reautorizar
+  NÃO é falha da rodada: é situação daquela conexão, que já aparece nela
+  (vínculo para atenção, conexão a reautorizar). Rodada que falha também
+  grava ("rodou e falhou" ≠ "não rodou"). A rota `/api/cron/calendar`
+  devolve o desfecho e as contagens; rodada `failed` responde 503 (o job
+  manual do GitHub fica vermelho e mostra o corpo).
 - **Detector 1** (§9.3): a recuperação adicional confere o batimento do
-  Inngest. Agendador principal desligado → nada a vigiar. Atrasado (> 60
-  min ou nunca rodou) com `CALENDAR_ALERTS_ENABLED` desligado → apurado e
-  respondido, sem e-mail nem reserva. Ligado → reserva atômica
+  Inngest. Agendador principal desligado → nada a vigiar. Rodou dentro do
+  prazo, mas a última rodada falhou → `last_run_failed`; parte falhou →
+  `last_run_partial` (nenhum dos dois é "saudável", nem "atrasado"; só a
+  resposta, sem e-mail — o e-mail continua só para atraso). Atrasado (> 60
+  min sem EXECUÇÃO, qualquer que tenha sido o desfecho, ou nunca rodou) com
+  `CALENDAR_ALERTS_ENABLED` desligado → apurado e respondido, sem e-mail
+  nem reserva. Ligado → reserva atômica
   (`claim_calendar_scheduler_alert`, no máximo um alerta a cada 6 h; falha
   não conta), um e-mail por destinatário (owner/admin dos workspaces com
   vínculo no ambiente; ninguém vê o endereço dos outros), sem conteúdo de
   evento, pelo Resend já usado nas propostas.
 - **Detector 2** (§9.3): na Agenda e em Integrações, owner/admin veem aviso
   quando há compromissos vinculados e a sincronização automática está
-  atrasada (> 60 min, ou nunca rodou) ou há canal com menos de 25% da vida.
+  atrasada (nenhuma execução automática em 60 min, ou nunca rodou), quando
+  ela roda mas a última execução falhou (com quando foi a última sem
+  falhas), quando parte das agendas falhou (as demais foram atualizadas) ou
+  há canal com menos de 25% da vida — cada caso com a sua mensagem.
   Com o agendador desligado, o aviso é informativo ("desligada neste
   ambiente; atualizada ao abrir a agenda e ao editar compromissos").
 - **Reconexão** (§6.5, critério 12): desconectar desfaz os vínculos; ao
@@ -496,13 +514,34 @@ continua desligado depois do merge.**
   existe e não tem outro vínculo ativo. Cada evento é conferido no Google:
   existe, não está cancelado, não é série e tem a marca deste compromisso e
   ambiente — senão não é adotado (nem recriado). O vínculo volta com a base
-  preservada; depois, listagem completa da agenda (Google → CRM) e saída de
+  preservada e a recuperação fica **pendente** nele (`recovery_pending_at`,
+  independente do `sync_error`, que a saída reescreve); depois, listagem
+  completa de cada agenda com recuperação pendente (Google → CRM) e saída de
   cada compromisso (CRM → Google), com as regras normais de conflito.
+  - Entrada que não termina (Google indisponível, outra execução com a
+    trava, sem acesso): a saída daquela agenda não roda e tudo fica
+    pendente.
+  - Saída: só `updated`, `unchanged`, `conflict_resolved` ou evento
+    cancelado no Google concluem (`finish_calendar_link_recovery`);
+    pendente, falha, incerto, sem acesso ou para atenção deixam pendente.
+  - A próxima tentativa ("Reencontrar compromissos", ou reconectar) retoma
+    as pendências da própria conexão (`list_pending_calendar_recoveries`),
+    inclusive depois de uma interrupção logo após revincular. Nada cria
+    evento ou vínculo: a saída só atualiza o evento vinculado.
+  - A tela mostra o que de fato terminou: reencontrados, retomados,
+    concluídos, pendentes (com o motivo) e sem acesso.
 - **Restauração** (`restore_calendar_conflict`, critério 7): só título e
   horário em que o Google prevaleceu; só pelo dono da conexão do vínculo
   (é ele quem leva ao Google), com `activity.edit` e alcance ao lead; só se
   a atividade ainda tem o valor que prevaleceu (senão `outdated`: restaurar
-  sobrescreveria algo mais novo); vínculo precisa estar `linked`. A
+  sobrescreveria algo mais novo); vínculo precisa estar `linked`. Horário =
+  início **e** duração do valor do CRM: o início volta à atividade e a
+  duração, ao vínculo; mudar só a duração depois do conflito (no CRM ou no
+  Google) também torna a restauração `outdated`. O vínculo fica pendente
+  (`conflict_restored`) até a saída concluir. Na saída, sem duração pedida,
+  vale a duração que o Google mudou desde a base; se ele não a mudou, vale
+  a do vínculo — assim a duração restaurada chega ao Google mesmo numa nova
+  tentativa depois de falha. A
   atividade passa pelo gatilho de ambiente; o conflito fica marcado
   (quando, quem, versão); auditoria só com o nome do campo. Em seguida a
   saída normal leva o valor ao Google — se o Google mudou de novo, vale a

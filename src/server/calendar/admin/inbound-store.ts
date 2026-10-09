@@ -122,6 +122,25 @@ export function createSupabaseInboundStore(): InboundStore {
       return data === "relinked" ? "relinked" : "not_recoverable";
     },
 
+    async listPendingRecoveries(actorUserId, connectionId) {
+      const { data, error } = await admin.rpc("list_pending_calendar_recoveries", {
+        p_connection_id: connectionId,
+        p_actor_user_id: actorUserId,
+      });
+      check(error);
+      return (data as unknown as Array<{ id: string; activityId: string; calendarId: string; eventId: string }> | null) ?? [];
+    },
+
+    async finishRecovery(actorUserId, linkId, connectionId) {
+      const { data, error } = await admin.rpc("finish_calendar_link_recovery", {
+        p_link_id: linkId,
+        p_connection_id: connectionId,
+        p_actor_user_id: actorUserId,
+      });
+      check(error);
+      return data === true;
+    },
+
     async beginChannel(actorUserId, params) {
       const { error } = await admin.rpc("begin_calendar_channel", {
         p_connection_id: params.connectionId,

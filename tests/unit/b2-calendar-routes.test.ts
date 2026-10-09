@@ -101,6 +101,25 @@ describe("/api/cron/calendar", () => {
     expect([...scheduler.heartbeats.keys()]).toEqual(["manual"]);
   });
 
+  it("rodada em que a agenda falha: 503 com as contagens e batimento de falha (não é \"ok\")", async () => {
+    const f = await makeFixture();
+    f.store.setActivity(activity());
+    const created = await createAppointment(f.deps, f.conn, activity());
+    if (created.status !== "created") throw new Error("setup");
+    f.provider.injectFault({ operation: "list", kind: "status", status: 503 });
+    m.provider.value = f.provider;
+    m.store.value = new InboundMemoryStore(f.store, () => new Date());
+    const scheduler = new MemorySchedulerStore(() => new Date());
+    m.scheduler.value = scheduler;
+    m.accessToken.value = f.conn.accessToken;
+
+    const res = await cron(cronRequest("Bearer segredo-de-teste"));
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ enabled: true, outcome: "failed", targets: 1, synced: 0, failed: 1 });
+    expect(scheduler.heartbeats.get("manual")).toMatchObject({ lastOutcome: "failed", lastSuccessAt: null, report: { failed: 1 } });
+  });
+
   it("source=github: batimento da recuperação adicional e Detector 1 (principal desligado por padrão: nada a vigiar)", async () => {
     const f = await makeFixture();
     m.provider.value = f.provider;

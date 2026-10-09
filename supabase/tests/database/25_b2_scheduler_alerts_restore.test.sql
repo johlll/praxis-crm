@@ -4,7 +4,7 @@
 -- timeline do lead. Todos os registros são criados por este teste.
 
 begin;
-select plan(50);
+select plan(70);
 
 \set dono   '20000000-0000-0000-0000-000000000001'
 \set adv    '20000000-0000-0000-0000-000000000002'
@@ -80,6 +80,10 @@ select throws_ok($i$ select claim_calendar_scheduler_alert('scheduler_stale', 'i
   'authenticated NÃO reserva alerta');
 select throws_ok(format($i$ select restore_calendar_conflict(gen_random_uuid(), %L::uuid) $i$, :'dono'), '42501', null,
   'authenticated NÃO chama a restauração direto (só o servidor, em nome da sessão)');
+select throws_ok(format($i$ select list_pending_calendar_recoveries(gen_random_uuid(), %L::uuid) $i$, :'dono'), '42501', null,
+  'authenticated NÃO lista recuperações pendentes');
+select throws_ok(format($i$ select finish_calendar_link_recovery(gen_random_uuid(), gen_random_uuid(), %L::uuid) $i$, :'dono'), '42501', null,
+  'authenticated NÃO conclui recuperação');
 reset role;
 
 -- ---------------------------------------------------------------------
@@ -103,11 +107,31 @@ select is(
    where environment = 'production' and scheduler = 'inngest'),
   jsonb_build_object('r', 2, 'o', 'failed'), 'cada rodada conta, e a que falhou fica registrada como falha'
 );
+select is(
+  (select last_success_at = last_run_at from public.calendar_scheduler_heartbeats where environment = 'production' and scheduler = 'inngest'),
+  true, 'a rodada que falhou NÃO apaga o último sucesso (executou ≠ sincronizou com sucesso)'
+);
 select throws_ok($i$ select record_calendar_scheduler_heartbeat('cron-qualquer', 'ok', '{}'::jsonb) $i$, 'P0001', 'invalid_scheduler',
   'agendador desconhecido é recusado');
 select is(jsonb_array_length(list_calendar_scheduler_heartbeats()), 1, 'production vê o próprio batimento');
 select set_config('request.headers', :'h_prev', true);
 select is(jsonb_array_length(list_calendar_scheduler_heartbeats()), 0, 'preview não vê o batimento de production');
+select record_calendar_scheduler_heartbeat('github', 'failed', '{"failed": 2, "synced": 0}'::jsonb);
+select is(
+  (select jsonb_build_object('o', last_outcome, 's', last_success_at) from public.calendar_scheduler_heartbeats
+   where environment = 'preview' and scheduler = 'github'),
+  jsonb_build_object('o', 'failed', 's', null),
+  'rodou e falhou: execução registrada, nenhum sucesso'
+);
+select record_calendar_scheduler_heartbeat('github', 'partial', '{"failed": 1, "synced": 1}'::jsonb);
+select is(
+  (select jsonb_build_object('o', h ->> 'lastOutcome', 'tem', h ? 'lastSuccessAt', 's', h -> 'lastSuccessAt')
+   from jsonb_array_elements(list_calendar_scheduler_heartbeats()) h),
+  jsonb_build_object('o', 'partial', 'tem', true, 's', null),
+  'parcial é aceito, não conta como sucesso, e a lista traz o último sucesso'
+);
+select throws_ok($i$ select record_calendar_scheduler_heartbeat('github', 'meio', '{}'::jsonb) $i$, 'P0001', 'invalid_outcome',
+  'desfecho desconhecido é recusado');
 select set_config('request.headers', :'h_prod', true);
 
 -- ---------------------------------------------------------------------
@@ -199,6 +223,32 @@ select is(
   'volta para a conexão nova com a BASE preservada'
 );
 select is(relink_recovered_calendar_link(:'link'::uuid, :'conn2'::uuid, :'dono'::uuid), 'not_recoverable', 'idempotente');
+select ok((select recovery_pending_at is not null from public.calendar_event_links where id = (:'link')::uuid),
+  'revinculado: a recuperação fica PENDENTE no vínculo');
+-- A saída falha e reescreve o erro de sincronização: a pendência continua.
+update public.calendar_event_links set sync_error = 'provider_503' where id = (:'link')::uuid;
+select is(
+  (select array_agg(r ->> 'id') from jsonb_array_elements(list_pending_calendar_recoveries(:'conn2'::uuid, :'dono'::uuid)) r),
+  array[:'link'], 'pendente continua listada pela própria conexão, independente do erro da saída'
+);
+select is(jsonb_array_length(list_recoverable_calendar_links(:'conn2'::uuid, :'dono'::uuid)), 0,
+  'e já não aparece como recuperável (não é revinculada de novo)');
+select throws_ok(format($i$ select list_pending_calendar_recoveries(%L::uuid, %L::uuid) $i$, :'conn2', :'adv'), 'P0001',
+  'connection_not_found', 'outro usuário não lista as pendências da conexão alheia');
+select is(finish_calendar_link_recovery(:'link'::uuid, :'conn_adv'::uuid, :'adv'::uuid), false,
+  'nem conclui pela própria conexão a recuperação de outro');
+select is(finish_calendar_link_recovery(:'link'::uuid, :'conn2'::uuid, :'dono'::uuid), true, 'o dono conclui a recuperação');
+select is(
+  (select jsonb_build_object('p', recovery_pending_at, 'l', jsonb_array_length(list_pending_calendar_recoveries(:'conn2'::uuid, :'dono'::uuid)))
+   from public.calendar_event_links where id = (:'link')::uuid),
+  jsonb_build_object('p', null, 'l', 0), 'concluída: sai das pendências'
+);
+select is(finish_calendar_link_recovery(:'link'::uuid, :'conn2'::uuid, :'dono'::uuid), false, 'concluir de novo não faz nada');
+select is(
+  (select count(*)::int from public.audit_logs
+   where workspace_id = :'ws'::uuid and action = 'calendar.link.recovery_completed' and metadata::text !~ 'evento-'),
+  1, 'auditoria da conclusão, sem id de evento'
+);
 select is(relink_recovered_calendar_link(:'link2'::uuid, :'conn2'::uuid, :'dono'::uuid), 'not_recoverable',
   'atividade com outro vínculo ativo: o antigo não volta');
 select is(
@@ -260,6 +310,45 @@ select is(restore_calendar_conflict(:'c_sched'::uuid, :'dono'::uuid) ->> 'status
 select is((select due_at from public.activities where id = (:'reuniao')::uuid), '2026-12-01T13:00:00Z'::timestamptz,
   'a atividade volta ao início do CRM');
 
+-- CRM 14h–15h perdeu para o Google, que ficou com 2 h a partir do horário atual.
+update public.calendar_event_links set duration_minutes = 120, sync_state = 'in_sync', sync_error = null where id = (:'link')::uuid;
+insert into public.calendar_sync_conflicts (workspace_id, link_id, environment, field, crm_value, google_value, resolution)
+values (:'ws'::uuid, :'link'::uuid, 'production', 'schedule',
+  jsonb_build_object('start', '2026-12-03T14:00:00Z', 'end', '2026-12-03T15:00:00Z'),
+  jsonb_build_object('start', '2026-12-01T13:00:00Z', 'end', '2026-12-01T15:00:00Z'), 'google_prevails')
+returning id as c_dur \gset
+select is(restore_calendar_conflict(:'c_dur'::uuid, :'dono'::uuid) ->> 'status', 'restored', 'horário de 1 h restaurado sobre um de 2 h');
+select is(
+  (select jsonb_build_object('due', a.due_at, 'dur', l.duration_minutes, 'st', l.sync_state, 'err', l.sync_error)
+   from public.activities a join public.calendar_event_links l on l.activity_id = a.id
+   where a.id = (:'reuniao')::uuid and l.id = (:'link')::uuid),
+  jsonb_build_object('due', '2026-12-03T14:00:00Z'::timestamptz, 'dur', 60, 'st', 'pending', 'err', 'conflict_restored'),
+  'início na atividade, DURAÇÃO no vínculo, e o vínculo pendente até a saída levar ao Google'
+);
+
+-- Depois do conflito, mudou SÓ a duração (o vínculo tem 60 min, o Google tinha vencido com 2 h).
+insert into public.calendar_sync_conflicts (workspace_id, link_id, environment, field, crm_value, google_value, resolution)
+values (:'ws'::uuid, :'link'::uuid, 'production', 'schedule',
+  jsonb_build_object('start', '2026-12-04T09:00:00Z', 'end', '2026-12-04T10:00:00Z'),
+  jsonb_build_object('start', '2026-12-03T14:00:00Z', 'end', '2026-12-03T16:00:00Z'), 'google_prevails')
+returning id as c_dur2 \gset
+select is(restore_calendar_conflict(:'c_dur2'::uuid, :'dono'::uuid) ->> 'status', 'outdated',
+  'a duração mudou depois do conflito: restaurar sobrescreveria valor mais novo');
+select is(
+  (select jsonb_build_object('due', a.due_at, 'dur', l.duration_minutes)
+   from public.activities a join public.calendar_event_links l on l.activity_id = a.id
+   where a.id = (:'reuniao')::uuid and l.id = (:'link')::uuid),
+  jsonb_build_object('due', '2026-12-03T14:00:00Z'::timestamptz, 'dur', 60), 'e nada foi alterado'
+);
+
+insert into public.calendar_sync_conflicts (workspace_id, link_id, environment, field, crm_value, google_value, resolution)
+values (:'ws'::uuid, :'link'::uuid, 'production', 'schedule',
+  jsonb_build_object('start', '2026-12-05T09:00:00Z'),
+  jsonb_build_object('start', '2026-12-03T14:00:00Z', 'end', '2026-12-03T15:00:00Z'), 'google_prevails')
+returning id as c_noend \gset
+select is(restore_calendar_conflict(:'c_noend'::uuid, :'dono'::uuid) ->> 'status', 'not_restorable',
+  'sem o fim do valor do CRM, não há duração a restaurar: nada alterado');
+
 insert into public.calendar_sync_conflicts (workspace_id, link_id, environment, field, crm_value, google_value, resolution)
 values (:'ws'::uuid, :'link'::uuid, 'production', 'cancellation', '{"title":"x"}'::jsonb, '{"cancelled":true}'::jsonb, 'google_prevails')
 returning id as c_cancel \gset
@@ -268,7 +357,7 @@ select is(restore_calendar_conflict(:'c_cancel'::uuid, :'dono'::uuid) ->> 'statu
 select is(
   (select count(*)::int from public.audit_logs
    where workspace_id = :'ws'::uuid and action = 'calendar.conflict.restored' and metadata::text !~ '(Título|Antigo|2026-12)'),
-  2, 'auditoria da restauração só com o nome do campo, nunca valores'
+  3, 'auditoria da restauração só com o nome do campo, nunca valores'
 );
 
 -- ---------------------------------------------------------------------
@@ -283,7 +372,7 @@ select is(
      'conflitos', count(*) filter (where i -> 'payload' ->> 'kind' = 'conflict'),
      'restaurados', count(*) filter (where i -> 'payload' ->> 'kind' = 'restored'))
    from jsonb_array_elements(:'tl'::jsonb) i),
-  jsonb_build_object('conflitos', 4, 'restaurados', 2),
+  jsonb_build_object('conflitos', 7, 'restaurados', 3),
   'cada conflito e cada restauração é um fato da timeline'
 );
 select is(
@@ -295,7 +384,7 @@ select is(
 );
 select is(
   (select count(*)::int from jsonb_array_elements(:'tl'::jsonb) i where i -> 'payload' ->> 'kind' = 'restored'
-     and (i ->> 'id')::uuid in (:'c_title'::uuid, :'c_sched'::uuid)),
+     and (i ->> 'id')::uuid in (:'c_title'::uuid, :'c_sched'::uuid, :'c_dur'::uuid)),
   0, 'a restauração tem id próprio, diferente do conflito'
 );
 select set_config('request.headers', :'h_prev', true);

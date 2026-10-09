@@ -38,7 +38,9 @@ jobs:
             https://*) ;;
             *) echo "target_url precisa começar com https://"; exit 1 ;;
           esac
-          curl -sf -X POST "${TARGET_URL}/api/cron/calendar?source=github&x-vercel-protection-bypass=${BYPASS_SECRET}" \
+          # Rodada que falhou volta 503 (com as contagens): o job fica vermelho
+          # e o corpo aparece no log.
+          curl -s --fail-with-body -X POST "${TARGET_URL}/api/cron/calendar?source=github&x-vercel-protection-bypass=${BYPASS_SECRET}" \
             -H "Authorization: Bearer ${CRON_SECRET}" \
             -H "x-vercel-set-bypass-cookie: true" \
             -w "\nHTTP %{http_code}\n"

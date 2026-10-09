@@ -47,7 +47,13 @@ export async function POST(request: Request) {
   try {
     const result = await runScheduledCalendarMaintenance(sourceOf(request));
     if (!result) return NextResponse.json({ enabled: false });
-    return NextResponse.json({ enabled: true, outcome: result.outcome, detector: result.detector, ...(result.report ?? {}) });
+    // `outcome`: ok | partial | failed (rodada desta chamada); `detector`: o
+    // agendador principal (só com source=github). Rodada que falhou responde
+    // 503 — com as contagens — para quem chamou não a tomar por sucesso.
+    return NextResponse.json(
+      { enabled: true, outcome: result.outcome, detector: result.detector, ...(result.report ?? {}) },
+      { status: result.outcome === "failed" ? 503 : 200 },
+    );
   } catch (error) {
     // Só o código: a mensagem original não sai daqui.
     console.error(JSON.stringify({ event: "calendar_maintenance_failed", code: error instanceof Error ? error.name : "unknown" }));

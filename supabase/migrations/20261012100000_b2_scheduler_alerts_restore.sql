@@ -1,7 +1,9 @@
 -- B2, etapa 3b (docs/decisoes/b2-google-agenda.md §6.11, §9.2, §9.3).
 --
 -- 1) Batimento dos agendadores (`calendar_scheduler_heartbeats`): cada
---    rodada da manutenção grava quando rodou e só CONTAGENS.
+--    rodada da manutenção grava quando rodou, o desfecho (ok, parcial ou
+--    falha) e só CONTAGENS. "Executou recentemente" (`last_run_at`) e
+--    "sincronizou com sucesso" (`last_success_at`) são datas separadas.
 -- 2) Alertas de agendador parado (`calendar_scheduler_alerts`): reserva
 --    atômica com intervalo mínimo entre alertas, destinatários = owner/admin
 --    dos workspaces com vínculo ativo no ambiente. O ENVIO é decidido pela
@@ -11,7 +13,10 @@
 -- 4) Agendas da própria conexão para a sincronização sob demanda.
 -- 5) Reconexão: vínculos desfeitos por uma desconexão ANTERIOR do mesmo
 --    usuário são reencontrados (o evento é conferido no Google pela marca
---    antes) e voltam para a conexão nova, com a base preservada.
+--    antes) e voltam para a conexão nova, com a base preservada. A
+--    recuperação fica PENDENTE no vínculo (`recovery_pending_at`) até a
+--    entrada e a saída terminarem: uma falha ou interrupção depois de
+--    revincular é retomada pela próxima tentativa.
 -- 6) Restauração do valor do CRM que perdeu num conflito, e conflito e
 --    restauração na timeline do lead.
 --
@@ -28,7 +33,11 @@ create table public.calendar_scheduler_heartbeats (
   -- avulsa ao endpoint (teste, operação).
   scheduler text not null check (scheduler in ('inngest', 'github', 'manual')),
   last_run_at timestamptz not null,
-  last_outcome text not null check (last_outcome in ('ok', 'failed')),
+  -- ok = todas as agendas tentadas sincronizaram; partial = parte falhou;
+  -- failed = a rodada falhou ou nenhuma agenda tentada sincronizou.
+  last_outcome text not null check (last_outcome in ('ok', 'partial', 'failed')),
+  -- Última rodada com desfecho ok (null = nenhuma ainda).
+  last_success_at timestamptz,
   -- Só contagens (números), nunca conteúdo de evento.
   last_report jsonb not null default '{}'::jsonb,
   runs bigint not null default 1,
@@ -58,7 +67,7 @@ begin
   if p_scheduler is null or p_scheduler not in ('inngest', 'github', 'manual') then
     raise exception 'invalid_scheduler';
   end if;
-  if p_outcome is null or p_outcome not in ('ok', 'failed') then
+  if p_outcome is null or p_outcome not in ('ok', 'partial', 'failed') then
     raise exception 'invalid_outcome';
   end if;
   -- Só pares nome → número, no máximo 30: nada de texto livre no batimento.
@@ -69,10 +78,12 @@ begin
     order by key limit 30
   ) e;
 
-  insert into public.calendar_scheduler_heartbeats (environment, scheduler, last_run_at, last_outcome, last_report)
-  values (v_env, p_scheduler, now(), p_outcome, v_report)
+  insert into public.calendar_scheduler_heartbeats (environment, scheduler, last_run_at, last_outcome, last_success_at, last_report)
+  values (v_env, p_scheduler, now(), p_outcome, case when p_outcome = 'ok' then now() end, v_report)
   on conflict (environment, scheduler) do update
-    set last_run_at = now(), last_outcome = excluded.last_outcome, last_report = excluded.last_report,
+    set last_run_at = now(), last_outcome = excluded.last_outcome,
+        last_success_at = coalesce(excluded.last_success_at, public.calendar_scheduler_heartbeats.last_success_at),
+        last_report = excluded.last_report,
         runs = public.calendar_scheduler_heartbeats.runs + 1, updated_at = now();
 end;
 $body$;
@@ -93,7 +104,8 @@ declare
   v_env public.calendar_environment := private.require_request_environment();
 begin
   return coalesce((
-    select jsonb_agg(jsonb_build_object('scheduler', h.scheduler, 'lastRunAt', h.last_run_at, 'lastOutcome', h.last_outcome)
+    select jsonb_agg(jsonb_build_object('scheduler', h.scheduler, 'lastRunAt', h.last_run_at, 'lastOutcome', h.last_outcome,
+        'lastSuccessAt', h.last_success_at)
       order by h.scheduler)
     from public.calendar_scheduler_heartbeats h
     where h.environment = v_env
@@ -229,7 +241,8 @@ begin
 
   return jsonb_build_object(
     'schedulers', coalesce((
-      select jsonb_agg(jsonb_build_object('scheduler', h.scheduler, 'lastRunAt', h.last_run_at, 'lastOutcome', h.last_outcome)
+      select jsonb_agg(jsonb_build_object('scheduler', h.scheduler, 'lastRunAt', h.last_run_at, 'lastOutcome', h.last_outcome,
+        'lastSuccessAt', h.last_success_at)
         order by h.scheduler)
       from public.calendar_scheduler_heartbeats h where h.environment = v_env
     ), '[]'::jsonb),
@@ -311,6 +324,10 @@ $body$;
 
 revoke all on function private.recoverable_link(public.calendar_event_links, public.calendar_connections) from public, anon, authenticated;
 
+-- Revinculado, com a recuperação ainda por concluir (entrada e saída). Não
+-- se confunde com `sync_error`, que a saída reescreve a cada tentativa.
+alter table public.calendar_event_links add column recovery_pending_at timestamptz;
+
 create function public.list_recoverable_calendar_links(p_connection_id uuid, p_actor_user_id uuid)
 returns jsonb
 language plpgsql
@@ -365,7 +382,7 @@ begin
 
   update public.calendar_event_links
   set connection_id = v_conn.id, status = 'linked', sync_state = 'pending', sync_error = 'reconnected',
-      sync_state_at = now(), updated_at = now()
+      sync_state_at = now(), recovery_pending_at = now(), updated_at = now()
   where id = v_link.id;
 
   insert into public.audit_logs (workspace_id, actor_user_id, action, resource_type, resource_id, metadata)
@@ -379,6 +396,68 @@ revoke all on function public.relink_recovered_calendar_link(uuid, uuid, uuid) f
 grant execute on function public.relink_recovered_calendar_link(uuid, uuid, uuid) to service_role;
 revoke execute on function public.relink_recovered_calendar_link(uuid, uuid, uuid) from anon, authenticated;
 
+-- Recuperações pendentes da PRÓPRIA conexão: revinculadas (agora ou numa
+-- tentativa anterior que falhou ou foi interrompida) e ainda não concluídas.
+create function public.list_pending_calendar_recoveries(p_connection_id uuid, p_actor_user_id uuid)
+returns jsonb
+language plpgsql
+security definer
+stable
+set search_path = ''
+as $body$
+declare
+  v_conn public.calendar_connections := private.own_active_connection(p_connection_id, p_actor_user_id);
+begin
+  return coalesce((
+    select jsonb_agg(jsonb_build_object(
+      'id', l.id, 'activityId', l.activity_id, 'calendarId', l.calendar_id, 'eventId', l.event_id) order by l.recovery_pending_at, l.id)
+    from (
+      select l.* from public.calendar_event_links l
+      where l.connection_id = v_conn.id and l.environment = v_conn.environment and l.status <> 'unlinked'
+        and l.recovery_pending_at is not null and l.activity_id is not null
+      order by l.recovery_pending_at, l.id
+      limit 200
+    ) l
+  ), '[]'::jsonb);
+end;
+$body$;
+
+revoke all on function public.list_pending_calendar_recoveries(uuid, uuid) from public;
+grant execute on function public.list_pending_calendar_recoveries(uuid, uuid) to service_role;
+revoke execute on function public.list_pending_calendar_recoveries(uuid, uuid) from anon, authenticated;
+
+-- Recuperação concluída (entrada e saída terminaram). Só da própria
+-- conexão; `false` = não estava pendente (idempotente).
+create function public.finish_calendar_link_recovery(p_link_id uuid, p_connection_id uuid, p_actor_user_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $body$
+declare
+  v_conn public.calendar_connections := private.own_active_connection(p_connection_id, p_actor_user_id);
+  v_link public.calendar_event_links;
+begin
+  update public.calendar_event_links l
+  set recovery_pending_at = null, updated_at = now()
+  where l.id = p_link_id and l.connection_id = v_conn.id and l.environment = v_conn.environment
+    and l.recovery_pending_at is not null
+  returning * into v_link;
+  if v_link.id is null then
+    return false;
+  end if;
+
+  insert into public.audit_logs (workspace_id, actor_user_id, action, resource_type, resource_id, metadata)
+  values (v_link.workspace_id, p_actor_user_id, 'calendar.link.recovery_completed', 'calendar_event_link', v_link.id,
+    jsonb_build_object('environment', v_link.environment, 'activity_id', v_link.activity_id));
+  return true;
+end;
+$body$;
+
+revoke all on function public.finish_calendar_link_recovery(uuid, uuid, uuid) from public;
+grant execute on function public.finish_calendar_link_recovery(uuid, uuid, uuid) to service_role;
+revoke execute on function public.finish_calendar_link_recovery(uuid, uuid, uuid) from anon, authenticated;
+
 -- ---------------------------------------------------------------------
 -- 6) Restauração do valor do CRM que perdeu num conflito
 -- ---------------------------------------------------------------------
@@ -391,10 +470,14 @@ alter table public.calendar_sync_conflicts
 -- Devolve { status: restored | already_restored | not_restorable | outdated
 -- | link_inactive | not_owner, activityId?, lockVersion? }.
 --  - só título e horário, e só o que o Google venceu;
+--  - horário = início E duração do valor do CRM: a atividade volta ao início
+--    e o vínculo, à duração (a saída leva os dois ao Google);
 --  - só pelo DONO da conexão do vínculo (é ele quem leva a mudança ao
 --    Google) e com activity.edit + alcance ao lead;
 --  - só se a atividade ainda tem o valor que prevaleceu (senão alguém já a
---    mudou depois: restaurar sobrescreveria esse valor mais novo);
+--    mudou depois: restaurar sobrescreveria esse valor mais novo). No
+--    horário, mudar só a duração depois do conflito também conta;
+--  - o vínculo fica pendente até a saída levar o valor ao Google;
 --  - a atividade passa pelo gatilho de ambiente, como toda alteração.
 -- A ida ao Google é feita em seguida pela aplicação, com as regras normais
 -- de saída (se o Google mudou de novo, vale a regra de conflito).
@@ -414,7 +497,11 @@ declare
   v_role public.membership_role;
   v_version bigint;
   v_crm_start timestamptz;
+  v_crm_end timestamptz;
   v_google_start timestamptz;
+  v_google_end timestamptz;
+  v_crm_minutes integer;
+  v_google_minutes integer;
 begin
   select * into v_conflict from public.calendar_sync_conflicts c where c.id = p_conflict_id for update;
   if v_conflict.id is null then
@@ -466,18 +553,31 @@ begin
     returning lock_version into v_version;
   else
     v_crm_start := (v_conflict.crm_value ->> 'start')::timestamptz;
+    v_crm_end := (v_conflict.crm_value ->> 'end')::timestamptz;
     v_google_start := (v_conflict.google_value ->> 'start')::timestamptz;
-    if v_crm_start is null or v_google_start is null then
+    v_google_end := (v_conflict.google_value ->> 'end')::timestamptz;
+    if v_crm_start is null or v_crm_end is null or v_google_start is null or v_google_end is null
+       or v_crm_end <= v_crm_start or v_google_end <= v_google_start then
       return jsonb_build_object('status', 'not_restorable', 'activityId', v_activity.id);
     end if;
-    if v_activity.due_at is distinct from v_google_start then
+    v_crm_minutes := round(extract(epoch from (v_crm_end - v_crm_start)) / 60)::integer;
+    v_google_minutes := round(extract(epoch from (v_google_end - v_google_start)) / 60)::integer;
+    -- Início OU duração mudaram depois do conflito (no CRM ou no Google):
+    -- restaurar sobrescreveria esse valor mais novo.
+    if v_activity.due_at is distinct from v_google_start or v_link.duration_minutes is distinct from v_google_minutes then
       return jsonb_build_object('status', 'outdated', 'activityId', v_activity.id);
     end if;
     update public.activities
     set due_at = v_crm_start, has_time = true, lock_version = lock_version + 1, updated_at = now()
     where id = v_activity.id
     returning lock_version into v_version;
+    update public.calendar_event_links set duration_minutes = v_crm_minutes where id = v_link.id;
   end if;
+
+  -- Restaurado no CRM, ainda não no Google: pendente até a saída concluir.
+  update public.calendar_event_links
+  set sync_state = 'pending', sync_operation = 'update', sync_error = 'conflict_restored', sync_state_at = now(), updated_at = now()
+  where id = v_link.id;
 
   update public.calendar_sync_conflicts
   set restored_at = now(), restored_by = p_actor_user_id, restored_activity_version = v_version
