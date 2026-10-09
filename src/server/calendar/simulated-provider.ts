@@ -58,7 +58,28 @@ type SimulatedChannel = {
   messageNumber: number;
 };
 
-type ListCursor = { items: EventListItem[]; offset: number; nextSyncToken: string };
+/** Consulta de listagem como recebida (sem o `pageToken`). */
+type ListQuery = {
+  syncToken?: string | undefined;
+  showDeleted?: boolean | undefined;
+  singleEvents?: boolean | undefined;
+  maxResults?: number | undefined;
+};
+
+/** Continuação de uma listagem: só vale para a MESMA consulta que a abriu. */
+type ListCursor = {
+  items: EventListItem[];
+  offset: number;
+  nextSyncToken: string;
+  calendarId: string;
+  query: string;
+  pageSize: number;
+  /** Época dos tokens quando a listagem incremental começou (`null` = completa). */
+  epoch: number | null;
+};
+
+const queryKey = (q: ListQuery) =>
+  JSON.stringify([q.syncToken ?? null, q.showDeleted ?? null, q.singleEvents ?? null, q.maxResults ?? null]);
 
 export class SimulatedCalendarProvider implements CalendarProvider {
   private issued = new Map<string, { email: string; calendars: ProviderCalendar[] }>();
@@ -88,6 +109,8 @@ export class SimulatedCalendarProvider implements CalendarProvider {
   private syncEpoch = new Map<string, number>();
   private cursors = new Map<string, ListCursor>();
   private cursorCounter = 0;
+  /** Consultas de listagem recebidas, em ordem (parâmetros completos). */
+  readonly listQueries: Array<ListQuery & { calendarId: string; pageToken?: string | undefined }> = [];
   /** Toda requisição recebida, em ordem — para provar o que NÃO foi chamado. */
   readonly calls: Array<{ operation: Operation | "freebusy" | "calendar"; eventId?: string | undefined; calendarId?: string | undefined }> = [];
   /** Convites que o Google teria enviado por e-mail. */
@@ -338,29 +361,39 @@ export class SimulatedCalendarProvider implements CalendarProvider {
     if (fault?.kind === "timeout_after_apply") throw new ProviderUncertainError();
   }
 
+  /**
+   * Como o Google: a página seguinte só é servida para a MESMA consulta que
+   * abriu a listagem (mesmo `syncToken` e demais parâmetros, mais o
+   * `pageToken`); consulta diferente é recusada (400). Token invalidado
+   * durante a listagem incremental devolve `410` em qualquer página.
+   */
   async listEvents(
     _accessToken: string,
     calendarId: string,
-    opts: { syncToken?: string | undefined; pageToken?: string | undefined },
+    opts: ListQuery & { pageToken?: string | undefined },
   ): Promise<EventListPage> {
     this.calls.push({ operation: "list", calendarId });
+    this.listQueries.push(structuredClone({ calendarId, ...opts }));
     const fault = this.nextFault("list");
     const revoked = this.revokedCalendars.get(calendarId);
     if (revoked !== undefined) throw new ProviderHttpError(revoked);
     if (fault?.kind === "timeout_before_apply" || fault?.kind === "timeout_after_apply") throw new ProviderUncertainError();
     if (fault?.kind === "status") throw new ProviderHttpError(fault.status ?? 500);
 
-    if (opts.pageToken) {
-      const cursor = this.cursors.get(opts.pageToken);
-      if (!cursor) throw new ProviderHttpError(400, "invalid_page_token");
-      this.cursors.delete(opts.pageToken);
+    const { pageToken, ...query } = opts;
+    const epoch = this.syncEpoch.get(calendarId) ?? 0;
+    if (pageToken) {
+      const cursor = this.cursors.get(pageToken);
+      if (!cursor || cursor.calendarId !== calendarId) throw new ProviderHttpError(400, "invalid_page_token");
+      if (cursor.query !== queryKey(query)) throw new ProviderHttpError(400, "page_query_mismatch");
+      if (cursor.epoch !== null && cursor.epoch !== epoch) throw new ProviderHttpError(410);
+      this.cursors.delete(pageToken);
       return this.page(cursor);
     }
 
-    const epoch = this.syncEpoch.get(calendarId) ?? 0;
     let since: number | null = null;
-    if (opts.syncToken) {
-      const match = /^simsync:(\d+):(\d+):(.+)$/.exec(opts.syncToken);
+    if (query.syncToken) {
+      const match = /^simsync:(\d+):(\d+):(.+)$/.exec(query.syncToken);
       if (!match || match[3] !== calendarId || Number(match[1]) !== epoch) throw new ProviderHttpError(410);
       since = Number(match[2]);
     }
@@ -368,7 +401,15 @@ export class SimulatedCalendarProvider implements CalendarProvider {
       .filter((e) => since === null || (e.seq ?? 0) > since)
       .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
       .map((e) => this.listItem(e));
-    return this.page({ items, offset: 0, nextSyncToken: `simsync:${epoch}:${this.etagCounter}:${calendarId}` });
+    return this.page({
+      items,
+      offset: 0,
+      nextSyncToken: `simsync:${epoch}:${this.etagCounter}:${calendarId}`,
+      calendarId,
+      query: queryKey(query),
+      pageSize: Math.max(1, Math.min(this.listPageSize, query.maxResults ?? this.listPageSize)),
+      epoch: since === null ? null : epoch,
+    });
   }
 
   async watchEvents(
@@ -471,7 +512,7 @@ export class SimulatedCalendarProvider implements CalendarProvider {
   }
 
   private page(cursor: ListCursor): EventListPage {
-    const items = cursor.items.slice(cursor.offset, cursor.offset + this.listPageSize);
+    const items = cursor.items.slice(cursor.offset, cursor.offset + cursor.pageSize);
     const offset = cursor.offset + items.length;
     if (offset < cursor.items.length) {
       this.cursorCounter += 1;

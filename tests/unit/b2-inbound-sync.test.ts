@@ -27,6 +27,12 @@ const crm = () => f.store.activities.get(ACTIVITY_ID)!;
 const stateOf = () => inbound.states.get(`conn-1|${CALENDAR_ID}`);
 const getsOf = (id: string) => f.provider.calls.filter((c) => c.operation === "get" && c.eventId === id).length;
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => (resolve = r));
+  return { promise, resolve };
+}
+
 beforeEach(async () => {
   f = await makeFixture();
   clock = { t: Date.parse("2026-11-01T12:00:00.000Z") };
@@ -204,6 +210,44 @@ describe("sem laço: o eco das escritas do CRM", () => {
     expect(inbound.applyCalls).toEqual([]);
   });
 
+  it("Google muda o título, CRM muda só o horário, a saída termina e depois roda a entrada: o título chega e o horário fica", async () => {
+    f.provider.externalEdit(CALENDAR_ID, eventId, { summary: "Título novo do Google" });
+    crm().dueAt = "2026-11-12T16:00:00.000Z";
+    crm().lockVersion = 4;
+
+    expect(await rescheduleAppointment(f.deps, f.conn, { ...crm() })).toMatchObject({ status: "updated" });
+    const google = f.provider.peek(CALENDAR_ID, eventId)!;
+    expect(google).toMatchObject({ summary: "Título novo do Google", start: { dateTime: "2026-11-12T16:00:00.000Z" } });
+    expect(crm().title).toBe("Reunião com cliente fictício"); // a saída não trouxe o título
+
+    expect(await syncCalendar(deps, conn)).toMatchObject({ status: "synced", applied: 1, conflicts: 0 });
+
+    expect(crm()).toMatchObject({ title: "Título novo do Google", dueAt: "2026-11-12T16:00:00.000Z" });
+    expect(f.store.conflicts).toEqual([]);
+    expect(linkOf()).toMatchObject({
+      baseTitle: "Título novo do Google",
+      baseStart: "2026-11-12T16:00:00.000Z",
+      baseEnd: "2026-11-12T17:00:00.000Z",
+      baseEtag: google.etag,
+    });
+    expect(countCalls(f.provider, "patch")).toBe(1); // nada volta ao Google
+    // A seguinte é eco puro.
+    inbound.applyCalls.length = 0;
+    expect(await syncCalendar(deps, conn)).toMatchObject({ status: "synced", applied: 0 });
+    expect(inbound.applyCalls).toEqual([]);
+  });
+
+  it("etag igual ao da base, mas horário listado diferente: o etag sozinho não basta, o detalhe é lido", async () => {
+    linkOf().baseStart = "2026-11-09T08:00:00.000Z"; // base parcial (gravada por versão anterior)
+    f.provider.calls.length = 0;
+
+    expect(await syncCalendar(deps, conn, { forceFull: true })).toMatchObject({ status: "synced", applied: 1, conflicts: 0 });
+
+    expect(getsOf(eventId)).toBe(1);
+    expect(linkOf().baseStart).toBe("2026-11-10T14:00:00.000Z");
+    expect(crm().dueAt).toBe("2026-11-10T14:00:00.000Z");
+  });
+
   it("sincronizar de novo sem mudanças: nenhuma aplicação", async () => {
     f.provider.externalEdit(CALENDAR_ID, eventId, { summary: "Uma vez" });
     await syncCalendar(deps, conn);
@@ -245,6 +289,61 @@ describe("paginação e syncToken", () => {
     expect(linkOf().status).toBe("linked");
     // O token novo funciona.
     expect(await syncCalendar(deps, conn)).toMatchObject({ status: "synced", full: false });
+  });
+
+  it("toda página repete o syncToken e os demais parâmetros da consulta inicial; só o pageToken muda", async () => {
+    f.provider.listPageSize = 2;
+    for (let i = 0; i < 4; i++) f.provider.addExternalEvent(CALENDAR_ID, "2026-11-20T10:00:00.000Z", "2026-11-20T11:00:00.000Z");
+    f.provider.externalEdit(CALENDAR_ID, eventId, { summary: "Na última página" });
+    const token = stateOf()!.syncToken;
+    f.provider.listQueries.length = 0;
+
+    expect(await syncCalendar(deps, conn)).toMatchObject({ status: "synced", full: false, pages: 3, applied: 1 });
+
+    const [first, ...rest] = f.provider.listQueries;
+    expect(first).toMatchObject({ syncToken: token });
+    expect(first).not.toHaveProperty("pageToken");
+    expect(rest).toHaveLength(2);
+    for (const query of rest) {
+      const { pageToken, ...same } = query;
+      expect(pageToken).toEqual(expect.any(String));
+      expect(same).toEqual(first);
+    }
+    expect(crm().title).toBe("Na última página");
+  });
+
+  it("o simulador recusa a página pedida com consulta diferente da que abriu a listagem", async () => {
+    f.provider.listPageSize = 1;
+    f.provider.addExternalEvent(CALENDAR_ID, "2026-11-20T10:00:00.000Z", "2026-11-20T11:00:00.000Z");
+    f.provider.addExternalEvent(CALENDAR_ID, "2026-11-21T10:00:00.000Z", "2026-11-21T11:00:00.000Z");
+    const query = { syncToken: stateOf()!.syncToken!, showDeleted: true, singleEvents: false, maxResults: 250 } as const;
+    const list = (opts: Parameters<typeof f.provider.listEvents>[2]) => f.provider.listEvents(f.conn.accessToken, CALENDAR_ID, opts);
+
+    const sem = await list(query);
+    await expect(list({ pageToken: sem.nextPageToken })).rejects.toMatchObject({ status: 400 }); // sem o syncToken
+    const outra = await list(query);
+    await expect(list({ ...query, maxResults: 10, pageToken: outra.nextPageToken })).rejects.toMatchObject({ status: 400 });
+    const certa = await list(query);
+    await expect(list({ ...query, pageToken: certa.nextPageToken })).resolves.toMatchObject({ items: [expect.anything()] });
+  });
+
+  it("410 numa página POSTERIOR: descarta o token, refaz a completa e não apaga nem duplica nada do CRM", async () => {
+    f.provider.listPageSize = 2;
+    f.provider.externalEdit(CALENDAR_ID, eventId, { summary: "Aplicado na 1ª página" });
+    for (let i = 0; i < 3; i++) f.provider.addExternalEvent(CALENDAR_ID, "2026-11-20T10:00:00.000Z", "2026-11-20T11:00:00.000Z");
+    // O Google invalida os tokens entre a 1ª e a 2ª página.
+    f.provider.onBefore("list", () => f.provider.onBefore("list", () => f.provider.invalidateSyncTokens(CALENDAR_ID)));
+
+    expect(await syncCalendar(deps, conn)).toMatchObject({ status: "synced", full: true, applied: 1, conflicts: 0 });
+
+    expect(inbound.audit.map((a) => a.action)).toContain("calendar.sync.token_reset");
+    expect(f.provider.listQueries.filter((q) => q.syncToken === undefined && q.pageToken === undefined)).toHaveLength(1); // uma completa
+    expect(crm().title).toBe("Aplicado na 1ª página");
+    expect(f.store.activities.size).toBe(1);
+    expect(linkOf().status).toBe("linked");
+    expect(f.store.conflicts).toEqual([]);
+    expect(inbound.applyCalls.filter((c) => c.status === "applied")).toHaveLength(1);
+    expect(await syncCalendar(deps, conn)).toMatchObject({ status: "synced", full: false, applied: 0 });
   });
 
   it("falha na listagem completa depois do 410: o token inválido não volta a ser usado", async () => {
@@ -304,6 +403,69 @@ describe("concorrência", () => {
     await inbound.claimSync("user-1", "conn-1", CALENDAR_ID);
     expect(await syncCalendar(deps, conn)).toEqual({ status: "busy" });
     expect(countCalls(f.provider, "list")).toBe(0);
+  });
+
+  it("execuções intercaladas: A perde a trava antes de aplicar, B assume; A não altera atividade, vínculo, conflitos nem token", async () => {
+    crm().title = "Editado no CRM";
+    crm().lockVersion = 4;
+    f.provider.externalEdit(CALENDAR_ID, eventId, { summary: "Editado no Google" });
+    const tokenAntes = stateOf()!.syncToken;
+    const linkAntes = structuredClone(linkOf());
+
+    // B: outra execução, que pega a trava e fica parada antes de listar.
+    const bHoldsLease = deferred();
+    const releaseB = deferred();
+    const apiB = new Proxy(f.provider, {
+      get(target, prop) {
+        if (prop === "listEvents") {
+          return async (...args: Parameters<typeof target.listEvents>) => {
+            bHoldsLease.resolve();
+            await releaseB.promise;
+            return target.listEvents(...args);
+          };
+        }
+        const value = Reflect.get(target, prop) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    let runB: Promise<unknown> | undefined;
+    inbound.onceBeforeApply(async () => {
+      clock.t += 200_000; // a trava de A (120 s) venceu
+      runB = syncCalendar({ ...deps, api: apiB }, conn);
+      await bHoldsLease.promise;
+    });
+
+    const runA = await syncCalendar(deps, conn);
+
+    expect(runA).toEqual({ status: "failed", code: "lease_lost" });
+    expect(crm()).toMatchObject({ title: "Editado no CRM", lockVersion: 4 });
+    expect(linkOf()).toEqual(linkAntes);
+    expect(f.store.conflicts).toEqual([]);
+    expect(stateOf()!.syncToken).toBe(tokenAntes);
+
+    // B continua e aplica uma única vez, com o conflito gravado uma vez.
+    releaseB.resolve();
+    expect(await runB).toMatchObject({ status: "synced", applied: 1, conflicts: 1 });
+    expect(crm().title).toBe("Editado no Google");
+    expect(f.store.conflicts).toEqual([expect.objectContaining({ field: "title", crmValue: "Editado no CRM" })]);
+    expect(stateOf()!.syncToken).not.toBe(tokenAntes);
+  });
+
+  it("410 depois de perder a trava: A não descarta o token, não relista e não aplica", async () => {
+    f.provider.externalEdit(CALENDAR_ID, eventId, { summary: "Não deve chegar por A" });
+    f.provider.invalidateSyncTokens(CALENDAR_ID);
+    const tokenAntes = stateOf()!.syncToken;
+    f.provider.onBefore("list", () => {
+      clock.t += 200_000;
+      void inbound.claimSync("user-1", "conn-1", CALENDAR_ID); // B assume
+    });
+
+    expect(await syncCalendar(deps, conn)).toEqual({ status: "failed", code: "lease_lost" });
+
+    expect(countCalls(f.provider, "list")).toBe(1);
+    expect(stateOf()!.syncToken).toBe(tokenAntes);
+    expect(crm().title).toBe("Reunião com cliente fictício");
+    expect(inbound.applyCalls).toEqual([]);
   });
 
   it("trava vencida e tomada por outra execução: a primeira NÃO grava o token", async () => {

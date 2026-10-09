@@ -255,6 +255,76 @@ describe("webhook", () => {
   });
 });
 
+describe("lotes da manutenção", () => {
+  /** Agendas extras da mesma conexão, cada uma com um compromisso vinculado e já sincronizado. */
+  function agendasExtras(n: number): string[] {
+    const calendars: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const calendarId = `extra-${String(i).padStart(2, "0")}@calendar.simulated`;
+      const id = f.provider.addExternalEvent(calendarId, "2026-11-20T10:00:00.000Z", "2026-11-20T11:00:00.000Z", "Compromisso fictício");
+      const event = f.provider.peek(calendarId, id)!;
+      const activityId = `a1b2c3d4-0000-4000-8000-${String(100 + i).padStart(12, "0")}`;
+      f.store.setActivity(activity({ id: activityId, title: "Compromisso fictício", dueAt: "2026-11-20T10:00:00.000Z" }));
+      f.store.seedLink({
+        activityId,
+        eventId: id,
+        calendarId,
+        baseEtag: event.etag,
+        baseTitle: "Compromisso fictício",
+        baseStart: event.start!.dateTime,
+        baseEnd: event.end!.dateTime,
+      });
+      calendars.push(calendarId);
+    }
+    return calendars;
+  }
+  const listed = () => new Set(f.provider.calls.filter((c) => c.operation === "list").map((c) => c.calendarId));
+
+  it("31 agendas, lote de 25: canais fora do lote são preservados e todas são atendidas na rodada seguinte", async () => {
+    agendasExtras(30); // + a principal = 31
+    await maintain({ maxTargets: 100 }); // um canal por agenda
+    expect(live()).toHaveLength(31);
+    f.provider.calls.length = 0;
+
+    clock.t += 16 * MIN; // polling vencido em todas
+    const first = await maintain();
+    expect(first).toMatchObject({ targets: 25, synced: 25, channelsStopped: 0 });
+    expect(live()).toHaveLength(31);
+    expect(countCalls(f.provider, "stop")).toBe(0);
+
+    const second = await maintain();
+    expect(second).toMatchObject({ synced: 6, channelsStopped: 0 });
+    expect(listed().size).toBe(31); // nenhuma ficou sem atendimento
+    expect(live()).toHaveLength(31);
+    expect(countCalls(f.provider, "stop")).toBe(0);
+  });
+
+  it("progresso entre rodadas: com lote de 4, as 11 agendas são todas atendidas em 3 rodadas, sem repetir antes da vez", async () => {
+    agendasExtras(10);
+    const served: string[][] = [];
+    for (let round = 0; round < 3; round++) {
+      f.provider.calls.length = 0;
+      await maintain({ maxTargets: 4, webhookAddress: null });
+      served.push([...listed()].map(String));
+    }
+    expect(served.map((s) => s.length)).toEqual([4, 4, 3]);
+    expect(new Set(served.flat()).size).toBe(11);
+  });
+
+  it("agenda REALMENTE sem vínculo continua tendo o canal encerrado, mesmo fora do lote", async () => {
+    agendasExtras(3);
+    await maintain({ maxTargets: 100 });
+    await cancelAppointment(f.deps, f.conn, { ...f.store.activities.get(ACTIVITY_ID)! });
+    f.provider.calls.length = 0;
+
+    const report = await maintain({ maxTargets: 1 });
+
+    expect(report.channelsStopped).toBe(1);
+    expect(channels().filter((c) => c.status === "stopped").map((c) => c.calendarId)).toEqual([CALENDAR_ID]);
+    expect(live()).toHaveLength(3);
+  });
+});
+
 describe("encerramento", () => {
   it("agenda sem nenhum vínculo ativo: o canal é encerrado", async () => {
     await maintain();
