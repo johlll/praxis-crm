@@ -6,7 +6,7 @@ import type { ActivityCalendarInfo } from "@/modules/calendar/types";
 
 const STATUS_TEXT: Record<ActivityCalendarInfo["status"], string> = {
   linked: "No Google Agenda",
-  needs_attention: "Google Agenda: pendente",
+  needs_attention: "Google Agenda: sem acesso à agenda",
   cancelled_in_google: "Cancelado no Google Agenda",
   missing_in_google: "Evento não encontrado no Google Agenda",
   not_linked: "Inclusão no Google Agenda incerta",
@@ -23,7 +23,8 @@ const SYNC_TEXT: Record<ActivityCalendarInfo["syncState"], string | null> = {
  * estado de sincronização vem do banco, então continua aqui depois de recarregar. */
 export function CalendarBadge({ info }: { info: ActivityCalendarInfo | null | undefined }) {
   if (!info) return null;
-  const sync = info.status === "not_linked" ? null : SYNC_TEXT[info.syncState];
+  // "sem acesso" e "inclusão incerta" já dizem tudo; o estado de sincronização só complementa os demais.
+  const sync = info.status === "not_linked" || info.status === "needs_attention" ? null : SYNC_TEXT[info.syncState];
   const problem = info.status !== "linked" || sync !== null;
   const Icon = problem ? TriangleAlert : CalendarCheck;
 

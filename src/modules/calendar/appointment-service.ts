@@ -245,8 +245,13 @@ export function noticeForCancel(result: CancelAppointmentResult): CalendarNotice
 
 export function noticeForCreate(result: CreateAppointmentResult): CalendarNotice | null {
   switch (result.status) {
-    case "created":
-      return ok(result.adopted ? "O evento já existia no Google Agenda e foi vinculado." : "Adicionado ao Google Agenda.", result.meet.url);
+    case "created": {
+      const base = result.adopted ? "O evento já existia no Google Agenda e foi vinculado." : "Adicionado ao Google Agenda.";
+      // Meet pedido e ainda não pronto não é "link criado".
+      if (result.meet.status === "pending") return warn(`${base} O Meet foi pedido e ainda está sendo criado pelo Google.`);
+      if (result.meet.status === "failed") return warn(`${base} O Google não conseguiu criar o Meet.`);
+      return ok(base, result.meet.url);
+    }
     case "already_linked":
       return null;
     case "busy":

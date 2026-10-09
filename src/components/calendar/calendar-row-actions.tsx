@@ -24,6 +24,7 @@ import {
   type AppointmentActionState,
 } from "@/modules/calendar/appointment-actions";
 import type { ActivityListItem } from "@/modules/activities/queries";
+import { EditForm } from "@/components/feedback/edit-form";
 import { CalendarOptionsFields } from "./calendar-options-fields";
 import { useCalendarCapabilities } from "./calendar-capabilities";
 
@@ -61,6 +62,10 @@ export function CalendarRowActions({ activity }: { activity: ActivityListItem })
   const caps = useCalendarCapabilities();
   const [isPending, startTransition] = useTransition();
   const [feedback, setFeedback] = useState<Feedback>(null);
+  // O diálogo de "adicionar" fica montado enquanto aberto: depois do sucesso a
+  // linha já não oferece "adicionar" (o vínculo existe), mas o resultado — ex.:
+  // Meet ainda em criação — precisa continuar visível até o usuário fechar.
+  const [addOpen, setAddOpen] = useState(false);
 
   if (!caps.enabled || !caps.canUse) return null;
 
@@ -73,7 +78,7 @@ export function CalendarRowActions({ activity }: { activity: ActivityListItem })
   const showRemove = mine && live;
   const showAdd =
     !info && caps.hasConnection && activity.type === "meeting" && activity.hasTime && activity.status === "pending";
-  if (!showRecover && !showMeet && !needsSync && !showRemove && !showAdd && !feedback) return null;
+  if (!showRecover && !showMeet && !needsSync && !showRemove && !showAdd && !addOpen && !feedback) return null;
 
   function run(action: (prev: AppointmentActionState, data: FormData) => Promise<AppointmentActionState>) {
     setFeedback(null);
@@ -140,7 +145,7 @@ export function CalendarRowActions({ activity }: { activity: ActivityListItem })
             <CalendarX2 size={14} aria-hidden />
           </Button>
         ) : null}
-        {showAdd ? <AddToCalendarDialog activity={activity} /> : null}
+        {showAdd || addOpen ? <AddToCalendarDialog activity={activity} open={addOpen} onOpenChange={setAddOpen} /> : null}
       </div>
       {feedback ? (
         <Alert variant={feedback.level} data-testid="calendar-row-feedback">
@@ -161,9 +166,17 @@ export function CalendarRowActions({ activity }: { activity: ActivityListItem })
   );
 }
 
-function AddToCalendarDialog({ activity }: { activity: ActivityListItem }) {
-  const [open, setOpen] = useState(false);
+function AddToCalendarDialog({
+  activity,
+  open,
+  onOpenChange,
+}: {
+  activity: ActivityListItem;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const [instanceKey, setInstanceKey] = useState(0);
+  const setOpen = onOpenChange;
 
   return (
     <Dialog
@@ -198,7 +211,7 @@ function AddToCalendarBody({ activity, onDone }: { activity: ActivityListItem; o
         <DialogHeader>
           <DialogTitle>Adicionado ao Google Agenda</DialogTitle>
         </DialogHeader>
-        <Alert variant="success">
+        <Alert variant={state.notice?.level === "warning" ? "warning" : "success"}>
           <AlertDescription>
             {state.notice?.message ?? "O compromisso já está na sua agenda."}
             {state.meetUrl ? (
@@ -226,7 +239,7 @@ function AddToCalendarBody({ activity, onDone }: { activity: ActivityListItem; o
         <DialogTitle>Adicionar ao Google Agenda</DialogTitle>
         <DialogDescription>&quot;{activity.title}&quot; será criado na sua agenda.</DialogDescription>
       </DialogHeader>
-      <form action={formAction} className="flex flex-col gap-4">
+      <EditForm action={formAction} className="flex flex-col gap-4">
         <input type="hidden" name="activityId" value={activity.id} />
         <CalendarOptionsFields
           idPrefix={`add-${activity.id}`}
@@ -254,7 +267,7 @@ function AddToCalendarBody({ activity, onDone }: { activity: ActivityListItem; o
             {pending ? "Adicionando…" : "Adicionar à agenda"}
           </Button>
         </DialogFooter>
-      </form>
+      </EditForm>
     </DialogContent>
   );
 }

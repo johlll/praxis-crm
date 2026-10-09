@@ -328,7 +328,8 @@ describe("reagendar atividade vinculada", () => {
     f.provider.revokeCalendarAccess(link!.calendarId, 404);
     const result = await rescheduleActivityAction(activityId, 1, "2026-11-12", "16:00");
     expect(result.calendar).toMatchObject({ level: "warning", message: expect.stringContaining("acessar a agenda") });
-    expect([...f.store.links.values()][0]).toMatchObject({ status: "needs_attention", baseCancelled: false });
+    // Recuperável (acesso de volta → próxima sincronização): pendente, não falha definitiva.
+    expect([...f.store.links.values()][0]).toMatchObject({ status: "needs_attention", baseCancelled: false, syncState: "pending" });
   });
 });
 

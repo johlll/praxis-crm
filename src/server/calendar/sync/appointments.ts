@@ -475,6 +475,8 @@ async function pushUpdate(
       status: "failed",
       errorCode: "calendar_access_lost",
       state: { ...stateFromLink(link, link.durationMinutes, activity.lockVersion), linkStatus: "needs_attention" },
+      // Recuperável: com o acesso de volta, a próxima sincronização resolve.
+      syncState: "pending",
     });
     return { status: "access_lost" };
   };
@@ -823,6 +825,8 @@ export async function cancelAppointment(
       status: "failed",
       errorCode: "calendar_access_lost",
       state: { ...stateFromLink(link, link.durationMinutes, activity.lockVersion), linkStatus: "needs_attention" },
+      // Recuperável: com o acesso de volta, a próxima sincronização resolve.
+      syncState: "pending",
     });
     return { status: "access_lost" };
   };

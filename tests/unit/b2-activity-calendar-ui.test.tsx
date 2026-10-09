@@ -113,7 +113,7 @@ describe("selo da agenda", () => {
 
   it("pendente e de outra pessoa ficam explícitos", () => {
     render(<CalendarBadge info={{ ...INFO, status: "needs_attention", isMine: false }} />);
-    expect(screen.getByText(/Google Agenda: pendente/)).toBeInTheDocument();
+    expect(screen.getByText(/Google Agenda: sem acesso à agenda/)).toBeInTheDocument();
     expect(screen.getByText(/agenda de outra pessoa/)).toBeInTheDocument();
   });
 
@@ -294,6 +294,29 @@ describe("B — estado gravado aparece no selo e oferece a ação certa", () => 
   });
 });
 
+describe("adicionar à agenda: o resultado continua visível", () => {
+  it("depois do sucesso a linha passa a ter vínculo, mas o diálogo com a mensagem (Meet em criação) NÃO some", async () => {
+    actions.createAppointmentAction.mockResolvedValue({
+      ok: true,
+      result: "created",
+      meetUrl: null,
+      notice: { level: "warning", message: "Adicionado ao Google Agenda. O Meet foi pedido e ainda está sendo criado pelo Google." },
+    });
+    const view = withCaps(ON, <CalendarRowActions activity={activity()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Adicionar Reunião fictícia ao Google Agenda/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Adicionar à agenda" }));
+    expect(await screen.findByText(/ainda está sendo criado/)).toBeInTheDocument();
+
+    // A página revalida: agora a atividade tem vínculo (e não oferece mais "adicionar").
+    view.rerender(
+      <CalendarCapabilitiesProvider value={ON}>
+        <CalendarRowActions activity={activity({ calendar: { ...INFO, meetStatus: "pending" } })} />
+      </CalendarCapabilitiesProvider>,
+    );
+    expect(screen.getByText(/ainda está sendo criado/)).toBeInTheDocument();
+  });
+});
+
 describe("A — vínculo existente nunca é escondido por tipo ou horário", () => {
   it.each([
     ["tarefa", { type: "task" as const }],
@@ -412,6 +435,23 @@ describe("nova atividade", () => {
 
     fireEvent.change(type, { target: { value: "task" } });
     expect(screen.queryByTestId("calendar-options")).not.toBeInTheDocument();
+  });
+
+  it("recusa do servidor NÃO limpa o formulário (antes: tipo voltava a Tarefa com as opções de reunião abertas)", async () => {
+    actions.createActivityAction.mockResolvedValue({ ok: false, error: "O horário está ocupado no Google Agenda." });
+    open(ON);
+    fireEvent.change(await screen.findByLabelText("Tipo"), { target: { value: "meeting" } });
+    fireEvent.change(screen.getByLabelText("Título"), { target: { value: "Reunião fictícia" } });
+    fireEvent.change(screen.getByLabelText("Data"), { target: { value: "2026-11-17" } });
+    fireEvent.change(screen.getByLabelText(/Horário/), { target: { value: "16:00" } });
+    fireEvent.click(screen.getByLabelText("Adicionar ao Google Agenda"));
+    fireEvent.click(screen.getByRole("button", { name: "Criar atividade" }));
+
+    expect(await screen.findByText("O horário está ocupado no Google Agenda.")).toBeInTheDocument();
+    expect((screen.getByLabelText("Tipo") as HTMLSelectElement).value).toBe("meeting");
+    expect((screen.getByLabelText("Título") as HTMLInputElement).value).toBe("Reunião fictícia");
+    expect((screen.getByLabelText(/Horário/) as HTMLInputElement).value).toBe("16:00");
+    expect((screen.getByLabelText("Adicionar ao Google Agenda") as HTMLInputElement).checked).toBe(true);
   });
 
   it("sem conexão: orienta a conectar em vez de mostrar os campos", async () => {

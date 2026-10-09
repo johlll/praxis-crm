@@ -377,6 +377,19 @@ describe("C — cada resultado tem a sua mensagem", () => {
     expect(r.notice?.message).not.toMatch(/link do Meet criado/i);
   });
 
+  it("criar já na agenda com Meet ainda em criação: diz isso (não 'link criado')", async () => {
+    f.provider.meetReadyAfterReads = 99;
+    const r = await createActivityAction({ ok: false }, form({ ...MEETING, calendarAdd: "on", withMeet: "on" }));
+    expect(r.calendar).toMatchObject({ level: "warning", message: expect.stringMatching(/ainda está sendo criado/) });
+  });
+
+  it("acesso perdido vira pendência recuperável (não falha definitiva)", async () => {
+    const { id, link } = await minhaReuniao();
+    f.provider.revokeCalendarAccess(link.calendarId, 403);
+    await rescheduleActivityAction(id, 1, "2026-11-12", "16:00");
+    expect(await readActivityCalendarInfo(id)).toMatchObject({ status: "needs_attention", syncState: "pending" });
+  });
+
   it("Meet pronto: link criado, com o endereço", async () => {
     const { id } = await minhaReuniao();
     const r = await addMeetAction({ ok: false }, form({ activityId: id }));

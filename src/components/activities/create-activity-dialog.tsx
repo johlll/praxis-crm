@@ -17,6 +17,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { CalendarNoticeAlert } from "@/components/calendar/calendar-notice";
+import { EditForm } from "@/components/feedback/edit-form";
 import { CalendarOptionsFields } from "@/components/calendar/calendar-options-fields";
 import { useCalendarCapabilities } from "@/components/calendar/calendar-capabilities";
 import { createActivityAction, type ActivityActionState } from "@/modules/activities/actions";
@@ -115,7 +116,11 @@ function CreateActivityDialogBody({
         <DialogTitle>Nova atividade</DialogTitle>
         {!leadId ? <DialogDescription>Vinculada a um lead — opcionalmente também a uma oportunidade.</DialogDescription> : null}
       </DialogHeader>
-      <form action={formAction} className="flex flex-col gap-4">
+      {/* Enviado pelo onSubmit (EditForm): numa recusa, o `<form action>` do React 19
+          limparia os campos enquanto a parte do Google Agenda continuaria aberta —
+          o tipo voltava a "Tarefa" com as opções de reunião na tela. No sucesso, o
+          diálogo troca para a tela de confirmação. */}
+      <EditForm action={formAction} className="flex flex-col gap-4">
         {leadId ? (
           <input type="hidden" name="leadId" value={leadId} />
         ) : (
@@ -247,7 +252,7 @@ function CreateActivityDialogBody({
             {pending ? "Criando…" : "Criar atividade"}
           </Button>
         </DialogFooter>
-      </form>
+      </EditForm>
     </DialogContent>
   );
 }
