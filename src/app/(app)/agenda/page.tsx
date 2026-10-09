@@ -10,6 +10,9 @@ import { listAllLeads } from "@/modules/leads/queries";
 import { listTeamMembers } from "@/modules/team/queries";
 import { WeekCalendar } from "@/components/activities/week-calendar";
 import { CreateActivityDialog } from "@/components/activities/create-activity-dialog";
+import { CalendarHealthNotices } from "@/components/calendar/calendar-health-notices";
+import { loadCalendarHealthNotices } from "@/modules/calendar/automation";
+import { scheduleOnDemandCalendarSync } from "@/modules/calendar/on-demand";
 
 export const metadata: Metadata = {
   title: "Agenda — Praxis CRM Jurídico",
@@ -33,11 +36,20 @@ export default async function AgendaPage() {
     listTeamMembers(workspaceId, user.id),
   ]);
 
+  // Google Agenda (B2): abrir a agenda dispara a sincronização da PRÓPRIA
+  // conexão depois da resposta (§9.2, item 3), e owner/admin veem se a
+  // automática está atrasada (§9.3). Integração desligada: nada acontece.
+  if (roleHasPermission(user.role, "calendar.connect_own")) {
+    await scheduleOnDemandCalendarSync({ userId: user.id, workspaceId });
+  }
+  const healthNotices = roleHasPermission(user.role, "calendar.manage") ? await loadCalendarHealthNotices(workspaceId) : [];
+
   return (
     <>
       <Topbar title="Agenda" subtitle="Compromissos e tarefas desta semana" user={user} />
       <main className="flex-1 overflow-y-auto p-5">
         <div className="mx-auto flex max-w-[1200px] flex-col gap-4">
+          <CalendarHealthNotices notices={healthNotices} />
           {canEdit ? (
             <div className="flex justify-end">
               <CreateActivityDialog leadOptions={leadOptions} members={members} />

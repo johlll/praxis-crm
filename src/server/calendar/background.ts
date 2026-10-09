@@ -1,4 +1,7 @@
 import { createSupabaseInboundStore } from "@/server/calendar/admin/inbound-store";
+import { createResendAlertSender, createSupabaseSchedulerStore } from "@/server/calendar/admin/scheduler-store";
+import { calendarAlertsEnabled, calendarSchedulerEnabled } from "@/server/calendar/automation-flags";
+import { runScheduledMaintenance, type ScheduledResult, type SchedulerSource } from "@/server/calendar/sync/scheduled";
 import { loadConnectionContext } from "@/server/calendar/connection-context";
 import { getCalendarEnvironment } from "@/server/calendar/environment";
 import { getCalendarProvider, type CalendarProvider } from "@/server/calendar/provider";
@@ -45,6 +48,10 @@ export async function openOwnerConnection(
 export async function runEnvironmentCalendarMaintenance(): Promise<MaintenanceReport | null> {
   const provider = await getCalendarProvider();
   if (!provider) return null;
+  return maintenanceWith(provider);
+}
+
+function maintenanceWith(provider: CalendarProvider): Promise<MaintenanceReport> {
   return runCalendarMaintenance({
     api: provider,
     store: createSupabaseInboundStore(),
@@ -53,4 +60,27 @@ export async function runEnvironmentCalendarMaintenance(): Promise<MaintenanceRe
     openConnection: (owner) => openOwnerConnection(provider, owner),
     webhookAddress: calendarWebhookAddress(),
   });
+}
+
+/**
+ * Rodada agendada (Inngest, recuperação adicional ou chamada manual): a
+ * manutenção, o batimento de quem chamou e, na recuperação adicional, o
+ * Detector 1. Sem provedor configurado, `null` sem tocar em nada — nem no
+ * batimento (as tabelas da B2 podem nem existir no banco).
+ */
+export async function runScheduledCalendarMaintenance(source: SchedulerSource): Promise<ScheduledResult | null> {
+  const provider = await getCalendarProvider();
+  if (!provider) return null;
+  const alertsEnabled = calendarAlertsEnabled();
+  return runScheduledMaintenance(
+    {
+      maintenance: () => maintenanceWith(provider),
+      store: createSupabaseSchedulerStore(),
+      now: () => new Date(),
+      schedulerEnabled: calendarSchedulerEnabled(),
+      alertsEnabled,
+      sendAlert: alertsEnabled ? createResendAlertSender() : null,
+    },
+    source,
+  );
 }

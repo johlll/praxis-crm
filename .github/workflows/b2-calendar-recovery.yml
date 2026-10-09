@@ -1,0 +1,44 @@
+name: B2 — recuperação adicional da agenda (manual)
+
+# Recuperação adicional do Google Agenda (docs/decisoes/b2-google-agenda.md
+# §9.2, item 2): chama a manutenção da agenda e confere o batimento do
+# agendador principal (Detector 1, §9.3).
+#
+# DESLIGADO POR PADRÃO, inclusive depois do merge:
+#  - não há `schedule:` — o workflow só roda quando alguém o dispara à mão;
+#  - não há endereço padrão — quem dispara informa o ambiente;
+#  - usa segredos PRÓPRIOS (B2_CALENDAR_CRON_SECRET), que não existem até a
+#    validação os criar; sem eles, o workflow para antes de chamar qualquer
+#    coisa.
+# Agendar este workflow (e com que frequência) é decisão da validação
+# (etapa 4), depois de medir o agendador principal. Não substitui nem altera
+# o workflow da A11.
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: "URL base do deployment a chamar (Preview ou Production), sem barra no fim"
+        required: true
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chamar /api/cron/calendar (source=github)
+        env:
+          CRON_SECRET: ${{ secrets.B2_CALENDAR_CRON_SECRET }}
+          BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+          TARGET_URL: ${{ github.event.inputs.target_url }}
+        run: |
+          if [ -z "${CRON_SECRET}" ]; then
+            echo "B2_CALENDAR_CRON_SECRET não configurado: a recuperação adicional continua desligada."
+            exit 1
+          fi
+          case "${TARGET_URL}" in
+            https://*) ;;
+            *) echo "target_url precisa começar com https://"; exit 1 ;;
+          esac
+          curl -sf -X POST "${TARGET_URL}/api/cron/calendar?source=github&x-vercel-protection-bypass=${BYPASS_SECRET}" \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            -H "x-vercel-set-bypass-cookie: true" \
+            -w "\nHTTP %{http_code}\n"

@@ -8,6 +8,7 @@ import { toUserMessage } from "@/lib/errors";
 import { uuidSchema } from "@/lib/uuid";
 import { getCalendarProvider } from "@/server/calendar/provider";
 import { adminListOwnChannels } from "@/server/calendar/admin/inbound-store";
+import { describeRecovery, recoverOwnCalendarLinks } from "@/modules/calendar/automation";
 import {
   adminConnectCalendar,
   adminDisconnectCalendar,
@@ -15,7 +16,7 @@ import {
   adminSetConnectionCalendar,
 } from "@/server/calendar/admin/connections";
 
-export type CalendarActionState = { ok: boolean; error?: string };
+export type CalendarActionState = { ok: boolean; error?: string; message?: string };
 
 /**
  * A recusa de ambiente aborta a transação no banco, então não deixa
@@ -65,8 +66,11 @@ export async function connectCalendarAction(
     return { ok: false, error: toUserMessage(error) };
   }
 
+  // Reconexão (§6.5): com a agenda já escolhida, reencontra os compromissos
+  // de uma desconexão anterior. Sem agenda escolhida, acontece na escolha.
+  const message = describeRecovery(await recoverOwnCalendarLinks(auth.ctx));
   revalidatePath("/configuracoes/integracoes");
-  return { ok: true };
+  return { ok: true, ...(message ? { message } : {}) };
 }
 
 const selectSchema = z.object({ connectionId: uuidSchema, calendarId: z.string().trim().min(1).max(1024) });
@@ -110,8 +114,26 @@ export async function selectCalendarAction(
     return { ok: false, error: toUserMessage(error) };
   }
 
+  const message = describeRecovery(await recoverOwnCalendarLinks(auth.ctx));
   revalidatePath("/configuracoes/integracoes");
-  return { ok: true };
+  return { ok: true, ...(message ? { message } : {}) };
+}
+
+/**
+ * "Reencontrar compromissos": repete a recuperação da reconexão (o Google
+ * pode ter falhado na primeira vez). Idempotente: o que já voltou não é
+ * listado de novo, e evento que não é deste compromisso nunca é adotado.
+ */
+export async function recoverCalendarLinksAction(): Promise<CalendarActionState> {
+  const auth = await requirePermissionSafe("calendar.connect_own");
+  if ("error" in auth) return { ok: false, error: auth.error };
+  const provider = await getCalendarProvider();
+  if (!provider) return { ok: false, error: PROVIDER_NOT_CONFIGURED };
+
+  const report = await recoverOwnCalendarLinks(auth.ctx);
+  if (!report) return { ok: false, error: "Não foi possível consultar o Google Agenda agora. Tente de novo." };
+  revalidatePath("/configuracoes/integracoes");
+  return { ok: true, message: describeRecovery(report) ?? "Nenhum compromisso de uma conexão anterior para reencontrar." };
 }
 
 const disconnectSchema = z.object({ connectionId: uuidSchema });

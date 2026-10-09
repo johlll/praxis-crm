@@ -3,6 +3,7 @@ import { requirePermissionSafe } from "@/server/authz/safe";
 import { getActivity } from "@/modules/activities/queries";
 import { readActivityCalendarInfo } from "@/modules/calendar/activity-links";
 import { listCalendarConnections } from "@/modules/calendar/queries";
+import { scheduleOnDemandCalendarSync } from "@/modules/calendar/on-demand";
 import {
   MAX_APPOINTMENT_MINUTES,
   MIN_APPOINTMENT_MINUTES,
@@ -479,7 +480,10 @@ export async function syncLinkedActivity(
   const { deps, conn, activity } = prep.prepared;
   if (!activity) return null;
   try {
-    return noticeForUpdate(await rescheduleAppointment(deps, conn, activity, options), prefix);
+    const notice = noticeForUpdate(await rescheduleAppointment(deps, conn, activity, options), prefix);
+    // Editar um compromisso também traz o que mudou no Google (§9.2, item 3).
+    await scheduleOnDemandCalendarSync(prep.ctx);
+    return notice;
   } catch (error) {
     const marked = await markPending(activityId, codeOf(error) || "sync_error");
     return warn(`${prefix}O Google Agenda não foi atualizado: ${errorMessage(error)}${marked ? " A alteração ficou pendente." : ""}`);
@@ -520,6 +524,7 @@ export async function createForNewActivity(activityId: string, options: CreateOp
     const { deps, conn, activity } = prep.prepared;
     if (!activity) return warn("Atividade criada, mas não foi adicionada ao Google Agenda.");
     const result = await createAppointment(deps, conn, activity, options);
+    await scheduleOnDemandCalendarSync(prep.ctx);
     return noticeForCreate(result) ?? ok("Já estava no Google Agenda.");
   } catch (error) {
     return warn(`Atividade criada, mas não foi adicionada ao Google Agenda: ${errorMessage(error)}`);

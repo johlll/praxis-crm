@@ -1,7 +1,7 @@
 import { createServerSupabaseClient } from "@/server/supabase/server";
 import { DataLoadError } from "@/server/data/load-error";
 
-export type LeadTimelineEventType = "nota" | "atividade" | "mensagem" | "etapa" | "proposta" | "conflito";
+export type LeadTimelineEventType = "nota" | "atividade" | "mensagem" | "etapa" | "proposta" | "conflito" | "agenda";
 
 export type LeadTimelineEvent = {
   eventType: LeadTimelineEventType;

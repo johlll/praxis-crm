@@ -9,6 +9,8 @@ import { ACTIVITY_TYPE_LABEL } from "@/components/activities/labels";
 import { MESSAGE_STATUS_LABEL } from "@/components/conversations/labels";
 import type { LeadTimelineEvent, LeadTimelineEventType } from "@/modules/timeline/queries";
 import { loadMoreLeadTimelineAction } from "@/modules/timeline/actions";
+import { restoreCalendarConflictAction } from "@/modules/calendar/conflict-actions";
+import type { CalendarNotice } from "@/modules/calendar/types";
 import type { TeamMember } from "@/modules/team/queries";
 import type { ActivityType } from "@/modules/activities/queries";
 
@@ -18,15 +20,90 @@ const FILTERS: { key: LeadTimelineEventType | "todos"; label: string }[] = [
   { key: "atividade", label: "Atividades" },
   { key: "etapa", label: "Alterações" },
   { key: "proposta", label: "Propostas" },
+  { key: "agenda", label: "Agenda" },
 ];
+
+const CALENDAR_FIELD_LABEL: Record<string, string> = {
+  title: "título",
+  schedule: "horário",
+  cancellation: "cancelamento",
+  meet: "Meet",
+};
+
+/** Valor de um lado do conflito de agenda, legível (título ou início do horário). */
+function conflictValue(field: string, value: unknown): string {
+  if (field === "title") return typeof value === "string" ? `“${value}”` : "—";
+  if (field === "schedule" && value && typeof value === "object" && "start" in value) {
+    const start = (value as { start?: unknown }).start;
+    return typeof start === "string" ? formatDateTime(start) : "—";
+  }
+  if (field === "cancellation") return "evento cancelado no Google";
+  return "—";
+}
+
+/**
+ * Conflito de agenda (B2, §6.4): o Google prevaleceu e o valor do CRM ficou
+ * gravado. Quem pode, restaura o valor do CRM — o servidor confere tudo de
+ * novo (dono da agenda, alcance, valor ainda atual) antes de alterar.
+ */
+function RestoreConflictButton({ conflictId }: { conflictId: string }) {
+  const [pending, startTransition] = useTransition();
+  const [notice, setNotice] = useState<CalendarNotice | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  return (
+    <div className="mt-1 flex flex-col gap-1">
+      {notice ? null : (
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          className="self-start"
+          disabled={pending}
+          onClick={() => {
+            setFailure(null);
+            startTransition(async () => {
+              const result = await restoreCalendarConflictAction(conflictId);
+              if (!result.ok) {
+                setFailure(result.error ?? "Não foi possível restaurar.");
+                return;
+              }
+              setNotice(result.notice ?? null);
+            });
+          }}
+        >
+          {pending ? "Restaurando…" : "Restaurar valor do CRM"}
+        </Button>
+      )}
+      {notice ? (
+        <Alert variant={notice.level === "warning" ? "warning" : "success"}>
+          <AlertDescription>{notice.message}</AlertDescription>
+        </Alert>
+      ) : null}
+      {failure ? (
+        <Alert variant="danger">
+          <AlertDescription>{failure}</AlertDescription>
+        </Alert>
+      ) : null}
+    </div>
+  );
+}
 
 function memberName(members: TeamMember[], userId: string | null | undefined): string {
   if (!userId) return "Alguém";
   return members.find((m) => m.userId === userId)?.fullName ?? "Alguém";
 }
 
-function EventRow({ event, members }: { event: LeadTimelineEvent; members: TeamMember[] }) {
+function EventRow({
+  event,
+  members,
+  canRestoreCalendar,
+}: {
+  event: LeadTimelineEvent;
+  members: TeamMember[];
+  canRestoreCalendar: boolean;
+}) {
   const p = event.payload;
+  let restoreId: string | null = null;
 
   let title = "";
   let detail = "";
@@ -72,6 +149,24 @@ function EventRow({ event, members }: { event: LeadTimelineEvent; members: TeamM
       title = "Verificação de conflito registrada";
       detail = `Status: ${String(p.status ?? "")}`;
       break;
+    case "agenda": {
+      const field = String(p.field ?? "");
+      const label = CALENDAR_FIELD_LABEL[field] ?? field;
+      const activity = String(p.activity_title ?? "");
+      if (p.kind === "restored") {
+        title = `Valor do CRM restaurado (${label})`;
+        detail = `${activity} — restaurado por ${memberName(members, p.restored_by as string)}: ${conflictValue(field, p.crm_value)}`;
+      } else {
+        title = `Conflito com o Google Agenda (${label})`;
+        detail =
+          field === "cancellation"
+            ? `${activity} — o evento foi cancelado no Google enquanto o CRM o alterava; a atividade continua no CRM.`
+            : `${activity} — o Google prevaleceu: ${conflictValue(field, p.google_value)}. Valor do CRM guardado: ${conflictValue(field, p.crm_value)}.`;
+        if (p.restored_at) detail += " Já restaurado.";
+        if (canRestoreCalendar && p.restorable === true && typeof p.conflict_id === "string") restoreId = p.conflict_id;
+      }
+      break;
+    }
   }
 
   return (
@@ -79,6 +174,7 @@ function EventRow({ event, members }: { event: LeadTimelineEvent; members: TeamM
       <span className="text-body font-semibold text-text">{title}</span>
       {detail ? <span className="text-meta text-text-secondary">{detail}</span> : null}
       <span className="font-mono text-meta text-text-tertiary">{formatDateTime(event.occurredAt)}</span>
+      {restoreId ? <RestoreConflictButton conflictId={restoreId} /> : null}
     </li>
   );
 }
@@ -89,12 +185,15 @@ export function LeadTimeline({
   initialHasMore,
   members,
   showFilters = true,
+  canRestoreCalendar = false,
 }: {
   leadId: string;
   initialItems: LeadTimelineEvent[];
   initialHasMore: boolean;
   members: TeamMember[];
   showFilters?: boolean;
+  /** Mostra "Restaurar valor do CRM" nos conflitos de agenda (`calendar.connect_own`). */
+  canRestoreCalendar?: boolean;
 }) {
   const [filter, setFilter] = useState<LeadTimelineEventType | "todos">("todos");
   const [items, setItems] = useState(initialItems);
@@ -198,7 +297,7 @@ export function LeadTimeline({
       ) : (
         <ul className="flex flex-col gap-0">
           {items.map((event) => (
-            <EventRow key={`${event.eventType}-${event.id}`} event={event} members={members} />
+            <EventRow key={`${event.eventType}-${event.id}`} event={event} members={members} canRestoreCalendar={canRestoreCalendar} />
           ))}
         </ul>
       )}

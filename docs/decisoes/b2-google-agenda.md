@@ -436,19 +436,81 @@ Primeira parte (**3a**), implementada com o provedor **simulado** (migration
 - **Endereço do webhook:** `CALENDAR_WEBHOOK_URL` (https) por ambiente; sem
   ela, só polling. Não configurada.
 
-**Checklist restante da B2** (nada disto está nesta PR):
+**Checklist da B2 depois da 3a** (estado atualizado na 3b, §6.11):
 
-| Item | Etapa prevista |
-| --- | --- |
-| Agendador principal: função agendada do Inngest, a cada 15 min, por ambiente (§9.2.1), e sincronização sob demanda ao abrir a agenda ou editar um compromisso (§9.2.3) | **3b** (segunda PR da etapa 3): código local, com o registro desligado; ligar e medir frequência e consumo na **4** |
-| Recuperação adicional: arquivo próprio no GitHub Actions e, se o plano permitir, cron diário da Vercel (§9.2.2); o workflow da A11 não muda | **3b** (código); plano da Vercel e disparos reais na **4** |
-| Batimento do agendador e alertas: `calendar_scheduler_heartbeat`, e-mail do Detector 1, aviso na tela do Detector 2 (§9.3) | **3b**; medição do §9.5 na **4** |
-| Reconexão reencontra os vínculos pela marca (critério 12) | **3b** |
-| Restauração do valor do CRM que perdeu num conflito (critério 7) | **3b** |
-| Conflito e restauração na timeline do lead (critério 7) | **3b** |
-| `CALENDAR_WEBHOOK_URL` e liberação da proteção do Preview para o webhook | **4** |
-| Comportamento real do Google (token, paginação, `410`, vida dos canais, cabeçalhos) e metas do §9.5 | **4** |
-| Pendências do administrador do Workspace e da conta de teste (§12) | **4** (validação externa) |
+| Item | Etapa | Estado |
+| --- | --- | --- |
+| Agendador principal: função agendada do Inngest, a cada 15 min, por ambiente (§9.2.1), e sincronização sob demanda ao abrir a agenda ou criar/editar um compromisso (§9.2.3) | **3b**; ligar e medir frequência e consumo na **4** | feito na 3b, **desligado** (`CALENDAR_SCHEDULER_ENABLED`) |
+| Recuperação adicional: workflow próprio no GitHub Actions (§9.2.2); o workflow da A11 não muda | **3b**; agendar e disparar de verdade na **4** | feito na 3b, **só disparo manual** e segredo próprio ainda inexistente |
+| Cron diário da Vercel como recuperação adicional | **4**, se o plano da conta permitir | não feito: um cron em `vercel.json` passaria a chamar Production sozinho |
+| Batimento do agendador e alertas: batimento, e-mail do Detector 1, aviso na tela do Detector 2 (§9.3) | **3b**; medição do §9.5 na **4** | feito na 3b, e-mail **desligado** (`CALENDAR_ALERTS_ENABLED`) |
+| Reconexão reencontra os vínculos pela marca (critério 12) | **3b** | feito |
+| Restauração do valor do CRM que perdeu num conflito (critério 7) | **3b** | feito (título e horário) |
+| Conflito e restauração na timeline do lead (critério 7) | **3b** | feito |
+| `CALENDAR_WEBHOOK_URL` e liberação da proteção do Preview para o webhook | **4** | pendente |
+| Comportamento real do Google (token, paginação, `410`, vida dos canais, cabeçalhos) e metas do §9.5 | **4** | pendente |
+| Pendências do administrador do Workspace e da conta de teste (§12) | **4** (validação externa) | pendente |
+
+### 6.11 Agendadores, alertas, reconexão e restauração (etapa 3b)
+Implementado com o provedor **simulado** (migration
+`20261012100000_b2_scheduler_alerts_restore`, não aplicada ao hospedado).
+**Tudo o que roda sozinho ou envia algo para fora começa desligado, e
+continua desligado depois do merge.**
+
+- **Agendador principal** (`src/server/calendar/inngest.ts`): função do
+  Inngest a cada 15 min (`TZ=UTC */15 * * * *`), uma por vez, sem novas
+  tentativas em laço. Só é oferecida ao Inngest com
+  `CALENDAR_SCHEDULER_ENABLED=true` (só o valor exato liga); sem ela a lista
+  de funções volta vazia e nada é agendado. Mesmo ligada, sem provedor
+  configurado a rodada não toca em nada.
+- **Sob demanda** (§9.2.3): abrir a Agenda, criar ou editar um compromisso
+  sincroniza as agendas da PRÓPRIA conexão cuja última execução tem mais de
+  5 min — depois da resposta (`after`), com a mesma trava da manutenção, no
+  máximo 5 agendas por vez. Não depende de chave: sem provedor, nada.
+- **Recuperação adicional** (`.github/workflows/b2-calendar-recovery.yml`):
+  só `workflow_dispatch`, sem `schedule`, sem endereço padrão (quem dispara
+  informa), com segredo próprio `B2_CALENDAR_CRON_SECRET` (mesmo valor do
+  `CRON_SECRET` do ambiente; ainda não existe). Chama
+  `/api/cron/calendar?source=github`. Agendá-lo é decisão da etapa 4.
+- **Batimento** (`calendar_scheduler_heartbeats`): toda rodada — Inngest,
+  recuperação adicional ou chamada manual — grava quando rodou, se deu
+  certo e só contagens (o banco descarta qualquer valor que não seja
+  número). Rodada que falha também grava ("rodou e falhou" ≠ "não rodou").
+- **Detector 1** (§9.3): a recuperação adicional confere o batimento do
+  Inngest. Agendador principal desligado → nada a vigiar. Atrasado (> 60
+  min ou nunca rodou) com `CALENDAR_ALERTS_ENABLED` desligado → apurado e
+  respondido, sem e-mail nem reserva. Ligado → reserva atômica
+  (`claim_calendar_scheduler_alert`, no máximo um alerta a cada 6 h; falha
+  não conta), um e-mail por destinatário (owner/admin dos workspaces com
+  vínculo no ambiente; ninguém vê o endereço dos outros), sem conteúdo de
+  evento, pelo Resend já usado nas propostas.
+- **Detector 2** (§9.3): na Agenda e em Integrações, owner/admin veem aviso
+  quando há compromissos vinculados e a sincronização automática está
+  atrasada (> 60 min, ou nunca rodou) ou há canal com menos de 25% da vida.
+  Com o agendador desligado, o aviso é informativo ("desligada neste
+  ambiente; atualizada ao abrir a agenda e ao editar compromissos").
+- **Reconexão** (§6.5, critério 12): desconectar desfaz os vínculos; ao
+  conectar de novo (com a agenda escolhida) ou pelo botão "Reencontrar
+  compromissos", o banco lista os vínculos desfeitos de conexões
+  desconectadas do MESMO usuário, workspace e ambiente, cuja atividade
+  existe e não tem outro vínculo ativo. Cada evento é conferido no Google:
+  existe, não está cancelado, não é série e tem a marca deste compromisso e
+  ambiente — senão não é adotado (nem recriado). O vínculo volta com a base
+  preservada; depois, listagem completa da agenda (Google → CRM) e saída de
+  cada compromisso (CRM → Google), com as regras normais de conflito.
+- **Restauração** (`restore_calendar_conflict`, critério 7): só título e
+  horário em que o Google prevaleceu; só pelo dono da conexão do vínculo
+  (é ele quem leva ao Google), com `activity.edit` e alcance ao lead; só se
+  a atividade ainda tem o valor que prevaleceu (senão `outdated`: restaurar
+  sobrescreveria algo mais novo); vínculo precisa estar `linked`. A
+  atividade passa pelo gatilho de ambiente; o conflito fica marcado
+  (quando, quem, versão); auditoria só com o nome do campo. Em seguida a
+  saída normal leva o valor ao Google — se o Google mudou de novo, vale a
+  regra de conflito outra vez, com registro. Cancelamento não se restaura.
+- **Timeline do lead**: tipo "Agenda" — o conflito (o que prevaleceu e o
+  valor do CRM guardado, com "Restaurar valor do CRM" para quem pode) e a
+  restauração como fato próprio. Só conflitos do ambiente autenticado da
+  requisição; sem ambiente, nenhum.
 
 ## 7. Isolamento entre ambientes
 
@@ -686,7 +748,7 @@ e reportados como medição, não como promessa.
    renovação, agendadores, batimento e alertas. Em duas PRs: **3a**
    (sincronização, canais, webhook e manutenção, com provedor simulado) e
    **3b** (agendadores, batimento e alertas, reconexão, restauração de
-   conflito e timeline; checklist em §6.10).
+   conflito e timeline; §6.11, checklist em §6.10).
 4. **Validação** com conta e calendário de teste (Preview, depois
    Production).
 5. **Etapa controlada** com a agenda do Henrique.
