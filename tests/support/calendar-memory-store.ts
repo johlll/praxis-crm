@@ -42,6 +42,8 @@ export class MemoryStore implements SyncStore {
   /** Atividades do CRM simuladas (só as registradas têm controle de versão). */
   activities = new Map<string, ActivitySnapshot>();
   private beforeApply: (() => void) | undefined;
+  /** Agenda SELECIONADA de cada conexão (o banco a lê da conexão, ao criar o vínculo). */
+  private selectedCalendar = new Map<string, string>();
   private seq = 0;
 
   constructor(
@@ -78,6 +80,13 @@ export class MemoryStore implements SyncStore {
     if (intent.status === "succeeded" || intent.status === "failed") return null;
     intent.status = params.status;
     intent.errorCode = params.errorCode;
+    // Como no banco: perda de acesso marca o vínculo ATIVO da conexão como pendente.
+    if (params.status === "failed" && params.state?.linkStatus === "needs_attention") {
+      const link = [...this.links.values()].find(
+        (l) => l.activityId === intent.activityId && l.status !== "unlinked" && l.connectionId === intent.connectionId,
+      );
+      if (link) link.status = "needs_attention";
+    }
     if (params.status !== "succeeded" || !params.state) return null;
 
     // Como no banco: o estado viaja como JSON — chave AUSENTE preserva o valor
@@ -110,7 +119,7 @@ export class MemoryStore implements SyncStore {
       activityId: intent.activityId,
       connectionId: intent.connectionId,
       environment: this.environment,
-      calendarId: this.calendarId,
+      calendarId: this.selectedCalendar.get(intent.connectionId) ?? this.calendarId,
       eventId: s.eventId,
       generation: 1,
       ...next,
@@ -158,6 +167,11 @@ export class MemoryStore implements SyncStore {
       return current.lockVersion;
     }
     return this.appliedToActivity.length;
+  }
+
+  /** O usuário escolhe outra agenda para a conexão: vale só para vínculos NOVOS. */
+  selectCalendar(connectionId: string, calendarId: string): void {
+    this.selectedCalendar.set(connectionId, calendarId);
   }
 
   /** Registra (ou substitui) a atividade do CRM, com controle de versão. */

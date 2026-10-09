@@ -9,7 +9,7 @@
 -- aqui como o servidor faz).
 
 begin;
-select plan(62);
+select plan(70);
 
 \set dono   '20000000-0000-0000-0000-000000000001'
 \set adv    '20000000-0000-0000-0000-000000000002'
@@ -281,8 +281,42 @@ select is(
   'um Meet novo (chaves presentes) substitui o valor guardado'
 );
 
+-- Duração REAL do evento (inclusive externo vinculado), fora de 15–480: sem teto
+-- nem piso no vínculo; só zero ou negativa é inválida.
+select begin_calendar_effect(:'conn_prod'::uuid, :'reuniao'::uuid, :'dono'::uuid, 'update', '{}'::jsonb) as intent_dur \gset
+select resolve_calendar_effect(
+  :'intent_dur'::uuid, :'dono'::uuid, 'succeeded', '',
+  jsonb_build_object('eventId', 'evento-1', 'etag', '"9e"', 'title', 'Reunião B2', 'cancelled', false, 'hasMeet', true,
+    'durationMinutes', 600, 'crmVersion', 4, 'linkStatus', 'linked')
+);
+select is(
+  (select duration_minutes from public.calendar_event_links where event_id = 'evento-1'),
+  600, 'duração acima de 480 (evento externo longo) é guardada como veio do Google'
+);
+select begin_calendar_effect(:'conn_prod'::uuid, :'reuniao'::uuid, :'dono'::uuid, 'update', '{}'::jsonb) as intent_dur2 \gset
+select resolve_calendar_effect(
+  :'intent_dur2'::uuid, :'dono'::uuid, 'succeeded', '',
+  jsonb_build_object('eventId', 'evento-1', 'etag', '"9f"', 'title', 'Reunião B2', 'cancelled', false, 'hasMeet', true,
+    'durationMinutes', 10, 'crmVersion', 4, 'linkStatus', 'linked')
+);
+select is(
+  (select duration_minutes from public.calendar_event_links where event_id = 'evento-1'),
+  10, 'duração abaixo de 15 também é guardada como veio do Google'
+);
+select begin_calendar_effect(:'conn_prod'::uuid, :'reuniao'::uuid, :'dono'::uuid, 'update', '{}'::jsonb) as intent_dur3 \gset
+select throws_ok(
+  format($i$ select resolve_calendar_effect(%L::uuid, %L::uuid, 'succeeded', '', %L::jsonb) $i$, :'intent_dur3', :'dono',
+    '{"eventId":"evento-1","durationMinutes":0,"linkStatus":"linked"}'),
+  '23514', null, 'duração zero continua inválida'
+);
+select resolve_calendar_effect(
+  :'intent_dur3'::uuid, :'dono'::uuid, 'succeeded', '',
+  jsonb_build_object('eventId', 'evento-1', 'etag', '"9g"', 'title', 'Reunião B2', 'cancelled', false, 'hasMeet', true,
+    'durationMinutes', 90, 'crmVersion', 4, 'linkStatus', 'linked')
+);
+
 -- ---------------------------------------------------------------------
--- 5c) O vínculo manda na conexão e na agenda
+-- 5c) O vínculo manda na conexão; a agenda selecionada afeta só vínculos novos
 -- ---------------------------------------------------------------------
 
 select connect_calendar_account(:'ws'::uuid, :'adv'::uuid, 'adv@v.test', array['escopo'], 'refresh-adv', 'access-adv', now() + interval '1 hour', '1') as conn_adv \gset
@@ -294,15 +328,17 @@ select throws_ok(
   'P0001', 'calendar_link_mismatch', 'conexão de OUTRO usuário não opera o compromisso vinculado pela conexão do dono'
 );
 
-select set_calendar_connection_calendar(:'conn_prod'::uuid, :'dono'::uuid, 'cal-prod-2@x', 'Outra agenda');
-select throws_ok(
-  format($i$ select begin_calendar_effect(%L::uuid, %L::uuid, %L::uuid, 'delete', '{}'::jsonb) $i$, :'conn_prod', :'reuniao', :'dono'),
-  'P0001', 'calendar_link_mismatch', 'o mesmo usuário com OUTRA agenda selecionada também não opera o vínculo'
-);
 select is(
   (select count(*)::int from public.calendar_effect_intents),
-  :'intents_antes'::int, 'as recusas não criam intenção'
+  :'intents_antes'::int, 'a recusa da conexão alheia não cria intenção'
 );
+
+-- Trocar a agenda SELECIONADA não bloqueia o compromisso existente: ele
+-- continua operável, na agenda em que nasceu.
+select set_calendar_connection_calendar(:'conn_prod'::uuid, :'dono'::uuid, 'cal-prod-2@x', 'Outra agenda');
+select begin_calendar_effect(:'conn_prod'::uuid, :'reuniao'::uuid, :'dono'::uuid, 'update', '{}'::jsonb) as intent_outra_agenda \gset
+select ok(:'intent_outra_agenda' is not null, 'com outra agenda selecionada, o compromisso existente continua operável');
+select resolve_calendar_effect(:'intent_outra_agenda'::uuid, :'dono'::uuid, 'failed', 'teste', '{}'::jsonb);
 
 -- Uma intenção aberta ANTES da troca de agenda é resolvida no MESMO vínculo.
 select set_calendar_connection_calendar(:'conn_prod'::uuid, :'dono'::uuid, 'cal-prod@x', 'Agenda de produção');
@@ -329,6 +365,43 @@ values (:'ws'::uuid, (:'conn_adv')::uuid, (:'reuniao')::uuid, 'production', 'upd
 select throws_ok(
   format($i$ select resolve_calendar_effect(%L::uuid, %L::uuid, 'succeeded', '', '{"eventId":"evento-1","cancelled":true}'::jsonb) $i$, :'intent_alheia', :'adv'),
   'P0001', 'calendar_link_mismatch', 'resolver não grava no vínculo de outra conexão'
+);
+
+-- Perda de acesso à agenda: pendência explícita no vínculo (nunca "apagado").
+-- Só a conexão dona do vínculo o marca.
+select resolve_calendar_effect(:'intent_alheia'::uuid, :'adv'::uuid, 'failed', 'calendar_access_lost', '{"linkStatus":"needs_attention"}'::jsonb);
+select is(
+  (select status::text from public.calendar_event_links where event_id = 'evento-1'),
+  'linked', 'outra conexão NÃO consegue marcar pendência no vínculo alheio'
+);
+
+select begin_calendar_effect(:'conn_prod'::uuid, :'reuniao'::uuid, :'dono'::uuid, 'update', '{}'::jsonb) as intent_perda \gset
+select resolve_calendar_effect(:'intent_perda'::uuid, :'dono'::uuid, 'failed', 'calendar_access_lost', '{"linkStatus":"needs_attention"}'::jsonb);
+select is(
+  (select jsonb_build_object('s', status::text, 'c', base_cancelled) from public.calendar_event_links where event_id = 'evento-1'),
+  jsonb_build_object('s', 'needs_attention', 'c', false),
+  'perda de acesso marca o vínculo como pendente, sem cancelá-lo'
+);
+select is(
+  (select count(*)::int from public.audit_logs where workspace_id = :'ws'::uuid and action = 'calendar.link.needs_attention'),
+  1, 'a pendência fica na auditoria'
+);
+select is(
+  (select count(*)::int from public.audit_logs
+   where workspace_id = :'ws'::uuid and action = 'calendar.link.needs_attention' and metadata::text ~* '(etag|title|Reunião)'),
+  0, 'e a auditoria da pendência não guarda título nem etag'
+);
+
+-- Com o acesso de volta, a operação seguinte limpa a pendência.
+select begin_calendar_effect(:'conn_prod'::uuid, :'reuniao'::uuid, :'dono'::uuid, 'update', '{}'::jsonb) as intent_volta \gset
+select resolve_calendar_effect(
+  :'intent_volta'::uuid, :'dono'::uuid, 'succeeded', '',
+  jsonb_build_object('eventId', 'evento-1', 'etag', '"9h"', 'title', 'Reunião B2', 'cancelled', false, 'hasMeet', true,
+    'durationMinutes', 90, 'crmVersion', 4, 'linkStatus', 'linked')
+);
+select is(
+  (select status::text from public.calendar_event_links where event_id = 'evento-1'),
+  'linked', 'com o acesso restabelecido, a pendência some'
 );
 
 -- ---------------------------------------------------------------------

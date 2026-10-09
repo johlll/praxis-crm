@@ -13,7 +13,9 @@
 -- ---------------------------------------------------------------------
 
 alter table public.calendar_event_links
-  add column duration_minutes integer not null default 60 check (duration_minutes between 15 and 480),
+  add column -- Duração REAL do evento (inclusive de evento externo vinculado, fora de 15–480):
+  -- o intervalo 15–480 vale só para o que o usuário digita, na aplicação.
+  duration_minutes integer not null default 60 check (duration_minutes > 0),
   add column base_etag text,
   add column base_title text check (base_title is null or char_length(base_title) <= 1024),
   add column base_start timestamptz,
@@ -180,13 +182,13 @@ begin
     raise exception 'calendar_environment_mismatch';
   end if;
 
-  -- O vínculo ativo manda: só a conexão e a agenda que o criaram o operam.
-  -- Outra conexão (de outro usuário) ou outra agenda da mesma conexão procuraria
-  -- o evento no lugar errado e leria "não existe" como evento apagado.
+  -- O vínculo ativo manda: só a conexão que o criou o opera. Outra conexão (de
+  -- outro usuário) procuraria o evento no lugar errado e leria "não existe"
+  -- como evento apagado. Trocar a agenda SELECIONADA da própria conexão afeta
+  -- só compromissos novos: o vínculo existente continua na agenda original.
   if exists (
     select 1 from public.calendar_event_links l
-    where l.activity_id = v_activity.id and l.status <> 'unlinked'
-      and (l.connection_id <> v_conn.id or l.calendar_id is distinct from v_conn.calendar_id)
+    where l.activity_id = v_activity.id and l.status <> 'unlinked' and l.connection_id <> v_conn.id
   ) then
     raise exception 'calendar_link_mismatch';
   end if;
@@ -255,6 +257,22 @@ begin
   where id = v_intent.id;
 
   if p_status <> 'succeeded' then
+    -- Perda de acesso à agenda: pendência EXPLÍCITA no vínculo (nunca "evento
+    -- apagado"). Só a conexão dona do vínculo o marca.
+    if p_status = 'failed' and p_state ->> 'linkStatus' = 'needs_attention' then
+      update public.calendar_event_links
+      set status = 'needs_attention', updated_at = now()
+      where activity_id = v_intent.activity_id and status <> 'unlinked' and connection_id = v_intent.connection_id
+      returning id into v_link_id;
+
+      if v_link_id is not null then
+        insert into public.audit_logs (workspace_id, actor_user_id, action, resource_type, resource_id, metadata)
+        values (
+          v_intent.workspace_id, p_actor_user_id, 'calendar.link.needs_attention', 'calendar_event_link', v_link_id,
+          jsonb_build_object('environment', v_env, 'activity_id', v_intent.activity_id, 'reason', left(p_error_code, 100))
+        );
+      end if;
+    end if;
     return null;
   end if;
 

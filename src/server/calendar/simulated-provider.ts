@@ -44,11 +44,13 @@ export class SimulatedCalendarProvider implements CalendarProvider {
   private events = new Map<string, Map<string, StoredEvent>>();
   private etagCounter = 0;
   private faults: InjectedFault[] = [];
+  /** Agendas cujo acesso foi perdido, e como o Google responde (403 ou 404). */
+  private revokedCalendars = new Map<string, 403 | 404>();
   private hooks: Array<{ operation: Operation; fn: () => void }> = [];
   /** Quantas leituras (`get`) até o Meet pendente virar `success`. */
   meetReadyAfterReads = 1;
   /** Toda requisição recebida, em ordem — para provar o que NÃO foi chamado. */
-  readonly calls: Array<{ operation: Operation | "freebusy"; eventId?: string | undefined }> = [];
+  readonly calls: Array<{ operation: Operation | "freebusy" | "calendar"; eventId?: string | undefined }> = [];
   /** Convites que o Google teria enviado por e-mail. */
   readonly notificationsSent: Array<{ eventId: string; to: string[] }> = [];
 
@@ -110,6 +112,21 @@ export class SimulatedCalendarProvider implements CalendarProvider {
     this.hooks.push({ operation, fn });
   }
 
+  /** Simula a perda de acesso à agenda. `as: 404` reproduz o caso ambíguo, em
+   * que o `get` volta como "não existe" e só a checagem da agenda resolve. */
+  revokeCalendarAccess(calendarId: string, as: 403 | 404 = 404): void {
+    this.revokedCalendars.set(calendarId, as);
+  }
+
+  restoreCalendarAccess(calendarId: string): void {
+    this.revokedCalendars.delete(calendarId);
+  }
+
+  async calendarAccessible(_accessToken: string, calendarId: string): Promise<boolean> {
+    this.calls.push({ operation: "calendar" });
+    return !this.revokedCalendars.has(calendarId);
+  }
+
   /** Edição feita DIRETO no Google, fora do CRM (muda o etag). */
   externalEdit(calendarId: string, eventId: string, patch: EventInput & { status?: "cancelled" | undefined }): void {
     const event = this.require(calendarId, eventId);
@@ -153,6 +170,8 @@ export class SimulatedCalendarProvider implements CalendarProvider {
   ): Promise<CalendarEvent> {
     this.calls.push({ operation: "insert", eventId: event.id });
     const fault = this.nextFault("insert");
+    const revoked = this.revokedCalendars.get(calendarId);
+    if (revoked !== undefined) throw new ProviderHttpError(revoked);
     if (fault?.kind === "timeout_before_apply") throw new ProviderUncertainError();
     if (fault?.kind === "status") throw new ProviderHttpError(fault.status ?? 500);
 
@@ -186,6 +205,10 @@ export class SimulatedCalendarProvider implements CalendarProvider {
     if (fault?.kind === "timeout_before_apply" || fault?.kind === "timeout_after_apply") throw new ProviderUncertainError();
     if (fault?.kind === "status") throw new ProviderHttpError(fault.status ?? 500);
 
+    const revoked = this.revokedCalendars.get(calendarId);
+    if (revoked === 403) throw new ProviderHttpError(403);
+    if (revoked === 404) return null;
+
     const stored = this.bucket(calendarId).get(eventId);
     if (!stored) return null;
     this.advanceMeet(stored);
@@ -201,6 +224,8 @@ export class SimulatedCalendarProvider implements CalendarProvider {
   ): Promise<CalendarEvent> {
     this.calls.push({ operation: "patch", eventId });
     const fault = this.nextFault("patch");
+    const revoked = this.revokedCalendars.get(calendarId);
+    if (revoked !== undefined) throw new ProviderHttpError(revoked);
     if (fault?.kind === "timeout_before_apply") throw new ProviderUncertainError();
     if (fault?.kind === "status") throw new ProviderHttpError(fault.status ?? 500);
 
@@ -228,6 +253,8 @@ export class SimulatedCalendarProvider implements CalendarProvider {
   ): Promise<void> {
     this.calls.push({ operation: "delete", eventId });
     const fault = this.nextFault("delete");
+    const revoked = this.revokedCalendars.get(calendarId);
+    if (revoked !== undefined) throw new ProviderHttpError(revoked);
     if (fault?.kind === "timeout_before_apply") throw new ProviderUncertainError();
     if (fault?.kind === "status") throw new ProviderHttpError(fault.status ?? 500);
 

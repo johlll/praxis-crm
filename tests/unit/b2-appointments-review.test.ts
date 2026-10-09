@@ -69,24 +69,6 @@ describe("achado 1 — o vínculo manda na conexão e no calendário", () => {
     expect(f.provider.peek(CALENDAR_ID, EVENT_ID)?.status).toBe("confirmed");
   });
 
-  it.each([
-    ["reagendar", (f: Awaited<ReturnType<typeof comEventoCriado>>, c: ConnectionContext) => rescheduleAppointment(f.deps, c, REMARCADA)],
-    ["adicionar Meet", (f: Awaited<ReturnType<typeof comEventoCriado>>, c: ConnectionContext) => addMeetToAppointment(f.deps, c, CRIADA)],
-    ["cancelar", (f: Awaited<ReturnType<typeof comEventoCriado>>, c: ConnectionContext) => cancelAppointment(f.deps, c, CRIADA)],
-  ])("%s depois de o MESMO usuário trocar a agenda selecionada: recusa, não interpreta como evento apagado", async (_nome, run) => {
-    const f = await comEventoCriado();
-    const trocada: ConnectionContext = { ...f.conn, calendarId: "segunda-agenda@calendar.simulated" };
-    const chamadas = f.provider.calls.length;
-    const intencoes = f.store.intents.length;
-
-    await expect(run(f, trocada)).rejects.toMatchObject({ code: "link_calendar_mismatch" });
-
-    expect(f.provider.calls.length).toBe(chamadas);
-    expect(f.store.intents.length).toBe(intencoes);
-    expect(f.store.conflicts).toEqual([]);
-    expect([...f.store.links.values()][0]).toMatchObject({ status: "linked", baseCancelled: false, calendarId: CALENDAR_ID });
-  });
-
   it("a conexão certa (mesma conexão, mesma agenda) continua funcionando", async () => {
     const f = await comEventoCriado();
     expect((await rescheduleAppointment(f.deps, f.conn, REMARCADA)).status).toBe("updated");
@@ -307,16 +289,162 @@ describe("achado 4 — a duração acompanha o horário que o Google venceu", ()
     expect(await f.store.getLink(ACTIVITY_ID)).toMatchObject({ durationMinutes: 120 });
   });
 
-  it("evento do Google fora dos limites (10 min): o vínculo guarda um valor válido e o reagendamento respeita o evento", async () => {
+  it.each([
+    ["10 minutos (abaixo de 15)", "2026-11-10T14:10:00.000Z", 10],
+    ["10 horas (acima de 480)", "2026-11-10T00:00:00.000Z", 600],
+  ])("evento externo vinculado com %s: a duração real é preservada e um reagendamento posterior a mantém", async (_nome, fim, esperado) => {
     const f = await comEventoCriado();
-    f.provider.externalEdit(CALENDAR_ID, EVENT_ID, { end: { dateTime: "2026-11-10T14:10:00.000Z" } });
+    const inicio = fim === "2026-11-10T00:00:00.000Z" ? "2026-11-09T14:00:00.000Z" : "2026-11-10T14:00:00.000Z";
+    const fimReal = fim === "2026-11-10T00:00:00.000Z" ? "2026-11-10T00:00:00.000Z" : fim;
+    f.provider.externalEdit(CALENDAR_ID, EVENT_ID, { start: { dateTime: inicio }, end: { dateTime: fimReal } });
+    f.store.setActivity({ ...CRIADA, dueAt: inicio }); // o CRM concorda com o início do Google
+
+    // Primeiro reagendamento (sem mudança de início): nada é "corrigido" para caber em 15–480.
+    await rescheduleAppointment(f.deps, f.conn, { ...CRIADA, dueAt: inicio });
+    const evento = f.provider.peek(CALENDAR_ID, EVENT_ID)!;
+    expect((Date.parse(evento.end!.dateTime!) - Date.parse(evento.start!.dateTime!)) / 60_000).toBe(esperado);
+
+    // Reagendamento posterior no CRM: início novo, duração real mantida e gravada sem clamp.
+    const novo = { ...CRIADA, dueAt: "2026-11-20T10:00:00.000Z", lockVersion: 9 };
+    f.store.setActivity(novo);
+    const result = await rescheduleAppointment(f.deps, f.conn, novo);
+
+    expect(result.status).toBe("updated");
+    const depois = f.provider.peek(CALENDAR_ID, EVENT_ID)!;
+    expect(depois.start?.dateTime).toBe("2026-11-20T10:00:00.000Z");
+    expect((Date.parse(depois.end!.dateTime!) - Date.parse(depois.start!.dateTime!)) / 60_000).toBe(esperado);
+    expect(await f.store.getLink(ACTIVITY_ID)).toMatchObject({ durationMinutes: esperado });
+  });
+
+  it("o intervalo 15–480 continua valendo para a duração DIGITADA", async () => {
+    const f = await comEventoCriado();
     f.store.setActivity(REMARCADA);
+    await expect(rescheduleAppointment(f.deps, f.conn, REMARCADA, { durationMinutes: 10 })).rejects.toMatchObject({ code: "invalid_duration" });
+    await expect(rescheduleAppointment(f.deps, f.conn, REMARCADA, { durationMinutes: 481 })).rejects.toMatchObject({ code: "invalid_duration" });
+    expect((await rescheduleAppointment(f.deps, f.conn, REMARCADA, { durationMinutes: 480 })).status).toBe("updated");
+  });
+});
 
-    await rescheduleAppointment(f.deps, f.conn, REMARCADA);
+// ---------------------------------------------------------------------
+// Troca da agenda selecionada: só compromissos NOVOS
+// ---------------------------------------------------------------------
 
-    expect(minutos(f)).toBe(10);
-    const link = await f.store.getLink(ACTIVITY_ID);
-    expect(link!.durationMinutes).toBeGreaterThanOrEqual(15);
-    expect(link!.durationMinutes).toBeLessThanOrEqual(480);
+describe("trocar a agenda selecionada afeta só compromissos novos", () => {
+  const SEGUNDA = "segunda-agenda@calendar.simulated";
+
+  it("reagendar depois da troca: o evento continua na agenda ORIGINAL, pela mesma conexão", async () => {
+    const f = await comEventoCriado();
+    f.store.setActivity(REMARCADA);
+    const trocada: ConnectionContext = { ...f.conn, calendarId: SEGUNDA };
+
+    const result = await rescheduleAppointment(f.deps, trocada, REMARCADA);
+
+    expect(result.status).toBe("updated");
+    expect(f.provider.peek(CALENDAR_ID, EVENT_ID)?.start?.dateTime).toBe("2026-11-12T16:00:00.000Z");
+    expect(f.provider.peek(SEGUNDA, EVENT_ID)).toBeUndefined(); // nada foi movido nem criado na agenda nova
+    expect(f.provider.eventCount(SEGUNDA)).toBe(0);
+    expect(f.store.conflicts).toEqual([]);
+    expect([...f.store.links.values()][0]).toMatchObject({ status: "linked", calendarId: CALENDAR_ID, connectionId: "conn-1", baseCancelled: false });
+  });
+
+  it("adicionar Meet depois da troca: o Meet nasce no evento da agenda original", async () => {
+    const f = await comEventoCriado();
+    const result = await addMeetToAppointment(f.deps, { ...f.conn, calendarId: SEGUNDA }, CRIADA);
+    expect(result).toMatchObject({ status: "updated", meet: { status: "success" } });
+    expect(f.provider.peek(CALENDAR_ID, EVENT_ID)?.conferenceData?.entryPoints).toHaveLength(1);
+    expect(f.provider.eventCount(SEGUNDA)).toBe(0);
+  });
+
+  it("cancelar depois da troca: apaga o evento da agenda original e só ele", async () => {
+    const f = await comEventoCriado();
+    const result = await cancelAppointment(f.deps, { ...f.conn, calendarId: SEGUNDA }, CRIADA);
+    expect(result).toEqual({ status: "cancelled" });
+    expect(f.provider.peek(CALENDAR_ID, EVENT_ID)?.status).toBe("cancelled");
+    expect(f.provider.eventCount(SEGUNDA)).toBe(0);
+  });
+
+  it("compromisso NOVO depois da troca nasce na agenda nova; o antigo fica onde estava", async () => {
+    const f = await comEventoCriado();
+    const trocada: ConnectionContext = { ...f.conn, calendarId: SEGUNDA };
+    f.store.selectCalendar("conn-1", SEGUNDA);
+    const outra = activity({ id: "a1b2c3d4-0000-4000-8000-00000000a002", title: "Outra reunião fictícia", dueAt: "2026-11-15T10:00:00.000Z" });
+
+    const criada = await createAppointment(f.deps, trocada, outra);
+
+    expect(criada.status).toBe("created");
+    expect(f.provider.eventCount(SEGUNDA)).toBe(1);
+    expect(f.provider.eventCount(CALENDAR_ID)).toBe(1);
+    const links = [...f.store.links.values()];
+    expect(links.find((l) => l.activityId === ACTIVITY_ID)?.calendarId).toBe(CALENDAR_ID);
+    expect(links.find((l) => l.activityId === outra.id)?.calendarId).toBe(SEGUNDA);
+  });
+
+  it("a conexão de OUTRO usuário continua recusada, mesmo com a agenda original selecionada", async () => {
+    const f = await comEventoCriado();
+    const outro = await f.provider.exchangeAuthorization("outro.usuario@exemplo.test");
+    const connOutro: ConnectionContext = { connectionId: "conn-2", calendarId: CALENDAR_ID, environment: "preview", accessToken: outro.accessToken };
+    const chamadas = f.provider.calls.length;
+
+    await expect(rescheduleAppointment(f.deps, connOutro, REMARCADA)).rejects.toMatchObject({ code: "link_connection_mismatch" });
+    await expect(cancelAppointment(f.deps, connOutro, CRIADA)).rejects.toMatchObject({ code: "link_connection_mismatch" });
+    expect(f.provider.calls.length).toBe(chamadas);
+  });
+});
+
+// ---------------------------------------------------------------------
+// Perda de acesso: pendência explícita, nunca "evento apagado"
+// ---------------------------------------------------------------------
+
+describe("perda de acesso à agenda do vínculo", () => {
+  it.each([
+    ["403 (proibido)", 403],
+    ["404 (agenda 'não existe' para esta conexão)", 404],
+  ] as const)("reagendar com acesso perdido — %s: pendência explícita, evento NÃO é dado como apagado", async (_nome, como) => {
+    const f = await comEventoCriado();
+    f.store.setActivity(REMARCADA);
+    f.provider.revokeCalendarAccess(CALENDAR_ID, como);
+
+    const result = await rescheduleAppointment(f.deps, f.conn, REMARCADA);
+
+    expect(result).toEqual({ status: "access_lost" });
+    expect(countCalls(f.provider, "patch")).toBe(0);
+    expect(f.store.conflicts).toEqual([]); // nada de "cancelamento" registrado
+    expect([...f.store.links.values()][0]).toMatchObject({ status: "needs_attention", baseCancelled: false });
+    expect(f.store.intents.at(-1)).toMatchObject({ status: "failed", errorCode: "calendar_access_lost" });
+    expect(f.provider.peek(CALENDAR_ID, EVENT_ID)?.status).toBe("confirmed");
+
+    // Com o acesso de volta, a mesma operação funciona e a pendência some.
+    f.provider.restoreCalendarAccess(CALENDAR_ID);
+    expect((await rescheduleAppointment(f.deps, f.conn, REMARCADA)).status).toBe("updated");
+    expect([...f.store.links.values()][0]).toMatchObject({ status: "linked" });
+  });
+
+  it.each([403, 404] as const)("cancelar com acesso perdido (%s): não desfaz o vínculo nem finge que o evento sumiu", async (como) => {
+    const f = await comEventoCriado();
+    f.provider.revokeCalendarAccess(CALENDAR_ID, como);
+
+    const result = await cancelAppointment(f.deps, f.conn, CRIADA);
+
+    expect(result).toEqual({ status: "access_lost" });
+    expect(countCalls(f.provider, "delete")).toBe(0);
+    expect([...f.store.links.values()][0]).toMatchObject({ status: "needs_attention", baseCancelled: false });
+    expect(await f.store.getLink(ACTIVITY_ID)).not.toBeNull(); // vínculo continua ativo
+
+    f.provider.restoreCalendarAccess(CALENDAR_ID);
+    expect(await cancelAppointment(f.deps, f.conn, CRIADA)).toEqual({ status: "cancelled" });
+  });
+
+  it("adicionar Meet com acesso perdido: mesma pendência", async () => {
+    const f = await comEventoCriado();
+    f.provider.revokeCalendarAccess(CALENDAR_ID, 404);
+    expect(await addMeetToAppointment(f.deps, f.conn, CRIADA)).toEqual({ status: "access_lost" });
+    expect([...f.store.links.values()][0]).toMatchObject({ status: "needs_attention" });
+  });
+
+  it("evento realmente apagado (agenda acessível) continua sendo cancelamento no Google", async () => {
+    const f = await comEventoCriado();
+    f.provider.externalEdit(CALENDAR_ID, EVENT_ID, { status: "cancelled" });
+    f.store.setActivity(REMARCADA);
+    expect(await rescheduleAppointment(f.deps, f.conn, REMARCADA)).toEqual({ status: "cancelled_in_google" });
   });
 });

@@ -123,10 +123,9 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   link_not_found: "Vínculo com a agenda não encontrado.",
   link_connection_mismatch:
     "Este compromisso foi criado na agenda de outra conexão. Use a conexão que o criou para alterá-lo.",
-  link_calendar_mismatch:
-    "Este compromisso foi criado em outra agenda desta conexão. Selecione de novo a agenda original para alterá-lo.",
-  calendar_link_mismatch:
-    "Este compromisso está vinculado a outra conexão ou agenda e não pode ser alterado por esta.",
+  calendar_link_mismatch: "Este compromisso está vinculado à conexão de outra pessoa e não pode ser alterado por esta.",
+  calendar_access_lost:
+    "Não foi possível acessar a agenda deste compromisso. Reautorize a conexão ou o acesso à agenda; o compromisso ficou marcado como pendente.",
   activity_version_conflict: "A atividade foi alterada por outra pessoa. Recarregue e tente de novo.",
   intent_not_found: "Operação de agenda não encontrada.",
   key_version_mismatch: "Não foi possível renovar a autorização desta conexão. Reconecte a agenda.",

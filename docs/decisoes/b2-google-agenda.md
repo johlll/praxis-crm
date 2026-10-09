@@ -228,17 +228,22 @@ pelo mesmo caminho de escrita com `If-Match`. Por campo:
 
 ### 6.8 Regras fixadas na revisão da etapa 2
 Quatro pontos da revisão da PR #25 foram reproduzidos com teste e passaram a
-ser regra:
+ser regra (duas decisões de produto fecharam a revisão):
 
-- **O vínculo manda na conexão e na agenda.** Reagendar, adicionar Meet e
-  cancelar só valem para a conexão **e** a agenda que criaram o vínculo; isso
-  é conferido antes de abrir intenção e de qualquer chamada ao Google
-  (`link_connection_mismatch`, `link_calendar_mismatch`; no banco,
-  `calendar_link_mismatch`). Procurar o evento em outra agenda devolveria "não
-  existe", e isso seria lido como evento apagado. Trocar a agenda selecionada
-  não move compromissos já criados: a operação é **recusada**, não redirecionada.
-  *Decisão de produto em aberto:* se, depois da troca, o CRM deve operar o
-  evento na agenda original da mesma conexão (ou oferecer "desvincular").
+- **O vínculo manda na conexão; a agenda selecionada afeta só compromissos
+  novos.** Reagendar, adicionar Meet e cancelar só valem para a conexão que
+  criou o vínculo — conferido antes de abrir intenção e de qualquer chamada ao
+  Google (`link_connection_mismatch`; no banco, `calendar_link_mismatch`).
+  Conexão de outro usuário é recusada. Trocar a agenda selecionada **não move
+  nem desvincula** nada: o compromisso existente continua operando no
+  `calendar_id` original do vínculo, pela mesma conexão autorizada.
+- **Perda de acesso é pendência explícita, nunca "evento apagado".** `401`/`403`
+  — ou um `get` que volta "não existe" com a agenda já inacessível
+  (`calendarAccessible` = falso) — encerra a operação como `access_lost`: o
+  vínculo vira `needs_attention` (auditado), nada é cancelado nem desvinculado,
+  e a próxima operação, com o acesso restabelecido, devolve o vínculo a
+  `linked`. "Não existe" com a agenda acessível continua sendo cancelamento no
+  Google.
 - **Aplicar o valor do Google exige a versão lida da atividade.**
   `apply_google_values_to_activity` compara `lock_version`; se o CRM mudou
   depois da leitura, não aplica nada, não grava conflito e devolve `null`. O
@@ -248,11 +253,13 @@ ser regra:
   `resolve_calendar_effect`, `meetStatus`, `meetUrl` e `meetRequestId` só
   mantêm o valor guardado quando a chave não vem; com `null`, o Google
   informou que o Meet foi removido.
-- **Duração coerente.** O CRM só conhece o início. Sem duração pedida, o
-  evento mantém a duração que tem no Google, e uma mudança só de duração no
-  Google não conflita com o CRM remarcar. Quando o horário é reconciliado, a
-  duração do vínculo passa a ser a do evento que ficou (limitada a 15–480 no
-  vínculo; o evento do Google nunca é encurtado para caber).
+- **Duração real, sem clamp.** Padrão de 60 min; o campo editável da interface
+  aceita 15–480 (validado na aplicação, sobre o que o usuário digita). O CRM só
+  conhece o início: sem duração pedida, o evento mantém a que tem no Google, e
+  uma mudança só de duração no Google não conflita com o CRM remarcar. Quando o
+  horário é reconciliado, a duração do vínculo é a **real** do evento que
+  ficou, inclusive de evento externo fora de 15–480 (a constraint do banco
+  exige apenas `> 0`).
 
 ## 7. Isolamento entre ambientes
 

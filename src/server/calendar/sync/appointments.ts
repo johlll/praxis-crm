@@ -51,12 +51,14 @@ export type UpdateAppointmentResult =
   | { status: "conflict_resolved"; conflicts: Array<{ field: string }>; meet: MeetInfo }
   | { status: "cancelled_in_google" }
   | { status: "needs_attention" }
+  | { status: "access_lost" }
   | { status: "failed"; code: string }
   | { status: "uncertain"; intentId: string };
 
 export type CancelAppointmentResult =
   | { status: "cancelled" | "already_gone" }
   | { status: "kept_google_event" }
+  | { status: "access_lost" }
   | { status: "failed"; code: string }
   | { status: "uncertain"; intentId: string };
 
@@ -75,13 +77,6 @@ function durationOf(event: { start?: { dateTime?: string | undefined } | undefin
   if (!start || !end) return null;
   const minutes = Math.round((Date.parse(end) - Date.parse(start)) / 60_000);
   return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
-}
-
-/** O banco só guarda 15–480; um evento do Google fora disso ainda é respeitado
- * ao reagendar (usa-se a duração real do evento), mas o vínculo guarda um
- * valor válido. */
-function clampDuration(minutes: number): number {
-  return Math.min(MAX_DURATION, Math.max(MIN_DURATION, Math.round(minutes)));
 }
 
 function meetOf(event: CalendarEvent): MeetInfo {
@@ -158,14 +153,32 @@ function assertLinkEnvironment(deps: SyncDeps, link: LinkRecord): void {
 }
 
 /**
- * O vínculo manda: o compromisso só é operado pela conexão e pela agenda que
- * o criaram. Conferido ANTES de qualquer chamada ao Google — procurar o
- * evento numa agenda que não é a dele devolveria "não existe", o que seria
- * lido como evento apagado.
+ * O vínculo manda: o compromisso só é operado pela conexão que o criou, e na
+ * agenda em que nasceu. Conferido ANTES de qualquer chamada ao Google —
+ * procurar o evento numa agenda que não é a dele devolveria "não existe", o
+ * que seria lido como evento apagado.
  */
-function assertLinkOwnedBy(link: LinkRecord, conn: ConnectionContext): void {
-  if (link.connectionId !== conn.connectionId) throw new CalendarSyncError("link_connection_mismatch");
-  if (link.calendarId !== conn.calendarId) throw new CalendarSyncError("link_calendar_mismatch");
+function operatingConnection(link: LinkRecord, selected: ConnectionContext): ConnectionContext {
+  if (link.connectionId !== selected.connectionId) throw new CalendarSyncError("link_connection_mismatch");
+  // Trocar a agenda selecionada afeta só compromissos NOVOS: o existente
+  // continua na agenda em que nasceu, pela mesma conexão autorizada.
+  return link.calendarId === selected.calendarId ? selected : { ...selected, calendarId: link.calendarId };
+}
+
+/** 401/403: o acesso à agenda foi perdido — não é evento apagado. */
+function isAccessDenied(error: unknown): boolean {
+  const status = httpStatus(error);
+  return status === 401 || status === 403;
+}
+
+/** A agenda do vínculo ainda é acessível? `null` = não foi possível saber. */
+async function calendarReachable(deps: SyncDeps, conn: ConnectionContext): Promise<boolean | null> {
+  try {
+    return await deps.api.calendarAccessible(conn.accessToken, conn.calendarId);
+  } catch (error) {
+    if (isAccessDenied(error)) return false;
+    return null;
+  }
 }
 
 function validateDuration(minutes: number): void {
@@ -392,16 +405,16 @@ type UpdateRequest = {
 
 async function pushUpdate(
   deps: SyncDeps,
-  conn: ConnectionContext,
+  selected: ConnectionContext,
   initial: ActivitySnapshot,
   req: UpdateRequest,
 ): Promise<UpdateAppointmentResult> {
-  assertConnectionEnvironment(deps, conn);
+  assertConnectionEnvironment(deps, selected);
 
   const link = await deps.store.getLink(initial.id);
   if (!link) throw new CalendarSyncError("not_linked");
   assertLinkEnvironment(deps, link);
-  assertLinkOwnedBy(link, conn); // antes da intenção e de qualquer chamada externa
+  const conn = operatingConnection(link, selected); // antes da intenção e de qualquer chamada externa
   if (link.status === "cancelled_in_google" || link.status === "missing_in_google") {
     return { status: "cancelled_in_google" };
   }
@@ -420,17 +433,38 @@ async function pushUpdate(
   const finish = async (status: "failed" | "uncertain", code: string) => {
     await deps.store.resolveEffect({ intentId, status, errorCode: code });
   };
+  // Perda de acesso: pendência EXPLÍCITA no vínculo, nunca "evento apagado".
+  const accessLost = async (): Promise<UpdateAppointmentResult> => {
+    await deps.store.resolveEffect({
+      intentId,
+      status: "failed",
+      errorCode: "calendar_access_lost",
+      state: { ...stateFromLink(link, link.durationMinutes, activity.lockVersion), linkStatus: "needs_attention" },
+    });
+    return { status: "access_lost" };
+  };
 
   for (let attempt = 1; attempt <= MAX_CONCURRENCY_ATTEMPTS; attempt++) {
     let google: CalendarEvent | null;
     try {
       google = await deps.api.getEvent(conn.accessToken, conn.calendarId, link.eventId);
     } catch (error) {
+      if (isAccessDenied(error)) return accessLost();
       if (isUncertain(error) || error instanceof ProviderHttpError) {
         await finish("uncertain", "result_uncertain");
         return { status: "uncertain", intentId };
       }
       throw error;
+    }
+    if (google === null) {
+      // "Não existe" pode ser evento apagado OU agenda que deixou de ser
+      // acessível: só o primeiro caso é cancelamento.
+      const reachable = await calendarReachable(deps, conn);
+      if (reachable === null) {
+        await finish("uncertain", "result_uncertain");
+        return { status: "uncertain", intentId };
+      }
+      if (!reachable) return accessLost();
     }
 
     // Sem duração pedida, o evento mantém a que tem no Google: o CRM só conhece
@@ -534,6 +568,7 @@ async function pushUpdate(
       const outcome = await patchWithRecovery(deps, conn, google, patch, plan.push);
       if (outcome.kind === "precondition") continue; // relê e refaz a comparação
       if (outcome.kind === "gone") continue; // o próximo ciclo trata como cancelado
+      if (outcome.kind === "denied") return accessLost();
       if (outcome.kind === "uncertain") {
         await finish("uncertain", "result_uncertain");
         return { status: "uncertain", intentId };
@@ -569,7 +604,9 @@ async function pushUpdate(
         meetStatus: meet.status,
         meetUrl: meet.url,
         meetRequestId: plan.push.meet ? requestId : link.meetRequestId,
-        durationMinutes: clampDuration(settledDuration ?? req.explicitDuration ?? link.durationMinutes),
+        // Duração REAL do evento, mesmo fora de 15–480 (esse intervalo vale só
+        // para o que o usuário digita, não para o que o Google já tem).
+        durationMinutes: settledDuration ?? req.explicitDuration ?? link.durationMinutes,
         crmVersion: activity.lockVersion,
         linkStatus: "linked",
       },
@@ -626,6 +663,7 @@ type PatchOutcome =
   | { kind: "ok"; event: CalendarEvent }
   | { kind: "precondition" }
   | { kind: "gone" }
+  | { kind: "denied" }
   | { kind: "uncertain" }
   | { kind: "failed"; code: string };
 
@@ -660,6 +698,7 @@ async function patchWithRecovery(
     const status = httpStatus(error);
     if (status === 412) return { kind: "precondition" };
     if (status === 404) return { kind: "gone" };
+    if (isAccessDenied(error)) return { kind: "denied" };
     if (!isUncertain(error)) {
       if (error instanceof ProviderHttpError) return { kind: "failed", code: `provider_${error.status}` };
       throw error;
@@ -681,6 +720,7 @@ async function patchWithRecovery(
     const status = httpStatus(error);
     if (status === 412) return { kind: "precondition" };
     if (status === 404) return { kind: "gone" };
+    if (isAccessDenied(error)) return { kind: "denied" };
     return { kind: "uncertain" };
   }
 }
@@ -725,15 +765,15 @@ export async function addMeetToAppointment(
  */
 export async function cancelAppointment(
   deps: SyncDeps,
-  conn: ConnectionContext,
+  selected: ConnectionContext,
   activity: ActivitySnapshot,
 ): Promise<CancelAppointmentResult> {
-  assertConnectionEnvironment(deps, conn);
+  assertConnectionEnvironment(deps, selected);
 
   const link = await deps.store.getLink(activity.id);
   if (!link) throw new CalendarSyncError("not_linked");
   assertLinkEnvironment(deps, link);
-  assertLinkOwnedBy(link, conn); // antes da intenção e de qualquer chamada externa
+  const conn = operatingConnection(link, selected); // antes da intenção e de qualquer chamada externa
 
   const base = stateOfBase(link);
   const intentId = await deps.store.beginEffect({
@@ -750,16 +790,35 @@ export async function cancelAppointment(
     linkStatus,
   });
 
+  const accessLost = async (): Promise<CancelAppointmentResult> => {
+    await deps.store.resolveEffect({
+      intentId,
+      status: "failed",
+      errorCode: "calendar_access_lost",
+      state: { ...stateFromLink(link, link.durationMinutes, activity.lockVersion), linkStatus: "needs_attention" },
+    });
+    return { status: "access_lost" };
+  };
+
   for (let attempt = 1; attempt <= MAX_CONCURRENCY_ATTEMPTS; attempt++) {
     let google: CalendarEvent | null;
     try {
       google = await deps.api.getEvent(conn.accessToken, conn.calendarId, link.eventId);
     } catch (error) {
+      if (isAccessDenied(error)) return accessLost();
       if (isUncertain(error) || error instanceof ProviderHttpError) {
         await deps.store.resolveEffect({ intentId, status: "uncertain", errorCode: "result_uncertain" });
         return { status: "uncertain", intentId };
       }
       throw error;
+    }
+    if (google === null) {
+      const reachable = await calendarReachable(deps, conn);
+      if (reachable === null) {
+        await deps.store.resolveEffect({ intentId, status: "uncertain", errorCode: "result_uncertain" });
+        return { status: "uncertain", intentId };
+      }
+      if (!reachable) return accessLost();
     }
 
     if (!google || google.status === "cancelled") {
@@ -797,6 +856,7 @@ export async function cancelAppointment(
         await deps.store.resolveEffect({ intentId, status: "succeeded", state: closed(google, "unlinked") });
         return { status: "already_gone" };
       }
+      if (isAccessDenied(error)) return accessLost();
       if (!isUncertain(error)) {
         if (error instanceof ProviderHttpError) {
           await deps.store.resolveEffect({ intentId, status: "failed", errorCode: `provider_${error.status}` });

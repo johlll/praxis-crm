@@ -131,7 +131,6 @@ export class CalendarSyncError extends Error {
       | "invalid_duration"
       | "not_linked"
       | "link_connection_mismatch"
-      | "link_calendar_mismatch"
       | "activity_not_found",
   ) {
     super(code);

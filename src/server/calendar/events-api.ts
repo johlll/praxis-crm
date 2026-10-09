@@ -92,6 +92,13 @@ export interface CalendarEventsApi {
     opts: { ifMatch: string; sendUpdates: SendUpdates },
   ): Promise<void>;
 
+  /**
+   * A agenda ainda é acessível a esta conexão? `false` = o acesso foi perdido
+   * (ou a agenda deixou de existir). Existe para não confundir "perdi o
+   * acesso" com "o evento foi apagado": ambos podem voltar como 404 no `get`.
+   */
+  calendarAccessible(accessToken: string, calendarId: string): Promise<boolean>;
+
   /** Intervalos ocupados, nunca título nem detalhe. */
   freeBusy(
     accessToken: string,

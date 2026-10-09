@@ -146,13 +146,19 @@ describe("resultados e recusas", () => {
     warn.mockRestore();
   });
 
-  it.each([
-    ["link_connection_mismatch", "outra conexão"],
-    ["link_calendar_mismatch", "outra agenda"],
-  ])("vínculo de outra conexão/agenda (%s): mensagem clara, sem tratar como evento apagado", async (code, trecho) => {
-    m.reschedule.mockRejectedValue(new CalendarSyncError(code as "link_connection_mismatch"));
+  it("vínculo de outra conexão: mensagem clara, sem tratar como evento apagado", async () => {
+    m.reschedule.mockRejectedValue(new CalendarSyncError("link_connection_mismatch"));
     const r = await rescheduleAppointmentAction({ ok: false }, form({ activityId: ACT }));
-    expect(r).toEqual({ ok: false, error: expect.stringContaining(trecho) });
+    expect(r).toEqual({ ok: false, error: expect.stringContaining("outra conexão") });
+  });
+
+  it.each([
+    ["reagendar", () => rescheduleAppointmentAction({ ok: false }, form({ activityId: ACT })), () => m.reschedule],
+    ["cancelar", () => cancelAppointmentAction({ ok: false }, form({ activityId: ACT })), () => m.cancelAppointment],
+  ])("%s com acesso à agenda perdido: não é sucesso e explica a pendência", async (_nome, run, mock) => {
+    mock().mockResolvedValue({ status: "access_lost" });
+    const r = await run();
+    expect(r).toMatchObject({ ok: false, result: "access_lost", error: expect.stringContaining("pendente") });
   });
 
   it("o orquestrador relê a atividade pela SESSÃO (mesmo alcance e RLS da leitura inicial)", async () => {

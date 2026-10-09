@@ -136,8 +136,13 @@ const createSchema = z.object({
 });
 
 function describe(result: { status: string; meet?: { url: string | null } }): AppointmentActionState {
-  const ok = !["failed", "uncertain", "needs_attention", "busy"].includes(result.status);
-  return { ok, result: result.status, meetUrl: result.meet?.url ?? null };
+  const ok = !["failed", "uncertain", "needs_attention", "busy", "access_lost"].includes(result.status);
+  return {
+    ok,
+    result: result.status,
+    meetUrl: result.meet?.url ?? null,
+    ...(result.status === "access_lost" ? { error: toUserMessage({ message: "calendar_access_lost" }) } : {}),
+  };
 }
 
 export async function createAppointmentAction(
