@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 
 import { CalendarSyncError } from "@/server/calendar/sync/types";
-import { createAppointment, getAvailability, isSlotFree } from "@/server/calendar/sync/appointments";
+import { createAppointment, getAvailability, isSlotFree, recoverUncertainCreate } from "@/server/calendar/sync/appointments";
 import { deterministicEventId } from "@/server/calendar/sync/ids";
 
 import { ACTIVITY_ID, CALENDAR_ID, activity, countCalls, makeFixture } from "../support/calendar-fixture";
@@ -159,16 +159,24 @@ describe("resultado incerto: consulta o estado antes de repetir", () => {
     expect(await store.getLink(ACTIVITY_ID)).toBeNull();
   });
 
-  it("depois de incerto, uma nova tentativa explícita adota o evento que existe (sem duplicar)", async () => {
+  it("depois de incerto, uma nova inclusão é recusada; a verificação adota o evento que existe (sem duplicar)", async () => {
     const { provider, store, deps, conn } = await makeFixture();
     provider.injectFault({ operation: "insert", kind: "timeout_after_apply" });
     provider.injectFault({ operation: "get", kind: "timeout_before_apply" });
     await createAppointment(deps, conn, activity()); // incerto
+    const chamadas = provider.calls.length;
+    const intencoes = store.intents.length;
 
-    const again = await createAppointment(deps, conn, activity());
-    expect(again).toMatchObject({ status: "created", adopted: true });
+    // Uma intenção nova não pode responder pela anterior: recusada antes de qualquer chamada.
+    await expect(createAppointment(deps, conn, activity())).rejects.toMatchObject({ code: "create_outcome_uncertain" });
+    expect(provider.calls.length).toBe(chamadas);
+    expect(store.intents.length).toBe(intencoes);
+
+    const verificada = await recoverUncertainCreate(deps, activity(), async () => conn);
+    expect(verificada).toMatchObject({ status: "adopted", calendarId: CALENDAR_ID });
     expect(provider.eventCount(CALENDAR_ID)).toBe(1);
     expect(await store.getLink(ACTIVITY_ID)).not.toBeNull();
+    expect(store.intents.length).toBe(intencoes);
   });
 });
 

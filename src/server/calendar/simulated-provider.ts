@@ -50,7 +50,7 @@ export class SimulatedCalendarProvider implements CalendarProvider {
   /** Quantas leituras (`get`) até o Meet pendente virar `success`. */
   meetReadyAfterReads = 1;
   /** Toda requisição recebida, em ordem — para provar o que NÃO foi chamado. */
-  readonly calls: Array<{ operation: Operation | "freebusy" | "calendar"; eventId?: string | undefined }> = [];
+  readonly calls: Array<{ operation: Operation | "freebusy" | "calendar"; eventId?: string | undefined; calendarId?: string | undefined }> = [];
   /** Convites que o Google teria enviado por e-mail. */
   readonly notificationsSent: Array<{ eventId: string; to: string[] }> = [];
 
@@ -123,7 +123,7 @@ export class SimulatedCalendarProvider implements CalendarProvider {
   }
 
   async calendarAccessible(_accessToken: string, calendarId: string): Promise<boolean> {
-    this.calls.push({ operation: "calendar" });
+    this.calls.push({ operation: "calendar", calendarId });
     return !this.revokedCalendars.has(calendarId);
   }
 
@@ -168,7 +168,7 @@ export class SimulatedCalendarProvider implements CalendarProvider {
     event: EventInput,
     opts: { conferenceDataVersion?: 0 | 1 | undefined; sendUpdates: SendUpdates },
   ): Promise<CalendarEvent> {
-    this.calls.push({ operation: "insert", eventId: event.id });
+    this.calls.push({ operation: "insert", eventId: event.id, calendarId });
     const fault = this.nextFault("insert");
     const revoked = this.revokedCalendars.get(calendarId);
     if (revoked !== undefined) throw new ProviderHttpError(revoked);
@@ -200,7 +200,7 @@ export class SimulatedCalendarProvider implements CalendarProvider {
   }
 
   async getEvent(_accessToken: string, calendarId: string, eventId: string): Promise<CalendarEvent | null> {
-    this.calls.push({ operation: "get", eventId });
+    this.calls.push({ operation: "get", eventId, calendarId });
     const fault = this.nextFault("get");
     if (fault?.kind === "timeout_before_apply" || fault?.kind === "timeout_after_apply") throw new ProviderUncertainError();
     if (fault?.kind === "status") throw new ProviderHttpError(fault.status ?? 500);
@@ -222,7 +222,7 @@ export class SimulatedCalendarProvider implements CalendarProvider {
     patch: EventInput,
     opts: { ifMatch: string; conferenceDataVersion?: 0 | 1 | undefined; sendUpdates: SendUpdates },
   ): Promise<CalendarEvent> {
-    this.calls.push({ operation: "patch", eventId });
+    this.calls.push({ operation: "patch", eventId, calendarId });
     const fault = this.nextFault("patch");
     const revoked = this.revokedCalendars.get(calendarId);
     if (revoked !== undefined) throw new ProviderHttpError(revoked);
@@ -251,7 +251,7 @@ export class SimulatedCalendarProvider implements CalendarProvider {
     eventId: string,
     opts: { ifMatch: string; sendUpdates: SendUpdates },
   ): Promise<void> {
-    this.calls.push({ operation: "delete", eventId });
+    this.calls.push({ operation: "delete", eventId, calendarId });
     const fault = this.nextFault("delete");
     const revoked = this.revokedCalendars.get(calendarId);
     if (revoked !== undefined) throw new ProviderHttpError(revoked);

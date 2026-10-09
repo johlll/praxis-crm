@@ -69,11 +69,23 @@ export type CancelAppointmentResult =
   | { status: "uncertain"; intentId: string };
 
 export type RecoverCreateResult =
-  /** O evento existia no Google: foi adotado (nada foi criado de novo). */
-  | { status: "adopted"; meet: MeetInfo }
-  /** Confirmado que o evento NÃO existe: nada foi criado agora. */
-  | { status: "not_created" }
+  /** O evento existia no Google, na agenda da tentativa: foi adotado (nada foi criado de novo). */
+  | { status: "adopted"; meet: MeetInfo; calendarId: string }
+  /** Confirmado, na agenda da tentativa, que o evento NÃO existe: nada foi criado agora. */
+  | { status: "not_created"; calendarId: string }
   | { status: "already_linked" }
+  /** Não há inclusão sem desfecho a verificar. */
+  | { status: "nothing_open" }
+  /** A tentativa é de outra pessoa: nada consultado nem alterado. */
+  | { status: "not_owner" }
+  /** Aberta há pouco: pode estar em andamento. Nada consultado. */
+  | { status: "in_progress" }
+  /** Intenção sem agenda/evento registrados: não há como concluir. Continua aberta. */
+  | { status: "insufficient_info" }
+  /** A conexão da tentativa não está disponível (trocada, desconectada, a
+   * reautorizar): nada consultado, a pendência continua. */
+  | { status: "connection_unavailable" }
+  /** Sem acesso à agenda da tentativa: não prova ausência. A pendência continua. */
   | { status: "access_lost" }
   | { status: "failed"; code: string }
   | { status: "uncertain"; intentId: string };
@@ -295,6 +307,10 @@ export async function createAppointment(
     return { status: "already_linked", link: existingLink };
   }
 
+  // Inclusão anterior ainda sem desfecho: o evento PODE existir (talvez em
+  // outra agenda). Nova tentativa só depois de verificá-la.
+  if (await deps.store.getOpenCreateIntent(activity.id)) throw new CalendarSyncError("create_outcome_uncertain");
+
   const start = new Date(activity.dueAt).toISOString();
   const end = addMinutes(start, durationMinutes);
 
@@ -307,11 +323,14 @@ export async function createAppointment(
   const withMeet = options.withMeet === true;
   const requestId = meetRequestId(eventId);
 
+  // Identidade da tentativa gravada ANTES da chamada: a agenda e o evento
+  // usados abaixo são exatamente estes.
   const intentId = await deps.store.beginEffect({
     connectionId: conn.connectionId,
     activityId: activity.id,
     operation: "create",
     expected: { title: activity.title, start, end, meet: withMeet },
+    target: { calendarId: conn.calendarId, eventId },
   });
 
   const input: EventInput = {
@@ -927,68 +946,85 @@ export async function cancelAppointment(
 
 /**
  * A inclusão no Google ficou incerta (timeout e a conferência também falhou).
- * Aqui só se CONSULTA o Google pelo id determinístico — nunca se cria nada:
- *  - o evento existe e é este compromisso → é adotado (vínculo gravado);
- *  - comprovadamente não existe → diz isso, e o usuário decide criar de novo;
- *  - ainda não dá para saber → continua incerto.
- * Em qualquer desfecho definitivo, a intenção incerta anterior é encerrada.
+ * A verificação resolve a intenção ORIGINAL, com a identidade gravada antes
+ * da chamada (ambiente, conexão, agenda e evento) — nunca a agenda
+ * selecionada agora, nem uma intenção nova. Só CONSULTA o Google; nunca cria:
+ *  - o evento existe na agenda da tentativa e é este compromisso → adotado;
+ *  - comprovadamente não existe lá (com acesso à agenda confirmado) → diz isso;
+ *  - sem acesso, sem conexão ou sem resposta → a pendência continua aberta
+ *    (nada disso prova que o evento não foi criado);
+ *  - tentativa de outra pessoa ou sem alvo registrado → nada é concluído.
+ *
+ * `openConnection` entrega o token da conexão ORIGINAL do usuário da sessão,
+ * ou `null` se ela não estiver disponível.
  */
 export async function recoverUncertainCreate(
   deps: SyncDeps,
-  conn: ConnectionContext,
   activity: ActivitySnapshot,
+  openConnection: (original: { connectionId: string; calendarId: string }) => Promise<ConnectionContext | null>,
 ): Promise<RecoverCreateResult> {
-  assertConnectionEnvironment(deps, conn);
-
   const existing = await deps.store.getLink(activity.id);
   if (existing) {
     assertLinkEnvironment(deps, existing);
     return { status: "already_linked" };
   }
 
-  const eventId = deterministicEventId(deps.environment, activity.id, 1);
-  const intentId = await deps.store.beginEffect({
-    connectionId: conn.connectionId,
-    activityId: activity.id,
-    operation: "create",
-    expected: { recover: true },
-  });
+  const intent = await deps.store.getOpenCreateIntent(activity.id);
+  if (!intent) return { status: "nothing_open" };
+  if (!intent.isMine) return { status: "not_owner" };
+  if (intent.environment !== deps.environment) throw new CalendarSyncError("calendar_environment_mismatch");
+  if (!intent.calendarId || !intent.eventId) return { status: "insufficient_info" };
+  if (!intent.settled) return { status: "in_progress" };
 
-  const end = async (status: "failed" | "uncertain", code: string) =>
-    deps.store.resolveEffect({ intentId, status, errorCode: code });
+  const conn = await openConnection({ connectionId: intent.connectionId, calendarId: intent.calendarId });
+  if (!conn || conn.connectionId !== intent.connectionId) return { status: "connection_unavailable" };
+  assertConnectionEnvironment(deps, conn);
+  // A agenda e o evento são os da tentativa, quaisquer que sejam os selecionados agora.
+  const target: ConnectionContext = { ...conn, calendarId: intent.calendarId };
+  const { intentId, eventId } = intent;
+
+  // Sem resposta conclusiva: a MESMA intenção continua aberta (só o motivo é
+  // atualizado). Nada é repetido e nenhuma nova tentativa fica liberada.
+  const keepOpen = async (code: string) => deps.store.resolveEffect({ intentId, status: "uncertain", errorCode: code });
+  const conclude = async (code: string) => deps.store.resolveEffect({ intentId, status: "failed", errorCode: code });
 
   let found: CalendarEvent | null;
   try {
-    found = await deps.api.getEvent(conn.accessToken, conn.calendarId, eventId);
+    found = await deps.api.getEvent(target.accessToken, target.calendarId, eventId);
   } catch (error) {
     if (isAccessDenied(error)) {
-      await end("failed", "calendar_access_lost");
+      await keepOpen("calendar_access_lost");
       return { status: "access_lost" };
     }
-    await end("uncertain", "result_uncertain");
-    return { status: "uncertain", intentId };
+    if (isUncertain(error) || error instanceof ProviderHttpError) {
+      await keepOpen("result_uncertain");
+      return { status: "uncertain", intentId };
+    }
+    throw error;
   }
 
   if (!found) {
-    const reachable = await calendarReachable(deps, conn);
+    // "Não existe" só vale com o acesso à agenda da tentativa confirmado.
+    const reachable = await calendarReachable(deps, target);
     if (reachable === null) {
-      await end("uncertain", "result_uncertain");
+      await keepOpen("result_uncertain");
       return { status: "uncertain", intentId };
     }
     if (!reachable) {
-      await end("failed", "calendar_access_lost");
+      await keepOpen("calendar_access_lost");
       return { status: "access_lost" };
     }
-    await end("failed", "not_created_confirmed");
-    return { status: "not_created" };
+    await conclude("not_created_confirmed");
+    return { status: "not_created", calendarId: target.calendarId };
   }
 
+  // O id é único na agenda: outro dono ou evento cancelado também concluem.
   if (!markerMatches(found, activity.id, deps.environment)) {
-    await end("failed", "id_conflict");
+    await conclude("id_conflict");
     return { status: "failed", code: "id_conflict" };
   }
   if (found.status === "cancelled") {
-    await end("failed", "event_cancelled_exists");
+    await conclude("event_cancelled_exists");
     return { status: "failed", code: "event_cancelled_exists" };
   }
 
@@ -1002,5 +1038,5 @@ export async function recoverUncertainCreate(
       meetRequestId: found.conferenceData?.createRequest?.requestId ?? null,
     }),
   });
-  return { status: "adopted", meet: meetOf(found) };
+  return { status: "adopted", meet: meetOf(found), calendarId: target.calendarId };
 }

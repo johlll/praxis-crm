@@ -11,10 +11,10 @@ import {
   noticeForCancel,
   noticeForCreate,
   noticeForMeet,
-  noticeForRecover,
   noticeForUpdate,
   prepare,
   toCreateOptions,
+  verifyUncertainCreate,
 } from "@/modules/calendar/appointment-service";
 import type { CalendarNotice } from "@/modules/calendar/types";
 import {
@@ -22,7 +22,6 @@ import {
   cancelAppointment,
   createAppointment,
   getAvailability,
-  recoverUncertainCreate,
   rescheduleAppointment,
 } from "@/server/calendar/sync/appointments";
 
@@ -74,7 +73,18 @@ const createSchema = z.object({
 });
 
 /** Só estes desfechos cumprem o que foi pedido; o resto volta como não-ok, com a explicação. */
-const DONE = new Set(["created", "already_linked", "updated", "unchanged", "conflict_resolved", "cancelled", "already_gone", "adopted", "not_created"]);
+const DONE = new Set([
+  "created",
+  "already_linked",
+  "updated",
+  "unchanged",
+  "conflict_resolved",
+  "cancelled",
+  "already_gone",
+  "adopted",
+  "not_created",
+  "nothing_open",
+]);
 
 function describe(
   result: { status: string; meet?: { url: string | null } },
@@ -190,8 +200,9 @@ export async function cancelAppointmentAction(
 
 /**
  * "Verificar inclusão": a inclusão no Google ficou com resultado incerto. Só
- * CONSULTA o Google — se o evento existe, é vinculado; se comprovadamente não
- * existe, diz isso. Nunca cria nada sozinho.
+ * CONSULTA o Google, na agenda e com a conexão da tentativa original — se o
+ * evento existe, é vinculado; se comprovadamente não existe, diz isso. Nunca
+ * cria nada sozinho.
  */
 export async function recoverUncertainCreateAction(
   _prev: AppointmentActionState,
@@ -200,18 +211,10 @@ export async function recoverUncertainCreateAction(
   const parsed = activityIdSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { ok: false, error: "Compromisso inválido." };
 
-  const prep = await prepare(parsed.data.activityId);
-  if (!prep.ok) return { ok: false, error: prep.error };
-  const { deps, conn, activity } = prep.prepared;
-  if (!activity) return failure(new Error("activity_not_found"));
-
-  try {
-    const result = await recoverUncertainCreate(deps, conn, activity);
-    revalidateCalendarRoutes();
-    return describe(result, noticeForRecover(result));
-  } catch (error) {
-    return failure(error, prep.ctx);
-  }
+  const verified = await verifyUncertainCreate(parsed.data.activityId);
+  if (!verified.ok) return { ok: false, error: verified.error };
+  revalidateCalendarRoutes();
+  return describe(verified.result, verified.notice);
 }
 
 const availabilitySchema = z.object({ from: z.string().datetime(), to: z.string().datetime() });

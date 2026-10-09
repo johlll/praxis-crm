@@ -1,9 +1,10 @@
 -- pgTAP — B2, etapa 2b: leitura do vínculo com a agenda pela interface
--- (list_activity_calendar_links). Todos os registros são criados por este
+-- (list_activity_calendar_links) e identidade da tentativa de inclusão
+-- (get_open_calendar_create). Todos os registros são criados por este
 -- teste. Mostra o que a tela recebe e, principalmente, o que NÃO recebe.
 
 begin;
-select plan(28);
+select plan(46);
 
 \set dono   '20000000-0000-0000-0000-000000000001'
 \set adv    '20000000-0000-0000-0000-000000000002'
@@ -43,6 +44,10 @@ select create_activity(
   p_lead_id := (:'lead')::uuid, p_type := 'meeting'::activity_type, p_title := 'Reunião sem vínculo',
   p_due_date := (current_date + 6), p_due_time := '10:00'::time
 ) as livre \gset
+select create_activity(
+  p_lead_id := (:'lead')::uuid, p_type := 'meeting'::activity_type, p_title := 'Reunião três',
+  p_due_date := (current_date + 7), p_due_time := '11:00'::time
+) as terceira \gset
 reset role;
 
 select pg_temp.hdr('production') as h_prod \gset
@@ -137,6 +142,11 @@ reset role;
 select set_config('request.headers', :'h_prod', true);
 
 select begin_calendar_effect(:'conn'::uuid, :'reuniao'::uuid, :'dono'::uuid, 'update', '{}'::jsonb) as i_pend \gset
+select is(
+  (select jsonb_build_object('c', calendar_id, 'e', event_id) from public.calendar_effect_intents where id = (:'i_pend')::uuid),
+  jsonb_build_object('c', 'cal-links@x', 'e', 'evento-links-1'),
+  'operação sobre compromisso vinculado grava como alvo a agenda e o evento DO VÍNCULO'
+);
 select resolve_calendar_effect(:'i_pend'::uuid, :'dono'::uuid, 'failed', 'provider_503', '{"syncState":"pending"}'::jsonb);
 select is(
   (select jsonb_build_object('s', sync_state, 'o', sync_operation, 'e', sync_error) from public.calendar_event_links where id = (:'link')::uuid),
@@ -238,7 +248,22 @@ reset role;
 -- 7) Inclusão no Google com resultado incerto (ainda sem vínculo)
 -- ---------------------------------------------------------------------
 
-select begin_calendar_effect(:'conn'::uuid, :'livre'::uuid, :'dono'::uuid, 'create', '{}'::jsonb) as i_create \gset
+select throws_ok(
+  format($i$ select begin_calendar_effect(%L::uuid, %L::uuid, %L::uuid, 'create', '{}'::jsonb) $i$, :'conn', :'livre', :'dono'),
+  'P0001', 'calendar_target_required', 'a inclusão só nasce com a agenda e o evento que vai usar'
+);
+select throws_ok(
+  format($i$ select begin_calendar_effect(%L::uuid, %L::uuid, %L::uuid, 'create', '{}'::jsonb, 'outra-agenda@x', 'evento-livre') $i$, :'conn', :'livre', :'dono'),
+  'P0001', 'calendar_selection_changed', 'a agenda da tentativa é a selecionada no momento do registro'
+);
+
+select begin_calendar_effect(:'conn'::uuid, :'livre'::uuid, :'dono'::uuid, 'create', '{}'::jsonb, 'cal-links@x', 'evento-livre') as i_create \gset
+select is(
+  (select jsonb_build_object('c', calendar_id, 'e', event_id, 'k', connection_id, 'v', environment, 'w', workspace_id)
+   from public.calendar_effect_intents where id = (:'i_create')::uuid),
+  jsonb_build_object('c', 'cal-links@x', 'e', 'evento-livre', 'k', :'conn', 'v', 'production', 'w', :'ws'),
+  'a identidade da tentativa (ambiente, workspace, conexão, agenda, evento) é gravada ANTES da chamada'
+);
 select resolve_calendar_effect(:'i_create'::uuid, :'dono'::uuid, 'uncertain', 'result_uncertain', '{}'::jsonb);
 
 set local role authenticated;
@@ -249,21 +274,94 @@ select is(
   jsonb_build_object('s', 'not_linked', 'y', 'uncertain', 'o', 'create', 'm', 'true'),
   'inclusão incerta aparece para a tela, mesmo sem vínculo'
 );
-reset role;
-
--- A verificação confirma que o evento não existe: a pendência some.
-select begin_calendar_effect(:'conn'::uuid, :'livre'::uuid, :'dono'::uuid, 'create', '{"recover":true}'::jsonb) as i_check \gset
-select resolve_calendar_effect(:'i_check'::uuid, :'dono'::uuid, 'failed', 'not_created_confirmed', '{}'::jsonb);
-set local role authenticated;
-select set_config('request.jwt.claims', json_build_object('sub', :'dono', 'role', 'authenticated')::text, true);
-select is(
-  list_activity_calendar_links(array[(:'livre')::uuid]),
-  '[]'::jsonb, 'depois da verificação, a inclusão incerta deixa de aparecer'
+select throws_ok(
+  format($i$ select get_open_calendar_create(%L::uuid, %L::uuid) $i$, :'livre', :'dono'),
+  '42501', null, 'authenticated NÃO executa get_open_calendar_create'
 );
 reset role;
+
+select throws_ok(
+  format($i$ select begin_calendar_effect(%L::uuid, %L::uuid, %L::uuid, 'create', '{}'::jsonb, 'cal-links@x', 'evento-livre') $i$, :'conn', :'livre', :'dono'),
+  'P0001', 'create_outcome_uncertain', 'com uma inclusão sem desfecho, outra não nasce (o evento pode existir)'
+);
+select throws_ok(
+  format($i$ update public.calendar_effect_intents set calendar_id = 'cal-links-2@x' where id = %L::uuid $i$, :'i_create'),
+  'P0001', 'intent_identity_immutable', 'a identidade gravada não pode ser trocada depois'
+);
+
+-- A verificação lê a tentativa ORIGINAL.
+select is(
+  get_open_calendar_create(:'livre'::uuid, :'dono'::uuid) - 'intentId' - 'workspaceId',
+  jsonb_build_object('isMine', true, 'environment', 'production', 'connectionId', :'conn',
+    'calendarId', 'cal-links@x', 'eventId', 'evento-livre', 'status', 'uncertain', 'settled', true),
+  'o autor recebe a tentativa original, com o alvo gravado'
+);
+select is(
+  get_open_calendar_create(:'livre'::uuid, :'adv'::uuid),
+  '{"isMine": false}'::jsonb, 'outra pessoa com alcance só sabe que existe (sem conexão, agenda nem evento)'
+);
+select throws_ok(
+  format($i$ select get_open_calendar_create(%L::uuid, %L::uuid) $i$, :'livre', :'adv2'),
+  'P0001', 'activity_not_found', 'sem alcance ao lead, nem isso'
+);
+select set_config('request.headers', :'h_prev', true);
+select is(get_open_calendar_create(:'livre'::uuid, :'dono'::uuid), null::jsonb, 'o preview não enxerga a tentativa de production');
+select set_config('request.headers', :'h_prod', true);
+
+-- Troca de agenda entre a inclusão incerta e a verificação: o evento
+-- encontrado é vinculado na agenda DA TENTATIVA, e só a intenção original é
+-- concluída. Outra intenção aberta da mesma atividade, de outro alvo (aqui,
+-- sem alvo registrado), continua aberta.
+select set_calendar_connection_calendar(:'conn'::uuid, :'dono'::uuid, 'cal-links-2@x', 'Outra agenda');
+insert into public.calendar_effect_intents (workspace_id, connection_id, activity_id, environment, operation, status, created_by)
+values (:'ws'::uuid, (:'conn')::uuid, (:'livre')::uuid, 'production', 'update', 'uncertain', :'dono') returning id as i_outro \gset
+
+select throws_ok(
+  format($i$ select resolve_calendar_effect(%L::uuid, %L::uuid, 'succeeded', '', '{"eventId":"outro-evento"}'::jsonb) $i$, :'i_create', :'dono'),
+  'P0001', 'intent_target_mismatch', 'a inclusão só é concluída no evento gravado'
+);
+select resolve_calendar_effect(
+  :'i_create'::uuid, :'dono'::uuid, 'succeeded', '',
+  jsonb_build_object('eventId', 'evento-livre', 'etag', '"1"', 'title', 'Reunião sem vínculo', 'cancelled', false,
+    'hasMeet', false, 'durationMinutes', 60, 'crmVersion', 1, 'linkStatus', 'linked')
+) as link_livre \gset
+select is(
+  (select calendar_id from public.calendar_event_links where id = (:'link_livre')::uuid),
+  'cal-links@x', 'depois da troca de agenda, o evento é vinculado na agenda ORIGINAL da tentativa'
+);
 select is(
   (select status from public.calendar_effect_intents where id = (:'i_create')::uuid),
-  'superseded', 'a intenção incerta foi encerrada pela verificação'
+  'succeeded', 'a intenção original é a concluída (nenhuma nova é aberta)'
+);
+select is(
+  (select status from public.calendar_effect_intents where id = (:'i_outro')::uuid),
+  'uncertain', 'outra intenção aberta da mesma atividade, de outro alvo, NÃO é encerrada'
+);
+select is(get_open_calendar_create(:'livre'::uuid, :'dono'::uuid), null::jsonb, 'concluída, não há mais inclusão a verificar');
+
+-- Sem acesso à agenda da tentativa: a MESMA intenção continua aberta. Só a
+-- ausência confirmada (com acesso) a encerra.
+select begin_calendar_effect(:'conn'::uuid, :'terceira'::uuid, :'dono'::uuid, 'create', '{}'::jsonb, 'cal-links-2@x', 'evento-tres') as i_tres \gset
+select resolve_calendar_effect(:'i_tres'::uuid, :'dono'::uuid, 'uncertain', 'result_uncertain', '{}'::jsonb);
+select resolve_calendar_effect(:'i_tres'::uuid, :'dono'::uuid, 'uncertain', 'calendar_access_lost', '{}'::jsonb);
+select is(
+  (select jsonb_build_object('s', status, 'e', error_code) from public.calendar_effect_intents where id = (:'i_tres')::uuid),
+  jsonb_build_object('s', 'uncertain', 'e', 'calendar_access_lost'),
+  'sem acesso à agenda, a pendência continua aberta (não vira ausência)'
+);
+select resolve_calendar_effect(:'i_tres'::uuid, :'dono'::uuid, 'failed', 'not_created_confirmed', '{}'::jsonb);
+select is(get_open_calendar_create(:'terceira'::uuid, :'dono'::uuid), null::jsonb, 'ausência confirmada encerra a pendência');
+
+-- Intenção sem alvo registrado: nenhuma conclusão é inventada.
+insert into public.calendar_effect_intents (workspace_id, connection_id, activity_id, environment, operation, status, created_by)
+values (:'ws'::uuid, (:'conn')::uuid, (:'terceira')::uuid, 'production', 'create', 'uncertain', :'dono') returning id as i_legado \gset
+select is(
+  get_open_calendar_create(:'terceira'::uuid, :'dono'::uuid) ->> 'calendarId',
+  null::text, 'intenção sem alvo registrado chega sem agenda (nenhuma é deduzida)'
+);
+select throws_ok(
+  format($i$ select resolve_calendar_effect(%L::uuid, %L::uuid, 'succeeded', '', '{"eventId":"evento-tres"}'::jsonb) $i$, :'i_legado', :'dono'),
+  'P0001', 'intent_target_unknown', 'e não pode ser concluída como criada'
 );
 
 select * from finish();

@@ -131,7 +131,7 @@ select throws_ok(
   'P0001', 'activity_not_appointment', 'só reunião com horário vira compromisso'
 );
 
-select begin_calendar_effect(:'conn_prod'::uuid, :'reuniao'::uuid, :'dono'::uuid, 'create', '{"title":"Reunião B2"}'::jsonb) as intent_create \gset
+select begin_calendar_effect(:'conn_prod'::uuid, :'reuniao'::uuid, :'dono'::uuid, 'create', '{"title":"Reunião B2"}'::jsonb, 'cal-prod@x', 'evento-1') as intent_create \gset
 select is(
   (select status from public.calendar_effect_intents where id = (:'intent_create')::uuid),
   'pending', 'a intenção nasce pendente, ANTES de qualquer efeito externo'

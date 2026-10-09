@@ -250,11 +250,13 @@ export type Database = {
       calendar_effect_intents: {
         Row: {
           activity_id: string | null
+          calendar_id: string | null
           connection_id: string
           created_at: string
           created_by: string
           environment: Database["public"]["Enums"]["calendar_environment"]
           error_code: string | null
+          event_id: string | null
           expected: Json
           id: string
           operation: string
@@ -264,11 +266,13 @@ export type Database = {
         }
         Insert: {
           activity_id?: string | null
+          calendar_id?: string | null
           connection_id: string
           created_at?: string
           created_by: string
           environment: Database["public"]["Enums"]["calendar_environment"]
           error_code?: string | null
+          event_id?: string | null
           expected?: Json
           id?: string
           operation: string
@@ -278,11 +282,13 @@ export type Database = {
         }
         Update: {
           activity_id?: string | null
+          calendar_id?: string | null
           connection_id?: string
           created_at?: string
           created_by?: string
           environment?: Database["public"]["Enums"]["calendar_environment"]
           error_code?: string | null
+          event_id?: string | null
           expected?: Json
           id?: string
           operation?: string
@@ -3280,7 +3286,9 @@ export type Database = {
         Args: {
           p_activity_id: string
           p_actor_user_id: string
+          p_calendar_id?: string
           p_connection_id: string
+          p_event_id?: string
           p_expected: Json
           p_operation: string
         }
@@ -3662,6 +3670,10 @@ export type Database = {
           has_more: boolean
           items: Json
         }[]
+      }
+      get_open_calendar_create: {
+        Args: { p_activity_id: string; p_actor_user_id: string }
+        Returns: Json
       }
       get_opportunity: { Args: { p_opportunity_id: string }; Returns: Json }
       get_pipeline_board: { Args: { p_pipeline_id: string }; Returns: Json }

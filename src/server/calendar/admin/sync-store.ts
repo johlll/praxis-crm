@@ -1,6 +1,6 @@
 import { createCalendarAdminSupabaseClient } from "@/server/calendar/admin/supabase";
 import type { Json } from "@/server/types/database";
-import type { LinkRecord, LinkState, SyncStore } from "@/server/calendar/sync/types";
+import type { LinkRecord, LinkState, OpenCreateIntent, SyncStore } from "@/server/calendar/sync/types";
 
 /**
  * Adaptador de persistência da sincronização: só chama as RPCs de
@@ -21,16 +21,26 @@ export function createSupabaseSyncStore(actorUserId: string): SyncStore {
       return (data as unknown as LinkRecord | null) ?? null;
     },
 
-    async beginEffect({ connectionId, activityId, operation, expected }) {
+    async beginEffect({ connectionId, activityId, operation, expected, target }) {
       const { data, error } = await admin.rpc("begin_calendar_effect", {
         p_connection_id: connectionId,
         p_activity_id: activityId,
         p_actor_user_id: actorUserId,
         p_operation: operation,
         p_expected: expected as Json,
+        ...(target ? { p_calendar_id: target.calendarId, p_event_id: target.eventId } : {}),
       });
       if (error) throw new Error(error.message);
       return data;
+    },
+
+    async getOpenCreateIntent(activityId) {
+      const { data, error } = await admin.rpc("get_open_calendar_create", {
+        p_activity_id: activityId,
+        p_actor_user_id: actorUserId,
+      });
+      if (error) throw new Error(error.message);
+      return (data as unknown as OpenCreateIntent | null) ?? null;
     },
 
     async resolveEffect({ intentId, status, errorCode, state, syncState }) {

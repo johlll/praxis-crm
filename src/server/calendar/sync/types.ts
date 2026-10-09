@@ -58,6 +58,30 @@ export type EffectOperation = "create" | "update" | "delete" | "meet";
 
 export type ConflictResolution = "google_prevails" | "crm_prevails" | "kept_google_event" | "needs_attention";
 
+/** Agenda e evento EFETIVAMENTE usados na chamada ao Google. */
+export type EffectTarget = { calendarId: string; eventId: string };
+
+/**
+ * A inclusão mais recente ainda sem desfecho de uma atividade, com a
+ * identidade gravada ANTES da chamada ao Google. De outra pessoa, só o fato
+ * de existir. `calendarId`/`eventId` nulos = intenção sem alvo registrado
+ * (não há como concluir nada sobre ela). `settled`: incerta, ou parada há
+ * tempo suficiente para não estar mais em andamento.
+ */
+export type OpenCreateIntent =
+  | { isMine: false }
+  | {
+      isMine: true;
+      intentId: string;
+      workspaceId: string;
+      environment: CalendarEnvironment;
+      connectionId: string;
+      calendarId: string | null;
+      eventId: string | null;
+      status: "pending" | "uncertain";
+      settled: boolean;
+    };
+
 export interface SyncStore {
   getLink(activityId: string): Promise<LinkRecord | null>;
   beginEffect(params: {
@@ -65,7 +89,11 @@ export interface SyncStore {
     activityId: string;
     operation: EffectOperation;
     expected: Record<string, unknown>;
+    /** Obrigatório na inclusão: gravado antes da chamada, é o que a
+     * verificação de um resultado incerto consulta depois. */
+    target?: EffectTarget | undefined;
   }): Promise<string>;
+  getOpenCreateIntent(activityId: string): Promise<OpenCreateIntent | null>;
   resolveEffect(params: {
     intentId: string;
     status: "succeeded" | "failed" | "uncertain";
@@ -138,7 +166,8 @@ export class CalendarSyncError extends Error {
       | "invalid_duration"
       | "not_linked"
       | "link_connection_mismatch"
-      | "activity_not_found",
+      | "activity_not_found"
+      | "create_outcome_uncertain",
   ) {
     super(code);
     this.name = "CalendarSyncError";

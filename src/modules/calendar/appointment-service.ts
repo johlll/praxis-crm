@@ -18,6 +18,7 @@ import {
   createAppointment,
   getAvailability,
   isSlotFree,
+  recoverUncertainCreate,
   rescheduleAppointment,
   type CancelAppointmentResult,
   type CreateAppointmentResult,
@@ -265,20 +266,104 @@ export function noticeForCreate(result: CreateAppointmentResult): CalendarNotice
   }
 }
 
-export function noticeForRecover(result: RecoverCreateResult): CalendarNotice {
+const STILL_PENDING = "Não dá para saber se o evento foi criado: a verificação continua pendente e nada foi criado de novo.";
+
+/**
+ * `selectedCalendarId`: a agenda selecionada AGORA. Quando difere da agenda
+ * da tentativa, a mensagem diz onde o compromisso ficou (ou onde a ausência
+ * foi confirmada).
+ */
+export function noticeForRecover(result: RecoverCreateResult, selectedCalendarId: string | null = null): CalendarNotice {
   switch (result.status) {
     case "adopted":
-      return ok("Confirmado: o evento estava no Google Agenda e foi vinculado à atividade.", result.meet.url);
+      return ok(
+        result.calendarId !== selectedCalendarId
+          ? "Confirmado: o evento estava no Google Agenda, na agenda em que a inclusão foi feita, e foi vinculado à atividade. Essa não é a agenda selecionada agora: o compromisso continua na agenda original; só compromissos novos vão para a selecionada."
+          : "Confirmado: o evento estava no Google Agenda e foi vinculado à atividade.",
+        result.meet.url,
+      );
     case "not_created":
-      return warn("Confirmado: o evento não foi criado no Google Agenda. Nada foi criado agora; adicione de novo se quiser.");
+      return warn(
+        result.calendarId !== selectedCalendarId
+          ? "Confirmado na agenda em que a inclusão foi tentada: o evento não foi criado lá. Nada foi criado agora; se adicionar de novo, ele irá para a agenda selecionada agora."
+          : "Confirmado: o evento não foi criado no Google Agenda. Nada foi criado agora; adicione de novo se quiser.",
+      );
     case "already_linked":
       return ok("O compromisso já está vinculado ao Google Agenda.");
+    case "nothing_open":
+      return ok("Não há inclusão pendente de verificação para este compromisso.");
+    case "not_owner":
+      return warn("Esta inclusão foi feita pela agenda de outra pessoa: só ela pode verificá-la. Nada foi consultado nem alterado.");
+    case "in_progress":
+      return warn("A inclusão ainda pode estar em andamento. Verifique de novo em instantes; nada foi repetido.");
+    case "insufficient_info":
+      return warn(
+        "Esta inclusão foi registrada sem a agenda e o evento usados, então não é possível concluir se o evento foi criado. Ela continua pendente; confira a agenda no Google.",
+      );
+    case "connection_unavailable":
+      return warn(
+        `A conexão usada na inclusão não está disponível (trocada, desconectada ou a reautorizar). ${STILL_PENDING} Reautorize essa conexão e verifique de novo.`,
+      );
     case "access_lost":
-      return warn(toUserMessage({ message: "calendar_access_lost" }));
+      return warn(`Sem acesso à agenda em que a inclusão foi feita. ${STILL_PENDING} Restabeleça o acesso a essa agenda e verifique de novo.`);
     case "failed":
       return warn(`Não foi possível confirmar a inclusão (${result.code}).`);
     case "uncertain":
       return warn("O Google Agenda ainda não respondeu: o resultado continua incerto. Tente verificar de novo em instantes.");
+  }
+}
+
+// ---------------------------------------------------------------------
+// Verificar uma inclusão incerta
+// ---------------------------------------------------------------------
+
+/**
+ * "Verificar inclusão": resolve a intenção ORIGINAL com a conexão que a fez
+ * (do próprio usuário, ativa) e na agenda gravada nela. Não usa `prepare`,
+ * que exige a conexão e a agenda selecionadas AGORA.
+ */
+export async function verifyUncertainCreate(
+  activityId: string,
+): Promise<{ ok: false; error: string } | { ok: true; result: RecoverCreateResult; notice: CalendarNotice }> {
+  const auth = await requirePermissionSafe("calendar.connect_own");
+  if ("error" in auth) return { ok: false, error: auth.error };
+  const ctx: SessionContext = { userId: auth.ctx.userId, workspaceId: auth.ctx.workspaceId };
+
+  const provider = await getCalendarProvider();
+  if (!provider) return { ok: false, error: PROVIDER_NOT_CONFIGURED };
+
+  try {
+    const activity = await loadActivityFromSession(activityId);
+    if (!activity) return { ok: false, error: toUserMessage(new Error("activity_not_found")) };
+
+    const connections = await listCalendarConnections(ctx.workspaceId);
+    const selected = connections.find((c) => c.isMine && c.status !== "disconnected") ?? null;
+    const deps: SyncDeps = {
+      api: provider,
+      store: createSupabaseSyncStore(ctx.userId),
+      environment: getCalendarEnvironment(),
+      loadActivity: loadActivityFromSession,
+    };
+
+    const result = await recoverUncertainCreate(deps, activity, async ({ connectionId, calendarId }) => {
+      // Só a conexão ORIGINAL, do próprio usuário e ativa. Outra conexão (mesmo
+      // que dele, depois de reconectar) não tem como responder pela tentativa.
+      const original = connections.find((c) => c.id === connectionId && c.isMine);
+      if (!original || original.status !== "active") return null;
+      try {
+        return await loadConnectionContext({
+          provider,
+          connection: { id: original.id, calendarId, status: original.status },
+          workspaceId: ctx.workspaceId,
+          actorUserId: ctx.userId,
+        });
+      } catch {
+        return null;
+      }
+    });
+    return { ok: true, result, notice: noticeForRecover(result, selected?.calendarId ?? null) };
+  } catch (error) {
+    return { ok: false, error: errorMessage(error, ctx) };
   }
 }
 
