@@ -338,6 +338,118 @@ Google, e as telas ganharam os controles. Tudo com o provedor **simulado**.
   estado, se é do usuário, duração, Meet e sincronização — nunca título, etag,
   ids de agenda/evento, e-mail da conta nem token.
 
+### 6.10 Google → CRM (etapa 3)
+Primeira parte (**3a**), implementada com o provedor **simulado** (migration
+`20261011100000_b2_google_to_crm_sync`, não aplicada ao hospedado).
+
+- **Só eventos vinculados.** A listagem (`events.list`, `fields` mínimo, sem
+  título) traz a agenda inteira; cada item é reconhecido pelo vínculo local
+  `(agenda, evento)` do ambiente e da conexão. Sem vínculo: descartado em
+  memória — não é lido em detalhe, gravado, logado nem contado. Só o evento
+  vinculado é lido com `events.get` (título e Meet).
+- **Por (conexão, agenda) com vínculo ativo**, inclusive agendas que não são
+  mais a selecionada (o compromisso continua na agenda em que nasceu).
+- **Uma execução por vez** (`claim_calendar_sync`, trava com validade). O
+  `syncToken` novo só é gravado por quem ainda detém a trava, depois de
+  **todas** as páginas e de todos os itens vinculados aplicados; qualquer
+  falha mantém o anterior e a execução é refeita — o processamento é
+  idempotente (o eco e o já aplicado são reconhecidos pela base).
+- **Trava conferida em toda escrita.** `reset_calendar_sync_token`,
+  `apply_google_inbound_change` e `finish_calendar_sync` recebem a trava e,
+  antes de gravar, bloqueiam a linha do estado (`private.lock_sync_lease`,
+  `for update`) e conferem que ela ainda é desta execução, desta conexão e
+  agenda e não venceu (relógio de agora). O bloqueio vale até o fim da
+  transação: nenhuma outra execução assume entre a conferência e a escrita.
+  Ordem de bloqueio estado → vínculo nas duas funções que tocam os dois.
+  Quem perdeu a trava não altera atividade, vínculo, conflito, token nem
+  auditoria, e o orquestrador para no ato (`lease_lost`). Provado em
+  sequência no pgTAP e sob concorrência real no CI
+  (`scripts/b2-sync-lease-concurrency-check.sh`: duas sessões com
+  transações abertas ao mesmo tempo).
+- **Paginação:** a consulta inicial (`syncToken`, `showDeleted`,
+  `singleEvents`, `maxResults`) é repetida em **todas** as páginas; só o
+  `pageToken` é acrescentado. O simulador recusa página de consulta
+  diferente (400), como o Google.
+- **`410`, em qualquer página:** o token é descartado na hora e a listagem
+  completa é refeita; nada do CRM é apagado, e o que as páginas anteriores
+  já aplicaram é reconhecido pela base (não é reaplicado nem duplica
+  conflito). Na listagem completa, vínculo ausente é confirmado com `get` e
+  com o acesso à agenda antes de virar `missing_in_google`.
+- **Eco e reconciliação parcial.** O `etag` igual, sozinho, não prova que
+  todos os campos foram reconciliados. Por isso: (a) a saída (etapa 2) só
+  grava na base o `etag` do evento quando **todos** os campos sincronizados
+  da base conferem com ele; se algum ficou para a entrada (ex.: o Google
+  mudou o título enquanto o CRM remarcava), a base mantém o `etag` anterior,
+  o que obriga a entrada a ler o detalhe; (b) a entrada só trata um item
+  como eco se o `etag` **e** o que a listagem traz (estado, início e fim)
+  batem com a base.
+- **Regra por campo contra a base** (§6.3/6.4), aplicada por
+  `apply_google_inbound_change` numa única transação (atividade, conflitos
+  e base), só se a base e a versão da atividade são as lidas — senão relê e
+  reavalia (até 3 vezes; depois, o token não avança):
+  - mudou só no Google → aplicado no CRM; nos dois para valores diferentes →
+    o Google prevalece e o valor do CRM fica gravado; só no CRM → o CRM não é
+    sobrescrito e a base desse campo não avança;
+  - horário: o CRM recebe o início; a duração do vínculo é a real;
+  - cancelado no Google → vínculo `cancelled_in_google`, atividade mantida;
+  - Meet: o do Google é adotado (removido lá, removido aqui; nunca recriado);
+  - série/instância de série ou marca de outro compromisso/ambiente →
+    `needs_attention`, nada aplicado.
+- **Autorização:** tudo roda em nome do **dono da conexão**; se ele não
+  alcança mais a atividade (papel ou lead), nada é aplicado e o vínculo vai
+  para atenção (`owner_lost_access`). **Isolamento:** todas as RPCs exigem o
+  ambiente autenticado; a atividade passa pelo gatilho de ambiente.
+- **Perda de acesso** (401/403/404 na listagem): pendência explícita nos
+  vínculos da agenda, token mantido; a próxima listagem bem-sucedida prova o
+  acesso e os devolve a `linked`. **Refresh token inválido:** conexão
+  `needs_reauth`, sem novas tentativas em laço.
+- **Canais:** linha `creating` com o **hash** do segredo gravada antes do
+  `watch`; `renew_at` pela vida efetiva (§9.4); trava atômica de renovação;
+  o novo é criado antes de o velho (`retiring`) ser parado, o que acontece
+  depois da primeira mensagem do novo ou de 10 min; vida < 45 min →
+  `polling_only`, sem laço por 24 h; resposta do `watch` perdida → a primeira
+  mensagem revela o recurso e o canal é ativado (sem criar outro), ou é
+  abandonado depois de 10 min; canal de agenda sem vínculo ou vencido é
+  encerrado. Desconectar encerra os canais no Google (enquanto há token) e
+  no banco.
+- **Webhook** (`/api/calendar/webhook`, público no proxy): só cabeçalhos;
+  canal do ambiente + segredo + recurso conferidos no banco; só marca a
+  agenda para sincronizar (`dirty_at`). 200 aceito/encerrado, 404
+  desconhecido, 400 malformado. Sem provedor configurado: 404 sem tocar no
+  banco.
+- **Manutenção** (`/api/cron/calendar`, segredo dos crons da A11): por alvo
+  do lote, cuida do canal e sincroniza com dica do webhook, a cada 15 min
+  (polling) e com listagem completa a cada 24 h. Idempotente e segura em
+  paralelo. Responde só contagens. Sem provedor configurado, não toca em
+  nada.
+- **Lote justo** (`claim_calendar_maintenance_batch`, padrão 25, teto 200):
+  até metade das vagas para agendas com dica do webhook ainda não atendida;
+  o resto para as visitadas há mais tempo. A visita é marcada na própria
+  reserva, então a rodada seguinte começa pelas outras e toda agenda é
+  atendida em poucas rodadas, mesmo com mais agendas que vagas (e mesmo
+  quando a conexão de alguma não abre). Os canais vêm do lote, mais os sem
+  vínculo ou vencidos de qualquer agenda (até 200), cada um com `hasLinks`
+  calculado no banco: **agenda fora do lote não está sem vínculo**, e o
+  canal dela não é encerrado. Duas rodadas simultâneas podem reservar a
+  mesma agenda; as travas de sincronização e renovação impedem trabalho
+  duplicado.
+- **Endereço do webhook:** `CALENDAR_WEBHOOK_URL` (https) por ambiente; sem
+  ela, só polling. Não configurada.
+
+**Checklist restante da B2** (nada disto está nesta PR):
+
+| Item | Etapa prevista |
+| --- | --- |
+| Agendador principal: função agendada do Inngest, a cada 15 min, por ambiente (§9.2.1), e sincronização sob demanda ao abrir a agenda ou editar um compromisso (§9.2.3) | **3b** (segunda PR da etapa 3): código local, com o registro desligado; ligar e medir frequência e consumo na **4** |
+| Recuperação adicional: arquivo próprio no GitHub Actions e, se o plano permitir, cron diário da Vercel (§9.2.2); o workflow da A11 não muda | **3b** (código); plano da Vercel e disparos reais na **4** |
+| Batimento do agendador e alertas: `calendar_scheduler_heartbeat`, e-mail do Detector 1, aviso na tela do Detector 2 (§9.3) | **3b**; medição do §9.5 na **4** |
+| Reconexão reencontra os vínculos pela marca (critério 12) | **3b** |
+| Restauração do valor do CRM que perdeu num conflito (critério 7) | **3b** |
+| Conflito e restauração na timeline do lead (critério 7) | **3b** |
+| `CALENDAR_WEBHOOK_URL` e liberação da proteção do Preview para o webhook | **4** |
+| Comportamento real do Google (token, paginação, `410`, vida dos canais, cabeçalhos) e metas do §9.5 | **4** |
+| Pendências do administrador do Workspace e da conta de teste (§12) | **4** (validação externa) |
+
 ## 7. Isolamento entre ambientes
 
 O Supabase é compartilhado, então o isolamento é de duas camadas:
@@ -571,7 +683,10 @@ e reportados como medição, não como promessa.
 2. **CRM → Google:** criar/reagendar/cancelar, `If-Match`, idempotência,
    Meet, `freebusy`, convidados opcionais.
 3. **Google → CRM:** sync incremental, conflitos, canais, webhook,
-   renovação, agendadores, batimento e alertas.
+   renovação, agendadores, batimento e alertas. Em duas PRs: **3a**
+   (sincronização, canais, webhook e manutenção, com provedor simulado) e
+   **3b** (agendadores, batimento e alertas, reconexão, restauração de
+   conflito e timeline; checklist em §6.10).
 4. **Validação** com conta e calendário de teste (Preview, depois
    Production).
 5. **Etapa controlada** com a agenda do Henrique.

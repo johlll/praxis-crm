@@ -1,0 +1,113 @@
+/**
+ * @vitest-environment node
+ *
+ * B2, etapa 3 — rotas de manutenção (`/api/cron/calendar`) e webhook
+ * (`/api/calendar/webhook`). Com a integração desligada (sem provedor —
+ * hoje, em Preview e Production) nenhuma das duas toca no banco nem no
+ * Google. Dados fictícios.
+ */
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { ACTIVITY_ID, CALENDAR_ID, activity, makeFixture } from "../support/calendar-fixture";
+import { InboundMemoryStore } from "../support/calendar-inbound-store";
+
+const m = vi.hoisted(() => ({
+  provider: { value: null as unknown },
+  store: { value: null as unknown },
+  storeCreated: vi.fn(),
+  accessToken: { value: "" },
+}));
+
+vi.mock("@/server/ingest/config", () => ({
+  IngestConfigError: class extends Error {},
+  getIngestConfig: () => ({ CRON_SECRET: "segredo-de-teste" }),
+}));
+vi.mock("@/server/calendar/provider", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getCalendarProvider: async () => m.provider.value,
+}));
+vi.mock("@/server/calendar/admin/inbound-store", () => ({
+  createSupabaseInboundStore: () => {
+    m.storeCreated();
+    return m.store.value;
+  },
+}));
+vi.mock("@/server/calendar/connection-context", () => ({
+  loadConnectionContext: async () => ({ accessToken: m.accessToken.value }),
+}));
+
+import { POST as cron } from "@/app/api/cron/calendar/route";
+import { POST as webhook } from "@/app/api/calendar/webhook/route";
+import { createAppointment } from "@/server/calendar/sync/appointments";
+import { isPublicPath } from "@/proxy";
+
+const cronRequest = (auth?: string) =>
+  new Request("https://crm.exemplo.test/api/cron/calendar", { method: "POST", headers: auth ? { authorization: auth } : {} });
+
+beforeEach(() => {
+  m.provider.value = null;
+  m.store.value = null;
+  m.storeCreated.mockClear();
+  vi.spyOn(console, "error").mockImplementation(() => {});
+});
+
+describe("/api/cron/calendar", () => {
+  it("sem o segredo: 401", async () => {
+    expect((await cron(cronRequest())).status).toBe(401);
+    expect((await cron(cronRequest("Bearer outro"))).status).toBe(401);
+    expect(m.storeCreated).not.toHaveBeenCalled();
+  });
+
+  it("integração desligada: não toca em nada", async () => {
+    const res = await cron(cronRequest("Bearer segredo-de-teste"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ enabled: false });
+    expect(m.storeCreated).not.toHaveBeenCalled();
+  });
+
+  it("ligada (simulado): roda a manutenção e devolve só contagens, nunca conteúdo de evento", async () => {
+    const f = await makeFixture();
+    f.store.setActivity(activity());
+    const created = await createAppointment(f.deps, f.conn, activity());
+    if (created.status !== "created") throw new Error("setup");
+    f.provider.externalEdit(CALENDAR_ID, created.eventId, { summary: "Título sigiloso do Google" });
+    m.provider.value = f.provider;
+    m.store.value = new InboundMemoryStore(f.store, () => new Date());
+    m.accessToken.value = f.conn.accessToken;
+
+    const res = await cron(cronRequest("Bearer segredo-de-teste"));
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ enabled: true, targets: 1, synced: 1 });
+    expect(JSON.stringify(body)).not.toMatch(/sigiloso|Reunião/);
+    expect(f.store.activities.get(ACTIVITY_ID)!.title).toBe("Título sigiloso do Google");
+  });
+});
+
+describe("/api/calendar/webhook", () => {
+  const notification = () =>
+    new Request("https://crm.exemplo.test/api/calendar/webhook", {
+      method: "POST",
+      headers: { "x-goog-channel-id": "canal-x", "x-goog-channel-token": "t", "x-goog-resource-state": "exists" },
+    });
+
+  it("integração desligada: 404, sem tocar no banco", async () => {
+    expect((await webhook(notification())).status).toBe(404);
+    expect(m.storeCreated).not.toHaveBeenCalled();
+  });
+
+  it("ligada: canal desconhecido 404; malformada 400", async () => {
+    const f = await makeFixture();
+    m.provider.value = f.provider;
+    m.store.value = new InboundMemoryStore(f.store, () => new Date());
+    expect((await webhook(notification())).status).toBe(404);
+    expect((await webhook(new Request("https://crm.exemplo.test/api/calendar/webhook", { method: "POST" }))).status).toBe(400);
+  });
+
+  it("é rota pública no proxy (o Google chega sem sessão); o resto da API de agenda não", () => {
+    expect(isPublicPath("/api/calendar/webhook")).toBe(true);
+    expect(isPublicPath("/api/calendar")).toBe(false);
+    expect(isPublicPath("/api/calendar/outra")).toBe(false);
+  });
+});

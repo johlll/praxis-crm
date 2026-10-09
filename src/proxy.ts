@@ -34,6 +34,9 @@ import { getEnv } from "@/server/env";
  * Inngest (assinatura do provedor) e os crons (segredo próprio no
  * cabeçalho). Sem isto, um POST de formulário era desviado para /entrar e
  * a captação respondia a página de login.
+ *
+ * B2: o webhook do Google Agenda também chega sem usuário; ele se autentica
+ * pelo canal conhecido do ambiente e pelo segredo do canal.
  */
 const PUBLIC_PATHS = [
   "/entrar",
@@ -42,6 +45,7 @@ const PUBLIC_PATHS = [
   "/api/forms",
   "/api/inngest",
   "/api/cron",
+  "/api/calendar/webhook",
 ];
 
 export function isPublicPath(pathname: string): boolean {

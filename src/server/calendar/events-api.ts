@@ -1,7 +1,9 @@
 /**
  * Contrato mínimo da API de eventos do Google Calendar usado pela B2
- * (etapa 2, CRM → Google). Reproduz só o que o plano exige
- * (docs/decisoes/b2-google-agenda.md §6):
+ * (etapa 2, CRM → Google; etapa 3, Google → CRM). Reproduz só o que o plano
+ * exige (docs/decisoes/b2-google-agenda.md §6):
+ *  - listagem incremental por `syncToken`, paginada, com `410` (etapa 3);
+ *  - canais de notificação (`watch`/`stop`), sem renovação automática;
  *  - `If-Match` com o `etag` nas escritas, e `412` quando mudou;
  *  - id de evento definido pelo cliente (409 se já existe);
  *  - Meet por `conferenceData.createRequest`, assíncrono;
@@ -27,8 +29,43 @@ export type CalendarEvent = {
   extendedProperties?: { private?: Record<string, string> } | undefined;
   conferenceData?: ConferenceData | undefined;
   attendees?: Array<{ email: string }> | undefined;
+  /** Série (evento-mestre) ou instância de série: não suportados no vínculo (§6.2). */
+  recurrence?: string[] | undefined;
+  recurringEventId?: string | undefined;
   updated: string;
 };
+
+/**
+ * Item da listagem incremental (`events.list` com `fields` mínimo, §6.2):
+ * nunca título, descrição, convidados ou local — a listagem traz eventos de
+ * TODA a agenda, inclusive os que não são do CRM.
+ */
+export type EventListItem = Pick<CalendarEvent, "id" | "etag" | "status" | "updated" | "start" | "end" | "extendedProperties">;
+
+/**
+ * Consulta da listagem. A MESMA consulta vale para todas as páginas: a
+ * página seguinte repete o `syncToken` e os demais parâmetros e só acrescenta
+ * o `pageToken`.
+ */
+export type EventListQuery = {
+  /** Sem ele: listagem completa. */
+  syncToken?: string | undefined;
+  showDeleted: true;
+  singleEvents: false;
+  maxResults: number;
+};
+
+export type EventListPage = {
+  items: EventListItem[];
+  /** Há mais páginas. */
+  nextPageToken?: string | undefined;
+  /** Só na ÚLTIMA página. */
+  nextSyncToken?: string | undefined;
+};
+
+/** Canal de notificação criado por `events.watch`. `expiration` é o
+ * EFETIVO devolvido pelo Google (não há TTL fixo documentado). */
+export type WatchChannel = { resourceId: string; expiration: string };
 
 export type EventInput = {
   id?: string | undefined;
@@ -98,6 +135,30 @@ export interface CalendarEventsApi {
    * acesso" com "o evento foi apagado": ambos podem voltar como 404 no `get`.
    */
   calendarAccessible(accessToken: string, calendarId: string): Promise<boolean>;
+
+  /**
+   * Listagem para sincronização (Google → CRM). Parâmetros SEMPRE iguais do
+   * sync completo em diante (`showDeleted` verdadeiro, sem `timeMin`,
+   * `q`, `privateExtendedProperty`...), porque o `syncToken` é incompatível
+   * com eles. Sem `syncToken` = listagem completa. Página seguinte = a mesma
+   * consulta com `pageToken`. `410` (`ProviderHttpError`), em qualquer página
+   * = token inválido: descartar e refazer a listagem completa.
+   */
+  listEvents(
+    accessToken: string,
+    calendarId: string,
+    query: EventListQuery & { pageToken?: string | undefined },
+  ): Promise<EventListPage>;
+
+  /** Cria um canal de notificação para a agenda. O Google não renova canais. */
+  watchEvents(
+    accessToken: string,
+    calendarId: string,
+    channel: { id: string; token: string; address: string },
+  ): Promise<WatchChannel>;
+
+  /** Encerra um canal (`channels.stop`). */
+  stopChannel(accessToken: string, channel: { id: string; resourceId: string }): Promise<void>;
 
   /** Intervalos ocupados, nunca título nem detalhe. */
   freeBusy(

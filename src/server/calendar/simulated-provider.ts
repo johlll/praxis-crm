@@ -3,7 +3,10 @@ import {
   ProviderUncertainError,
   type CalendarEvent,
   type EventInput,
+  type EventListItem,
+  type EventListPage,
   type SendUpdates,
+  type WatchChannel,
 } from "@/server/calendar/events-api";
 import { CALENDAR_SCOPES, type CalendarProvider, type ProviderCalendar, type ProviderTokens } from "@/server/calendar/provider";
 
@@ -21,7 +24,7 @@ import { CALENDAR_SCOPES, type CalendarProvider, type ProviderCalendar, type Pro
  * recuperação de resultado incerto.
  */
 
-type Operation = "insert" | "get" | "patch" | "delete";
+type Operation = "insert" | "get" | "patch" | "delete" | "list" | "watch" | "stop";
 
 export type InjectedFault = {
   operation: Operation;
@@ -32,7 +35,51 @@ export type InjectedFault = {
   status?: number | undefined;
 };
 
-type StoredEvent = CalendarEvent & { meetReadsLeft?: number | undefined };
+/** `seq`: posição no registro de mudanças da agenda (base do `syncToken`). */
+type StoredEvent = CalendarEvent & { meetReadsLeft?: number | undefined; seq?: number | undefined };
+
+/** Notificação que o Google enviaria ao endereço do canal (só cabeçalhos). */
+export type SimulatedNotification = {
+  channelId: string;
+  token: string;
+  resourceId: string;
+  resourceState: "sync" | "exists";
+  messageNumber: number;
+  expiration: string;
+};
+
+type SimulatedChannel = {
+  calendarId: string;
+  token: string;
+  address: string;
+  resourceId: string;
+  expiration: string;
+  stopped: boolean;
+  messageNumber: number;
+};
+
+/** Consulta de listagem como recebida (sem o `pageToken`). */
+type ListQuery = {
+  syncToken?: string | undefined;
+  showDeleted?: boolean | undefined;
+  singleEvents?: boolean | undefined;
+  maxResults?: number | undefined;
+};
+
+/** Continuação de uma listagem: só vale para a MESMA consulta que a abriu. */
+type ListCursor = {
+  items: EventListItem[];
+  offset: number;
+  nextSyncToken: string;
+  calendarId: string;
+  query: string;
+  pageSize: number;
+  /** Época dos tokens quando a listagem incremental começou (`null` = completa). */
+  epoch: number | null;
+};
+
+const queryKey = (q: ListQuery) =>
+  JSON.stringify([q.syncToken ?? null, q.showDeleted ?? null, q.singleEvents ?? null, q.maxResults ?? null]);
 
 export class SimulatedCalendarProvider implements CalendarProvider {
   private issued = new Map<string, { email: string; calendars: ProviderCalendar[] }>();
@@ -49,6 +96,21 @@ export class SimulatedCalendarProvider implements CalendarProvider {
   private hooks: Array<{ operation: Operation; fn: () => void }> = [];
   /** Quantas leituras (`get`) até o Meet pendente virar `success`. */
   meetReadyAfterReads = 1;
+  /** Itens por página na listagem (o Google pagina; o teste força páginas pequenas). */
+  listPageSize = 50;
+  /** Vida dos canais criados (o `expiration` efetivo devolvido). */
+  channelTtlMs = 7 * 24 * 3600_000;
+  /** Relógio dos canais (controlável nos testes). */
+  now: () => number = () => Date.now();
+  /** Canais criados, pelo id. */
+  readonly channels = new Map<string, SimulatedChannel>();
+  /** Notificações que o Google teria enviado, em ordem (entregues pelo teste ao webhook). */
+  readonly outbox: SimulatedNotification[] = [];
+  private syncEpoch = new Map<string, number>();
+  private cursors = new Map<string, ListCursor>();
+  private cursorCounter = 0;
+  /** Consultas de listagem recebidas, em ordem (parâmetros completos). */
+  readonly listQueries: Array<ListQuery & { calendarId: string; pageToken?: string | undefined }> = [];
   /** Toda requisição recebida, em ordem — para provar o que NÃO foi chamado. */
   readonly calls: Array<{ operation: Operation | "freebusy" | "calendar"; eventId?: string | undefined; calendarId?: string | undefined }> = [];
   /** Convites que o Google teria enviado por e-mail. */
@@ -132,6 +194,7 @@ export class SimulatedCalendarProvider implements CalendarProvider {
     const event = this.require(calendarId, eventId);
     Object.assign(event, patch);
     this.touch(event);
+    this.announce(calendarId);
   }
 
   /** Evento pessoal/externo (sem a marca do CRM) que só deve bloquear
@@ -139,6 +202,7 @@ export class SimulatedCalendarProvider implements CalendarProvider {
   addExternalEvent(calendarId: string, start: string, end: string, summary = "Consulta médica (pessoal)"): string {
     this.etagCounter += 1;
     const id = `ext${this.etagCounter}`;
+    const seq = this.etagCounter;
     const event: StoredEvent = {
       id,
       etag: `"${this.etagCounter}"`,
@@ -147,9 +211,34 @@ export class SimulatedCalendarProvider implements CalendarProvider {
       start: { dateTime: start },
       end: { dateTime: end },
       updated: new Date().toISOString(),
+      seq,
     };
     this.bucket(calendarId).set(id, event);
+    this.announce(calendarId);
     return id;
+  }
+
+  /** O Google descarta os tokens desta agenda: o próximo uso volta `410`. */
+  invalidateSyncTokens(calendarId: string): void {
+    this.syncEpoch.set(calendarId, (this.syncEpoch.get(calendarId) ?? 0) + 1);
+  }
+
+  /** O evento some por completo (nem como cancelado): `get` volta 404. */
+  removeEventPermanently(calendarId: string, eventId: string): void {
+    this.bucket(calendarId).delete(eventId);
+  }
+
+  /** Transforma o evento em série (não suportada no vínculo). */
+  makeRecurring(calendarId: string, eventId: string): void {
+    const event = this.require(calendarId, eventId);
+    event.recurrence = ["RRULE:FREQ=WEEKLY"];
+    this.touch(event);
+    this.announce(calendarId);
+  }
+
+  /** Entrega (e esvazia) as notificações pendentes. */
+  drainNotifications(): SimulatedNotification[] {
+    return this.outbox.splice(0, this.outbox.length);
   }
 
   peek(calendarId: string, eventId: string): StoredEvent | undefined {
@@ -194,6 +283,7 @@ export class SimulatedCalendarProvider implements CalendarProvider {
     this.touch(stored);
     this.bucket(calendarId).set(stored.id, stored);
     this.notify(stored, opts.sendUpdates);
+    this.announce(calendarId);
 
     if (fault?.kind === "timeout_after_apply") throw new ProviderUncertainError();
     return this.snapshot(stored);
@@ -240,6 +330,7 @@ export class SimulatedCalendarProvider implements CalendarProvider {
     this.applyConference(stored, patch, opts.conferenceDataVersion);
     this.touch(stored);
     this.notify(stored, opts.sendUpdates);
+    this.announce(calendarId);
 
     if (fault?.kind === "timeout_after_apply") throw new ProviderUncertainError();
     return this.snapshot(stored);
@@ -265,8 +356,99 @@ export class SimulatedCalendarProvider implements CalendarProvider {
     stored.status = "cancelled";
     this.touch(stored);
     this.notify(stored, opts.sendUpdates);
+    this.announce(calendarId);
 
     if (fault?.kind === "timeout_after_apply") throw new ProviderUncertainError();
+  }
+
+  /**
+   * Como o Google: a página seguinte só é servida para a MESMA consulta que
+   * abriu a listagem (mesmo `syncToken` e demais parâmetros, mais o
+   * `pageToken`); consulta diferente é recusada (400). Token invalidado
+   * durante a listagem incremental devolve `410` em qualquer página.
+   */
+  async listEvents(
+    _accessToken: string,
+    calendarId: string,
+    opts: ListQuery & { pageToken?: string | undefined },
+  ): Promise<EventListPage> {
+    this.calls.push({ operation: "list", calendarId });
+    this.listQueries.push(structuredClone({ calendarId, ...opts }));
+    const fault = this.nextFault("list");
+    const revoked = this.revokedCalendars.get(calendarId);
+    if (revoked !== undefined) throw new ProviderHttpError(revoked);
+    if (fault?.kind === "timeout_before_apply" || fault?.kind === "timeout_after_apply") throw new ProviderUncertainError();
+    if (fault?.kind === "status") throw new ProviderHttpError(fault.status ?? 500);
+
+    const { pageToken, ...query } = opts;
+    const epoch = this.syncEpoch.get(calendarId) ?? 0;
+    if (pageToken) {
+      const cursor = this.cursors.get(pageToken);
+      if (!cursor || cursor.calendarId !== calendarId) throw new ProviderHttpError(400, "invalid_page_token");
+      if (cursor.query !== queryKey(query)) throw new ProviderHttpError(400, "page_query_mismatch");
+      if (cursor.epoch !== null && cursor.epoch !== epoch) throw new ProviderHttpError(410);
+      this.cursors.delete(pageToken);
+      return this.page(cursor);
+    }
+
+    let since: number | null = null;
+    if (query.syncToken) {
+      const match = /^simsync:(\d+):(\d+):(.+)$/.exec(query.syncToken);
+      if (!match || match[3] !== calendarId || Number(match[1]) !== epoch) throw new ProviderHttpError(410);
+      since = Number(match[2]);
+    }
+    const items = [...this.bucket(calendarId).values()]
+      .filter((e) => since === null || (e.seq ?? 0) > since)
+      .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
+      .map((e) => this.listItem(e));
+    return this.page({
+      items,
+      offset: 0,
+      nextSyncToken: `simsync:${epoch}:${this.etagCounter}:${calendarId}`,
+      calendarId,
+      query: queryKey(query),
+      pageSize: Math.max(1, Math.min(this.listPageSize, query.maxResults ?? this.listPageSize)),
+      epoch: since === null ? null : epoch,
+    });
+  }
+
+  async watchEvents(
+    _accessToken: string,
+    calendarId: string,
+    channel: { id: string; token: string; address: string },
+  ): Promise<WatchChannel> {
+    this.calls.push({ operation: "watch", calendarId });
+    const fault = this.nextFault("watch");
+    const revoked = this.revokedCalendars.get(calendarId);
+    if (revoked !== undefined) throw new ProviderHttpError(revoked);
+    if (fault?.kind === "timeout_before_apply") throw new ProviderUncertainError();
+    if (fault?.kind === "status") throw new ProviderHttpError(fault.status ?? 500);
+    if (this.channels.has(channel.id)) throw new ProviderHttpError(400, "channel_id_not_unique");
+
+    const created: SimulatedChannel = {
+      calendarId,
+      token: channel.token,
+      address: channel.address,
+      resourceId: `simres-${calendarId}`,
+      expiration: new Date(this.now() + this.channelTtlMs).toISOString(),
+      stopped: false,
+      messageNumber: 0,
+    };
+    this.channels.set(channel.id, created);
+    // Primeira mensagem de todo canal: `sync`, número 1.
+    this.emit(channel.id, created, "sync");
+    if (fault?.kind === "timeout_after_apply") throw new ProviderUncertainError();
+    return { resourceId: created.resourceId, expiration: created.expiration };
+  }
+
+  async stopChannel(_accessToken: string, channel: { id: string; resourceId: string }): Promise<void> {
+    this.calls.push({ operation: "stop" });
+    const fault = this.nextFault("stop");
+    if (fault?.kind === "timeout_before_apply") throw new ProviderUncertainError();
+    if (fault?.kind === "status") throw new ProviderHttpError(fault.status ?? 500);
+    const found = this.channels.get(channel.id);
+    if (!found || found.resourceId !== channel.resourceId) throw new ProviderHttpError(404);
+    found.stopped = true;
   }
 
   async freeBusy(
@@ -316,15 +498,63 @@ export class SimulatedCalendarProvider implements CalendarProvider {
     return this.faults.splice(index, 1)[0];
   }
 
+  private listItem(event: StoredEvent): EventListItem {
+    // `fields` mínimo: nunca título, descrição, convidados ou conferência.
+    return structuredClone({
+      id: event.id,
+      etag: event.etag,
+      status: event.status,
+      updated: event.updated,
+      start: event.start,
+      end: event.end,
+      extendedProperties: event.extendedProperties,
+    });
+  }
+
+  private page(cursor: ListCursor): EventListPage {
+    const items = cursor.items.slice(cursor.offset, cursor.offset + cursor.pageSize);
+    const offset = cursor.offset + items.length;
+    if (offset < cursor.items.length) {
+      this.cursorCounter += 1;
+      const token = `simpage:${this.cursorCounter}`;
+      this.cursors.set(token, { ...cursor, offset });
+      return { items, nextPageToken: token };
+    }
+    return { items, nextSyncToken: cursor.nextSyncToken };
+  }
+
+  /** O Google avisa os canais ativos da agenda de que algo mudou. */
+  private announce(calendarId: string): void {
+    for (const [id, channel] of this.channels) {
+      if (channel.calendarId === calendarId && !channel.stopped && Date.parse(channel.expiration) > this.now()) {
+        this.emit(id, channel, "exists");
+      }
+    }
+  }
+
+  private emit(id: string, channel: SimulatedChannel, resourceState: "sync" | "exists"): void {
+    channel.messageNumber += 1;
+    this.outbox.push({
+      channelId: id,
+      token: channel.token,
+      resourceId: channel.resourceId,
+      resourceState,
+      messageNumber: channel.messageNumber,
+      expiration: channel.expiration,
+    });
+  }
+
   private touch(event: StoredEvent): void {
     this.etagCounter += 1;
+    event.seq = this.etagCounter;
     event.etag = `"${this.etagCounter}"`;
     event.updated = new Date().toISOString();
   }
 
   private snapshot(event: StoredEvent): CalendarEvent {
-    const { meetReadsLeft: _ignored, ...rest } = event;
+    const { meetReadsLeft: _ignored, seq: _seq, ...rest } = event;
     void _ignored;
+    void _seq;
     return structuredClone(rest);
   }
 
