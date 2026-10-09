@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { ActivityListItem } from "@/modules/activities/queries";
 import type { TeamMember } from "@/modules/team/queries";
 import { formatDue } from "@/lib/timezone";
+import { CalendarBadge } from "@/components/calendar/calendar-badge";
 import { ACTIVITY_TYPE_LABEL, PRIORITY_LABEL } from "./labels";
 import { ActivityRowActions } from "./activity-row-actions";
 
@@ -52,6 +53,7 @@ export function ActivityListTable({
                         {item.title}
                       </span>
                       <span className="text-meta text-text-tertiary">{ACTIVITY_TYPE_LABEL[item.type]}</span>
+                      <CalendarBadge info={item.calendar} />
                     </div>
                   </div>
                 </td>

@@ -128,6 +128,13 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
     "Não foi possível acessar a agenda deste compromisso. Reautorize a conexão ou o acesso à agenda; o compromisso ficou marcado como pendente.",
   activity_version_conflict: "A atividade foi alterada por outra pessoa. Recarregue e tente de novo.",
   intent_not_found: "Operação de agenda não encontrada.",
+  create_outcome_uncertain:
+    "A inclusão anterior deste compromisso no Google Agenda ainda não foi confirmada. Use “Verificar inclusão” antes de adicionar de novo — o evento pode já existir.",
+  calendar_selection_changed: "A agenda selecionada mudou durante a operação. Nada foi criado; tente de novo.",
+  calendar_target_required: "Não foi possível registrar a agenda da operação. Nada foi criado; tente de novo.",
+  calendar_target_mismatch: "A operação não corresponde à agenda deste compromisso. Nada foi alterado.",
+  intent_target_unknown: "Esta inclusão não registrou a agenda usada; não é possível concluí-la.",
+  intent_target_mismatch: "O evento encontrado não corresponde à inclusão registrada. Nada foi vinculado.",
   key_version_mismatch: "Não foi possível renovar a autorização desta conexão. Reconecte a agenda.",
   calendar_provider_not_configured: "A integração com o Google Agenda não está configurada neste ambiente.",
 };

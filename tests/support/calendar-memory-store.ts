@@ -3,8 +3,10 @@ import type {
   ActivitySnapshot,
   ConflictResolution,
   EffectOperation,
+  EffectTarget,
   LinkRecord,
   LinkState,
+  OpenCreateIntent,
   SyncStore,
 } from "@/server/calendar/sync/types";
 
@@ -20,8 +22,23 @@ export type StoredIntent = {
   activityId: string;
   operation: EffectOperation;
   expected: Record<string, unknown>;
-  status: "pending" | "succeeded" | "failed" | "uncertain";
+  status: "pending" | "succeeded" | "failed" | "uncertain" | "superseded";
   errorCode?: string | undefined;
+  /** Identidade gravada ANTES da chamada (como no banco). */
+  createdBy: string;
+  createdAt: number;
+  calendarId: string | null;
+  eventId: string | null;
+};
+
+/** Pendente há mais que isto já não está "em andamento" (como no banco). */
+const SETTLE_MS = 2 * 60_000;
+
+/** Estado de sincronização do vínculo (mesma regra da migration da etapa 2b). */
+export type StoredSync = {
+  syncState?: "in_sync" | "pending" | "failed" | "uncertain";
+  syncOperation?: EffectOperation | null;
+  syncError?: string | null;
 };
 
 export type StoredConflict = {
@@ -33,7 +50,9 @@ export type StoredConflict = {
 };
 
 export class MemoryStore implements SyncStore {
-  links = new Map<string, LinkRecord & { activityId: string }>();
+  links = new Map<string, LinkRecord & { activityId: string } & StoredSync>();
+  /** Pendências marcadas sem intenção (preparação/conexão falhou depois de salvar no CRM). */
+  pendingMarks: Array<{ activityId: string; reason: string }> = [];
   intents: StoredIntent[] = [];
   conflicts: StoredConflict[] = [];
   appliedToActivity: Array<{ activityId: string; title?: string | undefined; dueAt?: string | undefined }> = [];
@@ -41,6 +60,8 @@ export class MemoryStore implements SyncStore {
   applyAttempts: Array<{ activityId: string; expectedVersion: number | undefined; applied: boolean }> = [];
   /** Atividades do CRM simuladas (só as registradas têm controle de versão). */
   activities = new Map<string, ActivitySnapshot>();
+  /** Usuário em nome de quem o store age (o adaptador real recebe o da sessão). */
+  actor = "user-1";
   private beforeApply: (() => void) | undefined;
   /** Agenda SELECIONADA de cada conexão (o banco a lê da conexão, ao criar o vínculo). */
   private selectedCalendar = new Map<string, string>();
@@ -61,11 +82,45 @@ export class MemoryStore implements SyncStore {
     activityId: string;
     operation: EffectOperation;
     expected: Record<string, unknown>;
+    target?: EffectTarget | undefined;
   }): Promise<string> {
+    const { target, ...rest } = params;
+    let calendarId: string | null;
+    let eventId: string | null;
+    if (params.operation === "create") {
+      // Como no banco: a inclusão grava a agenda selecionada e o evento; só
+      // uma inclusão sem desfecho por atividade.
+      if (!target?.calendarId || !target.eventId) throw new Error("calendar_target_required");
+      if (target.calendarId !== this.selectedCalendarOf(params.connectionId)) throw new Error("calendar_selection_changed");
+      if (this.openCreates(params.activityId).length > 0) throw new Error("create_outcome_uncertain");
+      ({ calendarId, eventId } = target);
+    } else {
+      // Demais operações: o alvo é o do vínculo ativo.
+      const link = [...this.links.values()].find((l) => l.activityId === params.activityId && l.status !== "unlinked");
+      calendarId = link?.calendarId ?? null;
+      eventId = link?.eventId ?? null;
+    }
     this.seq += 1;
     const id = `intent-${this.seq}`;
-    this.intents.push({ id, ...params, status: "pending" });
+    this.intents.push({ id, ...rest, status: "pending", createdBy: this.actor, createdAt: Date.now(), calendarId, eventId });
     return id;
+  }
+
+  async getOpenCreateIntent(activityId: string): Promise<OpenCreateIntent | null> {
+    const intent = this.openCreates(activityId).sort((a, b) => b.createdAt - a.createdAt)[0];
+    if (!intent) return null;
+    if (intent.createdBy !== this.actor) return { isMine: false };
+    return {
+      isMine: true,
+      intentId: intent.id,
+      workspaceId: "workspace-1",
+      environment: this.environment,
+      connectionId: intent.connectionId,
+      calendarId: intent.calendarId,
+      eventId: intent.eventId,
+      status: intent.status as "pending" | "uncertain",
+      settled: intent.status === "uncertain" || intent.createdAt < Date.now() - SETTLE_MS,
+    };
   }
 
   async resolveEffect(params: {
@@ -73,26 +128,64 @@ export class MemoryStore implements SyncStore {
     status: "succeeded" | "failed" | "uncertain";
     errorCode?: string | undefined;
     state?: LinkState | undefined;
+    syncState?: "pending" | "failed" | undefined;
   }): Promise<string | null> {
     const intent = this.intents.find((i) => i.id === params.intentId);
-    if (!intent) throw new Error("intent_not_found");
+    // Como no banco: só quem abriu a intenção a resolve.
+    if (!intent || intent.createdBy !== this.actor) throw new Error("intent_not_found");
     // Idempotente: resultado definitivo não é reescrito.
-    if (intent.status === "succeeded" || intent.status === "failed") return null;
+    if (intent.status === "succeeded" || intent.status === "failed" || intent.status === "superseded") return null;
+    // Inclusão concluída só no alvo gravado.
+    if (params.status === "succeeded" && intent.operation === "create") {
+      if (!intent.calendarId || !intent.eventId) throw new Error("intent_target_unknown");
+      if (params.state?.eventId !== intent.eventId) throw new Error("intent_target_mismatch");
+    }
     intent.status = params.status;
     intent.errorCode = params.errorCode;
-    // Como no banco: perda de acesso marca o vínculo ATIVO da conexão como pendente.
-    if (params.status === "failed" && params.state?.linkStatus === "needs_attention") {
-      const link = [...this.links.values()].find(
+
+    // Como no banco: um desfecho definitivo encerra intenções ainda abertas do
+    // MESMO alvo (conexão, agenda e evento) — não basta ser da mesma atividade.
+    if (params.status !== "uncertain" && intent.calendarId && intent.eventId) {
+      for (const other of this.intents) {
+        if (
+          other !== intent &&
+          other.connectionId === intent.connectionId &&
+          other.calendarId === intent.calendarId &&
+          other.eventId === intent.eventId &&
+          (other.status === "uncertain" || other.status === "pending")
+        ) {
+          other.status = "superseded";
+        }
+      }
+    }
+
+    const active = () =>
+      [...this.links.values()].find(
         (l) => l.activityId === intent.activityId && l.status !== "unlinked" && l.connectionId === intent.connectionId,
       );
-      if (link) link.status = "needs_attention";
+
+    if (params.status !== "succeeded") {
+      // Como no banco: falha ou incerteza ficam GRAVADAS no vínculo ativo
+      // (visíveis depois de recarregar); perda de acesso o marca como pendente.
+      const link = active();
+      if (link) {
+        if (params.status === "failed" && params.state?.linkStatus === "needs_attention") link.status = "needs_attention";
+        link.syncState = params.status === "uncertain" ? "uncertain" : (params.syncState ?? "failed");
+        link.syncOperation = intent.operation;
+        link.syncError = params.errorCode ?? null;
+      }
+      return null;
     }
-    if (params.status !== "succeeded" || !params.state) return null;
+    if (!params.state) return null;
 
     // Como no banco: o estado viaja como JSON — chave AUSENTE preserva o valor
     // guardado; chave presente (inclusive null) o substitui.
     const s = JSON.parse(JSON.stringify(params.state)) as LinkState;
-    const existing = [...this.links.values()].find((l) => l.eventId === s.eventId);
+    // Como no banco: o vínculo ativo da atividade; sem ele, o da agenda DA
+    // TENTATIVA (não a selecionada agora).
+    const calendarId = intent.calendarId ?? this.selectedCalendarOf(intent.connectionId);
+    const existing =
+      active() ?? [...this.links.values()].find((l) => l.calendarId === calendarId && l.eventId === s.eventId);
     const pick = <K extends "meetRequestId" | "meetStatus" | "meetUrl">(key: K, fallback: LinkRecord[K] | undefined): LinkRecord[K] =>
       (key in s ? (s[key] ?? null) : (fallback ?? null)) as LinkRecord[K];
     const next = {
@@ -110,7 +203,7 @@ export class MemoryStore implements SyncStore {
       meetUrl: pick("meetUrl", existing?.meetUrl),
     };
     if (existing) {
-      Object.assign(existing, next);
+      Object.assign(existing, next, { syncState: "in_sync", syncOperation: null, syncError: null });
       return existing.id;
     }
     this.seq += 1;
@@ -119,13 +212,26 @@ export class MemoryStore implements SyncStore {
       activityId: intent.activityId,
       connectionId: intent.connectionId,
       environment: this.environment,
-      calendarId: this.selectedCalendar.get(intent.connectionId) ?? this.calendarId,
+      calendarId,
       eventId: s.eventId,
       generation: 1,
       ...next,
+      syncState: "in_sync" as const,
+      syncOperation: null,
+      syncError: null,
     };
     this.links.set(link.id, link);
     return link.id;
+  }
+
+  async markLinkPending(params: { activityId: string; reason: string }): Promise<boolean> {
+    const link = [...this.links.values()].find((l) => l.activityId === params.activityId && l.status !== "unlinked");
+    if (!link) return false;
+    link.syncState = "pending";
+    link.syncOperation = "update";
+    link.syncError = params.reason;
+    this.pendingMarks.push(params);
+    return true;
   }
 
   async recordConflict(params: {
@@ -172,6 +278,16 @@ export class MemoryStore implements SyncStore {
   /** O usuário escolhe outra agenda para a conexão: vale só para vínculos NOVOS. */
   selectCalendar(connectionId: string, calendarId: string): void {
     this.selectedCalendar.set(connectionId, calendarId);
+  }
+
+  private selectedCalendarOf(connectionId: string): string {
+    return this.selectedCalendar.get(connectionId) ?? this.calendarId;
+  }
+
+  private openCreates(activityId: string): StoredIntent[] {
+    return this.intents.filter(
+      (i) => i.activityId === activityId && i.operation === "create" && (i.status === "pending" || i.status === "uncertain"),
+    );
   }
 
   /** Registra (ou substitui) a atividade do CRM, com controle de versão. */

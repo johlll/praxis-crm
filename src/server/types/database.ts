@@ -250,11 +250,13 @@ export type Database = {
       calendar_effect_intents: {
         Row: {
           activity_id: string | null
+          calendar_id: string | null
           connection_id: string
           created_at: string
           created_by: string
           environment: Database["public"]["Enums"]["calendar_environment"]
           error_code: string | null
+          event_id: string | null
           expected: Json
           id: string
           operation: string
@@ -264,11 +266,13 @@ export type Database = {
         }
         Insert: {
           activity_id?: string | null
+          calendar_id?: string | null
           connection_id: string
           created_at?: string
           created_by: string
           environment: Database["public"]["Enums"]["calendar_environment"]
           error_code?: string | null
+          event_id?: string | null
           expected?: Json
           id?: string
           operation: string
@@ -278,11 +282,13 @@ export type Database = {
         }
         Update: {
           activity_id?: string | null
+          calendar_id?: string | null
           connection_id?: string
           created_at?: string
           created_by?: string
           environment?: Database["public"]["Enums"]["calendar_environment"]
           error_code?: string | null
+          event_id?: string | null
           expected?: Json
           id?: string
           operation?: string
@@ -355,6 +361,10 @@ export type Database = {
           meet_status: string | null
           meet_url: string | null
           status: Database["public"]["Enums"]["calendar_link_status"]
+          sync_error: string | null
+          sync_operation: string | null
+          sync_state: string
+          sync_state_at: string | null
           updated_at: string
           workspace_id: string
         }
@@ -380,6 +390,10 @@ export type Database = {
           meet_status?: string | null
           meet_url?: string | null
           status?: Database["public"]["Enums"]["calendar_link_status"]
+          sync_error?: string | null
+          sync_operation?: string | null
+          sync_state?: string
+          sync_state_at?: string | null
           updated_at?: string
           workspace_id: string
         }
@@ -405,6 +419,10 @@ export type Database = {
           meet_status?: string | null
           meet_url?: string | null
           status?: Database["public"]["Enums"]["calendar_link_status"]
+          sync_error?: string | null
+          sync_operation?: string | null
+          sync_state?: string
+          sync_state_at?: string | null
           updated_at?: string
           workspace_id?: string
         }
@@ -3268,7 +3286,9 @@ export type Database = {
         Args: {
           p_activity_id: string
           p_actor_user_id: string
+          p_calendar_id?: string
           p_connection_id: string
+          p_event_id?: string
           p_expected: Json
           p_operation: string
         }
@@ -3651,6 +3671,10 @@ export type Database = {
           items: Json
         }[]
       }
+      get_open_calendar_create: {
+        Args: { p_activity_id: string; p_actor_user_id: string }
+        Returns: Json
+      }
       get_opportunity: { Args: { p_opportunity_id: string }; Returns: Json }
       get_pipeline_board: { Args: { p_pipeline_id: string }; Returns: Json }
       get_proposal: { Args: { p_proposal_id: string }; Returns: Json }
@@ -3713,6 +3737,10 @@ export type Database = {
           items: Json
           total_count: number
         }[]
+      }
+      list_activity_calendar_links: {
+        Args: { p_activity_ids: string[] }
+        Returns: Json
       }
       list_calendar_connections: {
         Args: { p_workspace_id: string }
@@ -3809,6 +3837,14 @@ export type Database = {
           p_opportunity_id: string
         }
         Returns: Json
+      }
+      mark_calendar_link_pending: {
+        Args: {
+          p_activity_id: string
+          p_actor_user_id: string
+          p_reason: string
+        }
+        Returns: boolean
       }
       mark_outbox_failed: {
         Args: {

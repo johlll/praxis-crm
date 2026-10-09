@@ -221,7 +221,9 @@ pelo mesmo caminho de escrita com `If-Match`. Por campo:
 - **Timeout ou resultado incerto:** antes de chamar o Google, grava-se a
   intenção em `calendar_effect_intents` (operação, estado esperado, base).
   Após timeout/erro de rede, **não se repete às cegas**: consulta-se o estado
-  — criação: `events.get` do id (200 e confere → sucesso; 404 → pode repetir);
+  — criação: `events.get` do id (200 e confere → sucesso; 404 → pode repetir,
+  uma vez, dentro da mesma tentativa; depois disso, só a verificação da
+  intenção original conclui — §6.9);
   atualização: relê e compara com o estado pretendido (igual → sucesso; igual
   à base → repete com `If-Match`; outro → reaplica a regra 6.3); exclusão:
   `events.get` (404/cancelado → sucesso). Intenção sem desfecho vira alerta.
@@ -260,6 +262,81 @@ ser regra (duas decisões de produto fecharam a revisão):
   horário é reconciliado, a duração do vínculo é a **real** do evento que
   ficou, inclusive de evento externo fora de 15–480 (a constraint do banco
   exige apenas `> 0`).
+
+### 6.9 Interface de atividades (etapa 2b)
+As ações de atividade que já existiam passaram a levar o compromisso ao
+Google, e as telas ganharam os controles. Tudo com o provedor **simulado**.
+
+- **Integração desligada = tela idêntica à anterior.** Sem provedor
+  configurado (hoje, em Preview e Production), nenhuma função de B2 é chamada
+  pelas telas de atividade: a lista não lê vínculos, o layout não lê conexões e
+  as ações de atividade não tocam em nada de calendário. Por isso o código
+  pode ser publicado antes das migrations de B2.
+- **Recusa ANTES de qualquer escrita (CRM ou Google)** — decisões de produto
+  da revisão da PR #26, válidas enquanto não houver fluxo de delegação ou
+  reconciliação:
+  - compromisso vinculado à conexão de **outra pessoa**: título, horário,
+    duração, tipo e exclusão ficam bloqueados; notas e prioridade continuam
+    editáveis, sem disparar sincronização;
+  - compromisso vinculado (qualquer dono): mudar o tipo ou tirar o horário
+    exige resolver o vínculo antes (remover da agenda);
+  - inclusão no Google com resultado incerto: título, horário, duração, tipo e
+    exclusão aguardam a verificação;
+  - a duração digitada (15–480) é conferida no servidor.
+- **Nada é desvinculado nem abandonado no Google automaticamente.** Evento
+  editado no Google desde a última sincronização não é apagado nem desvinculado
+  ("Remover da agenda" diz que não removeu), e a atividade não é excluída.
+- **Excluir atividade vinculada à minha agenda: Google primeiro.** Só
+  "removido" ou "já não existia" deixam a exclusão seguir; acesso perdido,
+  falha ou resultado incerto impedem a exclusão, com o motivo.
+- **Depois de salvar no CRM**, o resultado no Google volta como aviso e, se não
+  deu certo, fica **gravado no vínculo** (`sync_state`), visível depois de
+  recarregar:
+  - `pending` — temporário (Google não respondeu, 429/5xx, leitura falhou,
+    concorrência esgotada, conexão a reautorizar, acesso perdido): "Sincronizar";
+  - `failed` — recusa definitiva do Google (ex.: 400) ou evento editado no
+    Google ao pedir remoção: precisa de alguém;
+  - `uncertain` — não se sabe se o Google aplicou: "Verificar" **consulta o
+    estado antes de repetir** qualquer efeito.
+  Uma conferência com desfecho definitivo encerra só as intenções abertas do
+  **mesmo alvo** — mesmo ambiente, conexão, agenda e evento (`superseded`);
+  pertencer à mesma atividade não basta, e intenção sem alvo registrado nunca
+  é encerrada assim. Falha de leitura antes de qualquer escrita é pendência,
+  não incerteza.
+- **Identidade imutável da tentativa.** Antes da chamada ao Google, a intenção
+  grava ambiente, workspace, conexão, `calendar_id` e `event_id` efetivamente
+  usados: na inclusão, a agenda selecionada naquele momento (se ela mudar entre
+  a leitura e o registro, `calendar_selection_changed`) e o id determinístico;
+  nas demais operações, a agenda e o evento do vínculo. Um gatilho impede
+  trocar a identidade depois. Só existe **uma inclusão sem desfecho por
+  atividade e ambiente** (índice único): enquanto ela não for verificada, uma
+  nova inclusão é recusada antes de qualquer chamada (`create_outcome_uncertain`)
+  — o evento pode existir, talvez em outra agenda.
+- **Inclusão incerta** (ainda sem vínculo) aparece para a tela e tem
+  "Verificar inclusão", que resolve a **intenção original**
+  (`get_open_calendar_create`) — nunca abre uma intenção nova nem usa a agenda
+  selecionada depois. Só consulta, com a conexão e na agenda da tentativa, o
+  evento da tentativa:
+  - existe e é este compromisso → é adotado e vinculado **na agenda da
+    tentativa** (se ela não é mais a selecionada, a mensagem diz isso);
+  - não existe, com o acesso à agenda confirmado → "não foi criado", e uma nova
+    inclusão volta a ser possível (na agenda selecionada agora);
+  - sem acesso à agenda, conexão original indisponível (trocada, desconectada,
+    a reautorizar) ou Google sem resposta → **a pendência continua aberta**:
+    nada disso prova que o evento não foi criado, e nenhuma nova tentativa fica
+    liberada;
+  - tentativa de outra pessoa → recusada sem consultar nem alterar nada;
+  - aberta há menos de 2 minutos → pode estar em andamento, nada é consultado;
+  - intenção sem agenda/evento registrados → nenhuma conclusão é inventada.
+  Repetir a verificação nunca cria evento, envia convite ou duplica vínculo.
+- **Mensagens fiéis ao resultado concreto:** removido ≠ mantido no Google; Meet
+  pronto ≠ Meet em criação; conflito explica que o Google prevaleceu; incerto
+  aparece como incerto.
+- **Vínculo nunca escondido:** a leitura e os controles de agenda não filtram
+  por tipo ou horário quando o vínculo existe.
+- **Leitura do vínculo pela tela:** `list_activity_calendar_links` devolve só
+  estado, se é do usuário, duração, Meet e sincronização — nunca título, etag,
+  ids de agenda/evento, e-mail da conta nem token.
 
 ## 7. Isolamento entre ambientes
 

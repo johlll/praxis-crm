@@ -52,12 +52,40 @@ export type UpdateAppointmentResult =
   | { status: "cancelled_in_google" }
   | { status: "needs_attention" }
   | { status: "access_lost" }
+  /** Temporário (o Google não respondeu ou recusou por ora): vale tentar de novo. */
+  | { status: "pending"; code: string }
+  /** Recusa definitiva do Google. */
   | { status: "failed"; code: string }
+  /** Não se sabe se o Google aplicou: consultar antes de repetir. */
   | { status: "uncertain"; intentId: string };
 
 export type CancelAppointmentResult =
   | { status: "cancelled" | "already_gone" }
+  /** Editado no Google desde a última sincronização: NÃO apagado e NÃO desvinculado. */
   | { status: "kept_google_event" }
+  | { status: "access_lost" }
+  | { status: "pending"; code: string }
+  | { status: "failed"; code: string }
+  | { status: "uncertain"; intentId: string };
+
+export type RecoverCreateResult =
+  /** O evento existia no Google, na agenda da tentativa: foi adotado (nada foi criado de novo). */
+  | { status: "adopted"; meet: MeetInfo; calendarId: string }
+  /** Confirmado, na agenda da tentativa, que o evento NÃO existe: nada foi criado agora. */
+  | { status: "not_created"; calendarId: string }
+  | { status: "already_linked" }
+  /** Não há inclusão sem desfecho a verificar. */
+  | { status: "nothing_open" }
+  /** A tentativa é de outra pessoa: nada consultado nem alterado. */
+  | { status: "not_owner" }
+  /** Aberta há pouco: pode estar em andamento. Nada consultado. */
+  | { status: "in_progress" }
+  /** Intenção sem agenda/evento registrados: não há como concluir. Continua aberta. */
+  | { status: "insufficient_info" }
+  /** A conexão da tentativa não está disponível (trocada, desconectada, a
+   * reautorizar): nada consultado, a pendência continua. */
+  | { status: "connection_unavailable" }
+  /** Sem acesso à agenda da tentativa: não prova ausência. A pendência continua. */
   | { status: "access_lost" }
   | { status: "failed"; code: string }
   | { status: "uncertain"; intentId: string };
@@ -136,6 +164,16 @@ function httpStatus(error: unknown): number | null {
 
 function isUncertain(error: unknown): boolean {
   return error instanceof ProviderUncertainError;
+}
+
+/** Erro temporário (vale tentar de novo depois) × recusa definitiva do Google. */
+function isRetryableCode(code: string): boolean {
+  return /^provider_(429|5\d\d)$/.test(code) || code.startsWith("provider_read") || code === "precondition_failed_exhausted";
+}
+
+/** Falha ao LER o Google: nenhuma escrita foi tentada, então não é incerto. */
+function readFailureCode(error: unknown): string {
+  return error instanceof ProviderHttpError ? `provider_read_${error.status}` : "provider_read_timeout";
 }
 
 function assertAppointment(activity: ActivitySnapshot): void {
@@ -269,6 +307,10 @@ export async function createAppointment(
     return { status: "already_linked", link: existingLink };
   }
 
+  // Inclusão anterior ainda sem desfecho: o evento PODE existir (talvez em
+  // outra agenda). Nova tentativa só depois de verificá-la.
+  if (await deps.store.getOpenCreateIntent(activity.id)) throw new CalendarSyncError("create_outcome_uncertain");
+
   const start = new Date(activity.dueAt).toISOString();
   const end = addMinutes(start, durationMinutes);
 
@@ -281,11 +323,14 @@ export async function createAppointment(
   const withMeet = options.withMeet === true;
   const requestId = meetRequestId(eventId);
 
+  // Identidade da tentativa gravada ANTES da chamada: a agenda e o evento
+  // usados abaixo são exatamente estes.
   const intentId = await deps.store.beginEffect({
     connectionId: conn.connectionId,
     activityId: activity.id,
     operation: "create",
     expected: { title: activity.title, start, end, meet: withMeet },
+    target: { calendarId: conn.calendarId, eventId },
   });
 
   const input: EventInput = {
@@ -431,7 +476,16 @@ async function pushUpdate(
   });
 
   const finish = async (status: "failed" | "uncertain", code: string) => {
-    await deps.store.resolveEffect({ intentId, status, errorCode: code });
+    await deps.store.resolveEffect({
+      intentId,
+      status,
+      errorCode: code,
+      ...(status === "failed" ? { syncState: isRetryableCode(code) ? ("pending" as const) : ("failed" as const) } : {}),
+    });
+  };
+  const failure = async (code: string): Promise<UpdateAppointmentResult> => {
+    await finish("failed", code);
+    return isRetryableCode(code) ? { status: "pending", code } : { status: "failed", code };
   };
   // Perda de acesso: pendência EXPLÍCITA no vínculo, nunca "evento apagado".
   const accessLost = async (): Promise<UpdateAppointmentResult> => {
@@ -440,6 +494,8 @@ async function pushUpdate(
       status: "failed",
       errorCode: "calendar_access_lost",
       state: { ...stateFromLink(link, link.durationMinutes, activity.lockVersion), linkStatus: "needs_attention" },
+      // Recuperável: com o acesso de volta, a próxima sincronização resolve.
+      syncState: "pending",
     });
     return { status: "access_lost" };
   };
@@ -450,20 +506,15 @@ async function pushUpdate(
       google = await deps.api.getEvent(conn.accessToken, conn.calendarId, link.eventId);
     } catch (error) {
       if (isAccessDenied(error)) return accessLost();
-      if (isUncertain(error) || error instanceof ProviderHttpError) {
-        await finish("uncertain", "result_uncertain");
-        return { status: "uncertain", intentId };
-      }
+      // Falha de LEITURA: nada foi escrito nesta tentativa — pendente, não incerto.
+      if (isUncertain(error) || error instanceof ProviderHttpError) return failure(readFailureCode(error));
       throw error;
     }
     if (google === null) {
       // "Não existe" pode ser evento apagado OU agenda que deixou de ser
       // acessível: só o primeiro caso é cancelamento.
       const reachable = await calendarReachable(deps, conn);
-      if (reachable === null) {
-        await finish("uncertain", "result_uncertain");
-        return { status: "uncertain", intentId };
-      }
+      if (reachable === null) return failure("provider_read_calendar");
       if (!reachable) return accessLost();
     }
 
@@ -573,10 +624,7 @@ async function pushUpdate(
         await finish("uncertain", "result_uncertain");
         return { status: "uncertain", intentId };
       }
-      if (outcome.kind === "failed") {
-        await finish("failed", outcome.code);
-        return { status: "failed", code: outcome.code };
-      }
+      if (outcome.kind === "failed") return failure(outcome.code);
       latest = outcome.event;
     }
 
@@ -796,8 +844,15 @@ export async function cancelAppointment(
       status: "failed",
       errorCode: "calendar_access_lost",
       state: { ...stateFromLink(link, link.durationMinutes, activity.lockVersion), linkStatus: "needs_attention" },
+      // Recuperável: com o acesso de volta, a próxima sincronização resolve.
+      syncState: "pending",
     });
     return { status: "access_lost" };
+  };
+  const cancelFailure = async (code: string): Promise<CancelAppointmentResult> => {
+    const retryable = isRetryableCode(code);
+    await deps.store.resolveEffect({ intentId, status: "failed", errorCode: code, syncState: retryable ? "pending" : "failed" });
+    return retryable ? { status: "pending", code } : { status: "failed", code };
   };
 
   for (let attempt = 1; attempt <= MAX_CONCURRENCY_ATTEMPTS; attempt++) {
@@ -806,18 +861,13 @@ export async function cancelAppointment(
       google = await deps.api.getEvent(conn.accessToken, conn.calendarId, link.eventId);
     } catch (error) {
       if (isAccessDenied(error)) return accessLost();
-      if (isUncertain(error) || error instanceof ProviderHttpError) {
-        await deps.store.resolveEffect({ intentId, status: "uncertain", errorCode: "result_uncertain" });
-        return { status: "uncertain", intentId };
-      }
+      // Falha de LEITURA antes de apagar: nada foi tentado — pendente, não incerto.
+      if (isUncertain(error) || error instanceof ProviderHttpError) return cancelFailure(readFailureCode(error));
       throw error;
     }
     if (google === null) {
       const reachable = await calendarReachable(deps, conn);
-      if (reachable === null) {
-        await deps.store.resolveEffect({ intentId, status: "uncertain", errorCode: "result_uncertain" });
-        return { status: "uncertain", intentId };
-      }
+      if (reachable === null) return cancelFailure("provider_read_calendar");
       if (!reachable) return accessLost();
     }
 
@@ -828,8 +878,9 @@ export async function cancelAppointment(
 
     const current = stateOfEvent(google);
     if (googleChangedSinceBase(base, current)) {
-      // Editado no Google desde a última sincronização: não se apaga. O
-      // evento fica, o vínculo é desfeito e o conflito é gravado.
+      // Editado no Google desde a última sincronização: não se apaga, e o
+      // vínculo NÃO é desfeito (nada fica abandonado no Google). O pedido de
+      // cancelar fica gravado como conflito e o vínculo, como falha a resolver.
       await deps.store.recordConflict({
         linkId: link.id,
         field: "cancellation",
@@ -837,11 +888,7 @@ export async function cancelAppointment(
         googleValue: { title: current.title, start: current.start, end: current.end },
         resolution: "kept_google_event",
       });
-      await deps.store.resolveEffect({
-        intentId,
-        status: "succeeded",
-        state: { ...stateFromLink(link, link.durationMinutes, activity.lockVersion), etag: google.etag, linkStatus: "unlinked" },
-      });
+      await deps.store.resolveEffect({ intentId, status: "failed", errorCode: "google_edited_since_sync", syncState: "failed" });
       return { status: "kept_google_event" };
     }
 
@@ -858,10 +905,7 @@ export async function cancelAppointment(
       }
       if (isAccessDenied(error)) return accessLost();
       if (!isUncertain(error)) {
-        if (error instanceof ProviderHttpError) {
-          await deps.store.resolveEffect({ intentId, status: "failed", errorCode: `provider_${error.status}` });
-          return { status: "failed", code: `provider_${error.status}` };
-        }
+        if (error instanceof ProviderHttpError) return cancelFailure(`provider_${error.status}`);
         throw error;
       }
     }
@@ -893,6 +937,106 @@ export async function cancelAppointment(
     googleValue: null,
     resolution: "needs_attention",
   });
-  await deps.store.resolveEffect({ intentId, status: "failed", errorCode: "precondition_failed_exhausted" });
-  return { status: "failed", code: "precondition_failed_exhausted" };
+  return cancelFailure("precondition_failed_exhausted");
+}
+
+// ---------------------------------------------------------------------
+// Recuperar uma inclusão com resultado incerto
+// ---------------------------------------------------------------------
+
+/**
+ * A inclusão no Google ficou incerta (timeout e a conferência também falhou).
+ * A verificação resolve a intenção ORIGINAL, com a identidade gravada antes
+ * da chamada (ambiente, conexão, agenda e evento) — nunca a agenda
+ * selecionada agora, nem uma intenção nova. Só CONSULTA o Google; nunca cria:
+ *  - o evento existe na agenda da tentativa e é este compromisso → adotado;
+ *  - comprovadamente não existe lá (com acesso à agenda confirmado) → diz isso;
+ *  - sem acesso, sem conexão ou sem resposta → a pendência continua aberta
+ *    (nada disso prova que o evento não foi criado);
+ *  - tentativa de outra pessoa ou sem alvo registrado → nada é concluído.
+ *
+ * `openConnection` entrega o token da conexão ORIGINAL do usuário da sessão,
+ * ou `null` se ela não estiver disponível.
+ */
+export async function recoverUncertainCreate(
+  deps: SyncDeps,
+  activity: ActivitySnapshot,
+  openConnection: (original: { connectionId: string; calendarId: string }) => Promise<ConnectionContext | null>,
+): Promise<RecoverCreateResult> {
+  const existing = await deps.store.getLink(activity.id);
+  if (existing) {
+    assertLinkEnvironment(deps, existing);
+    return { status: "already_linked" };
+  }
+
+  const intent = await deps.store.getOpenCreateIntent(activity.id);
+  if (!intent) return { status: "nothing_open" };
+  if (!intent.isMine) return { status: "not_owner" };
+  if (intent.environment !== deps.environment) throw new CalendarSyncError("calendar_environment_mismatch");
+  if (!intent.calendarId || !intent.eventId) return { status: "insufficient_info" };
+  if (!intent.settled) return { status: "in_progress" };
+
+  const conn = await openConnection({ connectionId: intent.connectionId, calendarId: intent.calendarId });
+  if (!conn || conn.connectionId !== intent.connectionId) return { status: "connection_unavailable" };
+  assertConnectionEnvironment(deps, conn);
+  // A agenda e o evento são os da tentativa, quaisquer que sejam os selecionados agora.
+  const target: ConnectionContext = { ...conn, calendarId: intent.calendarId };
+  const { intentId, eventId } = intent;
+
+  // Sem resposta conclusiva: a MESMA intenção continua aberta (só o motivo é
+  // atualizado). Nada é repetido e nenhuma nova tentativa fica liberada.
+  const keepOpen = async (code: string) => deps.store.resolveEffect({ intentId, status: "uncertain", errorCode: code });
+  const conclude = async (code: string) => deps.store.resolveEffect({ intentId, status: "failed", errorCode: code });
+
+  let found: CalendarEvent | null;
+  try {
+    found = await deps.api.getEvent(target.accessToken, target.calendarId, eventId);
+  } catch (error) {
+    if (isAccessDenied(error)) {
+      await keepOpen("calendar_access_lost");
+      return { status: "access_lost" };
+    }
+    if (isUncertain(error) || error instanceof ProviderHttpError) {
+      await keepOpen("result_uncertain");
+      return { status: "uncertain", intentId };
+    }
+    throw error;
+  }
+
+  if (!found) {
+    // "Não existe" só vale com o acesso à agenda da tentativa confirmado.
+    const reachable = await calendarReachable(deps, target);
+    if (reachable === null) {
+      await keepOpen("result_uncertain");
+      return { status: "uncertain", intentId };
+    }
+    if (!reachable) {
+      await keepOpen("calendar_access_lost");
+      return { status: "access_lost" };
+    }
+    await conclude("not_created_confirmed");
+    return { status: "not_created", calendarId: target.calendarId };
+  }
+
+  // O id é único na agenda: outro dono ou evento cancelado também concluem.
+  if (!markerMatches(found, activity.id, deps.environment)) {
+    await conclude("id_conflict");
+    return { status: "failed", code: "id_conflict" };
+  }
+  if (found.status === "cancelled") {
+    await conclude("event_cancelled_exists");
+    return { status: "failed", code: "event_cancelled_exists" };
+  }
+
+  await deps.store.resolveEffect({
+    intentId,
+    status: "succeeded",
+    state: linkStateFrom(found, {
+      durationMinutes: durationOf(found) ?? DEFAULT_DURATION,
+      crmVersion: activity.lockVersion,
+      linkStatus: "linked",
+      meetRequestId: found.conferenceData?.createRequest?.requestId ?? null,
+    }),
+  });
+  return { status: "adopted", meet: meetOf(found), calendarId: target.calendarId };
 }

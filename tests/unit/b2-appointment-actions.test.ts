@@ -177,10 +177,11 @@ describe("resultados e recusas", () => {
 
   it("Meet criado: devolve o link", async () => {
     m.addMeet.mockResolvedValue({ status: "updated", meet: { status: "success", url: "https://meet.simulated/x" } });
-    expect(await addMeetAction({ ok: false }, form({ activityId: ACT }))).toEqual({
+    expect(await addMeetAction({ ok: false }, form({ activityId: ACT }))).toMatchObject({
       ok: true,
       result: "updated",
       meetUrl: "https://meet.simulated/x",
+      notice: { level: "success", message: "Link do Meet criado.", meetUrl: "https://meet.simulated/x" },
     });
   });
 

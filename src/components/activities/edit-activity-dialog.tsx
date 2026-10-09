@@ -15,6 +15,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { CalendarNoticeAlert } from "@/components/calendar/calendar-notice";
+import { useCalendarCapabilities } from "@/components/calendar/calendar-capabilities";
 import { updateActivityAction, type ActivityActionState } from "@/modules/activities/actions";
 import { ACTIVITY_TYPES } from "@/modules/activities/schema";
 import { LEAD_PRIORITIES } from "@/modules/leads/schema";
@@ -47,6 +49,13 @@ export function EditActivityDialog({ activity }: { activity: ActivityListItem })
 
 function EditActivityDialogBody({ activity, onDone }: { activity: ActivityListItem; onDone: () => void }) {
   const [state, formAction, pending] = useActionState(updateActivityAction, INITIAL_STATE);
+  // Vínculo vivo com o Google: o tipo não muda sem resolver o vínculo; na agenda
+  // de outra pessoa (ou com inclusão incerta), o título também fica travado.
+  // O servidor confere de novo antes de salvar.
+  const caps = useCalendarCapabilities();
+  const info = caps.enabled ? activity.calendar : null;
+  const live = !!info && info.status !== "cancelled_in_google" && info.status !== "missing_in_google";
+  const titleLocked = live && (!info.isMine || info.status === "not_linked");
 
   if (state.ok) {
     return (
@@ -57,6 +66,7 @@ function EditActivityDialogBody({ activity, onDone }: { activity: ActivityListIt
         <Alert variant="success">
           <AlertDescription>As alterações foram salvas.</AlertDescription>
         </Alert>
+        <CalendarNoticeAlert notice={state.calendar} />
         <DialogFooter>
           <Button type="button" onClick={onDone}>
             Concluir
@@ -81,6 +91,7 @@ function EditActivityDialogBody({ activity, onDone }: { activity: ActivityListIt
             id="edit-activity-type"
             name="type"
             defaultValue={activity.type}
+            disabled={live}
             className="h-9 rounded-input border border-border-input bg-surface px-3 text-body text-text"
           >
             {ACTIVITY_TYPES.map((type) => (
@@ -93,8 +104,22 @@ function EditActivityDialogBody({ activity, onDone }: { activity: ActivityListIt
 
         <FormField>
           <FormLabel htmlFor="edit-activity-title">Título</FormLabel>
-          <Input id="edit-activity-title" name="title" required maxLength={160} defaultValue={activity.title} />
+          <Input
+            id="edit-activity-title"
+            name="title"
+            required
+            maxLength={160}
+            defaultValue={activity.title}
+            disabled={titleLocked}
+          />
         </FormField>
+        {live ? (
+          <p className="text-small text-text-secondary" data-testid="calendar-edit-hint">
+            {titleLocked
+              ? "Este compromisso está vinculado à agenda de outra pessoa (ou com inclusão incerta): tipo e título só mudam depois de resolver o vínculo. Notas e prioridade continuam editáveis."
+              : "Este compromisso está no Google Agenda: para mudar o tipo, remova-o da agenda primeiro."}
+          </p>
+        ) : null}
 
         <FormField>
           <FormLabel htmlFor="edit-activity-priority">Prioridade</FormLabel>

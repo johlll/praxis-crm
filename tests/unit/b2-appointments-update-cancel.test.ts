@@ -190,11 +190,19 @@ describe("reagendar", () => {
       expect(store.intents.at(-1)).toMatchObject({ status: "uncertain" });
     });
 
-    it("erro HTTP do Google vira falha registrada", async () => {
+    it("erro TEMPORÁRIO do Google (500) vira pendência gravada no vínculo", async () => {
       const { provider, store, deps, conn } = await comEventoCriado();
       provider.injectFault({ operation: "patch", kind: "status", status: 500 });
-      expect(await rescheduleAppointment(deps, conn, REMARCADO)).toEqual({ status: "failed", code: "provider_500" });
+      expect(await rescheduleAppointment(deps, conn, REMARCADO)).toEqual({ status: "pending", code: "provider_500" });
       expect(store.intents.at(-1)).toMatchObject({ status: "failed", errorCode: "provider_500" });
+      expect([...store.links.values()][0]).toMatchObject({ syncState: "pending", syncOperation: "update" });
+    });
+
+    it("recusa DEFINITIVA do Google (400) vira falha gravada no vínculo", async () => {
+      const { provider, store, deps, conn } = await comEventoCriado();
+      provider.injectFault({ operation: "patch", kind: "status", status: 400 });
+      expect(await rescheduleAppointment(deps, conn, REMARCADO)).toEqual({ status: "failed", code: "provider_400" });
+      expect([...store.links.values()][0]).toMatchObject({ syncState: "failed", syncError: "provider_400" });
     });
   });
 
@@ -258,7 +266,7 @@ describe("cancelar", () => {
     expect(provider.notificationsSent).toEqual([]);
   });
 
-  it("evento editado no Google desde a base: NÃO apaga, mantém o evento, desfaz o vínculo e registra", async () => {
+  it("evento editado no Google desde a base: NÃO apaga, mantém o evento E o vínculo, e registra", async () => {
     const { provider, store, deps, conn } = await comEventoCriado();
     provider.externalEdit(CALENDAR_ID, EVENT_ID, { summary: "Agora é outra coisa" });
 
@@ -268,7 +276,8 @@ describe("cancelar", () => {
     expect(countCalls(provider, "delete")).toBe(0);
     expect(provider.peek(CALENDAR_ID, EVENT_ID)?.status).toBe("confirmed");
     expect(store.conflicts).toMatchObject([{ field: "cancellation", resolution: "kept_google_event", crmValue: { cancelled: true } }]);
-    expect([...store.links.values()][0]!.status).toBe("unlinked");
+    // Nada fica abandonado no Google: o vínculo continua, com a falha a resolver gravada.
+    expect([...store.links.values()][0]).toMatchObject({ status: "linked", syncState: "failed", syncOperation: "delete" });
   });
 
   it("edição que chega ENTRE a leitura e o DELETE: 412, relê e mantém o evento", async () => {
@@ -307,9 +316,8 @@ describe("cancelar", () => {
     it("incerto também ao reler: fica incerto, sem repetir às cegas", async () => {
       const { provider, store, deps, conn } = await comEventoCriado();
       provider.injectFault({ operation: "delete", kind: "timeout_before_apply" });
-      provider.injectFault({ operation: "get", kind: "timeout_before_apply" });
       // O primeiro get (antes do delete) passa; o segundo (reconciliação) falha.
-      provider.injectFault({ operation: "get", kind: "timeout_before_apply" });
+      provider.onBefore("delete", () => provider.injectFault({ operation: "get", kind: "timeout_before_apply" }));
 
       const result = await cancelAppointment(deps, conn, activity());
       expect(["uncertain"]).toContain(result.status);

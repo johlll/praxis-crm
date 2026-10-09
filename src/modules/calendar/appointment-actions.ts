@@ -3,15 +3,20 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { requirePermissionSafe } from "@/server/authz/safe";
 import { toUserMessage } from "@/lib/errors";
+import { zonedInstant } from "@/lib/timezone";
 import { uuidSchema } from "@/lib/uuid";
-import { getActivity } from "@/modules/activities/queries";
-import { listCalendarConnections } from "@/modules/calendar/queries";
-import { createSupabaseSyncStore } from "@/server/calendar/admin/sync-store";
-import { loadConnectionContext } from "@/server/calendar/connection-context";
-import { getCalendarEnvironment } from "@/server/calendar/environment";
-import { getCalendarProvider } from "@/server/calendar/provider";
+import {
+  errorMessage,
+  noticeForCancel,
+  noticeForCreate,
+  noticeForMeet,
+  noticeForUpdate,
+  prepare,
+  toCreateOptions,
+  verifyUncertainCreate,
+} from "@/modules/calendar/appointment-service";
+import type { CalendarNotice } from "@/modules/calendar/types";
 import {
   addMeetToAppointment,
   cancelAppointment,
@@ -19,18 +24,18 @@ import {
   getAvailability,
   rescheduleAppointment,
 } from "@/server/calendar/sync/appointments";
-import type { ActivitySnapshot, ConnectionContext, SyncDeps } from "@/server/calendar/sync/types";
 
 /**
- * Compromissos CRM → Google (B2, etapa 2). Cada ação confere a permissão
- * pela sessão (`calendar.connect_own`), lê a atividade pela SESSÃO do
- * usuário (RLS e alcance de verdade), e entrega ao orquestrador o usuário e
- * o workspace da sessão — nunca valores vindos do formulário. O ambiente vem
- * do servidor. O banco recusa, por dentro, vínculo de outro ambiente.
+ * Compromissos CRM → Google (B2). Cada ação confere a permissão pela sessão
+ * (`calendar.connect_own`), lê a atividade pela SESSÃO do usuário (RLS e
+ * alcance de verdade), e entrega ao orquestrador o usuário e o workspace da
+ * sessão — nunca valores vindos do formulário. O ambiente vem do servidor. O
+ * banco recusa, por dentro, vínculo de outro ambiente ou de outra conexão.
  *
- * Esta etapa não altera as ações de atividade que já existem: a ligação
- * delas com estas (reagendar/excluir disparando o Google) é a etapa
- * seguinte, junto da interface.
+ * São as ações dos botões "Adicionar ao Google Agenda", "Meet", "Sincronizar"
+ * e "Remover da agenda". As ações de atividade que já existiam (criar,
+ * editar, reagendar, excluir) chamam o mesmo serviço
+ * (`appointment-service.ts`).
  */
 
 export type AppointmentActionState = {
@@ -40,88 +45,20 @@ export type AppointmentActionState = {
   result?: string;
   meetUrl?: string | null;
   busy?: Array<{ start: string; end: string }>;
+  /** Mensagem fiel ao resultado concreto (removido ≠ mantido; Meet pronto ≠ em criação; incerto). */
+  notice?: CalendarNotice;
 };
 
-const PROVIDER_NOT_CONFIGURED = toUserMessage(new Error("calendar_provider_not_configured"));
-
-type Prepared = { deps: SyncDeps; conn: ConnectionContext; activity: ActivitySnapshot };
-
-/** Falha de ambiente: o banco aborta a transação, então o registro fica no
- * servidor — só o código e ids internos. */
-function logRefusal(error: unknown, ctx: { userId: string; workspaceId: string }) {
-  const code = error instanceof Error ? (error as { code?: string }).code ?? error.message : "";
-  if (code === "calendar_environment_mismatch") {
-    console.warn(JSON.stringify({ event: "calendar_environment_mismatch", userId: ctx.userId, workspaceId: ctx.workspaceId }));
-  }
-}
-
-type ActivityDetail = NonNullable<Awaited<ReturnType<typeof getActivity>>>;
-
-function snapshotOf(detail: ActivityDetail): ActivitySnapshot {
-  return {
-    id: detail.id,
-    title: detail.title,
-    dueAt: detail.dueAt,
-    hasTime: detail.hasTime,
-    type: detail.type,
-    lockVersion: detail.lockVersion,
-  };
-}
-
-/** Relê a atividade pela SESSÃO do usuário (RLS e alcance de verdade). */
-async function loadActivityFromSession(activityId: string): Promise<ActivitySnapshot | null> {
-  const detail = await getActivity(activityId);
-  return detail ? snapshotOf(detail) : null;
-}
-
-async function prepare(activityId: string | null): Promise<
-  | { ok: false; error: string }
-  | { ok: true; prepared: Omit<Prepared, "activity"> & { activity: ActivitySnapshot | null }; ctx: { userId: string; workspaceId: string } }
-> {
-  const auth = await requirePermissionSafe("calendar.connect_own");
-  if ("error" in auth) return { ok: false, error: auth.error };
-
-  const provider = await getCalendarProvider();
-  if (!provider) return { ok: false, error: PROVIDER_NOT_CONFIGURED };
-
-  const connections = await listCalendarConnections(auth.ctx.workspaceId);
-  const mine = connections.find((c) => c.isMine && c.status !== "disconnected");
-  if (!mine) return { ok: false, error: toUserMessage(new Error("connection_not_found")) };
-
-  const conn = await loadConnectionContext({
-    provider,
-    connection: { id: mine.id, calendarId: mine.calendarId, status: mine.status },
-    workspaceId: auth.ctx.workspaceId,
-    actorUserId: auth.ctx.userId,
-  });
-
-  let activity: ActivitySnapshot | null = null;
-  if (activityId) {
-    const detail = await getActivity(activityId);
-    if (!detail) return { ok: false, error: toUserMessage(new Error("activity_not_found")) };
-    activity = snapshotOf(detail);
-  }
-
-  return {
-    ok: true,
-    ctx: { userId: auth.ctx.userId, workspaceId: auth.ctx.workspaceId },
-    prepared: {
-      deps: {
-        api: provider,
-        store: createSupabaseSyncStore(auth.ctx.userId),
-        environment: getCalendarEnvironment(),
-        loadActivity: loadActivityFromSession,
-      },
-      conn,
-      activity,
-    },
-  };
+/** As telas que mostram o selo da agenda (listas e agenda semanal). */
+function revalidateCalendarRoutes() {
+  revalidatePath("/agenda");
+  revalidatePath("/atividades");
+  revalidatePath("/leads/[id]", "page");
+  revalidatePath("/oportunidades/[id]", "page");
 }
 
 function failure(error: unknown, ctx?: { userId: string; workspaceId: string }): AppointmentActionState {
-  if (ctx) logRefusal(error, ctx);
-  const code = error instanceof Error ? ((error as { code?: string }).code ?? error.message) : "";
-  return { ok: false, error: toUserMessage({ message: code }) };
+  return { ok: false, error: errorMessage(error, ctx) };
 }
 
 const activityIdSchema = z.object({ activityId: uuidSchema });
@@ -135,12 +72,29 @@ const createSchema = z.object({
   confirmInvites: z.preprocess((v) => v === "on" || v === "true", z.boolean()),
 });
 
-function describe(result: { status: string; meet?: { url: string | null } }): AppointmentActionState {
-  const ok = !["failed", "uncertain", "needs_attention", "busy", "access_lost"].includes(result.status);
+/** Só estes desfechos cumprem o que foi pedido; o resto volta como não-ok, com a explicação. */
+const DONE = new Set([
+  "created",
+  "already_linked",
+  "updated",
+  "unchanged",
+  "conflict_resolved",
+  "cancelled",
+  "already_gone",
+  "adopted",
+  "not_created",
+  "nothing_open",
+]);
+
+function describe(
+  result: { status: string; meet?: { url: string | null } },
+  notice: CalendarNotice | null,
+): AppointmentActionState {
   return {
-    ok,
+    ok: DONE.has(result.status),
     result: result.status,
     meetUrl: result.meet?.url ?? null,
+    ...(notice ? { notice } : {}),
     ...(result.status === "access_lost" ? { error: toUserMessage({ message: "calendar_access_lost" }) } : {}),
   };
 }
@@ -163,16 +117,22 @@ export async function createAppointmentAction(
     .filter(Boolean);
 
   try {
-    const result = await createAppointment(deps, conn, activity, {
-      durationMinutes: parsed.data.durationMinutes,
-      withMeet: parsed.data.withMeet,
-      requireFree: parsed.data.requireFree,
-      ...(emails.length > 0 ? { invite: { emails, confirmed: parsed.data.confirmInvites } } : {}),
-    });
+    const result = await createAppointment(
+      deps,
+      conn,
+      activity,
+      toCreateOptions({
+        durationMinutes: parsed.data.durationMinutes,
+        withMeet: parsed.data.withMeet,
+        requireFree: parsed.data.requireFree,
+        inviteEmails: emails,
+        confirmInvites: parsed.data.confirmInvites,
+      }),
+    );
     if (result.status === "busy") return { ok: false, result: "busy", busy: result.busy };
     if (result.status === "failed") return { ok: false, result: "failed", error: toUserMessage({ message: result.code }) };
-    revalidatePath("/agenda");
-    return describe(result.status === "already_linked" ? { status: "already_linked" } : result);
+    revalidateCalendarRoutes();
+    return describe(result.status === "already_linked" ? { status: "already_linked" } : result, noticeForCreate(result));
   } catch (error) {
     return failure(error, prep.ctx);
   }
@@ -192,8 +152,8 @@ export async function rescheduleAppointmentAction(
 
   try {
     const result = await rescheduleAppointment(deps, conn, activity);
-    revalidatePath("/agenda");
-    return describe(result);
+    revalidateCalendarRoutes();
+    return describe(result, noticeForUpdate(result) ?? { level: "success", message: "O Google Agenda já estava em dia." });
   } catch (error) {
     return failure(error, prep.ctx);
   }
@@ -209,7 +169,9 @@ export async function addMeetAction(_prev: AppointmentActionState, formData: For
   if (!activity) return failure(new Error("activity_not_found"));
 
   try {
-    return describe(await addMeetToAppointment(deps, conn, activity));
+    const result = await addMeetToAppointment(deps, conn, activity);
+    revalidateCalendarRoutes();
+    return describe(result, noticeForMeet(result));
   } catch (error) {
     return failure(error, prep.ctx);
   }
@@ -229,11 +191,30 @@ export async function cancelAppointmentAction(
 
   try {
     const result = await cancelAppointment(deps, conn, activity);
-    revalidatePath("/agenda");
-    return describe(result);
+    revalidateCalendarRoutes();
+    return describe(result, noticeForCancel(result));
   } catch (error) {
     return failure(error, prep.ctx);
   }
+}
+
+/**
+ * "Verificar inclusão": a inclusão no Google ficou com resultado incerto. Só
+ * CONSULTA o Google, na agenda e com a conexão da tentativa original — se o
+ * evento existe, é vinculado; se comprovadamente não existe, diz isso. Nunca
+ * cria nada sozinho.
+ */
+export async function recoverUncertainCreateAction(
+  _prev: AppointmentActionState,
+  formData: FormData,
+): Promise<AppointmentActionState> {
+  const parsed = activityIdSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { ok: false, error: "Compromisso inválido." };
+
+  const verified = await verifyUncertainCreate(parsed.data.activityId);
+  if (!verified.ok) return { ok: false, error: verified.error };
+  revalidateCalendarRoutes();
+  return describe(verified.result, verified.notice);
 }
 
 const availabilitySchema = z.object({ from: z.string().datetime(), to: z.string().datetime() });
@@ -251,6 +232,37 @@ export async function checkAvailabilityAction(
 
   try {
     const busy = await getAvailability(prep.prepared.deps, prep.prepared.conn, parsed.data);
+    return { ok: true, busy };
+  } catch (error) {
+    return failure(error, prep.ctx);
+  }
+}
+
+const slotSchema = z.object({
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  dueTime: z.string().regex(/^\d{2}:\d{2}$/),
+  durationMinutes: z.coerce.number().int().min(15).max(480).default(60),
+});
+
+/**
+ * "Verificar disponibilidade" do formulário: recebe a data e a hora digitadas
+ * (no fuso do escritório) e a duração, e devolve só os intervalos ocupados
+ * que encostam nesse horário — nunca título nem detalhe de evento.
+ */
+export async function checkSlotAvailabilityAction(
+  _prev: AppointmentActionState,
+  formData: FormData,
+): Promise<AppointmentActionState> {
+  const parsed = slotSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { ok: false, error: "Informe a data, o horário e a duração." };
+
+  const prep = await prepare(null);
+  if (!prep.ok) return { ok: false, error: prep.error };
+
+  const from = zonedInstant(parsed.data.dueDate, parsed.data.dueTime);
+  const to = new Date(Date.parse(from) + parsed.data.durationMinutes * 60_000).toISOString();
+  try {
+    const busy = await getAvailability(prep.prepared.deps, prep.prepared.conn, { from, to });
     return { ok: true, busy };
   } catch (error) {
     return failure(error, prep.ctx);

@@ -6,6 +6,18 @@ import { createServerSupabaseClient } from "@/server/supabase/server";
 import { requirePermissionSafe } from "@/server/authz/safe";
 import { requireMembership } from "@/server/authz/permissions";
 import { toUserMessage } from "@/lib/errors";
+import { zonedInstant } from "@/lib/timezone";
+import {
+  cancelLinkedBeforeDelete,
+  createForNewActivity,
+  guardActivityChange,
+  isValidTypedDuration,
+  parseCalendarCreate,
+  preflightCalendarCreate,
+  syncLinkedActivity,
+  toCreateOptions,
+} from "@/modules/calendar/appointment-service";
+import type { CalendarNotice } from "@/modules/calendar/types";
 import { listActivities, type ActivityListItem } from "./queries";
 import {
   createActivitySchema,
@@ -22,6 +34,8 @@ export type ActivityActionState = {
   ok: boolean;
   error?: string;
   activityId?: string;
+  /** O que aconteceu no Google Agenda (só quando a integração está ligada e a atividade tem vínculo). */
+  calendar?: CalendarNotice;
 };
 
 /** As telas que listam atividades variam (Central, painel da oportunidade,
@@ -59,6 +73,20 @@ export async function createActivityAction(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
   }
 
+  // Google Agenda (opcional): tudo o que dá para conferir ANTES de criar é
+  // conferido antes — a atividade não nasce para só depois falhar na agenda.
+  const calendarForm = parseCalendarCreate(formData);
+  if (!calendarForm.ok) return { ok: false, error: calendarForm.error };
+  if (calendarForm.options) {
+    if (parsed.data.type !== "meeting" || !parsed.data.dueTime) {
+      return { ok: false, error: toUserMessage({ message: "activity_not_appointment" }) };
+    }
+    const problem = await preflightCalendarCreate(calendarForm.options, {
+      start: zonedInstant(parsed.data.dueDate, parsed.data.dueTime),
+    });
+    if (problem) return { ok: false, error: problem };
+  }
+
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("create_activity", {
     p_lead_id: parsed.data.leadId,
@@ -76,8 +104,12 @@ export async function createActivityAction(
     return { ok: false, error: toUserMessage(error) };
   }
 
+  const calendar = calendarForm.options
+    ? await createForNewActivity(data, toCreateOptions(calendarForm.options))
+    : undefined;
+
   revalidateActivityRoutes(parsed.data.leadId, parsed.data.opportunityId || undefined);
-  return { ok: true, activityId: data };
+  return { ok: true, activityId: data, ...(calendar ? { calendar } : {}) };
 }
 
 export async function updateActivityAction(
@@ -101,6 +133,15 @@ export async function updateActivityAction(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
   }
 
+  // Vínculo com o Google conferido ANTES da escrita (agenda de outra pessoa,
+  // mudança de tipo). Notas e prioridade não disparam sincronização.
+  const calendarGuard = await guardActivityChange(parsed.data.activityId, {
+    kind: "update",
+    title: parsed.data.title,
+    type: parsed.data.type,
+  });
+  if (!calendarGuard.ok) return { ok: false, error: calendarGuard.error };
+
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.rpc("update_activity", {
     p_activity_id: parsed.data.activityId,
@@ -116,8 +157,11 @@ export async function updateActivityAction(
     return { ok: false, error: toUserMessage(error) };
   }
 
+  // Título novo de um compromisso vinculado à MINHA agenda vai ao Google.
+  const calendar = calendarGuard.sync ? await syncLinkedActivity(parsed.data.activityId) : null;
+
   revalidateActivityRoutes();
-  return { ok: true, activityId: parsed.data.activityId };
+  return { ok: true, activityId: parsed.data.activityId, ...(calendar ? { calendar } : {}) };
 }
 
 export async function rescheduleActivityAction(
@@ -126,6 +170,8 @@ export async function rescheduleActivityAction(
   dueDate: string,
   dueTime: string,
   scope?: { leadId?: string; opportunityId?: string },
+  /** Duração nova, só quando o usuário a alterou (15–480). Sem ela, vale a do evento no Google. */
+  calendar?: { durationMinutes?: number },
 ): Promise<ActivityActionState> {
   const guard = await requirePermissionSafe("activity.edit");
   if ("error" in guard) return { ok: false, error: guard.error };
@@ -134,6 +180,13 @@ export async function rescheduleActivityAction(
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
   }
+
+  // Duração conferida no servidor, sem depender do navegador.
+  if (calendar?.durationMinutes !== undefined && !isValidTypedDuration(calendar.durationMinutes)) {
+    return { ok: false, error: toUserMessage({ message: "invalid_duration" }) };
+  }
+  const guardResult = await guardActivityChange(parsed.data.activityId, { kind: "reschedule", dueTime: parsed.data.dueTime ?? "" });
+  if (!guardResult.ok) return { ok: false, error: guardResult.error };
 
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.rpc("reschedule_activity", {
@@ -147,8 +200,15 @@ export async function rescheduleActivityAction(
     return { ok: false, error: toUserMessage(error) };
   }
 
+  const notice = guardResult.sync
+    ? await syncLinkedActivity(
+        parsed.data.activityId,
+        calendar?.durationMinutes !== undefined ? { durationMinutes: calendar.durationMinutes } : {},
+      )
+    : null;
+
   revalidateActivityRoutes(scope?.leadId, scope?.opportunityId);
-  return { ok: true, activityId: parsed.data.activityId };
+  return { ok: true, activityId: parsed.data.activityId, ...(notice ? { calendar: notice } : {}) };
 }
 
 export async function reassignActivityAction(
@@ -219,6 +279,13 @@ export async function deleteActivityAction(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
   }
 
+  // Vinculada ao Google: o evento sai da agenda ANTES (o vínculo se perde com a
+  // atividade). Se a agenda não puder ser alcançada, a atividade NÃO é excluída.
+  const guardResult = await guardActivityChange(parsed.data.activityId, { kind: "delete" });
+  if (!guardResult.ok) return { ok: false, error: guardResult.error };
+  const beforeDelete = await cancelLinkedBeforeDelete(parsed.data.activityId, guardResult.info);
+  if (!beforeDelete.proceed) return { ok: false, error: beforeDelete.error };
+
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.rpc("delete_activity", { p_activity_id: parsed.data.activityId });
 
@@ -227,7 +294,7 @@ export async function deleteActivityAction(
   }
 
   revalidateActivityRoutes(scope?.leadId, scope?.opportunityId);
-  return { ok: true };
+  return { ok: true, ...(beforeDelete.notice ? { calendar: beforeDelete.notice } : {}) };
 }
 
 export type StageRuleActionState = { ok: boolean; error?: string };

@@ -37,3 +37,51 @@ export function formatTime(iso: string): string {
 export function formatDue(iso: string, hasTime: boolean): string {
   return hasTime ? formatDateTime(iso) : formatDate(iso);
 }
+
+/**
+ * Instante (ISO, UTC) de uma data "YYYY-MM-DD" e hora "HH:MM" digitadas no
+ * fuso do escritório. Usado onde o servidor precisa do instante ANTES de a
+ * atividade existir no banco (ex.: checar disponibilidade na agenda); depois
+ * de criada, vale sempre o `due_at` que o banco montou.
+ */
+export function zonedInstant(date: string, time: string): string {
+  const [y, m, d] = date.split("-").map(Number) as [number, number, number];
+  const [hh, mm] = time.split(":").map(Number) as [number, number];
+  const wall = Date.UTC(y, m - 1, d, hh, mm);
+  // O deslocamento do fuso nesse instante, lido do próprio Intl (sem fixar -03:00).
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(wall));
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? "0");
+  const asLocal = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour") % 24, get("minute"), get("second"));
+  const offset = asLocal - wall;
+  return new Date(wall - offset).toISOString();
+}
+
+/**
+ * "YYYY-MM-DD" e "HH:MM" de um instante, no fuso do escritório — o formato dos
+ * <input type="date"> e <input type="time">. Sem hora relevante, `time` vem vazio.
+ */
+export function dateTimeInputParts(iso: string, hasTime: boolean): { date: string; time: string } {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(iso));
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return {
+    date: `${get("year")}-${get("month")}-${get("day")}`,
+    time: hasTime ? `${get("hour") === "24" ? "00" : get("hour")}:${get("minute")}` : "",
+  };
+}
