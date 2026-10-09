@@ -1,8 +1,10 @@
 -- B2, etapa 3 — Google → CRM (docs/decisoes/b2-google-agenda.md §6.2, §9).
 --
 -- 1) `calendar_sync_state`: por conexão e agenda, o `syncToken`, a trava de
---    execução (uma sincronização por vez) e a dica do webhook (`dirty_at`).
---    O token só avança quando TODAS as páginas foram processadas.
+--    execução (uma sincronização por vez), a dica do webhook (`dirty_at`) e
+--    a última visita da manutenção (lote justo). O token só avança quando
+--    TODAS as páginas foram processadas, e toda escrita confere a trava com
+--    a linha bloqueada (`private.lock_sync_lease`).
 -- 2) `calendar_watch_channels`: canais de notificação, com o segredo do
 --    canal guardado só como hash, a vida EFETIVA devolvida pelo Google e a
 --    trava de renovação.
@@ -37,6 +39,9 @@ create table public.calendar_sync_state (
   last_error_at timestamptz,
   -- Dica do webhook: algo mudou na agenda depois da última execução.
   dirty_at timestamptz,
+  -- Última vez que a agenda entrou num lote da manutenção (justiça entre
+  -- rodadas: os visitados há mais tempo vão primeiro).
+  last_visit_at timestamptz,
   -- Trava de execução: uma sincronização por conexão e agenda.
   lease_id uuid,
   lease_started_at timestamptz,
@@ -133,72 +138,140 @@ $body$;
 revoke all on function private.own_active_connection(uuid, uuid) from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------
--- list_calendar_maintenance — o que o agendador precisa, do ambiente.
--- Alvos de sincronização: cada (conexão, agenda) com vínculo ativo.
--- Canais: todos os não encerrados. Nunca tokens nem hashes.
+-- claim_calendar_maintenance_batch — o lote de UMA rodada da manutenção.
+--
+-- Candidatos: cada (conexão ATIVA, agenda) com vínculo ativo no ambiente.
+-- Lote justo, limitado (1–200): até metade das vagas para agendas com dica
+-- do webhook ainda não atendida (a mais antiga primeiro); o resto para as
+-- visitadas há mais tempo (nunca visitadas primeiro). Cada escolhida tem a
+-- visita marcada aqui, na mesma operação: a rodada seguinte começa pelas
+-- outras, e toda agenda é visitada em poucas rodadas mesmo quando há mais
+-- agendas que vagas.
+--
+-- Canais: os do lote, mais os que podem ter de ser encerrados em QUALQUER
+-- agenda (sem vínculo ativo ou vencidos), até 200. Cada canal diz se a
+-- agenda dele tem vínculo (`hasLinks`), calculado aqui e não pela presença
+-- no lote: agenda fora do lote não está sem vínculo.
+-- Nunca tokens nem hashes.
 -- ---------------------------------------------------------------------
 
-create function public.list_calendar_maintenance(p_limit integer default 200)
+create function public.claim_calendar_maintenance_batch(p_limit integer default 25)
 returns jsonb
 language plpgsql
 security definer
-stable
 set search_path = ''
 as $body$
 declare
   v_env public.calendar_environment := private.require_request_environment();
+  v_limit integer := greatest(1, least(coalesce(p_limit, 25), 200));
+  v_targets jsonb;
+  v_channels jsonb;
 begin
-  return jsonb_build_object(
-    'targets', coalesce((
-      select jsonb_agg(jsonb_build_object(
-        'connectionId', t.connection_id,
-        'workspaceId', c.workspace_id,
-        'userId', c.user_id,
-        'connectionStatus', c.status,
-        'calendarId', t.calendar_id,
-        'hasSyncToken', s.sync_token is not null,
-        'lastRunAt', s.last_run_at,
-        'fullSyncAt', s.full_sync_at,
-        'dirtyAt', s.dirty_at,
-        'leaseUntil', s.lease_until
-      ) order by t.connection_id, t.calendar_id)
-      from (
-        select distinct l.connection_id, l.calendar_id
-        from public.calendar_event_links l
-        where l.environment = v_env and l.status <> 'unlinked'
-        order by l.connection_id, l.calendar_id
-        limit greatest(1, least(coalesce(p_limit, 200), 1000))
-      ) t
-      join public.calendar_connections c on c.id = t.connection_id and c.environment = v_env and c.status <> 'disconnected'
-      left join public.calendar_sync_state s on s.connection_id = t.connection_id and s.calendar_id = t.calendar_id
-    ), '[]'::jsonb),
-    'channels', coalesce((
-      select jsonb_agg(jsonb_build_object(
-        'channelId', w.channel_id,
-        'connectionId', w.connection_id,
-        'workspaceId', w.workspace_id,
-        'userId', c.user_id,
-        'connectionStatus', c.status,
-        'calendarId', w.calendar_id,
-        'status', w.status,
-        'resourceId', w.resource_id,
-        'expiresAt', w.expires_at,
-        'renewAt', w.renew_at,
-        'syncReceivedAt', w.sync_received_at,
-        'createdAt', w.created_at,
-        'updatedAt', w.updated_at
-      ) order by w.created_at)
-      from public.calendar_watch_channels w
-      join public.calendar_connections c on c.id = w.connection_id
-      where w.environment = v_env and w.status <> 'stopped'
-    ), '[]'::jsonb)
-  );
+  with candidates as (
+    select distinct l.connection_id, l.calendar_id
+    from public.calendar_event_links l
+    join public.calendar_connections c on c.id = l.connection_id and c.environment = v_env and c.status = 'active'
+    where l.environment = v_env and l.status <> 'unlinked'
+  ),
+  ranked as (
+    select k.connection_id, k.calendar_id, s.last_visit_at, s.dirty_at,
+      (s.dirty_at is not null and (s.last_visit_at is null or s.dirty_at > s.last_visit_at)) as hinted
+    from candidates k
+    left join public.calendar_sync_state s on s.connection_id = k.connection_id and s.calendar_id = k.calendar_id
+  ),
+  hinted as (
+    select r.connection_id, r.calendar_id, 0 as tier, row_number() over (order by r.dirty_at, r.connection_id, r.calendar_id) as pos
+    from ranked r where r.hinted
+    order by r.dirty_at, r.connection_id, r.calendar_id
+    limit v_limit / 2
+  ),
+  fair as (
+    select r.connection_id, r.calendar_id, 1 as tier,
+      row_number() over (order by r.last_visit_at asc nulls first, r.connection_id, r.calendar_id) as pos
+    from ranked r
+    order by r.last_visit_at asc nulls first, r.connection_id, r.calendar_id
+    limit v_limit
+  ),
+  picked as (
+    select distinct on (u.connection_id, u.calendar_id) u.connection_id, u.calendar_id, u.tier, u.pos
+    from (select * from hinted union all select * from fair) u
+    order by u.connection_id, u.calendar_id, u.tier, u.pos
+  ),
+  batch as (
+    select p.connection_id, p.calendar_id, p.tier, p.pos from picked p order by p.tier, p.pos limit v_limit
+  )
+  select coalesce(jsonb_agg(jsonb_build_object(
+      'connectionId', b.connection_id,
+      'workspaceId', c.workspace_id,
+      'userId', c.user_id,
+      'connectionStatus', c.status,
+      'calendarId', b.calendar_id,
+      'hasSyncToken', s.sync_token is not null,
+      'lastRunAt', s.last_run_at,
+      'fullSyncAt', s.full_sync_at,
+      'dirtyAt', s.dirty_at,
+      'leaseUntil', s.lease_until
+    ) order by b.tier, b.pos), '[]'::jsonb)
+  into v_targets
+  from batch b
+  join public.calendar_connections c on c.id = b.connection_id
+  left join public.calendar_sync_state s on s.connection_id = b.connection_id and s.calendar_id = b.calendar_id;
+
+  -- A visita é marcada na reserva.
+  insert into public.calendar_sync_state (workspace_id, connection_id, environment, calendar_id, last_visit_at)
+  select (t ->> 'workspaceId')::uuid, (t ->> 'connectionId')::uuid, v_env, t ->> 'calendarId', now()
+  from jsonb_array_elements(v_targets) t
+  on conflict (connection_id, calendar_id) do update set last_visit_at = now(), updated_at = now();
+
+  select coalesce(jsonb_agg(x.item order by x.updated_at), '[]'::jsonb)
+  into v_channels
+  from (
+    select w.updated_at, jsonb_build_object(
+      'channelId', w.channel_id,
+      'connectionId', w.connection_id,
+      'workspaceId', w.workspace_id,
+      'userId', c.user_id,
+      'connectionStatus', c.status,
+      'calendarId', w.calendar_id,
+      'status', w.status,
+      'resourceId', w.resource_id,
+      'expiresAt', w.expires_at,
+      'renewAt', w.renew_at,
+      'syncReceivedAt', w.sync_received_at,
+      'createdAt', w.created_at,
+      'updatedAt', w.updated_at,
+      'hasLinks', exists (
+        select 1 from public.calendar_event_links l
+        where l.connection_id = w.connection_id and l.calendar_id = w.calendar_id
+          and l.environment = v_env and l.status <> 'unlinked'),
+      'replacementDelivered', exists (
+        select 1 from public.calendar_watch_channels o
+        where o.connection_id = w.connection_id and o.calendar_id = w.calendar_id and o.id <> w.id
+          and o.status = 'active' and o.sync_received_at is not null)
+    ) as item
+    from public.calendar_watch_channels w
+    join public.calendar_connections c on c.id = w.connection_id
+    where w.environment = v_env and w.status <> 'stopped'
+      and (
+        exists (select 1 from jsonb_array_elements(v_targets) t
+                where (t ->> 'connectionId')::uuid = w.connection_id and t ->> 'calendarId' = w.calendar_id)
+        or not exists (
+          select 1 from public.calendar_event_links l
+          where l.connection_id = w.connection_id and l.calendar_id = w.calendar_id
+            and l.environment = v_env and l.status <> 'unlinked')
+        or (w.expires_at is not null and w.expires_at <= now())
+      )
+    order by w.updated_at
+    limit 200
+  ) x;
+
+  return jsonb_build_object('targets', v_targets, 'channels', v_channels);
 end;
 $body$;
 
-revoke all on function public.list_calendar_maintenance(integer) from public;
-grant execute on function public.list_calendar_maintenance(integer) to service_role;
-revoke execute on function public.list_calendar_maintenance(integer) from anon, authenticated;
+revoke all on function public.claim_calendar_maintenance_batch(integer) from public;
+grant execute on function public.claim_calendar_maintenance_batch(integer) to service_role;
+revoke execute on function public.claim_calendar_maintenance_batch(integer) from anon, authenticated;
 
 -- ---------------------------------------------------------------------
 -- claim / reset / finish — uma sincronização por vez; o token só avança
@@ -251,11 +324,15 @@ revoke all on function public.claim_calendar_sync(uuid, text, uuid, integer) fro
 grant execute on function public.claim_calendar_sync(uuid, text, uuid, integer) to service_role;
 revoke execute on function public.claim_calendar_sync(uuid, text, uuid, integer) from anon, authenticated;
 
--- Estado da trava, conferido em toda escrita do estado.
-create function private.leased_sync_state(p_lease_id uuid, p_actor_user_id uuid)
+-- A trava AINDA é desta execução? Bloqueia a linha do estado (`for update`)
+-- e só então confere dono, ambiente e validade (pelo relógio de agora, não
+-- pelo início da transação). Com a linha bloqueada, nenhuma outra execução
+-- toma a trava (claim espera) até o fim da transação de quem chamou: a
+-- conferência e a escrita que vem depois são uma coisa só.
+-- `null` = a trava não é mais desta execução (vencida ou tomada).
+create function private.lock_sync_lease(p_lease_id uuid, p_actor_user_id uuid)
 returns public.calendar_sync_state
 language plpgsql
-stable
 security definer
 set search_path = ''
 as $body$
@@ -264,7 +341,7 @@ declare
   v_state public.calendar_sync_state;
   v_conn public.calendar_connections;
 begin
-  select * into v_state from public.calendar_sync_state s where s.lease_id = p_lease_id;
+  select * into v_state from public.calendar_sync_state s where s.lease_id = p_lease_id for update;
   if v_state.id is null then
     return null;
   end if;
@@ -275,14 +352,18 @@ begin
   if v_conn.user_id is distinct from p_actor_user_id then
     raise exception 'connection_not_found';
   end if;
+  if v_state.lease_until is null or v_state.lease_until < clock_timestamp() then
+    return null;
+  end if;
   return v_state;
 end;
 $body$;
 
-revoke all on function private.leased_sync_state(uuid, uuid) from public, anon, authenticated;
+revoke all on function private.lock_sync_lease(uuid, uuid) from public, anon, authenticated;
 
 -- 410: o token deixa de valer JÁ (uma falha na listagem completa não volta
--- a tentar o token inválido). A trava continua com quem a detém.
+-- a tentar o token inválido). A trava continua com quem a detém; quem a
+-- perdeu não descarta nada (`false`).
 create function public.reset_calendar_sync_token(p_lease_id uuid, p_actor_user_id uuid)
 returns boolean
 language plpgsql
@@ -290,9 +371,9 @@ security definer
 set search_path = ''
 as $body$
 declare
-  v_state public.calendar_sync_state := private.leased_sync_state(p_lease_id, p_actor_user_id);
+  v_state public.calendar_sync_state := private.lock_sync_lease(p_lease_id, p_actor_user_id);
 begin
-  if v_state.id is null or v_state.lease_until < now() then
+  if v_state.id is null then
     return false;
   end if;
   update public.calendar_sync_state
@@ -328,13 +409,14 @@ security definer
 set search_path = ''
 as $body$
 declare
-  v_state public.calendar_sync_state := private.leased_sync_state(p_lease_id, p_actor_user_id);
+  v_state public.calendar_sync_state;
 begin
   if p_outcome not in ('success', 'failed', 'access_lost') then
     raise exception 'invalid_outcome';
   end if;
-  -- Trava perdida (vencida e tomada por outra execução): nada é gravado.
-  if v_state.id is null or v_state.lease_until < now() then
+  v_state := private.lock_sync_lease(p_lease_id, p_actor_user_id);
+  -- Trava perdida (vencida e/ou tomada por outra execução): nada é gravado.
+  if v_state.id is null then
     return false;
   end if;
 
@@ -439,12 +521,20 @@ revoke execute on function public.list_calendar_links_for_sync(uuid, text, uuid)
 -- p_state: { etag, title, start, end, cancelled, hasMeet, meetStatus,
 -- meetUrl, durationMinutes, linkStatus, changed[] }. Nos campos do Meet,
 -- chave ausente preserva e null remove (mesma regra da etapa 2).
--- Devolve { status: applied | stale_link | stale_activity | not_authorized }.
+--
+-- p_lease_id: a trava da execução. Antes de qualquer escrita, a linha do
+-- estado é BLOQUEADA e a trava conferida (desta execução, desta conexão e
+-- agenda, ainda válida); o bloqueio dura até o fim desta transação, então
+-- nenhuma outra execução assume no meio. Ordem de bloqueio: estado, depois
+-- vínculo (a mesma de `finish_calendar_sync`), sem impasse entre as duas.
+-- Devolve { status: applied | stale_link | stale_activity | not_authorized
+-- | lease_lost }.
 -- ---------------------------------------------------------------------
 
 create function public.apply_google_inbound_change(
   p_link_id uuid,
   p_actor_user_id uuid,
+  p_lease_id uuid,
   p_expected_base_etag text,
   p_expected_version bigint,
   p_title text,
@@ -459,6 +549,7 @@ set search_path = ''
 as $body$
 declare
   v_env public.calendar_environment := private.require_request_environment();
+  v_lease public.calendar_sync_state;
   v_link public.calendar_event_links;
   v_conn public.calendar_connections;
   v_activity public.activities;
@@ -468,6 +559,10 @@ declare
   v_conflict jsonb;
   v_status public.calendar_link_status;
 begin
+  -- 1) A trava (linha do estado bloqueada até o fim da transação).
+  v_lease := private.lock_sync_lease(p_lease_id, p_actor_user_id);
+
+  -- 2) O vínculo.
   select * into v_link from public.calendar_event_links l where l.id = p_link_id for update;
   if v_link.id is null or v_link.status = 'unlinked' then
     raise exception 'link_not_found';
@@ -479,6 +574,12 @@ begin
   -- Só a conexão dona do vínculo, ativa, aplica o que veio da agenda dela.
   if v_conn.user_id is distinct from p_actor_user_id or v_conn.status <> 'active' then
     raise exception 'connection_not_found';
+  end if;
+
+  -- A trava tem de ser desta conexão e agenda. Sem ela, nada é gravado:
+  -- nem atividade, nem vínculo, nem conflito, nem auditoria.
+  if v_lease.id is null or v_lease.connection_id <> v_link.connection_id or v_lease.calendar_id <> v_link.calendar_id then
+    return jsonb_build_object('status', 'lease_lost');
   end if;
 
   -- A base mudou desde a leitura (outra operação gravou): o chamador relê.
@@ -567,9 +668,9 @@ begin
 end;
 $body$;
 
-revoke all on function public.apply_google_inbound_change(uuid, uuid, text, bigint, text, timestamptz, jsonb, jsonb) from public;
-grant execute on function public.apply_google_inbound_change(uuid, uuid, text, bigint, text, timestamptz, jsonb, jsonb) to service_role;
-revoke execute on function public.apply_google_inbound_change(uuid, uuid, text, bigint, text, timestamptz, jsonb, jsonb) from anon, authenticated;
+revoke all on function public.apply_google_inbound_change(uuid, uuid, uuid, text, bigint, text, timestamptz, jsonb, jsonb) from public;
+grant execute on function public.apply_google_inbound_change(uuid, uuid, uuid, text, bigint, text, timestamptz, jsonb, jsonb) to service_role;
+revoke execute on function public.apply_google_inbound_change(uuid, uuid, uuid, text, bigint, text, timestamptz, jsonb, jsonb) from anon, authenticated;
 
 -- ---------------------------------------------------------------------
 -- Conexão a reautorizar (o refresh token deixou de valer).

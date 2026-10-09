@@ -1,10 +1,10 @@
--- pgTAP — B2, etapa 3: sincronização Google → CRM (estado e trava, token
--- só no fim, aplicação com base/versão/alcance, canais e webhook,
--- reautorização e desconexão). Todos os registros são criados por este
+-- pgTAP — B2, etapa 3: sincronização Google → CRM (estado, trava conferida
+-- em toda escrita, lote justo da manutenção, token só no fim, aplicação
+-- com base/versão/alcance, canais e webhook, reautorização e desconexão). Todos os registros são criados por este
 -- teste (workspace, atividades, conexões e vínculos próprios de QA).
 
 begin;
-select plan(63);
+select plan(80);
 
 \set dono   '20000000-0000-0000-0000-000000000001'
 \set adv    '20000000-0000-0000-0000-000000000002'
@@ -44,6 +44,14 @@ select create_activity(
   p_lead_id := (:'lead')::uuid, p_type := 'meeting'::activity_type, p_title := 'Reunião do advogado',
   p_due_date := (current_date + 6), p_due_time := '10:00'::time
 ) as reuniao_adv \gset
+select create_activity(
+  p_lead_id := (:'lead')::uuid, p_type := 'meeting'::activity_type, p_title := 'Reunião na agenda B',
+  p_due_date := (current_date + 7), p_due_time := '10:00'::time
+) as reuniao_b \gset
+select create_activity(
+  p_lead_id := (:'lead')::uuid, p_type := 'meeting'::activity_type, p_title := 'Reunião na agenda C',
+  p_due_date := (current_date + 8), p_due_time := '10:00'::time
+) as reuniao_c \gset
 reset role;
 
 select pg_temp.hdr('production') as h_prod \gset
@@ -57,6 +65,12 @@ update public.calendar_event_links
 set base_etag = '"1"', base_title = 'Reunião B2 entrada', meet_status = 'success', meet_url = 'https://meet.simulated/e1',
     base_has_meet = true, duration_minutes = 60
 where id = (:'link')::uuid;
+-- Mais duas agendas da mesma conexão (compromissos que nasceram nelas).
+select set_calendar_connection_calendar(:'conn'::uuid, :'dono'::uuid, 'cal-b@x', 'Agenda B');
+select create_calendar_event_link(:'conn'::uuid, :'reuniao_b'::uuid, :'dono'::uuid, 'evento-b') as link_b \gset
+select set_calendar_connection_calendar(:'conn'::uuid, :'dono'::uuid, 'cal-c@x', 'Agenda C');
+select create_calendar_event_link(:'conn'::uuid, :'reuniao_c'::uuid, :'dono'::uuid, 'evento-c') as link_c \gset
+select set_calendar_connection_calendar(:'conn'::uuid, :'dono'::uuid, 'cal-a@x', 'Agenda A');
 
 select connect_calendar_account(:'ws'::uuid, :'adv'::uuid, 'adv@v.test', array['escopo'], 'refresh-adv', 'access-adv', now() + interval '1 hour', '1') as conn_adv \gset
 select set_calendar_connection_calendar(:'conn_adv'::uuid, :'adv'::uuid, 'cal-adv@x', 'Agenda do advogado');
@@ -87,7 +101,7 @@ select throws_ok(
   '42501', null, 'authenticated NÃO executa claim_calendar_sync'
 );
 select throws_ok(
-  format($i$ select apply_google_inbound_change(%L::uuid, %L::uuid, '"1"', 1, '', null, '[]'::jsonb, '{}'::jsonb) $i$, :'link', :'dono'),
+  format($i$ select apply_google_inbound_change(%L::uuid, %L::uuid, null, '"1"', 1, '', null, '[]'::jsonb, '{}'::jsonb) $i$, :'link', :'dono'),
   '42501', null, 'authenticated NÃO executa apply_google_inbound_change'
 );
 select throws_ok(
@@ -95,8 +109,8 @@ select throws_ok(
   '42501', null, 'authenticated NÃO executa record_calendar_notification'
 );
 select throws_ok(
-  $i$ select list_calendar_maintenance() $i$,
-  '42501', null, 'authenticated NÃO executa list_calendar_maintenance'
+  $i$ select claim_calendar_maintenance_batch() $i$,
+  '42501', null, 'authenticated NÃO executa claim_calendar_maintenance_batch'
 );
 select throws_ok(
   format($i$ select begin_calendar_channel(%L::uuid, 'cal-a@x', %L::uuid, 'c', repeat('a', 64)) $i$, :'conn', :'dono'),
@@ -116,19 +130,71 @@ select throws_ok(
 
 select set_config('request.headers', :'h_prod', true);
 select is(
-  (select count(*)::int from jsonb_array_elements(list_calendar_maintenance() -> 'targets') t
+  (select count(*)::int from jsonb_array_elements(claim_calendar_maintenance_batch() -> 'targets') t
    where t ->> 'connectionId' = :'conn' and t ->> 'calendarId' = 'cal-a@x'),
   1, 'a agenda com vínculo ativo é alvo da manutenção'
 );
 select is(
-  (list_calendar_maintenance())::text ~ '(refresh-cifrado|access-cifrado|token_hash)',
+  (claim_calendar_maintenance_batch())::text ~ '(refresh-cifrado|access-cifrado|token_hash)',
   false, 'a manutenção nunca recebe tokens nem hashes'
 );
 select set_config('request.headers', :'h_prev', true);
 select is(
-  jsonb_array_length(list_calendar_maintenance() -> 'targets'),
+  jsonb_array_length(claim_calendar_maintenance_batch() -> 'targets'),
   0, 'o preview não enxerga alvos de production'
 );
+select set_config('request.headers', :'h_prod', true);
+
+-- Lote justo: 4 agendas (cal-a, cal-b, cal-c e a do advogado), lote de 2.
+update public.calendar_sync_state set last_visit_at = null, dirty_at = null;
+select claim_calendar_maintenance_batch(2) as lote1 \gset
+select claim_calendar_maintenance_batch(2) as lote2 \gset
+select is(jsonb_array_length(:'lote1'::jsonb -> 'targets'), 2, 'o lote respeita o limite pedido');
+select is(
+  (select count(distinct (t ->> 'connectionId') || '|' || (t ->> 'calendarId'))::int
+   from jsonb_array_elements((:'lote1'::jsonb -> 'targets') || (:'lote2'::jsonb -> 'targets')) t),
+  4, 'a rodada seguinte começa pelas agendas que ficaram de fora: duas rodadas cobrem as 4, sem repetir'
+);
+select is(
+  (select count(*)::int from public.calendar_sync_state where last_visit_at is not null
+     and connection_id in ((:'conn')::uuid, (:'conn_adv')::uuid)),
+  4, 'a visita fica marcada na própria reserva do lote'
+);
+select is(
+  jsonb_array_length(claim_calendar_maintenance_batch(1000) -> 'targets'),
+  4, 'limite acima do teto é reduzido (no máximo 200), sem perder agendas'
+);
+-- Dica do webhook ainda não atendida entra na frente (até metade das vagas).
+update public.calendar_sync_state set dirty_at = now() + interval '1 second'
+where connection_id = (:'conn')::uuid and calendar_id = 'cal-c@x';
+select is(
+  (claim_calendar_maintenance_batch(2) -> 'targets' -> 0 ->> 'calendarId'),
+  'cal-c@x', 'agenda com dica do webhook vai à frente do lote'
+);
+update public.calendar_sync_state set dirty_at = null;
+
+-- Canal de agenda FORA do lote, mas com vínculo: não é tratado como sem vínculo.
+select begin_calendar_channel(:'conn'::uuid, 'cal-b@x', :'dono'::uuid, 'canal-b', repeat('b', 64));
+update public.calendar_sync_state set last_visit_at = now() + interval '1 hour'
+where connection_id = (:'conn')::uuid and calendar_id = 'cal-b@x';
+select claim_calendar_maintenance_batch(1) as lote3 \gset
+select is(
+  (select count(*)::int from jsonb_array_elements(:'lote3'::jsonb -> 'targets') t where t ->> 'calendarId' = 'cal-b@x'),
+  0, 'a agenda B está fora deste lote'
+);
+select is(
+  (select count(*)::int from jsonb_array_elements(:'lote3'::jsonb -> 'channels') c where c ->> 'channelId' = 'canal-b'),
+  0, 'e o canal dela (com vínculo, não vencido) não vem para encerramento'
+);
+update public.calendar_event_links set status = 'unlinked' where id = (:'link_b')::uuid;
+select is(
+  (select jsonb_build_object('l', c -> 'hasLinks') from jsonb_array_elements(claim_calendar_maintenance_batch(1) -> 'channels') c
+   where c ->> 'channelId' = 'canal-b'),
+  jsonb_build_object('l', false),
+  'sem vínculo DE VERDADE: o canal vem, com hasLinks falso, em qualquer lote'
+);
+update public.calendar_event_links set status = 'linked' where id = (:'link_b')::uuid;
+select stop_calendar_channel('canal-b', :'dono'::uuid, 'teste');
 select throws_ok(
   format($i$ select list_calendar_links_for_sync(%L::uuid, 'cal-a@x', %L::uuid) $i$, :'conn', :'dono'),
   'P0001', 'calendar_environment_mismatch', 'o preview não lê os vínculos de production'
@@ -227,13 +293,15 @@ select is(
 );
 
 select lock_version as v0 from public.activities where id = (:'reuniao')::uuid \gset
+-- Execução A: detém a trava da agenda A.
+select (claim_calendar_sync(:'conn'::uuid, 'cal-a@x', :'dono'::uuid) ->> 'leaseId') as lease_a \gset
 
 select is(
-  apply_google_inbound_change(:'link'::uuid, :'dono'::uuid, '"base-errada"', :'v0'::bigint, 'X', null, '[]'::jsonb, '{"etag":"\"2\""}'::jsonb) ->> 'status',
+  apply_google_inbound_change(:'link'::uuid, :'dono'::uuid, :'lease_a'::uuid, '"base-errada"', :'v0'::bigint, 'X', null, '[]'::jsonb, '{"etag":"\"2\""}'::jsonb) ->> 'status',
   'stale_link', 'base diferente da lida: nada aplicado'
 );
 select is(
-  apply_google_inbound_change(:'link'::uuid, :'dono'::uuid, '"1"', (:'v0'::bigint) - 1, 'X', null, '[]'::jsonb, '{"etag":"\"2\""}'::jsonb) ->> 'status',
+  apply_google_inbound_change(:'link'::uuid, :'dono'::uuid, :'lease_a'::uuid, '"1"', (:'v0'::bigint) - 1, 'X', null, '[]'::jsonb, '{"etag":"\"2\""}'::jsonb) ->> 'status',
   'stale_activity', 'atividade mudou desde a leitura: nada aplicado'
 );
 select is(
@@ -242,18 +310,65 @@ select is(
 );
 
 select throws_ok(
-  format($i$ select apply_google_inbound_change(%L::uuid, %L::uuid, '"1"', %s, 'X', null, '[]'::jsonb, '{"etag":"\"2\""}'::jsonb) $i$, :'link', :'adv', :'v0'),
+  format($i$ select apply_google_inbound_change(%L::uuid, %L::uuid, %L::uuid, '"1"', %s, 'X', null, '[]'::jsonb, '{"etag":"\"2\""}'::jsonb) $i$, :'link', :'adv', :'lease_a', :'v0'),
   'P0001', 'connection_not_found', 'só o dono da conexão aplica o que veio da agenda dele'
 );
 select set_config('request.headers', :'h_prev', true);
 select throws_ok(
-  format($i$ select apply_google_inbound_change(%L::uuid, %L::uuid, '"1"', %s, 'X', null, '[]'::jsonb, '{"etag":"\"2\""}'::jsonb) $i$, :'link', :'dono', :'v0'),
+  format($i$ select apply_google_inbound_change(%L::uuid, %L::uuid, %L::uuid, '"1"', %s, 'X', null, '[]'::jsonb, '{"etag":"\"2\""}'::jsonb) $i$, :'link', :'dono', :'lease_a', :'v0'),
   'P0001', 'calendar_environment_mismatch', 'o preview não aplica mudança em vínculo de production'
 );
 select set_config('request.headers', :'h_prod', true);
 
+-- Trava de OUTRA agenda da mesma conexão não serve.
+select (claim_calendar_sync(:'conn'::uuid, 'cal-b@x', :'dono'::uuid) ->> 'leaseId') as lease_outra \gset
+select is(
+  apply_google_inbound_change(:'link'::uuid, :'dono'::uuid, :'lease_outra'::uuid, '"1"', :'v0'::bigint, 'X', null, '[]'::jsonb, '{"etag":"\"2\""}'::jsonb) ->> 'status',
+  'lease_lost', 'trava de outra agenda: nada aplicado'
+);
+select finish_calendar_sync(:'lease_outra'::uuid, :'dono'::uuid, 'failed', null, false, 'teste');
+
+-- Execuções intercaladas: a trava de A vence, B assume; A não grava NADA.
+select count(*)::int as conflitos0 from public.calendar_sync_conflicts where link_id = (:'link')::uuid \gset
+select count(*)::int as audit0 from public.audit_logs where workspace_id = :'ws'::uuid and action like 'calendar.%' \gset
+update public.calendar_sync_state set lease_until = now() - interval '1 second' where lease_id = (:'lease_a')::uuid;
+select is(
+  apply_google_inbound_change(:'link'::uuid, :'dono'::uuid, :'lease_a'::uuid, '"1"', :'v0'::bigint, 'De A', null, '[]'::jsonb, '{"etag":"\"a\""}'::jsonb) ->> 'status',
+  'lease_lost', 'trava de A vencida (ainda não tomada): nada aplicado'
+);
+select (claim_calendar_sync(:'conn'::uuid, 'cal-a@x', :'dono'::uuid) ->> 'leaseId') as lease_b \gset
+select ok(:'lease_b' is not null and :'lease_b' <> :'lease_a', 'B assume a trava vencida');
+select is(
+  apply_google_inbound_change(
+    :'link'::uuid, :'dono'::uuid, :'lease_a'::uuid, '"1"', :'v0'::bigint, 'Título de A', null,
+    '[{"field":"title","crmValue":"x","googleValue":"Título de A"}]'::jsonb,
+    jsonb_build_object('etag', '"a"', 'title', 'Título de A', 'linkStatus', 'linked', 'changed', jsonb_build_array('title'))
+  ) ->> 'status',
+  'lease_lost', 'A, sem a trava, não aplica (mesmo com base e versão certas)'
+);
+select is(reset_calendar_sync_token(:'lease_a'::uuid, :'dono'::uuid), false, 'A não descarta o token');
+select is(finish_calendar_sync(:'lease_a'::uuid, :'dono'::uuid, 'success', 'tok-de-A', true, ''), false, 'A não grava token');
+select is(finish_calendar_sync(:'lease_a'::uuid, :'dono'::uuid, 'access_lost', null, false, 'x'), false, 'A não marca perda de acesso');
+select is(
+  (select jsonb_build_object('t', a.title, 'v', a.lock_version, 'e', l.base_etag, 'bt', l.base_title, 's', l.status::text,
+     'c', (select count(*)::int from public.calendar_sync_conflicts k where k.link_id = l.id),
+     'tok', s.sync_token, 'lease', s.lease_id::text)
+   from public.calendar_event_links l
+   join public.activities a on a.id = l.activity_id
+   join public.calendar_sync_state s on s.connection_id = l.connection_id and s.calendar_id = l.calendar_id
+   where l.id = (:'link')::uuid),
+  jsonb_build_object('t', 'Reunião B2 entrada', 'v', (:'v0')::bigint, 'e', '"1"', 'bt', 'Reunião B2 entrada', 's', 'linked',
+    'c', (:'conflitos0')::int, 'tok', 'tok-5', 'lease', :'lease_b'),
+  'atividade, vínculo, conflitos e token intactos; a trava continua com B'
+);
+select is(
+  (select count(*)::int from public.audit_logs where workspace_id = :'ws'::uuid and action like 'calendar.%'),
+  (:'audit0')::int, 'nem auditoria em nome de A'
+);
+
+-- B aplica.
 select apply_google_inbound_change(
-  :'link'::uuid, :'dono'::uuid, '"1"', :'v0'::bigint, 'Título do Google', null,
+  :'link'::uuid, :'dono'::uuid, :'lease_b'::uuid, '"1"', :'v0'::bigint, 'Título do Google', null,
   '[{"field":"title","crmValue":"Título do CRM","googleValue":"Título do Google"}]'::jsonb,
   jsonb_build_object('etag', '"2"', 'title', 'Título do Google', 'start', '2026-11-10T14:00:00Z', 'end', '2026-11-10T15:00:00Z',
     'cancelled', false, 'hasMeet', false, 'meetStatus', null, 'meetUrl', null, 'durationMinutes', 60,
@@ -283,7 +398,7 @@ select is(
 
 -- Cancelado no Google: o vínculo muda, a atividade NÃO é apagada.
 select apply_google_inbound_change(
-  :'link'::uuid, :'dono'::uuid, '"2"', (:'v0'::bigint) + 1, '', null, '[]'::jsonb,
+  :'link'::uuid, :'dono'::uuid, :'lease_b'::uuid, '"2"', (:'v0'::bigint) + 1, '', null, '[]'::jsonb,
   jsonb_build_object('etag', '"3"', 'title', 'Título do Google', 'cancelled', true, 'hasMeet', false,
     'durationMinutes', 60, 'linkStatus', 'cancelled_in_google', 'changed', jsonb_build_array('cancellation'))
 );
@@ -297,8 +412,9 @@ select is(
 -- O dono da conexão perde o alcance ao lead: nada é aplicado.
 update public.leads set assigned_to = :'adv2'::uuid where id = (:'lead')::uuid;
 select lock_version as va from public.activities where id = (:'reuniao_adv')::uuid \gset
+select (claim_calendar_sync(:'conn_adv'::uuid, 'cal-adv@x', :'adv'::uuid) ->> 'leaseId') as lease_adv \gset
 select is(
-  apply_google_inbound_change(:'link_adv'::uuid, :'adv'::uuid, '"a1"', :'va'::bigint, 'Não deve chegar', null, '[]'::jsonb,
+  apply_google_inbound_change(:'link_adv'::uuid, :'adv'::uuid, :'lease_adv'::uuid, '"a1"', :'va'::bigint, 'Não deve chegar', null, '[]'::jsonb,
     '{"etag":"\"a2\"","title":"Não deve chegar","linkStatus":"linked"}'::jsonb) ->> 'status',
   'not_authorized', 'sem alcance do dono à atividade: recusado'
 );

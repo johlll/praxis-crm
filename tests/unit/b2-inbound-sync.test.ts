@@ -333,6 +333,7 @@ describe("paginação e syncToken", () => {
     for (let i = 0; i < 3; i++) f.provider.addExternalEvent(CALENDAR_ID, "2026-11-20T10:00:00.000Z", "2026-11-20T11:00:00.000Z");
     // O Google invalida os tokens entre a 1ª e a 2ª página.
     f.provider.onBefore("list", () => f.provider.onBefore("list", () => f.provider.invalidateSyncTokens(CALENDAR_ID)));
+    f.provider.listQueries.length = 0;
 
     expect(await syncCalendar(deps, conn)).toMatchObject({ status: "synced", full: true, applied: 1, conflicts: 0 });
 

@@ -1,4 +1,10 @@
-import { ProviderHttpError, ProviderUncertainError, type CalendarEvent, type EventListItem } from "@/server/calendar/events-api";
+import {
+  ProviderHttpError,
+  ProviderUncertainError,
+  type CalendarEvent,
+  type EventListItem,
+  type EventListQuery,
+} from "@/server/calendar/events-api";
 import { CalendarSyncError } from "@/server/calendar/sync/types";
 import { planInbound, planStatusOnly, type GoogleSnapshot, type InboundPlan } from "@/server/calendar/sync/inbound-plan";
 import type { InboundConnection, InboundDeps, InboundLink } from "@/server/calendar/sync/inbound-types";
@@ -17,8 +23,12 @@ import type { InboundConnection, InboundDeps, InboundLink } from "@/server/calen
  *  5. o novo `syncToken` só é gravado depois de TODAS as páginas e de todos
  *     os itens vinculados aplicados. Qualquer falha mantém o anterior e a
  *     execução é refeita (o processamento é idempotente);
- *  6. `410`: o token é descartado e a listagem completa é refeita — nada do
- *     CRM é apagado; vínculo ausente na completa é confirmado com `get`.
+ *  6. `410`, em qualquer página: o token é descartado e a listagem completa
+ *     é refeita — nada do CRM é apagado; vínculo ausente na completa é
+ *     confirmado com `get`;
+ *  7. toda escrita (descartar o token, aplicar, concluir) leva a trava, e o
+ *     banco confere que ela ainda é desta execução NA MESMA operação. Quem
+ *     perdeu a trava para no ato, sem gravar nada.
  */
 
 export type SyncOutcome =
@@ -29,6 +39,9 @@ export type SyncOutcome =
   | { status: "failed"; code: string };
 
 const MAX_APPLY_ATTEMPTS = 3;
+
+/** Itens por página pedidos ao Google (o máximo que ele aceita é 2500). */
+export const LIST_PAGE_SIZE = 250;
 
 class AbortRun extends Error {
   constructor(
@@ -73,6 +86,47 @@ function markerCoherent(item: Pick<EventListItem, "extendedProperties">, link: I
 
 type Counters = { applied: number; conflicts: number; notAuthorized: number };
 
+/** Uma execução: quem roda, com qual trava, e o que já aplicou. */
+type Run = { deps: InboundDeps; conn: InboundConnection; leaseId: string; counters: Counters };
+
+const sameInstant = (a: string | null, b: string | null): boolean =>
+  a === b || (a !== null && b !== null && Date.parse(a) === Date.parse(b));
+
+/**
+ * O item listado é o eco da base? O `etag` igual sozinho NÃO prova que todos
+ * os campos foram reconciliados: o que a listagem traz (estado e horário)
+ * também tem de bater com a base. O título não vem na listagem; por isso a
+ * base só recebe o `etag` de um evento quando TODOS os campos sincronizados
+ * conferem com ele (`pushUpdate`, na saída).
+ */
+function listedMatchesBase(item: EventListItem, link: InboundLink): boolean {
+  if (item.etag !== link.baseEtag) return false;
+  const cancelled = item.status === "cancelled";
+  if (cancelled !== link.baseCancelled) return false;
+  if (cancelled) return true;
+  return sameInstant(item.start?.dateTime ?? null, link.baseStart) && sameInstant(item.end?.dateTime ?? null, link.baseEnd);
+}
+
+/** O plano não muda nada no CRM nem na base: não há o que gravar. */
+function planIsNoop(plan: InboundPlan, link: InboundLink): boolean {
+  const s = plan.state;
+  return (
+    plan.title === undefined &&
+    plan.dueAt === undefined &&
+    plan.conflicts.length === 0 &&
+    s.etag === link.baseEtag &&
+    s.linkStatus === link.status &&
+    s.title === link.baseTitle &&
+    sameInstant(s.start, link.baseStart) &&
+    sameInstant(s.end, link.baseEnd) &&
+    s.cancelled === link.baseCancelled &&
+    s.hasMeet === link.baseHasMeet &&
+    s.meetStatus === link.meetStatus &&
+    s.meetUrl === link.meetUrl &&
+    s.durationMinutes === link.durationMinutes
+  );
+}
+
 export async function syncCalendar(
   deps: InboundDeps,
   conn: InboundConnection,
@@ -85,17 +139,20 @@ export async function syncCalendar(
   if (!lease) return { status: "busy" };
 
   const counters: Counters = { applied: 0, conflicts: 0, notAuthorized: 0 };
+  const run: Run = { deps, conn, leaseId: lease.leaseId, counters };
   let full = opts.forceFull === true || !lease.syncToken;
   try {
     const links = await deps.store.listLinks(actor, conn.connectionId, conn.calendarId);
     const byEvent = new Map(links.map((l) => [l.eventId, l]));
 
-    let listing = await listAndApply(deps, conn, byEvent, full ? undefined : (lease.syncToken ?? undefined), counters);
+    let listing = await listAndApply(run, byEvent, full ? undefined : (lease.syncToken ?? undefined));
     if (listing === "gone") {
-      // 410: o token não vale mais. Descarta JÁ e refaz a listagem completa.
-      await deps.store.resetSyncToken(actor, lease.leaseId);
+      // 410 (em qualquer página): o token não vale mais. Descarta JÁ e refaz
+      // a listagem completa. O que as páginas anteriores aplicaram fica: a
+      // completa o reconhece pela base e não reaplica.
+      if (!(await deps.store.resetSyncToken(actor, lease.leaseId))) throw new AbortRun("failed", "lease_lost");
       full = true;
-      listing = await listAndApply(deps, conn, byEvent, undefined, counters);
+      listing = await listAndApply(run, byEvent, undefined);
       if (listing === "gone") throw new AbortRun("failed", "provider_410_on_full_listing");
     }
 
@@ -104,7 +161,7 @@ export async function syncCalendar(
       // antes de concluir qualquer coisa.
       for (const link of links) {
         if (listing.seen.has(link.eventId) || (link.status !== "linked" && link.status !== "needs_attention")) continue;
-        await reconcileMissing(deps, conn, link, counters);
+        await reconcileMissing(run, link);
       }
     }
 
@@ -123,12 +180,19 @@ export async function syncCalendar(
 }
 
 async function listAndApply(
-  deps: InboundDeps,
-  conn: InboundConnection,
+  run: Run,
   byEvent: Map<string, InboundLink>,
   syncToken: string | undefined,
-  counters: Counters,
 ): Promise<"gone" | { nextSyncToken: string; pages: number; seen: Set<string> }> {
+  const { deps, conn } = run;
+  // A consulta inicial vale para TODAS as páginas: a seguinte só acrescenta
+  // o `pageToken` (o Google recusa página de consulta diferente).
+  const query: EventListQuery = {
+    ...(syncToken ? { syncToken } : {}),
+    showDeleted: true,
+    singleEvents: false,
+    maxResults: LIST_PAGE_SIZE,
+  };
   const seen = new Set<string>();
   let pageToken: string | undefined;
   let pages = 0;
@@ -136,9 +200,9 @@ async function listAndApply(
   for (;;) {
     let page;
     try {
-      page = await deps.api.listEvents(conn.accessToken, conn.calendarId, pageToken ? { pageToken } : { syncToken });
+      page = await deps.api.listEvents(conn.accessToken, conn.calendarId, pageToken ? { ...query, pageToken } : query);
     } catch (error) {
-      if (error instanceof ProviderHttpError && error.status === 410 && !pageToken && syncToken) return "gone";
+      if (error instanceof ProviderHttpError && error.status === 410 && query.syncToken) return "gone";
       if (isAccessDenied(error)) throw new AbortRun("access_lost", "calendar_access_lost");
       throw new AbortRun("failed", failureCode(error));
     }
@@ -149,7 +213,7 @@ async function listAndApply(
       // Evento sem vínculo: descartado aqui, sem gravar, logar nem contar.
       if (!link) continue;
       seen.add(item.id);
-      await applyLinked(deps, conn, link, item, counters);
+      await applyLinked(run, link, item);
     }
 
     if (page.nextPageToken) {
@@ -198,15 +262,11 @@ function planFor(deps: InboundDeps, link: InboundLink, item: Pick<EventListItem,
   return planInbound(link, snapshotOf(event));
 }
 
-async function applyLinked(
-  deps: InboundDeps,
-  conn: InboundConnection,
-  initial: InboundLink,
-  item: EventListItem,
-  counters: Counters,
-): Promise<void> {
-  // Eco de uma escrita do próprio CRM (ou nada novo): a base já tem este etag.
-  if (item.etag === initial.baseEtag) return;
+async function applyLinked(run: Run, initial: InboundLink, item: EventListItem): Promise<void> {
+  const { deps, conn, counters } = run;
+  // Eco de uma escrita do próprio CRM (ou nada novo): a base tem este etag E
+  // os campos listados batem com ela.
+  if (listedMatchesBase(item, initial)) return;
   if (initial.status === "unlinked") return;
 
   let link = initial;
@@ -217,10 +277,10 @@ async function applyLinked(
         ? ({ ...item, status: "cancelled" } as CalendarEvent)
         : await readLinkedEvent(deps, conn, link.eventId);
     const plan = planFor(deps, link, item, event, event?.etag ?? item.etag);
-    if (!plan) return;
-    if (plan.state.etag === link.baseEtag && plan.state.linkStatus === link.status) return;
+    if (!plan || planIsNoop(plan, link)) return;
 
     const result = await deps.store.applyInbound(conn.userId, {
+      leaseId: run.leaseId,
       linkId: link.id,
       expectedBaseEtag: link.baseEtag,
       expectedVersion: link.activity?.lockVersion ?? null,
@@ -238,11 +298,13 @@ async function applyLinked(
       counters.notAuthorized += 1;
       return;
     }
+    // Outra execução assumiu a trava: nada foi gravado, e esta para aqui.
+    if (result.status === "lease_lost") throw new AbortRun("failed", "lease_lost");
     // Mudou no meio (CRM editado ou outra operação gravou a base): relê o
     // vínculo e a atividade e reavalia tudo.
     const fresh = (await deps.store.listLinks(conn.userId, conn.connectionId, conn.calendarId)).find((l) => l.id === link.id);
     if (!fresh || fresh.status === "unlinked") return;
-    if (fresh.baseEtag === item.etag) return;
+    if (listedMatchesBase(item, fresh)) return;
     link = fresh;
   }
   // Não convergiu: o token NÃO avança e a próxima execução refaz.
@@ -251,23 +313,26 @@ async function applyLinked(
 
 /** Vínculo ausente da listagem completa: confirmado com `get` (e com o acesso
  * à agenda) antes de virar `missing_in_google`. Nunca apaga a atividade. */
-async function reconcileMissing(deps: InboundDeps, conn: InboundConnection, link: InboundLink, counters: Counters): Promise<void> {
+async function reconcileMissing(run: Run, link: InboundLink): Promise<void> {
+  const { deps, conn, counters } = run;
   const event = await readLinkedEvent(deps, conn, link.eventId);
   if (event) {
     // Existe, só não veio na listagem: trata como qualquer mudança.
     const { id, etag, status, updated, start, end, extendedProperties } = event;
-    await applyLinked(deps, conn, link, { id, etag, status, updated, start, end, extendedProperties }, counters);
+    await applyLinked(run, link, { id, etag, status, updated, start, end, extendedProperties });
     return;
   }
   if (link.status === "missing_in_google") return;
   const plan = planStatusOnly(link, link.baseEtag ?? "", "missing_in_google", ["missing"]);
   const result = await deps.store.applyInbound(conn.userId, {
+    leaseId: run.leaseId,
     linkId: link.id,
     expectedBaseEtag: link.baseEtag,
     expectedVersion: link.activity?.lockVersion ?? null,
     conflicts: [],
     state: plan.state,
   });
+  if (result.status === "lease_lost") throw new AbortRun("failed", "lease_lost");
   // Mudou no meio: a próxima listagem completa confirma de novo.
   if (result.status === "stale_link" || result.status === "stale_activity") throw new AbortRun("failed", "apply_retry_exhausted");
   if (result.status === "applied") counters.applied += 1;

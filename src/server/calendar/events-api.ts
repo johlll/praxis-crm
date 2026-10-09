@@ -42,6 +42,19 @@ export type CalendarEvent = {
  */
 export type EventListItem = Pick<CalendarEvent, "id" | "etag" | "status" | "updated" | "start" | "end" | "extendedProperties">;
 
+/**
+ * Consulta da listagem. A MESMA consulta vale para todas as páginas: a
+ * página seguinte repete o `syncToken` e os demais parâmetros e só acrescenta
+ * o `pageToken`.
+ */
+export type EventListQuery = {
+  /** Sem ele: listagem completa. */
+  syncToken?: string | undefined;
+  showDeleted: true;
+  singleEvents: false;
+  maxResults: number;
+};
+
 export type EventListPage = {
   items: EventListItem[];
   /** Há mais páginas. */
@@ -127,13 +140,14 @@ export interface CalendarEventsApi {
    * Listagem para sincronização (Google → CRM). Parâmetros SEMPRE iguais do
    * sync completo em diante (`showDeleted` verdadeiro, sem `timeMin`,
    * `q`, `privateExtendedProperty`...), porque o `syncToken` é incompatível
-   * com eles. Sem `syncToken` = listagem completa. `410` (`ProviderHttpError`)
+   * com eles. Sem `syncToken` = listagem completa. Página seguinte = a mesma
+   * consulta com `pageToken`. `410` (`ProviderHttpError`), em qualquer página
    * = token inválido: descartar e refazer a listagem completa.
    */
   listEvents(
     accessToken: string,
     calendarId: string,
-    opts: { syncToken?: string | undefined; pageToken?: string | undefined },
+    query: EventListQuery & { pageToken?: string | undefined },
   ): Promise<EventListPage>;
 
   /** Cria um canal de notificação para a agenda. O Google não renova canais. */

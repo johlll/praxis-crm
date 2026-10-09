@@ -9,20 +9,30 @@ import {
   stopChannel,
 } from "@/server/calendar/sync/channels";
 import { syncCalendar } from "@/server/calendar/sync/inbound";
-import type { ChannelRecord, InboundConnection, InboundDeps, SyncTarget } from "@/server/calendar/sync/inbound-types";
+import type { ChannelRecord, InboundConnection, InboundDeps } from "@/server/calendar/sync/inbound-types";
 
 /**
  * Rodada de manutenção do ambiente (B2, etapa 3; §9.2): para cada (conexão,
- * agenda) com vínculo ativo, cuida do canal e sincroniza quando há dica do
- * webhook, quando o polling venceu (15 min) ou quando o sync completo de
- * segurança venceu (24 h). Encerra canais sem uso. Idempotente: pode ser
- * chamada por mais de um agendador, ao mesmo tempo — as travas do banco
- * garantem uma sincronização e uma renovação por vez.
+ * agenda) do LOTE, cuida do canal e sincroniza quando há dica do webhook,
+ * quando o polling venceu (15 min) ou quando o sync completo de segurança
+ * venceu (24 h). Encerra canais sem uso. Idempotente: pode ser chamada por
+ * mais de um agendador, ao mesmo tempo — as travas do banco garantem uma
+ * sincronização e uma renovação por vez.
+ *
+ * Lote: o banco o reserva e marca a visita (`claim_calendar_maintenance_batch`),
+ * os visitados há mais tempo primeiro, com até metade das vagas para agendas
+ * com dica do webhook ainda não atendida. Assim toda agenda é visitada em
+ * poucas rodadas, mesmo com mais agendas que vagas. Estar fora do lote NÃO é
+ * "estar sem vínculo": o encerramento por falta de vínculo usa o vínculo real
+ * da agenda (`hasLinks`), calculado no banco.
  *
  * O relatório tem só contagens — nunca conteúdo de evento.
  */
 
 export const FULL_SYNC_INTERVAL_MS = 24 * 3600_000;
+
+/** Agendas por rodada (padrão). */
+export const MAINTENANCE_BATCH_SIZE = 25;
 
 /** Resultado de abrir a conexão de um dono: o contexto, "a reautorizar"
  * (refresh token inválido) ou indisponível agora. */
@@ -68,7 +78,7 @@ export async function runCalendarMaintenance(deps: MaintenanceDeps): Promise<Mai
     channelsStopped: 0,
     pollingOnly: 0,
   };
-  const { targets, channels } = await deps.store.listMaintenance();
+  const { targets, channels } = await deps.store.claimMaintenanceBatch(deps.maxTargets ?? MAINTENANCE_BATCH_SIZE);
   const now = deps.now().getTime();
 
   // Uma abertura de conexão por dono e rodada.
@@ -96,16 +106,16 @@ export async function runCalendarMaintenance(deps: MaintenanceDeps): Promise<Mai
     return ctx ? { connectionId: t.connectionId, userId: t.userId, calendarId: t.calendarId, environment: deps.environment, accessToken: ctx.accessToken } : null;
   };
 
-  const activeTargets = targets.filter((t) => t.connectionStatus === "active").slice(0, deps.maxTargets ?? 25);
-  const targetKeys = new Set(activeTargets.map((t) => key(t.connectionId, t.calendarId)));
-  const channelsOf = (t: SyncTarget) => channels.filter((c) => c.connectionId === t.connectionId && c.calendarId === t.calendarId);
+  const activeTargets = targets.filter((t) => t.connectionStatus === "active");
+  const channelsOf = (connectionId: string, calendarId: string) =>
+    channels.filter((c) => key(c.connectionId, c.calendarId) === key(connectionId, calendarId));
   report.targets = activeTargets.length;
 
   for (const target of activeTargets) {
     const conn = await contextFor(target);
     if (!conn) continue;
 
-    if (deps.webhookAddress) await ensureChannel(deps, conn, channelsOf(target), deps.webhookAddress, now, report);
+    if (deps.webhookAddress) await ensureChannel(deps, conn, channelsOf(target.connectionId, target.calendarId), deps.webhookAddress, now, report);
 
     const lastRun = ms(target.lastRunAt);
     const fullAt = ms(target.fullSyncAt);
@@ -127,7 +137,7 @@ export async function runCalendarMaintenance(deps: MaintenanceDeps): Promise<Mai
 
   // Canais: abandonados, vencidos, aposentados e sem vínculo.
   for (const channel of channels) {
-    const reason = channelEnd(channel, channels, targetKeys, now);
+    const reason = channelEnd(channel, now);
     if (!reason) continue;
     const conn =
       channel.connectionStatus === "active" && channel.resourceId
@@ -141,10 +151,10 @@ export async function runCalendarMaintenance(deps: MaintenanceDeps): Promise<Mai
 }
 
 /** Por que o canal deve ser encerrado agora (ou `null`). */
-function channelEnd(channel: ChannelRecord, all: ChannelRecord[], targetKeys: Set<string>, now: number): string | null {
+function channelEnd(channel: ChannelRecord, now: number): string | null {
   if (channel.status === "stopped") return null;
   const expired = channel.expiresAt !== null && Date.parse(channel.expiresAt) <= now;
-  if (!targetKeys.has(key(channel.connectionId, channel.calendarId))) return channel.status === "polling_only" ? null : "no_links";
+  if (!channel.hasLinks) return channel.status === "polling_only" ? null : "no_links";
   if (channel.status === "polling_only") return null;
   if (expired) return "expired";
   if (channel.status === "creating") {
@@ -152,15 +162,7 @@ function channelEnd(channel: ChannelRecord, all: ChannelRecord[], targetKeys: Se
     return !adoptable && now - Date.parse(channel.createdAt) >= CREATING_TIMEOUT_MS ? "abandoned" : null;
   }
   if (channel.status === "retiring") {
-    const replacementDelivered = all.some(
-      (c) =>
-        c.channelId !== channel.channelId &&
-        c.connectionId === channel.connectionId &&
-        c.calendarId === channel.calendarId &&
-        c.status === "active" &&
-        c.syncReceivedAt !== null,
-    );
-    return replacementDelivered || now - Date.parse(channel.updatedAt) >= RETIRING_WINDOW_MS ? "replaced" : null;
+    return channel.replacementDelivered || now - Date.parse(channel.updatedAt) >= RETIRING_WINDOW_MS ? "replaced" : null;
   }
   return null;
 }

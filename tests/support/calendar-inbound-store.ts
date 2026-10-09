@@ -1,11 +1,10 @@
 import type {
   ApplyInboundResult,
-  ChannelRecord,
   ChannelStatus,
-  InboundConflict,
   InboundLink,
   InboundState,
   InboundStore,
+  MaintenanceBatch,
   NotificationResult,
   SyncLease,
   SyncTarget,
@@ -16,8 +15,9 @@ import type { MemoryStore } from "./calendar-memory-store";
 /**
  * Persistência em memória da sincronização Google → CRM, com a MESMA
  * semântica das RPCs da migration `20261011100000_b2_google_to_crm_sync`
- * (trava de execução, token só no fim, base conferida, versão da atividade,
- * alcance do dono, canais com hash do segredo). Compartilha vínculos e
+ * (trava de execução conferida em toda escrita, token só no fim, base
+ * conferida, versão da atividade, alcance do dono, canais com hash do
+ * segredo, lote justo da manutenção). Compartilha vínculos e
  * atividades com o `MemoryStore` da etapa 2. O banco real é coberto pelo
  * pgTAP (`24_b2_google_to_crm_sync`).
  */
@@ -32,6 +32,7 @@ type StateRow = {
   lastRunAt: string | null;
   lastError: string | null;
   dirtyAt: string | null;
+  lastVisitAt: number | null;
   leaseId: string | null;
   leaseStartedAt: number | null;
   leaseUntil: number | null;
@@ -64,7 +65,7 @@ export class InboundMemoryStore implements InboundStore {
   audit: Array<{ action: string; metadata: Record<string, unknown> }> = [];
   /** Toda aplicação pedida (para provar o que NÃO foi aplicado). */
   applyCalls: Array<{ linkId: string; status: string }> = [];
-  private beforeApply: (() => void) | undefined;
+  private beforeApply: (() => void | Promise<void>) | undefined;
   private seq = 0;
 
   constructor(
@@ -83,22 +84,61 @@ export class InboundMemoryStore implements InboundStore {
     return c;
   }
 
-  /** Simula uma edição do CRM entre a leitura e a aplicação. */
-  onceBeforeApply(fn: () => void): void {
+  /** Roda `fn` entre a leitura e a aplicação (edição do CRM, outra execução...). */
+  onceBeforeApply(fn: () => void | Promise<void>): void {
     this.beforeApply = fn;
   }
 
-  async listMaintenance(): Promise<{ targets: SyncTarget[]; channels: ChannelRecord[] }> {
-    const pairs = new Map<string, { connectionId: string; calendarId: string }>();
+  private emptyState(connectionId: string, calendarId: string): StateRow {
+    return {
+      connectionId,
+      calendarId,
+      syncToken: null,
+      fullSyncAt: null,
+      lastRunAt: null,
+      lastError: null,
+      dirtyAt: null,
+      lastVisitAt: null,
+      leaseId: null,
+      leaseStartedAt: null,
+      leaseUntil: null,
+    };
+  }
+
+  /** (conexão, agenda) com vínculo ativo no ambiente. */
+  private linkedPairs(): Set<string> {
+    const pairs = new Set<string>();
     for (const l of this.base.links.values()) {
       if (l.status === "unlinked" || l.environment !== this.base.environment) continue;
-      pairs.set(this.key(l.connectionId, l.calendarId), { connectionId: l.connectionId, calendarId: l.calendarId });
+      pairs.add(this.key(l.connectionId, l.calendarId));
     }
-    const targets: SyncTarget[] = [];
-    for (const [k, p] of pairs) {
-      const c = this.connections.get(p.connectionId);
-      if (!c || c.status === "disconnected") continue;
+    return pairs;
+  }
+
+  async claimMaintenanceBatch(limit: number): Promise<MaintenanceBatch> {
+    const max = Math.max(1, Math.min(limit, 200));
+    const linked = this.linkedPairs();
+    type Candidate = { k: string; connectionId: string; calendarId: string; visit: number | null; dirty: number | null };
+    const candidates: Candidate[] = [];
+    for (const k of linked) {
+      const [connectionId, calendarId] = k.split("|") as [string, string];
+      if (this.connections.get(connectionId)?.status !== "active") continue;
       const s = this.states.get(k);
+      candidates.push({ k, connectionId, calendarId, visit: s?.lastVisitAt ?? null, dirty: s?.dirtyAt ? Date.parse(s.dirtyAt) : null });
+    }
+    // Até metade das vagas: dica do webhook ainda não atendida. O resto: os
+    // visitados há mais tempo (nunca visitados primeiro).
+    const hinted = candidates
+      .filter((x) => x.dirty !== null && (x.visit === null || x.dirty > x.visit))
+      .sort((a, b) => a.dirty! - b.dirty!)
+      .slice(0, Math.floor(max / 2));
+    const fair = [...candidates].sort((a, b) => (a.visit ?? -Infinity) - (b.visit ?? -Infinity) || a.k.localeCompare(b.k));
+    const picked = [...new Map([...hinted, ...fair].map((x) => [x.k, x])).values()].slice(0, max);
+
+    const targets: SyncTarget[] = [];
+    for (const p of picked) {
+      const c = this.connections.get(p.connectionId)!;
+      const s = this.states.get(p.k);
       targets.push({
         connectionId: p.connectionId,
         workspaceId: c.workspaceId,
@@ -112,8 +152,23 @@ export class InboundMemoryStore implements InboundStore {
         leaseUntil: s?.leaseUntil ? new Date(s.leaseUntil).toISOString() : null,
       });
     }
-    const channels: ChannelRecord[] = [...this.channels.values()]
-      .filter((w) => w.status !== "stopped")
+    // A visita é marcada na reserva: a próxima rodada começa pelos outros.
+    for (const p of picked) {
+      const s = this.states.get(p.k) ?? this.emptyState(p.connectionId, p.calendarId);
+      s.lastVisitAt = this.t();
+      this.states.set(p.k, s);
+    }
+
+    // Canais do lote + os que podem ter de ser encerrados em qualquer agenda.
+    const batchKeys = new Set(picked.map((p) => p.k));
+    const live = [...this.channels.values()].filter((w) => w.status !== "stopped");
+    const expired = (w: ChannelRow) => w.expiresAt !== null && Date.parse(w.expiresAt) <= this.t();
+    const channels = live
+      .filter((w) => {
+        const k = this.key(w.connectionId, w.calendarId);
+        return batchKeys.has(k) || !linked.has(k) || expired(w);
+      })
+      .sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt))
       .map((w) => {
         const c = this.connections.get(w.connectionId)!;
         return {
@@ -130,6 +185,10 @@ export class InboundMemoryStore implements InboundStore {
           syncReceivedAt: w.syncReceivedAt,
           createdAt: w.createdAt,
           updatedAt: w.updatedAt,
+          hasLinks: linked.has(this.key(w.connectionId, w.calendarId)),
+          replacementDelivered: live.some(
+            (o) => o !== w && o.connectionId === w.connectionId && o.calendarId === w.calendarId && o.status === "active" && o.syncReceivedAt !== null,
+          ),
         };
       });
     return structuredClone({ targets, channels });
@@ -140,7 +199,7 @@ export class InboundMemoryStore implements InboundStore {
     const k = this.key(connectionId, calendarId);
     let s = this.states.get(k);
     if (!s) {
-      s = { connectionId, calendarId, syncToken: null, fullSyncAt: null, lastRunAt: null, lastError: null, dirtyAt: null, leaseId: null, leaseStartedAt: null, leaseUntil: null };
+      s = this.emptyState(connectionId, calendarId);
       this.states.set(k, s);
     }
     if (s.leaseUntil !== null && s.leaseUntil >= this.t()) return null;
@@ -151,16 +210,18 @@ export class InboundMemoryStore implements InboundStore {
     return { leaseId: s.leaseId, syncToken: s.syncToken, fullSyncAt: s.fullSyncAt };
   }
 
+  /** Estado cuja trava AINDA é desta execução (como `private.lock_sync_lease`). */
   private leased(actor: string, leaseId: string): StateRow | null {
     const s = [...this.states.values()].find((x) => x.leaseId === leaseId);
     if (!s) return null;
     if (this.connections.get(s.connectionId)?.userId !== actor) throw new Error("connection_not_found");
+    if ((s.leaseUntil ?? 0) < this.t()) return null;
     return s;
   }
 
   async resetSyncToken(actor: string, leaseId: string): Promise<boolean> {
     const s = this.leased(actor, leaseId);
-    if (!s || (s.leaseUntil ?? 0) < this.t()) return false;
+    if (!s) return false;
     s.syncToken = null;
     s.lastError = "sync_token_invalid";
     this.audit.push({ action: "calendar.sync.token_reset", metadata: {} });
@@ -174,7 +235,7 @@ export class InboundMemoryStore implements InboundStore {
     opts: { syncToken?: string | undefined; full: boolean; error?: string | undefined },
   ): Promise<boolean> {
     const s = this.leased(actor, leaseId);
-    if (!s || (s.leaseUntil ?? 0) < this.t()) return false;
+    if (!s) return false;
     const links = [...this.base.links.values()].filter((l) => l.connectionId === s.connectionId && l.calendarId === s.calendarId);
     if (outcome === "success") {
       if (!opts.syncToken) throw new Error("sync_token_required");
@@ -230,21 +291,10 @@ export class InboundMemoryStore implements InboundStore {
       });
   }
 
-  async applyInbound(
-    actor: string,
-    params: {
-      linkId: string;
-      expectedBaseEtag: string | null;
-      expectedVersion: number | null;
-      title?: string | undefined;
-      dueAt?: string | undefined;
-      conflicts: InboundConflict[];
-      state: InboundState;
-    },
-  ): Promise<ApplyInboundResult> {
+  async applyInbound(actor: string, params: Parameters<InboundStore["applyInbound"]>[1]): Promise<ApplyInboundResult> {
     const hook = this.beforeApply;
     this.beforeApply = undefined;
-    hook?.();
+    await hook?.();
 
     const result = this.applyNow(actor, params);
     this.applyCalls.push({ linkId: params.linkId, status: result.status });
@@ -255,11 +305,14 @@ export class InboundMemoryStore implements InboundStore {
     actor: string,
     params: Parameters<InboundStore["applyInbound"]>[1],
   ): ApplyInboundResult {
+    // A trava primeiro: tem de ser desta execução, da conexão e da agenda do vínculo.
+    const lease = this.leased(actor, params.leaseId);
     const link = this.base.links.get(params.linkId);
     if (!link || link.status === "unlinked") throw new Error("link_not_found");
     if (link.environment !== this.base.environment) throw new Error("calendar_environment_mismatch");
     const c = this.connections.get(link.connectionId);
     if (c?.userId !== actor || c.status !== "active") throw new Error("connection_not_found");
+    if (!lease || lease.connectionId !== link.connectionId || lease.calendarId !== link.calendarId) return { status: "lease_lost" };
     if (link.baseEtag !== params.expectedBaseEtag) return { status: "stale_link" };
 
     let version: number | null = null;
@@ -398,19 +451,7 @@ export class InboundMemoryStore implements InboundStore {
       const k = this.key(w.connectionId, w.calendarId);
       const s = this.states.get(k);
       if (s) s.dirtyAt = this.iso();
-      else
-        this.states.set(k, {
-          connectionId: w.connectionId,
-          calendarId: w.calendarId,
-          syncToken: null,
-          fullSyncAt: null,
-          lastRunAt: null,
-          lastError: null,
-          dirtyAt: this.iso(),
-          leaseId: null,
-          leaseStartedAt: null,
-          leaseUntil: null,
-        });
+      else this.states.set(k, { ...this.emptyState(w.connectionId, w.calendarId), dirtyAt: this.iso() });
     }
     return "accepted";
   }

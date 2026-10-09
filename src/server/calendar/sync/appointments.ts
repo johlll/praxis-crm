@@ -633,6 +633,12 @@ async function pushUpdate(
     // A base avança SÓ nos campos reconciliados; o que mudou apenas no Google
     // fica para a sincronização de entrada, em vez de ser engolido aqui.
     const next = nextBase(base, stateOfEvent(latest), plan.reconciled);
+    // O `etag` da base certifica que TODOS os campos da base batem com aquele
+    // evento — é o que a entrada usa para reconhecer o eco. Se algum campo
+    // ficou para a entrada (ex.: título mudado só no Google enquanto o CRM
+    // remarcava), a base mantém o `etag` anterior, que não bate mais com o
+    // Google e obriga a entrada a ler o detalhe e trazer o que falta.
+    const fullyReconciled = !googleChangedSinceBase(next, stateOfEvent(latest));
     const meet = meetOf(latest);
     // Horário reconciliado: a duração do vínculo é a do evento que ficou (a do
     // Google, se ele venceu), para início, fim e duração permanecerem coerentes.
@@ -642,7 +648,7 @@ async function pushUpdate(
       status: "succeeded",
       state: {
         eventId: link.eventId,
-        etag: latest.etag,
+        etag: fullyReconciled ? latest.etag : link.baseEtag,
         title: next.title,
         start: next.start,
         end: next.end,

@@ -42,7 +42,19 @@ export type ChannelRecord = {
   syncReceivedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** A agenda do canal tem vínculo ativo no ambiente — independente do lote. */
+  hasLinks: boolean;
+  /** Há outro canal ATIVO da mesma agenda que já entregou a primeira mensagem. */
+  replacementDelivered: boolean;
 };
+
+/**
+ * Lote de uma rodada de manutenção. `targets` é só o lote (justo: os
+ * visitados há mais tempo primeiro, com parte reservada para a dica do
+ * webhook); `channels` são os canais do lote mais os que podem ter de ser
+ * encerrados em qualquer agenda (sem vínculo ou vencidos).
+ */
+export type MaintenanceBatch = { targets: SyncTarget[]; channels: ChannelRecord[] };
 
 export type SyncLease = { leaseId: string; syncToken: string | null; fullSyncAt: string | null };
 
@@ -92,14 +104,18 @@ export type ApplyInboundResult =
   /** A atividade mudou no CRM desde a leitura: reler e reavaliar. */
   | { status: "stale_activity" }
   /** O dono da conexão não alcança mais a atividade: nada aplicado, vínculo para atenção. */
-  | { status: "not_authorized" };
+  | { status: "not_authorized" }
+  /** A trava desta execução venceu ou foi tomada por outra: nada aplicado. */
+  | { status: "lease_lost" };
 
 export type NotificationResult = "accepted" | "ignored" | "rejected";
 
 export interface InboundStore {
-  listMaintenance(): Promise<{ targets: SyncTarget[]; channels: ChannelRecord[] }>;
+  /** Reserva o lote da rodada (e marca a visita, para a próxima começar pelos outros). */
+  claimMaintenanceBatch(limit: number): Promise<MaintenanceBatch>;
 
   claimSync(actorUserId: string, connectionId: string, calendarId: string, leaseSeconds?: number): Promise<SyncLease | null>;
+  /** `false` = a trava não é mais desta execução: nada foi gravado. */
   resetSyncToken(actorUserId: string, leaseId: string): Promise<boolean>;
   finishSync(
     actorUserId: string,
@@ -112,6 +128,8 @@ export interface InboundStore {
   applyInbound(
     actorUserId: string,
     params: {
+      /** Trava da execução: conferida no banco na mesma transação da escrita. */
+      leaseId: string;
       linkId: string;
       expectedBaseEtag: string | null;
       expectedVersion: number | null;

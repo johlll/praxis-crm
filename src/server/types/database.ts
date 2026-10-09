@@ -516,6 +516,7 @@ export type Database = {
           last_error: string | null
           last_error_at: string | null
           last_run_at: string | null
+          last_visit_at: string | null
           lease_id: string | null
           lease_started_at: string | null
           lease_until: string | null
@@ -535,6 +536,7 @@ export type Database = {
           last_error?: string | null
           last_error_at?: string | null
           last_run_at?: string | null
+          last_visit_at?: string | null
           lease_id?: string | null
           lease_started_at?: string | null
           lease_until?: string | null
@@ -554,6 +556,7 @@ export type Database = {
           last_error?: string | null
           last_error_at?: string | null
           last_run_at?: string | null
+          last_visit_at?: string | null
           lease_id?: string | null
           lease_started_at?: string | null
           lease_until?: string | null
@@ -3407,6 +3410,7 @@ export type Database = {
           p_due_at: string
           p_expected_base_etag: string
           p_expected_version: number
+          p_lease_id: string
           p_link_id: string
           p_state: Json
           p_title: string
@@ -3503,6 +3507,10 @@ export type Database = {
           p_lock_seconds?: number
         }
         Returns: boolean
+      }
+      claim_calendar_maintenance_batch: {
+        Args: { p_limit?: number }
+        Returns: Json
       }
       claim_calendar_sync: {
         Args: {
@@ -3972,7 +3980,6 @@ export type Database = {
         }
         Returns: Json
       }
-      list_calendar_maintenance: { Args: { p_limit?: number }; Returns: Json }
       list_clients: {
         Args: {
           p_page?: number

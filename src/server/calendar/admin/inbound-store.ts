@@ -2,12 +2,11 @@ import { createCalendarAdminSupabaseClient } from "@/server/calendar/admin/supab
 import type { Json } from "@/server/types/database";
 import type {
   ApplyInboundResult,
-  ChannelRecord,
   InboundLink,
   InboundStore,
+  MaintenanceBatch,
   NotificationResult,
   SyncLease,
-  SyncTarget,
 } from "@/server/calendar/sync/inbound-types";
 
 /**
@@ -23,10 +22,10 @@ export function createSupabaseInboundStore(): InboundStore {
   };
 
   return {
-    async listMaintenance() {
-      const { data, error } = await admin.rpc("list_calendar_maintenance", {});
+    async claimMaintenanceBatch(limit) {
+      const { data, error } = await admin.rpc("claim_calendar_maintenance_batch", { p_limit: limit });
       check(error);
-      const value = (data ?? {}) as unknown as { targets?: SyncTarget[]; channels?: ChannelRecord[] };
+      const value = (data ?? {}) as unknown as Partial<MaintenanceBatch>;
       return { targets: value.targets ?? [], channels: value.channels ?? [] };
     },
 
@@ -74,6 +73,7 @@ export function createSupabaseInboundStore(): InboundStore {
       const { data, error } = await admin.rpc("apply_google_inbound_change", {
         p_link_id: params.linkId,
         p_actor_user_id: actorUserId,
+        p_lease_id: params.leaseId,
         p_expected_base_etag: params.expectedBaseEtag as string,
         p_expected_version: params.expectedVersion as number,
         p_title: params.title ?? "",
