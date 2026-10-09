@@ -27,6 +27,12 @@ export function ActivityRowActions({
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const caps = useCalendarCapabilities();
+  const info = caps.enabled ? activity.calendar : null;
+  const deleteBlocked =
+    !!info &&
+    info.status !== "cancelled_in_google" &&
+    info.status !== "missing_in_google" &&
+    (!info.isMine || info.status === "not_linked");
 
   const scope = {
     leadId: activity.leadId,
@@ -102,8 +108,9 @@ export function ActivityRowActions({
         <Button
           variant="ghost"
           size="sm"
-          disabled={isPending}
+          disabled={isPending || deleteBlocked}
           aria-label={`Excluir ${activity.title}`}
+          title={deleteBlocked ? "Vinculado à agenda de outra pessoa (ou com inclusão incerta): resolva o vínculo antes de excluir." : undefined}
           onClick={handleDelete}
         >
           <Trash2 size={14} aria-hidden />

@@ -355,6 +355,10 @@ export type Database = {
           meet_status: string | null
           meet_url: string | null
           status: Database["public"]["Enums"]["calendar_link_status"]
+          sync_error: string | null
+          sync_operation: string | null
+          sync_state: string
+          sync_state_at: string | null
           updated_at: string
           workspace_id: string
         }
@@ -380,6 +384,10 @@ export type Database = {
           meet_status?: string | null
           meet_url?: string | null
           status?: Database["public"]["Enums"]["calendar_link_status"]
+          sync_error?: string | null
+          sync_operation?: string | null
+          sync_state?: string
+          sync_state_at?: string | null
           updated_at?: string
           workspace_id: string
         }
@@ -405,6 +413,10 @@ export type Database = {
           meet_status?: string | null
           meet_url?: string | null
           status?: Database["public"]["Enums"]["calendar_link_status"]
+          sync_error?: string | null
+          sync_operation?: string | null
+          sync_state?: string
+          sync_state_at?: string | null
           updated_at?: string
           workspace_id?: string
         }
@@ -3813,6 +3825,14 @@ export type Database = {
           p_opportunity_id: string
         }
         Returns: Json
+      }
+      mark_calendar_link_pending: {
+        Args: {
+          p_activity_id: string
+          p_actor_user_id: string
+          p_reason: string
+        }
+        Returns: boolean
       }
       mark_outbox_failed: {
         Args: {

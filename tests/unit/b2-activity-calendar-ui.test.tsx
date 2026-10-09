@@ -20,6 +20,7 @@ const actions = vi.hoisted(() => ({
   createAppointmentAction: vi.fn(),
   rescheduleAppointmentAction: vi.fn(),
   checkSlotAvailabilityAction: vi.fn(),
+  recoverUncertainCreateAction: vi.fn(),
 }));
 
 vi.mock("@/modules/activities/actions", () => ({
@@ -36,6 +37,7 @@ vi.mock("@/modules/calendar/appointment-actions", () => ({
   createAppointmentAction: actions.createAppointmentAction,
   rescheduleAppointmentAction: actions.rescheduleAppointmentAction,
   checkSlotAvailabilityAction: actions.checkSlotAvailabilityAction,
+  recoverUncertainCreateAction: actions.recoverUncertainCreateAction,
 }));
 
 import { CalendarBadge } from "@/components/calendar/calendar-badge";
@@ -58,6 +60,8 @@ const INFO: ActivityCalendarInfo = {
   meetStatus: null,
   meetUrl: null,
   lastSyncedAt: null,
+  syncState: "in_sync",
+  syncOperation: null,
 };
 
 function activity(overrides: Partial<ActivityListItem> = {}): ActivityListItem {
@@ -168,8 +172,13 @@ describe("ações de linha do Google Agenda", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("criar o Meet chama a ação e confirma", async () => {
-    actions.addMeetAction.mockResolvedValue({ ok: true, result: "updated", meetUrl: "https://meet.simulated/x" });
+  it("criar o Meet chama a ação e mostra a mensagem do resultado", async () => {
+    actions.addMeetAction.mockResolvedValue({
+      ok: true,
+      result: "updated",
+      meetUrl: "https://meet.simulated/x",
+      notice: { level: "success", message: "Link do Meet criado.", meetUrl: "https://meet.simulated/x" },
+    });
     withCaps(ON, <CalendarRowActions activity={activity({ calendar: INFO })} />);
     fireEvent.click(screen.getByRole("button", { name: /Criar link do Meet/ }));
     await waitFor(() => expect(screen.getByText("Link do Meet criado.")).toBeInTheDocument());
@@ -197,6 +206,102 @@ describe("ações de linha do Google Agenda", () => {
     withCaps(ON, <CalendarRowActions activity={activity({ calendar: INFO })} />);
     fireEvent.click(screen.getByRole("button", { name: /Criar link do Meet/ }));
     await waitFor(() => expect(screen.getByText("Não foi possível acessar a agenda.")).toBeInTheDocument());
+  });
+});
+
+describe("C — mensagens fiéis ao resultado (interface)", () => {
+  async function clicar(rotulo: RegExp, info: ActivityCalendarInfo = INFO) {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    withCaps(ON, <CalendarRowActions activity={activity({ calendar: info })} />);
+    fireEvent.click(screen.getByRole("button", { name: rotulo }));
+    return screen.findByTestId("calendar-row-feedback");
+  }
+
+  it("evento mantido no Google (kept_google_event) NÃO aparece como 'removido'", async () => {
+    actions.cancelAppointmentAction.mockResolvedValue({
+      ok: false,
+      result: "kept_google_event",
+      notice: { level: "warning", message: "O evento NÃO foi removido: ele foi alterado no Google Agenda depois da última sincronização." },
+    });
+    const box = await clicar(/Remover .* do Google Agenda/);
+    expect(box).toHaveTextContent(/NÃO foi removido/);
+    expect(box).not.toHaveTextContent(/^Removido do Google Agenda/);
+  });
+
+  it("Meet ainda em criação NÃO aparece como 'link criado'", async () => {
+    actions.addMeetAction.mockResolvedValue({
+      ok: true,
+      result: "updated",
+      meetUrl: null,
+      notice: { level: "warning", message: "O Meet foi pedido e ainda está sendo criado pelo Google." },
+    });
+    const box = await clicar(/Criar link do Meet/);
+    expect(box).toHaveTextContent(/ainda está sendo criado/);
+    expect(box).not.toHaveTextContent(/Link do Meet criado/);
+  });
+
+  it("conflito resolvido explica o que aconteceu", async () => {
+    actions.rescheduleAppointmentAction.mockResolvedValue({
+      ok: true,
+      result: "conflict_resolved",
+      notice: { level: "warning", message: "O evento também foi alterado no Google Agenda ao mesmo tempo (horário): o Google prevaleceu." },
+    });
+    const box = await clicar(/Sincronizar/, { ...INFO, syncState: "pending", syncOperation: "update" });
+    expect(box).toHaveTextContent(/Google prevaleceu/);
+  });
+
+  it("resultado incerto aparece CLARAMENTE como incerto (não como falha genérica nem sucesso)", async () => {
+    actions.cancelAppointmentAction.mockResolvedValue({
+      ok: false,
+      result: "uncertain",
+      notice: { level: "warning", message: "Resultado incerto no Google Agenda: não foi possível confirmar se a alteração foi aplicada." },
+    });
+    const box = await clicar(/Remover .* do Google Agenda/);
+    expect(box).toHaveTextContent(/Resultado incerto/);
+    expect(box).not.toHaveTextContent(/Não foi possível concluir/);
+  });
+});
+
+describe("B — estado gravado aparece no selo e oferece a ação certa", () => {
+  it.each([
+    ["pending", /sincronização pendente/],
+    ["failed", /falha na sincronização/],
+    ["uncertain", /resultado incerto — verifique/],
+  ] as const)("syncState %s aparece no selo", (state, texto) => {
+    render(<CalendarBadge info={{ ...INFO, syncState: state, syncOperation: "update" }} />);
+    expect(screen.getByTestId("calendar-badge")).toHaveTextContent(texto);
+  });
+
+  it("incerto: o botão é 'Verificar' (consulta antes de repetir)", () => {
+    withCaps(ON, <CalendarRowActions activity={activity({ calendar: { ...INFO, syncState: "uncertain", syncOperation: "update" } })} />);
+    expect(screen.getByRole("button", { name: /^Verificar Reunião fictícia com o Google Agenda/ })).toBeInTheDocument();
+  });
+
+  it("inclusão incerta (ainda sem vínculo): selo próprio e botão 'Verificar inclusão'", async () => {
+    const info: ActivityCalendarInfo = { ...INFO, status: "not_linked", syncState: "uncertain", syncOperation: "create" };
+    render(<CalendarBadge info={info} />);
+    expect(screen.getByTestId("calendar-badge")).toHaveTextContent(/Inclusão no Google Agenda incerta/);
+
+    actions.recoverUncertainCreateAction.mockResolvedValue({
+      ok: true,
+      result: "adopted",
+      notice: { level: "success", message: "Confirmado: o evento estava no Google Agenda e foi vinculado à atividade." },
+    });
+    withCaps(ON, <CalendarRowActions activity={activity({ calendar: info })} />);
+    fireEvent.click(screen.getByRole("button", { name: /Verificar inclusão/ }));
+    expect(await screen.findByText(/Confirmado: o evento estava no Google Agenda/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Adicionar .* ao Google Agenda/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("A — vínculo existente nunca é escondido por tipo ou horário", () => {
+  it.each([
+    ["tarefa", { type: "task" as const }],
+    ["sem horário", { hasTime: false }],
+    ["concluída", { status: "done" as const }],
+  ])("atividade %s com vínculo ainda mostra os controles da agenda", (_nome, overrides) => {
+    withCaps(ON, <CalendarRowActions activity={activity({ ...overrides, calendar: INFO })} />);
+    expect(screen.getByRole("button", { name: /Remover .* do Google Agenda/ })).toBeInTheDocument();
   });
 });
 
@@ -355,10 +460,16 @@ describe("reagendar", () => {
     expect(actions.rescheduleActivityAction.mock.calls[0]![5]).toEqual({ durationMinutes: 120 });
   });
 
-  it("agenda de outra pessoa: avisa e não oferece duração", async () => {
+  it("agenda de outra pessoa: explica e NÃO deixa reagendar (o servidor também recusa)", async () => {
     open({ ...INFO, isMine: false });
-    expect(await screen.findByText(/agenda de outra pessoa: o Google Agenda não será alterado/)).toBeInTheDocument();
+    expect(await screen.findByTestId("calendar-reschedule-blocked")).toHaveTextContent(/só ela pode reagendá-lo/);
     expect(screen.queryByLabelText(/Duração no Google Agenda/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reagendar" })).toBeDisabled();
+  });
+
+  it("compromisso meu vinculado: o horário passa a ser obrigatório", async () => {
+    open(INFO);
+    expect(await screen.findByLabelText(/Horário/)).toBeRequired();
   });
 
   it("sem vínculo ou com a integração desligada: o diálogo é o de sempre", async () => {
@@ -377,6 +488,31 @@ describe("reagendar", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reagendar" }));
     expect(await screen.findByText("O evento foi cancelado no Google Agenda.")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Fechar" }).length).toBeGreaterThan(0);
+  });
+});
+
+describe("editar e excluir com vínculo", () => {
+  it("vínculo meu: o tipo fica travado (título livre)", async () => {
+    const { EditActivityDialog } = await import("@/components/activities/edit-activity-dialog");
+    withCaps(ON, <EditActivityDialog activity={activity({ calendar: INFO })} />);
+    fireEvent.click(screen.getByRole("button", { name: /Editar/ }));
+    expect(await screen.findByLabelText("Tipo")).toBeDisabled();
+    expect(screen.getByLabelText("Título")).toBeEnabled();
+  });
+
+  it("agenda de outra pessoa: tipo e título travados; notas e prioridade livres", async () => {
+    const { EditActivityDialog } = await import("@/components/activities/edit-activity-dialog");
+    withCaps(ON, <EditActivityDialog activity={activity({ calendar: { ...INFO, isMine: false } })} />);
+    fireEvent.click(screen.getByRole("button", { name: /Editar/ }));
+    expect(await screen.findByLabelText("Título")).toBeDisabled();
+    expect(screen.getByLabelText("Tipo")).toBeDisabled();
+    expect(screen.getByLabelText("Notas")).toBeEnabled();
+    expect(screen.getByLabelText("Prioridade")).toBeEnabled();
+  });
+
+  it("agenda de outra pessoa: excluir fica indisponível", () => {
+    withCaps(ON, <ActivityRowActions activity={activity({ calendar: { ...INFO, isMine: false } })} members={[]} />);
+    expect(screen.getByRole("button", { name: /Excluir/ })).toBeDisabled();
   });
 });
 

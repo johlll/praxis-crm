@@ -7,7 +7,17 @@ export type CalendarLinkStatus =
   | "linked"
   | "missing_in_google"
   | "cancelled_in_google"
-  | "needs_attention";
+  | "needs_attention"
+  /** Sem vínculo, mas uma inclusão no Google ficou com resultado incerto. */
+  | "not_linked";
+
+/**
+ * Estado da última sincronização, GRAVADO no banco (sobrevive ao recarregar):
+ * `pending` = o CRM mudou e o Google ainda não (temporário, pode tentar de
+ * novo); `failed` = o Google recusou de forma definitiva; `uncertain` = não se
+ * sabe se o Google aplicou (consultar antes de repetir).
+ */
+export type CalendarSyncState = "in_sync" | "pending" | "failed" | "uncertain";
 
 /** O que a interface sabe do vínculo de uma atividade com o Google Agenda.
  * Nunca traz título, ids de agenda/evento, e-mail da conta nem token. */
@@ -19,6 +29,8 @@ export type ActivityCalendarInfo = {
   meetStatus: "pending" | "success" | "failed" | null;
   meetUrl: string | null;
   lastSyncedAt: string | null;
+  syncState: CalendarSyncState;
+  syncOperation: "create" | "update" | "delete" | "meet" | null;
 };
 
 /** Aviso sobre o Google Agenda que acompanha o resultado de uma ação de

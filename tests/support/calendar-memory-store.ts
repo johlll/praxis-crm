@@ -20,8 +20,15 @@ export type StoredIntent = {
   activityId: string;
   operation: EffectOperation;
   expected: Record<string, unknown>;
-  status: "pending" | "succeeded" | "failed" | "uncertain";
+  status: "pending" | "succeeded" | "failed" | "uncertain" | "superseded";
   errorCode?: string | undefined;
+};
+
+/** Estado de sincronização do vínculo (mesma regra da migration da etapa 2b). */
+export type StoredSync = {
+  syncState?: "in_sync" | "pending" | "failed" | "uncertain";
+  syncOperation?: EffectOperation | null;
+  syncError?: string | null;
 };
 
 export type StoredConflict = {
@@ -33,7 +40,9 @@ export type StoredConflict = {
 };
 
 export class MemoryStore implements SyncStore {
-  links = new Map<string, LinkRecord & { activityId: string }>();
+  links = new Map<string, LinkRecord & { activityId: string } & StoredSync>();
+  /** Pendências marcadas sem intenção (preparação/conexão falhou depois de salvar no CRM). */
+  pendingMarks: Array<{ activityId: string; reason: string }> = [];
   intents: StoredIntent[] = [];
   conflicts: StoredConflict[] = [];
   appliedToActivity: Array<{ activityId: string; title?: string | undefined; dueAt?: string | undefined }> = [];
@@ -73,21 +82,43 @@ export class MemoryStore implements SyncStore {
     status: "succeeded" | "failed" | "uncertain";
     errorCode?: string | undefined;
     state?: LinkState | undefined;
+    syncState?: "pending" | "failed" | undefined;
   }): Promise<string | null> {
     const intent = this.intents.find((i) => i.id === params.intentId);
     if (!intent) throw new Error("intent_not_found");
     // Idempotente: resultado definitivo não é reescrito.
-    if (intent.status === "succeeded" || intent.status === "failed") return null;
+    if (intent.status === "succeeded" || intent.status === "failed" || intent.status === "superseded") return null;
     intent.status = params.status;
     intent.errorCode = params.errorCode;
-    // Como no banco: perda de acesso marca o vínculo ATIVO da conexão como pendente.
-    if (params.status === "failed" && params.state?.linkStatus === "needs_attention") {
-      const link = [...this.links.values()].find(
+
+    // Como no banco: um desfecho definitivo encerra intenções antigas ainda
+    // abertas (incertas) da mesma atividade e conexão.
+    if (params.status !== "uncertain") {
+      for (const other of this.intents) {
+        if (other !== intent && other.activityId === intent.activityId && other.connectionId === intent.connectionId && (other.status === "uncertain" || other.status === "pending")) {
+          other.status = "superseded";
+        }
+      }
+    }
+
+    const active = () =>
+      [...this.links.values()].find(
         (l) => l.activityId === intent.activityId && l.status !== "unlinked" && l.connectionId === intent.connectionId,
       );
-      if (link) link.status = "needs_attention";
+
+    if (params.status !== "succeeded") {
+      // Como no banco: falha ou incerteza ficam GRAVADAS no vínculo ativo
+      // (visíveis depois de recarregar); perda de acesso o marca como pendente.
+      const link = active();
+      if (link) {
+        if (params.status === "failed" && params.state?.linkStatus === "needs_attention") link.status = "needs_attention";
+        link.syncState = params.status === "uncertain" ? "uncertain" : (params.syncState ?? "failed");
+        link.syncOperation = intent.operation;
+        link.syncError = params.errorCode ?? null;
+      }
+      return null;
     }
-    if (params.status !== "succeeded" || !params.state) return null;
+    if (!params.state) return null;
 
     // Como no banco: o estado viaja como JSON — chave AUSENTE preserva o valor
     // guardado; chave presente (inclusive null) o substitui.
@@ -110,7 +141,7 @@ export class MemoryStore implements SyncStore {
       meetUrl: pick("meetUrl", existing?.meetUrl),
     };
     if (existing) {
-      Object.assign(existing, next);
+      Object.assign(existing, next, { syncState: "in_sync", syncOperation: null, syncError: null });
       return existing.id;
     }
     this.seq += 1;
@@ -123,9 +154,22 @@ export class MemoryStore implements SyncStore {
       eventId: s.eventId,
       generation: 1,
       ...next,
+      syncState: "in_sync" as const,
+      syncOperation: null,
+      syncError: null,
     };
     this.links.set(link.id, link);
     return link.id;
+  }
+
+  async markLinkPending(params: { activityId: string; reason: string }): Promise<boolean> {
+    const link = [...this.links.values()].find((l) => l.activityId === params.activityId && l.status !== "unlinked");
+    if (!link) return false;
+    link.syncState = "pending";
+    link.syncOperation = "update";
+    link.syncError = params.reason;
+    this.pendingMarks.push(params);
+    return true;
   }
 
   async recordConflict(params: {

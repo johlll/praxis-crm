@@ -10,6 +10,8 @@ import { zonedInstant } from "@/lib/timezone";
 import {
   cancelLinkedBeforeDelete,
   createForNewActivity,
+  guardActivityChange,
+  isValidTypedDuration,
   parseCalendarCreate,
   preflightCalendarCreate,
   syncLinkedActivity,
@@ -131,6 +133,15 @@ export async function updateActivityAction(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
   }
 
+  // Vínculo com o Google conferido ANTES da escrita (agenda de outra pessoa,
+  // mudança de tipo). Notas e prioridade não disparam sincronização.
+  const calendarGuard = await guardActivityChange(parsed.data.activityId, {
+    kind: "update",
+    title: parsed.data.title,
+    type: parsed.data.type,
+  });
+  if (!calendarGuard.ok) return { ok: false, error: calendarGuard.error };
+
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.rpc("update_activity", {
     p_activity_id: parsed.data.activityId,
@@ -146,8 +157,8 @@ export async function updateActivityAction(
     return { ok: false, error: toUserMessage(error) };
   }
 
-  // Título novo de um compromisso vinculado vai ao Google (sem vínculo, nada acontece).
-  const calendar = await syncLinkedActivity(parsed.data.activityId);
+  // Título novo de um compromisso vinculado à MINHA agenda vai ao Google.
+  const calendar = calendarGuard.sync ? await syncLinkedActivity(parsed.data.activityId) : null;
 
   revalidateActivityRoutes();
   return { ok: true, activityId: parsed.data.activityId, ...(calendar ? { calendar } : {}) };
@@ -170,6 +181,13 @@ export async function rescheduleActivityAction(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
   }
 
+  // Duração conferida no servidor, sem depender do navegador.
+  if (calendar?.durationMinutes !== undefined && !isValidTypedDuration(calendar.durationMinutes)) {
+    return { ok: false, error: toUserMessage({ message: "invalid_duration" }) };
+  }
+  const guardResult = await guardActivityChange(parsed.data.activityId, { kind: "reschedule", dueTime: parsed.data.dueTime ?? "" });
+  if (!guardResult.ok) return { ok: false, error: guardResult.error };
+
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.rpc("reschedule_activity", {
     p_activity_id: parsed.data.activityId,
@@ -182,10 +200,12 @@ export async function rescheduleActivityAction(
     return { ok: false, error: toUserMessage(error) };
   }
 
-  const notice = await syncLinkedActivity(
-    parsed.data.activityId,
-    calendar?.durationMinutes !== undefined ? { durationMinutes: calendar.durationMinutes } : {},
-  );
+  const notice = guardResult.sync
+    ? await syncLinkedActivity(
+        parsed.data.activityId,
+        calendar?.durationMinutes !== undefined ? { durationMinutes: calendar.durationMinutes } : {},
+      )
+    : null;
 
   revalidateActivityRoutes(scope?.leadId, scope?.opportunityId);
   return { ok: true, activityId: parsed.data.activityId, ...(notice ? { calendar: notice } : {}) };
@@ -261,7 +281,9 @@ export async function deleteActivityAction(
 
   // Vinculada ao Google: o evento sai da agenda ANTES (o vínculo se perde com a
   // atividade). Se a agenda não puder ser alcançada, a atividade NÃO é excluída.
-  const beforeDelete = await cancelLinkedBeforeDelete(parsed.data.activityId);
+  const guardResult = await guardActivityChange(parsed.data.activityId, { kind: "delete" });
+  if (!guardResult.ok) return { ok: false, error: guardResult.error };
+  const beforeDelete = await cancelLinkedBeforeDelete(parsed.data.activityId, guardResult.info);
   if (!beforeDelete.proceed) return { ok: false, error: beforeDelete.error };
 
   const supabase = await createServerSupabaseClient();

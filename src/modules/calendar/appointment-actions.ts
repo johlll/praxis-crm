@@ -6,12 +6,23 @@ import { z } from "zod";
 import { toUserMessage } from "@/lib/errors";
 import { zonedInstant } from "@/lib/timezone";
 import { uuidSchema } from "@/lib/uuid";
-import { errorMessage, prepare, toCreateOptions } from "@/modules/calendar/appointment-service";
+import {
+  errorMessage,
+  noticeForCancel,
+  noticeForCreate,
+  noticeForMeet,
+  noticeForRecover,
+  noticeForUpdate,
+  prepare,
+  toCreateOptions,
+} from "@/modules/calendar/appointment-service";
+import type { CalendarNotice } from "@/modules/calendar/types";
 import {
   addMeetToAppointment,
   cancelAppointment,
   createAppointment,
   getAvailability,
+  recoverUncertainCreate,
   rescheduleAppointment,
 } from "@/server/calendar/sync/appointments";
 
@@ -35,6 +46,8 @@ export type AppointmentActionState = {
   result?: string;
   meetUrl?: string | null;
   busy?: Array<{ start: string; end: string }>;
+  /** Mensagem fiel ao resultado concreto (removido ≠ mantido; Meet pronto ≠ em criação; incerto). */
+  notice?: CalendarNotice;
 };
 
 /** As telas que mostram o selo da agenda (listas e agenda semanal). */
@@ -60,12 +73,18 @@ const createSchema = z.object({
   confirmInvites: z.preprocess((v) => v === "on" || v === "true", z.boolean()),
 });
 
-function describe(result: { status: string; meet?: { url: string | null } }): AppointmentActionState {
-  const ok = !["failed", "uncertain", "needs_attention", "busy", "access_lost"].includes(result.status);
+/** Só estes desfechos cumprem o que foi pedido; o resto volta como não-ok, com a explicação. */
+const DONE = new Set(["created", "already_linked", "updated", "unchanged", "conflict_resolved", "cancelled", "already_gone", "adopted", "not_created"]);
+
+function describe(
+  result: { status: string; meet?: { url: string | null } },
+  notice: CalendarNotice | null,
+): AppointmentActionState {
   return {
-    ok,
+    ok: DONE.has(result.status),
     result: result.status,
     meetUrl: result.meet?.url ?? null,
+    ...(notice ? { notice } : {}),
     ...(result.status === "access_lost" ? { error: toUserMessage({ message: "calendar_access_lost" }) } : {}),
   };
 }
@@ -103,7 +122,7 @@ export async function createAppointmentAction(
     if (result.status === "busy") return { ok: false, result: "busy", busy: result.busy };
     if (result.status === "failed") return { ok: false, result: "failed", error: toUserMessage({ message: result.code }) };
     revalidateCalendarRoutes();
-    return describe(result.status === "already_linked" ? { status: "already_linked" } : result);
+    return describe(result.status === "already_linked" ? { status: "already_linked" } : result, noticeForCreate(result));
   } catch (error) {
     return failure(error, prep.ctx);
   }
@@ -124,7 +143,7 @@ export async function rescheduleAppointmentAction(
   try {
     const result = await rescheduleAppointment(deps, conn, activity);
     revalidateCalendarRoutes();
-    return describe(result);
+    return describe(result, noticeForUpdate(result) ?? { level: "success", message: "O Google Agenda já estava em dia." });
   } catch (error) {
     return failure(error, prep.ctx);
   }
@@ -142,7 +161,7 @@ export async function addMeetAction(_prev: AppointmentActionState, formData: For
   try {
     const result = await addMeetToAppointment(deps, conn, activity);
     revalidateCalendarRoutes();
-    return describe(result);
+    return describe(result, noticeForMeet(result));
   } catch (error) {
     return failure(error, prep.ctx);
   }
@@ -163,7 +182,33 @@ export async function cancelAppointmentAction(
   try {
     const result = await cancelAppointment(deps, conn, activity);
     revalidateCalendarRoutes();
-    return describe(result);
+    return describe(result, noticeForCancel(result));
+  } catch (error) {
+    return failure(error, prep.ctx);
+  }
+}
+
+/**
+ * "Verificar inclusão": a inclusão no Google ficou com resultado incerto. Só
+ * CONSULTA o Google — se o evento existe, é vinculado; se comprovadamente não
+ * existe, diz isso. Nunca cria nada sozinho.
+ */
+export async function recoverUncertainCreateAction(
+  _prev: AppointmentActionState,
+  formData: FormData,
+): Promise<AppointmentActionState> {
+  const parsed = activityIdSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { ok: false, error: "Compromisso inválido." };
+
+  const prep = await prepare(parsed.data.activityId);
+  if (!prep.ok) return { ok: false, error: prep.error };
+  const { deps, conn, activity } = prep.prepared;
+  if (!activity) return failure(new Error("activity_not_found"));
+
+  try {
+    const result = await recoverUncertainCreate(deps, conn, activity);
+    revalidateCalendarRoutes();
+    return describe(result, noticeForRecover(result));
   } catch (error) {
     return failure(error, prep.ctx);
   }

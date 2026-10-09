@@ -60,6 +60,11 @@ vi.mock("@/modules/activities/queries", () => ({
 vi.mock("@/server/supabase/server", () => ({
   createServerSupabaseClient: async () => ({
     rpc: async (name: string, args: Record<string, unknown>) => {
+      if (name === "list_activity_calendar_links") {
+        // Mesma regra da migration (vínculo ativo / inclusão incerta).
+        const { createHarness, fakeActivityRpc } = await import("../support/calendar-activity-harness");
+        return fakeActivityRpc(createHarness(), m.store.value as never, name, args);
+      }
       if (name === "create_activity") {
         m.nextId.n += 1;
         const id = `a1b2c3d4-0000-4000-8000-0000000b${String(m.nextId.n).padStart(4, "0")}`;
@@ -298,12 +303,14 @@ describe("reagendar atividade vinculada", () => {
     expect(f.provider.calls.length).toBe(before);
   });
 
-  it("vinculada à agenda de OUTRA pessoa: o CRM muda, o Google não, e o aviso diz isso", async () => {
+  it("vinculada à agenda de OUTRA pessoa: recusado ANTES de salvar (nem CRM nem Google mudam)", async () => {
     const created = await createActivityAction({ ok: false }, form(MEETING));
     f.store.seedLink({ activityId: created.activityId!, eventId: "evento-de-outra-pessoa", connectionId: "conn-9" });
+    const antes = (m.activities.get(created.activityId!) as { dueAt: string }).dueAt;
     const result = await rescheduleActivityAction(created.activityId!, 1, "2026-11-12", "16:00");
-    expect(result.ok).toBe(true);
-    expect(result.calendar).toMatchObject({ level: "warning", message: expect.stringContaining("outra pessoa") });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("outra pessoa");
+    expect((m.activities.get(created.activityId!) as { dueAt: string }).dueAt).toBe(antes);
     expect(f.provider.calls).toEqual([]);
   });
 
@@ -367,22 +374,24 @@ describe("excluir atividade vinculada", () => {
     expect(m.activities.has(activityId)).toBe(true);
   });
 
-  it("evento editado no Google desde a última sincronização: é mantido lá e a atividade é excluída com aviso", async () => {
+  it("evento editado no Google desde a última sincronização: a atividade NÃO é excluída e nada fica abandonado", async () => {
     const { activityId, link } = await reuniaoNaAgenda();
     f.provider.externalEdit(link!.calendarId, link!.eventId, { summary: "Editado direto no Google" });
     const result = await deleteActivityAction(activityId);
-    expect(result.ok).toBe(true);
-    expect(result.calendar?.level).toBe("warning");
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("NÃO foi removido");
     expect(f.provider.peek(link!.calendarId, link!.eventId)?.status).toBe("confirmed");
-    expect(m.activities.has(activityId)).toBe(false);
+    expect(m.activities.has(activityId)).toBe(true);
+    expect(await f.store.getLink(activityId)).not.toBeNull();
   });
 
-  it("vinculada à agenda de OUTRA pessoa: exclui no CRM e avisa que o evento continua lá", async () => {
+  it("vinculada à agenda de OUTRA pessoa: exclusão recusada, atividade e vínculo permanecem", async () => {
     const created = await createActivityAction({ ok: false }, form(MEETING));
     f.store.seedLink({ activityId: created.activityId!, eventId: "evento-de-outra-pessoa", connectionId: "conn-9" });
     const result = await deleteActivityAction(created.activityId!);
-    expect(result.ok).toBe(true);
-    expect(result.calendar).toMatchObject({ level: "warning", message: expect.stringContaining("outra pessoa") });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("outra pessoa");
+    expect(m.activities.has(created.activityId!)).toBe(true);
     expect(f.provider.calls).toEqual([]);
   });
 

@@ -3,7 +3,7 @@
 -- teste. Mostra o que a tela recebe e, principalmente, o que NÃO recebe.
 
 begin;
-select plan(11);
+select plan(28);
 
 \set dono   '20000000-0000-0000-0000-000000000001'
 \set adv    '20000000-0000-0000-0000-000000000002'
@@ -129,6 +129,142 @@ select is(
   '[]'::jsonb, 'o preview não enxerga vínculo de production'
 );
 reset role;
+
+-- ---------------------------------------------------------------------
+-- 4) Estado de sincronização gravado (visível depois de recarregar)
+-- ---------------------------------------------------------------------
+
+select set_config('request.headers', :'h_prod', true);
+
+select begin_calendar_effect(:'conn'::uuid, :'reuniao'::uuid, :'dono'::uuid, 'update', '{}'::jsonb) as i_pend \gset
+select resolve_calendar_effect(:'i_pend'::uuid, :'dono'::uuid, 'failed', 'provider_503', '{"syncState":"pending"}'::jsonb);
+select is(
+  (select jsonb_build_object('s', sync_state, 'o', sync_operation, 'e', sync_error) from public.calendar_event_links where id = (:'link')::uuid),
+  jsonb_build_object('s', 'pending', 'o', 'update', 'e', 'provider_503'),
+  'falha temporária fica GRAVADA no vínculo como pendente'
+);
+
+select begin_calendar_effect(:'conn'::uuid, :'reuniao'::uuid, :'dono'::uuid, 'update', '{}'::jsonb) as i_fail \gset
+select resolve_calendar_effect(:'i_fail'::uuid, :'dono'::uuid, 'failed', 'provider_400', '{}'::jsonb);
+select is(
+  (select sync_state from public.calendar_event_links where id = (:'link')::uuid),
+  'failed', 'recusa definitiva fica gravada como falha'
+);
+select is(
+  (select status from public.calendar_effect_intents where id = (:'i_pend')::uuid),
+  'failed', 'intenção já definitiva não é reescrita por outra'
+);
+
+select begin_calendar_effect(:'conn'::uuid, :'reuniao'::uuid, :'dono'::uuid, 'delete', '{}'::jsonb) as i_unc \gset
+select resolve_calendar_effect(:'i_unc'::uuid, :'dono'::uuid, 'uncertain', 'result_uncertain', '{}'::jsonb);
+select is(
+  (select jsonb_build_object('s', sync_state, 'o', sync_operation) from public.calendar_event_links where id = (:'link')::uuid),
+  jsonb_build_object('s', 'uncertain', 'o', 'delete'),
+  'resultado incerto fica gravado como incerto, com a operação'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'dono', 'role', 'authenticated')::text, true);
+select is(
+  (select jsonb_build_object('s', e ->> 'syncState', 'o', e ->> 'syncOperation')
+   from jsonb_array_elements(list_activity_calendar_links(array[(:'reuniao')::uuid])) e),
+  jsonb_build_object('s', 'uncertain', 'o', 'delete'),
+  'a tela lê o estado gravado'
+);
+reset role;
+
+-- Uma conferência posterior com desfecho definitivo encerra a incerta e limpa o estado.
+select begin_calendar_effect(:'conn'::uuid, :'reuniao'::uuid, :'dono'::uuid, 'update', '{}'::jsonb) as i_ok \gset
+select resolve_calendar_effect(
+  :'i_ok'::uuid, :'dono'::uuid, 'succeeded', '',
+  jsonb_build_object('eventId', 'evento-links-1', 'etag', '"2"', 'title', 'Reunião sigilosa B2', 'cancelled', false,
+    'hasMeet', true, 'durationMinutes', 90, 'crmVersion', 2, 'linkStatus', 'linked')
+);
+select is(
+  (select jsonb_build_object('s', sync_state, 'e', sync_error) from public.calendar_event_links where id = (:'link')::uuid),
+  jsonb_build_object('s', 'in_sync', 'e', null),
+  'sucesso volta o vínculo a in_sync'
+);
+select is(
+  (select status from public.calendar_effect_intents where id = (:'i_unc')::uuid),
+  'superseded', 'a intenção incerta anterior é encerrada pela conferência'
+);
+select is(
+  (select count(*)::int from public.audit_logs
+   where workspace_id = :'ws'::uuid and action like 'calendar.link.sync_%' and metadata::text ~* '(etag|sigilosa|evento-links)'),
+  0, 'a auditoria do estado de sincronização não guarda título, etag nem ids de evento'
+);
+
+-- ---------------------------------------------------------------------
+-- 5) mark_calendar_link_pending
+-- ---------------------------------------------------------------------
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'dono', 'role', 'authenticated')::text, true);
+select throws_ok(
+  format($i$ select mark_calendar_link_pending(%L::uuid, %L::uuid, 'x') $i$, :'reuniao', :'dono'),
+  '42501', null, 'authenticated NÃO executa mark_calendar_link_pending'
+);
+reset role;
+
+select is(mark_calendar_link_pending(:'reuniao'::uuid, :'adv'::uuid, 'connection_not_active'), false,
+  'outro usuário não marca pendência no vínculo da conexão alheia');
+select is(mark_calendar_link_pending(:'reuniao'::uuid, :'dono'::uuid, 'connection_not_active'), true,
+  'o dono da conexão marca a pendência quando a sincronização nem começou');
+select is(
+  (select jsonb_build_object('s', sync_state, 'e', sync_error) from public.calendar_event_links where id = (:'link')::uuid),
+  jsonb_build_object('s', 'pending', 'e', 'connection_not_active'),
+  'e ela fica gravada'
+);
+select set_config('request.headers', :'h_prev', true);
+select is(mark_calendar_link_pending(:'reuniao'::uuid, :'dono'::uuid, 'x'), false,
+  'o preview não marca pendência em vínculo de production');
+select set_config('request.headers', :'h_prod', true);
+
+-- ---------------------------------------------------------------------
+-- 6) Vínculo existente não some quando a atividade deixa de ser reunião
+-- ---------------------------------------------------------------------
+
+update public.activities set type = 'task', has_time = false where id = (:'reuniao')::uuid;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'dono', 'role', 'authenticated')::text, true);
+select is(
+  (select list_activity_calendar_links(array[(:'reuniao')::uuid]) -> 0 ->> 'status'),
+  'linked', 'o vínculo continua aparecendo mesmo com a atividade virada tarefa sem horário'
+);
+reset role;
+
+-- ---------------------------------------------------------------------
+-- 7) Inclusão no Google com resultado incerto (ainda sem vínculo)
+-- ---------------------------------------------------------------------
+
+select begin_calendar_effect(:'conn'::uuid, :'livre'::uuid, :'dono'::uuid, 'create', '{}'::jsonb) as i_create \gset
+select resolve_calendar_effect(:'i_create'::uuid, :'dono'::uuid, 'uncertain', 'result_uncertain', '{}'::jsonb);
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'dono', 'role', 'authenticated')::text, true);
+select is(
+  (select jsonb_build_object('s', e ->> 'status', 'y', e ->> 'syncState', 'o', e ->> 'syncOperation', 'm', e ->> 'isMine')
+   from jsonb_array_elements(list_activity_calendar_links(array[(:'livre')::uuid])) e),
+  jsonb_build_object('s', 'not_linked', 'y', 'uncertain', 'o', 'create', 'm', 'true'),
+  'inclusão incerta aparece para a tela, mesmo sem vínculo'
+);
+reset role;
+
+-- A verificação confirma que o evento não existe: a pendência some.
+select begin_calendar_effect(:'conn'::uuid, :'livre'::uuid, :'dono'::uuid, 'create', '{"recover":true}'::jsonb) as i_check \gset
+select resolve_calendar_effect(:'i_check'::uuid, :'dono'::uuid, 'failed', 'not_created_confirmed', '{}'::jsonb);
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'dono', 'role', 'authenticated')::text, true);
+select is(
+  list_activity_calendar_links(array[(:'livre')::uuid]),
+  '[]'::jsonb, 'depois da verificação, a inclusão incerta deixa de aparecer'
+);
+reset role;
+select is(
+  (select status from public.calendar_effect_intents where id = (:'i_create')::uuid),
+  'superseded', 'a intenção incerta foi encerrada pela verificação'
+);
 
 select * from finish();
 rollback;

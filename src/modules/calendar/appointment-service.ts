@@ -1,8 +1,14 @@
 import { toUserMessage } from "@/lib/errors";
 import { requirePermissionSafe } from "@/server/authz/safe";
 import { getActivity } from "@/modules/activities/queries";
+import { readActivityCalendarInfo } from "@/modules/calendar/activity-links";
 import { listCalendarConnections } from "@/modules/calendar/queries";
-import type { CalendarNotice } from "@/modules/calendar/types";
+import {
+  MAX_APPOINTMENT_MINUTES,
+  MIN_APPOINTMENT_MINUTES,
+  type ActivityCalendarInfo,
+  type CalendarNotice,
+} from "@/modules/calendar/types";
 import { createSupabaseSyncStore } from "@/server/calendar/admin/sync-store";
 import { loadConnectionContext } from "@/server/calendar/connection-context";
 import { getCalendarEnvironment } from "@/server/calendar/environment";
@@ -16,6 +22,7 @@ import {
   type CancelAppointmentResult,
   type CreateAppointmentResult,
   type CreateOptions,
+  type RecoverCreateResult,
   type UpdateAppointmentResult,
 } from "@/server/calendar/sync/appointments";
 import type { ActivitySnapshot, ConnectionContext, SyncDeps } from "@/server/calendar/sync/types";
@@ -26,11 +33,14 @@ import type { ActivitySnapshot, ConnectionContext, SyncDeps } from "@/server/cal
  * excluir). Não é "use server": as funções daqui são chamadas por ações que
  * já conferiram a sessão, e nunca recebem usuário/workspace de formulário.
  *
- * Princípio das ações de atividade: com a integração desligada (sem
- * provedor) nada daqui toca no banco nem no Google — o comportamento
- * anterior fica idêntico. Com ela ligada, a mudança no CRM é a fonte da
- * verdade e o que acontece na agenda volta como um AVISO (`CalendarNotice`),
- * nunca como falha da ação de atividade que já foi concluída.
+ * Princípios:
+ *  - Integração desligada (sem provedor): nada daqui toca no banco nem no
+ *    Google — o comportamento anterior fica idêntico.
+ *  - O que precisa ser RECUSADO é recusado ANTES de qualquer escrita no CRM
+ *    ou no Google (`guardActivityChange`).
+ *  - Depois de salvar no CRM, o que acontece na agenda volta como AVISO
+ *    (`CalendarNotice`) e, se não deu certo, fica GRAVADO no vínculo como
+ *    pendência, falha ou resultado incerto — visível depois de recarregar.
  */
 
 export const PROVIDER_NOT_CONFIGURED = toUserMessage(new Error("calendar_provider_not_configured"));
@@ -61,42 +71,50 @@ export type Prepared = { deps: SyncDeps; conn: ConnectionContext; activity: Acti
 /** Falha de ambiente: o banco aborta a transação, então o registro fica no
  * servidor — só o código e ids internos. */
 export function logRefusal(error: unknown, ctx: SessionContext) {
-  const code = error instanceof Error ? ((error as { code?: string }).code ?? error.message) : "";
+  const code = codeOf(error);
   if (code === "calendar_environment_mismatch") {
     console.warn(JSON.stringify({ event: "calendar_environment_mismatch", userId: ctx.userId, workspaceId: ctx.workspaceId }));
   }
 }
 
+function codeOf(error: unknown): string {
+  return error instanceof Error ? ((error as { code?: string }).code ?? error.message) : "";
+}
+
 export function errorMessage(error: unknown, ctx?: SessionContext): string {
   if (ctx) logRefusal(error, ctx);
-  const code = error instanceof Error ? ((error as { code?: string }).code ?? error.message) : "";
-  return toUserMessage({ message: code });
+  return toUserMessage({ message: codeOf(error) });
 }
 
 export async function prepare(
   activityId: string | null,
-): Promise<{ ok: false; error: string } | { ok: true; prepared: Prepared; ctx: SessionContext }> {
+): Promise<{ ok: false; error: string; code: string } | { ok: true; prepared: Prepared; ctx: SessionContext }> {
   const auth = await requirePermissionSafe("calendar.connect_own");
-  if ("error" in auth) return { ok: false, error: auth.error };
+  if ("error" in auth) return { ok: false, error: auth.error, code: "insufficient_permission" };
 
   const provider = await getCalendarProvider();
-  if (!provider) return { ok: false, error: PROVIDER_NOT_CONFIGURED };
+  if (!provider) return { ok: false, error: PROVIDER_NOT_CONFIGURED, code: "calendar_provider_not_configured" };
 
   const connections = await listCalendarConnections(auth.ctx.workspaceId);
   const mine = connections.find((c) => c.isMine && c.status !== "disconnected");
-  if (!mine) return { ok: false, error: toUserMessage(new Error("connection_not_found")) };
+  if (!mine) return { ok: false, error: toUserMessage(new Error("connection_not_found")), code: "connection_not_found" };
 
-  const conn = await loadConnectionContext({
-    provider,
-    connection: { id: mine.id, calendarId: mine.calendarId, status: mine.status },
-    workspaceId: auth.ctx.workspaceId,
-    actorUserId: auth.ctx.userId,
-  });
+  let conn: ConnectionContext;
+  try {
+    conn = await loadConnectionContext({
+      provider,
+      connection: { id: mine.id, calendarId: mine.calendarId, status: mine.status },
+      workspaceId: auth.ctx.workspaceId,
+      actorUserId: auth.ctx.userId,
+    });
+  } catch (error) {
+    return { ok: false, error: errorMessage(error), code: codeOf(error) || "connection_unavailable" };
+  }
 
   let activity: ActivitySnapshot | null = null;
   if (activityId) {
     activity = await loadActivityFromSession(activityId);
-    if (!activity) return { ok: false, error: toUserMessage(new Error("activity_not_found")) };
+    if (!activity) return { ok: false, error: toUserMessage(new Error("activity_not_found")), code: "activity_not_found" };
   }
 
   return {
@@ -136,39 +154,99 @@ export function toCreateOptions(form: CreateFormOptions): CreateOptions {
   };
 }
 
+/** Duração digitada: inteiro entre 15 e 480. Conferida no servidor, sem
+ * depender do navegador. */
+export function isValidTypedDuration(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= MIN_APPOINTMENT_MINUTES &&
+    value <= MAX_APPOINTMENT_MINUTES
+  );
+}
+
 // ---------------------------------------------------------------------
-// Avisos
+// Avisos — cada resultado com a sua mensagem
 // ---------------------------------------------------------------------
 
 const warn = (message: string): CalendarNotice => ({ level: "warning", message });
+const ok = (message: string, meetUrl?: string | null): CalendarNotice => ({
+  level: "success",
+  message,
+  ...(meetUrl !== undefined ? { meetUrl } : {}),
+});
 
-export function noticeForUpdate(result: UpdateAppointmentResult): CalendarNotice | null {
+const UNCERTAIN =
+  "Resultado incerto no Google Agenda: não foi possível confirmar se a alteração foi aplicada. Use “Verificar” — a agenda é consultada antes de qualquer nova tentativa.";
+
+/** Depois de reagendar/editar/sincronizar. `prefix` diz o que já aconteceu no CRM. */
+export function noticeForUpdate(result: UpdateAppointmentResult, prefix = ""): CalendarNotice | null {
   switch (result.status) {
     case "updated":
-      return { level: "success", message: "Google Agenda atualizado.", meetUrl: result.meet.url };
+      return ok(`${prefix}Google Agenda atualizado.`, result.meet.url);
     case "unchanged":
       return null;
     case "conflict_resolved":
       return warn(
-        "Alterado também no Google Agenda ao mesmo tempo: o valor do Google prevaleceu e a atividade foi ajustada. O seu valor anterior ficou registrado.",
+        `${prefix}O evento também foi alterado no Google Agenda ao mesmo tempo (${result.conflicts.map((c) => FIELD_LABEL[c.field] ?? c.field).join(", ")}): o Google prevaleceu e a atividade foi ajustada para ficar igual. O valor anterior do CRM ficou registrado.`,
       );
     case "cancelled_in_google":
-      return warn("O evento foi cancelado no Google Agenda. A atividade continua no CRM, sem vínculo ativo com a agenda.");
+      return warn(`${prefix}O evento foi cancelado no Google Agenda. A atividade continua no CRM.`);
     case "needs_attention":
-      return warn("Muitas alterações simultâneas no Google Agenda. A sincronização ficou pendente: tente de novo em instantes.");
+      return warn(`${prefix}O evento mudou várias vezes no Google Agenda durante a sincronização. Ficou pendente: tente sincronizar de novo.`);
+    case "access_lost":
+      return warn(`${prefix}${toUserMessage({ message: "calendar_access_lost" })}`);
+    case "pending":
+      return warn(`${prefix}O Google Agenda não respondeu (${result.code}). A alteração ficou pendente: tente sincronizar de novo.`);
+    case "failed":
+      return warn(`${prefix}O Google Agenda recusou a alteração (${result.code}). Ficou registrada como falha a resolver.`);
+    case "uncertain":
+      return warn(`${prefix}${UNCERTAIN}`);
+  }
+}
+
+const FIELD_LABEL: Record<string, string> = { title: "título", schedule: "horário", cancellation: "cancelamento", meet: "Meet" };
+
+export function noticeForMeet(result: UpdateAppointmentResult): CalendarNotice | null {
+  if (result.status === "updated" || result.status === "unchanged" || result.status === "conflict_resolved") {
+    const { meet } = result;
+    if (meet.status === "success" && meet.url) {
+      return ok(result.status === "unchanged" ? "O evento já tinha link do Meet." : "Link do Meet criado.", meet.url);
+    }
+    if (meet.status === "pending") {
+      return warn("O Meet foi pedido e ainda está sendo criado pelo Google. O link aparece quando ficar pronto.");
+    }
+    if (meet.status === "failed") return warn("O Google não conseguiu criar o Meet. Tente de novo mais tarde.");
+    return warn("O Meet não foi confirmado pelo Google. Tente de novo.");
+  }
+  return noticeForUpdate(result);
+}
+
+export function noticeForCancel(result: CancelAppointmentResult): CalendarNotice {
+  switch (result.status) {
+    case "cancelled":
+      return ok("Removido do Google Agenda.");
+    case "already_gone":
+      return ok("O evento já não estava no Google Agenda; o vínculo foi encerrado.");
+    case "kept_google_event":
+      return warn(
+        "O evento NÃO foi removido: ele foi alterado no Google Agenda depois da última sincronização. O evento e o vínculo continuam; confira o evento no Google antes de tentar de novo.",
+      );
     case "access_lost":
       return warn(toUserMessage({ message: "calendar_access_lost" }));
+    case "pending":
+      return warn(`O Google Agenda não respondeu (${result.code}). Nada foi removido; tente de novo.`);
     case "failed":
-      return warn(`Salvo no CRM, mas o Google Agenda não foi atualizado (${result.code}). Tente sincronizar de novo.`);
+      return warn(`O Google Agenda recusou a remoção (${result.code}). Nada foi removido.`);
     case "uncertain":
-      return warn("Salvo no CRM, mas o resultado no Google Agenda é incerto. Confira a agenda antes de tentar de novo.");
+      return warn(UNCERTAIN);
   }
 }
 
 export function noticeForCreate(result: CreateAppointmentResult): CalendarNotice | null {
   switch (result.status) {
     case "created":
-      return { level: "success", message: "Adicionado ao Google Agenda.", meetUrl: result.meet.url };
+      return ok(result.adopted ? "O evento já existia no Google Agenda e foi vinculado." : "Adicionado ao Google Agenda.", result.meet.url);
     case "already_linked":
       return null;
     case "busy":
@@ -176,102 +254,169 @@ export function noticeForCreate(result: CreateAppointmentResult): CalendarNotice
     case "failed":
       return warn(`Não foi possível adicionar ao Google Agenda (${result.code}).`);
     case "uncertain":
-      return warn("Não foi possível confirmar se o evento foi criado no Google Agenda. Confira a agenda antes de tentar de novo.");
+      return warn(
+        "Não foi possível confirmar se o evento foi criado no Google Agenda. Use “Verificar” — a agenda é consultada antes de qualquer nova tentativa.",
+      );
+  }
+}
+
+export function noticeForRecover(result: RecoverCreateResult): CalendarNotice {
+  switch (result.status) {
+    case "adopted":
+      return ok("Confirmado: o evento estava no Google Agenda e foi vinculado à atividade.", result.meet.url);
+    case "not_created":
+      return warn("Confirmado: o evento não foi criado no Google Agenda. Nada foi criado agora; adicione de novo se quiser.");
+    case "already_linked":
+      return ok("O compromisso já está vinculado ao Google Agenda.");
+    case "access_lost":
+      return warn(toUserMessage({ message: "calendar_access_lost" }));
+    case "failed":
+      return warn(`Não foi possível confirmar a inclusão (${result.code}).`);
+    case "uncertain":
+      return warn("O Google Agenda ainda não respondeu: o resultado continua incerto. Tente verificar de novo em instantes.");
   }
 }
 
 // ---------------------------------------------------------------------
-// Ações de atividade que já existiam
+// Trava ANTES da escrita
 // ---------------------------------------------------------------------
 
+export type ActivityChange =
+  | { kind: "update"; title?: string | undefined; type?: string | undefined }
+  | { kind: "reschedule"; dueTime: string }
+  | { kind: "delete" };
+
+export type GuardResult =
+  | { ok: false; error: string }
+  /** `sync`: depois de salvar, levar a mudança ao Google (vínculo meu e mudança relevante). */
+  | { ok: true; sync: boolean; info: ActivityCalendarInfo | null };
+
+const RESOLVE_FIRST = "resolva o vínculo com o Google Agenda primeiro (remova o compromisso da agenda)";
+
 /**
- * Depois de editar/reagendar uma atividade no CRM: leva a mudança ao Google
- * quando ela está vinculada à agenda DESTE usuário. Nunca lança. `null` =
- * nada a dizer (integração desligada ou atividade sem vínculo).
+ * Confere o vínculo com o Google ANTES de qualquer escrita no CRM ou no
+ * Google, e recusa o que não pode acontecer sem resolver o vínculo:
+ *  - compromisso na agenda de OUTRA pessoa: título, horário, duração, tipo e
+ *    exclusão ficam bloqueados (notas e prioridade continuam livres);
+ *  - mudar o tipo de um compromisso vinculado ou tirar o horário dele;
+ *  - qualquer mudança desse tipo enquanto uma inclusão no Google está incerta.
+ * Com a integração desligada, não confere nada (não há vínculo a ler).
+ */
+export async function guardActivityChange(activityId: string, change: ActivityChange): Promise<GuardResult> {
+  let info: ActivityCalendarInfo | null;
+  try {
+    info = await readActivityCalendarInfo(activityId);
+  } catch {
+    return { ok: false, error: "Não foi possível conferir o vínculo com o Google Agenda. Nada foi alterado; tente de novo." };
+  }
+  if (!info) return { ok: true, sync: false, info: null };
+
+  // Evento já cancelado/ausente no Google: não há o que divergir nem abandonar.
+  const live = info.status !== "cancelled_in_google" && info.status !== "missing_in_google";
+
+  let relevant: boolean;
+  if (change.kind === "update") {
+    const current = await getActivity(activityId);
+    if (!current) return { ok: false, error: toUserMessage({ message: "activity_not_found" }) };
+    const titleChanged = change.title !== undefined && change.title !== "" && change.title !== current.title;
+    const typeChanged = change.type !== undefined && change.type !== "" && change.type !== current.type;
+    if (live && typeChanged && change.type !== "meeting") {
+      return { ok: false, error: `Este compromisso está no Google Agenda: para mudar o tipo, ${RESOLVE_FIRST}.` };
+    }
+    relevant = titleChanged || typeChanged;
+  } else if (change.kind === "reschedule") {
+    if (live && change.dueTime === "") {
+      return { ok: false, error: `Este compromisso está no Google Agenda: para tirar o horário, ${RESOLVE_FIRST}.` };
+    }
+    relevant = true;
+  } else {
+    relevant = true;
+  }
+
+  if (!relevant) return { ok: true, sync: false, info };
+
+  if (info.status === "not_linked") {
+    return {
+      ok: false,
+      error:
+        "A inclusão deste compromisso no Google Agenda ficou com resultado incerto. Use “Verificar inclusão” antes de alterar ou excluir — o evento pode existir na agenda.",
+    };
+  }
+  if (live && !info.isMine) {
+    return {
+      ok: false,
+      error:
+        change.kind === "delete"
+          ? "Este compromisso está na agenda de outra pessoa: só ela pode excluí-lo enquanto estiver vinculado."
+          : "Este compromisso está na agenda de outra pessoa: título, horário e duração só podem ser alterados por ela. Notas e prioridade continuam editáveis.",
+    };
+  }
+  return { ok: true, sync: live && info.isMine && change.kind !== "delete", info };
+}
+
+// ---------------------------------------------------------------------
+// Depois de salvar no CRM
+// ---------------------------------------------------------------------
+
+/** Pendência gravada quando a sincronização nem chegou a começar. */
+async function markPending(activityId: string, reason: string): Promise<boolean> {
+  try {
+    const auth = await requirePermissionSafe("calendar.connect_own");
+    if ("error" in auth) return false;
+    return await createSupabaseSyncStore(auth.ctx.userId).markLinkPending({ activityId, reason: reason.slice(0, 100) });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Depois de editar/reagendar no CRM uma atividade vinculada à agenda DESTE
+ * usuário (a trava já conferiu): leva a mudança ao Google. Nunca lança. Se
+ * não der certo, o vínculo fica com a pendência gravada.
  */
 export async function syncLinkedActivity(
   activityId: string,
   options: { durationMinutes?: number } = {},
 ): Promise<CalendarNotice | null> {
+  const prefix = "Salvo no CRM. ";
+  const prep = await prepare(activityId).catch((error: unknown) => ({ ok: false as const, error: errorMessage(error), code: codeOf(error) }));
+  if (!prep.ok) {
+    const marked = await markPending(activityId, prep.code || "prepare_failed");
+    return warn(
+      `${prefix}O Google Agenda não foi atualizado: ${prep.error}${marked ? " A alteração ficou pendente." : ""}`,
+    );
+  }
+  const { deps, conn, activity } = prep.prepared;
+  if (!activity) return null;
   try {
-    const provider = await getCalendarProvider();
-    if (!provider) return null;
-    const auth = await requirePermissionSafe("calendar.connect_own");
-    if ("error" in auth) return null;
-
-    const link = await createSupabaseSyncStore(auth.ctx.userId).getLink(activityId);
-    if (!link) return null;
-
-    const prep = await prepare(activityId);
-    if (!prep.ok) {
-      return warn(`Salvo no CRM, mas o Google Agenda não foi atualizado: ${prep.error}`);
-    }
-    if (link.connectionId !== prep.prepared.conn.connectionId) {
-      return warn("Salvo no CRM. Este compromisso está na agenda de outra pessoa, então o Google Agenda não foi alterado.");
-    }
-    const { deps, conn, activity } = prep.prepared;
-    if (!activity) return null;
-
-    return noticeForUpdate(await rescheduleAppointment(deps, conn, activity, options));
+    return noticeForUpdate(await rescheduleAppointment(deps, conn, activity, options), prefix);
   } catch (error) {
-    return warn(`Salvo no CRM, mas o Google Agenda não foi atualizado: ${errorMessage(error)}`);
+    const marked = await markPending(activityId, codeOf(error) || "sync_error");
+    return warn(`${prefix}O Google Agenda não foi atualizado: ${errorMessage(error)}${marked ? " A alteração ficou pendente." : ""}`);
   }
 }
 
 export type BeforeDelete = { proceed: true; notice: CalendarNotice | null } | { proceed: false; error: string };
 
-function resultOfCancel(result: CancelAppointmentResult): BeforeDelete {
-  switch (result.status) {
-    case "cancelled":
-    case "already_gone":
-      return { proceed: true, notice: { level: "success", message: "Evento removido do Google Agenda." } };
-    case "kept_google_event":
-      return {
-        proceed: true,
-        notice: warn("O evento foi alterado no Google Agenda depois da última sincronização, então foi mantido lá."),
-      };
-    case "access_lost":
-      return { proceed: false, error: `A atividade não foi excluída. ${toUserMessage({ message: "calendar_access_lost" })}` };
-    case "failed":
-      return {
-        proceed: false,
-        error: `A atividade não foi excluída: não foi possível remover o evento do Google Agenda (${result.code}).`,
-      };
-    case "uncertain":
-      return {
-        proceed: false,
-        error: "A atividade não foi excluída: o resultado no Google Agenda é incerto. Confira a agenda e tente de novo.",
-      };
-  }
-}
-
 /**
- * Antes de excluir uma atividade vinculada: remove o evento do Google. O
- * vínculo é perdido quando a atividade é excluída, então a ordem é Google
- * primeiro — se a agenda não puder ser alcançada, a atividade NÃO é excluída.
+ * Antes de excluir uma atividade vinculada à agenda DESTE usuário (a trava já
+ * recusou a de outra pessoa): remove o evento do Google primeiro, porque o
+ * vínculo se perde com a atividade. Qualquer desfecho que não seja "removido"
+ * ou "já não existia" impede a exclusão — nada fica abandonado no Google.
  */
-export async function cancelLinkedBeforeDelete(activityId: string): Promise<BeforeDelete> {
+export async function cancelLinkedBeforeDelete(activityId: string, info: ActivityCalendarInfo | null): Promise<BeforeDelete> {
+  if (!info) return { proceed: true, notice: null };
   try {
-    const provider = await getCalendarProvider();
-    if (!provider) return { proceed: true, notice: null };
-    const auth = await requirePermissionSafe("calendar.connect_own");
-    if ("error" in auth) return { proceed: true, notice: null };
-
-    const link = await createSupabaseSyncStore(auth.ctx.userId).getLink(activityId);
-    if (!link) return { proceed: true, notice: null };
-
     const prep = await prepare(activityId);
     if (!prep.ok) return { proceed: false, error: `A atividade não foi excluída: ${prep.error}` };
-    if (link.connectionId !== prep.prepared.conn.connectionId) {
-      return {
-        proceed: true,
-        notice: warn("O evento continua na agenda de outra pessoa; só ela pode removê-lo do Google Agenda."),
-      };
-    }
     const { deps, conn, activity } = prep.prepared;
     if (!activity) return { proceed: true, notice: null };
 
-    return resultOfCancel(await cancelAppointment(deps, conn, activity));
+    const result = await cancelAppointment(deps, conn, activity);
+    if (result.status === "cancelled" || result.status === "already_gone") {
+      return { proceed: true, notice: noticeForCancel(result) };
+    }
+    return { proceed: false, error: `A atividade não foi excluída. ${noticeForCancel(result).message}` };
   } catch (error) {
     return { proceed: false, error: `A atividade não foi excluída: ${errorMessage(error)}` };
   }
@@ -285,7 +430,7 @@ export async function createForNewActivity(activityId: string, options: CreateOp
     const { deps, conn, activity } = prep.prepared;
     if (!activity) return warn("Atividade criada, mas não foi adicionada ao Google Agenda.");
     const result = await createAppointment(deps, conn, activity, options);
-    return noticeForCreate(result) ?? { level: "success", message: "Já estava no Google Agenda." };
+    return noticeForCreate(result) ?? ok("Já estava no Google Agenda.");
   } catch (error) {
     return warn(`Atividade criada, mas não foi adicionada ao Google Agenda: ${errorMessage(error)}`);
   }
@@ -310,7 +455,7 @@ export function parseCalendarCreate(
   if (!checked(formData.get("calendarAdd"))) return { ok: true, options: null };
 
   const duration = Number(formData.get("durationMinutes") || 60);
-  if (!Number.isInteger(duration) || duration < 15 || duration > 480) {
+  if (!isValidTypedDuration(duration)) {
     return { ok: false, error: toUserMessage({ message: "invalid_duration" }) };
   }
 

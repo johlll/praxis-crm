@@ -71,7 +71,14 @@ export interface SyncStore {
     status: "succeeded" | "failed" | "uncertain";
     errorCode?: string | undefined;
     state?: LinkState | undefined;
+    /** Numa falha: `pending` (temporária, dá para tentar de novo) ou `failed`
+     * (recusa definitiva). Fica gravado no vínculo, visível depois de recarregar. */
+    syncState?: "pending" | "failed" | undefined;
   }): Promise<string | null>;
+  /** Pendência sem intenção (a sincronização nem chegou a começar, ex.:
+   * conexão a reautorizar), depois de o CRM já ter salvo. `false` = não havia
+   * vínculo ativo da conexão do usuário. */
+  markLinkPending(params: { activityId: string; reason: string }): Promise<boolean>;
   recordConflict(params: {
     linkId: string;
     field: "title" | "schedule" | "cancellation" | "meet";

@@ -33,16 +33,26 @@ export function createSupabaseSyncStore(actorUserId: string): SyncStore {
       return data;
     },
 
-    async resolveEffect({ intentId, status, errorCode, state }) {
+    async resolveEffect({ intentId, status, errorCode, state, syncState }) {
       const { data, error } = await admin.rpc("resolve_calendar_effect", {
         p_intent_id: intentId,
         p_actor_user_id: actorUserId,
         p_status: status,
         p_error_code: errorCode ?? "",
-        p_state: (state ?? {}) as unknown as Json,
+        p_state: { ...(state ?? {}), ...(syncState ? { syncState } : {}) } as unknown as Json,
       });
       if (error) throw new Error(error.message);
       return data ?? null;
+    },
+
+    async markLinkPending({ activityId, reason }) {
+      const { data, error } = await admin.rpc("mark_calendar_link_pending", {
+        p_activity_id: activityId,
+        p_actor_user_id: actorUserId,
+        p_reason: reason,
+      });
+      if (error) throw new Error(error.message);
+      return data === true;
     },
 
     async recordConflict({ linkId, field, crmValue, googleValue, resolution }) {

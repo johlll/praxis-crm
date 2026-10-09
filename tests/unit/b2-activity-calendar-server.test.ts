@@ -91,7 +91,7 @@ describe("selo de agenda nas listas", () => {
     expect(result.every((i) => i.calendar === null)).toBe(true);
   });
 
-  it("consulta só reuniões com horário e anexa o estado por atividade", async () => {
+  it("consulta TODAS as atividades (um vínculo nunca é escondido por tipo/horário) e anexa o estado", async () => {
     m.rpc.mockResolvedValue({
       data: [
         { activityId: "a4", status: "linked", isMine: true, durationMinutes: 90, meetStatus: "success", meetUrl: "https://meet.simulated/x", lastSyncedAt: null },
@@ -99,7 +99,7 @@ describe("selo de agenda nas listas", () => {
       error: null,
     });
     const result = await attachCalendarInfo(items);
-    expect(m.rpc).toHaveBeenCalledWith("list_activity_calendar_links", { p_activity_ids: ["a1", "a4"] });
+    expect(m.rpc).toHaveBeenCalledWith("list_activity_calendar_links", { p_activity_ids: ["a1", "a2", "a3", "a4"] });
     expect(result.find((i) => i.id === "a4")?.calendar).toEqual({
       status: "linked",
       isMine: true,
@@ -107,14 +107,25 @@ describe("selo de agenda nas listas", () => {
       meetStatus: "success",
       meetUrl: "https://meet.simulated/x",
       lastSyncedAt: null,
+      syncState: "in_sync",
+      syncOperation: null,
     });
     expect(result.find((i) => i.id === "a1")?.calendar).toBeNull();
     expect(result.find((i) => i.id === "a2")?.calendar).toBeNull();
   });
 
-  it("nenhuma reunião com horário: nem chama o banco", async () => {
-    await attachCalendarInfo([{ id: "a2", type: "task", hasTime: false }]);
+  it("lista vazia: nem chama o banco", async () => {
+    await attachCalendarInfo([]);
     expect(m.rpc).not.toHaveBeenCalled();
+  });
+
+  it("vínculo de uma atividade que deixou de ser reunião com horário continua aparecendo", async () => {
+    m.rpc.mockResolvedValue({
+      data: [{ activityId: "a2", status: "linked", isMine: true, durationMinutes: 60, meetStatus: null, meetUrl: null, lastSyncedAt: null, syncState: "pending", syncOperation: "update" }],
+      error: null,
+    });
+    const result = await attachCalendarInfo(items);
+    expect(result.find((i) => i.id === "a2")?.calendar).toMatchObject({ status: "linked", syncState: "pending" });
   });
 
   it("mais de 200 reuniões: lê em blocos de 200", async () => {

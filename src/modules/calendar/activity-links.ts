@@ -14,7 +14,7 @@ type LinkRow = ActivityCalendarInfo & { activityId: string };
  * decoração, e as ações de calendário conferem o vínculo de verdade no
  * servidor antes de qualquer efeito.
  */
-export async function attachCalendarInfo<T extends { id: string; type: string; hasTime: boolean }>(
+export async function attachCalendarInfo<T extends { id: string }>(
   items: T[],
 ): Promise<Array<T & { calendar: ActivityCalendarInfo | null }>> {
   const none = items.map((item) => ({ ...item, calendar: null }));
@@ -23,32 +23,44 @@ export async function attachCalendarInfo<T extends { id: string; type: string; h
   const provider = await getCalendarProvider();
   if (!provider) return none;
 
-  const candidates = items.filter((item) => item.type === "meeting" && item.hasTime).map((item) => item.id);
-  if (candidates.length === 0) return none;
-
   try {
-    const supabase = await createServerSupabaseClient();
-    const rows: LinkRow[] = [];
-    // A função aceita até 200 por chamada.
-    for (let i = 0; i < candidates.length; i += 200) {
-      const { data, error } = await supabase.rpc("list_activity_calendar_links", {
-        p_activity_ids: candidates.slice(i, i + 200),
-      });
-      if (error) throw new Error(error.message);
-      rows.push(...((data as unknown as LinkRow[] | null) ?? []));
-    }
-    const byActivity = new Map(rows.map((row) => [row.activityId, row]));
-    return items.map((item) => {
-      const row = byActivity.get(item.id);
-      if (!row) return { ...item, calendar: null };
-      const { activityId: _activityId, ...info } = row;
-      void _activityId;
-      return { ...item, calendar: info };
-    });
+    // TODAS as atividades: um vínculo existente nunca é escondido porque a
+    // atividade deixou de ser reunião com horário.
+    const byActivity = await readLinks(items.map((item) => item.id));
+    return items.map((item) => ({ ...item, calendar: byActivity.get(item.id) ?? null }));
   } catch (error) {
     console.error(
       JSON.stringify({ event: "calendar_links_unavailable", message: error instanceof Error ? error.message : "erro" }),
     );
     return none;
   }
+}
+
+/**
+ * O vínculo de UMA atividade, para conferir ANTES de uma escrita. Ao
+ * contrário da lista, uma falha de leitura LANÇA: quem chama recusa a
+ * alteração em vez de seguir sem saber. `null` = sem vínculo (ou integração
+ * desligada).
+ */
+export async function readActivityCalendarInfo(activityId: string): Promise<ActivityCalendarInfo | null> {
+  const provider = await getCalendarProvider();
+  if (!provider) return null;
+  return (await readLinks([activityId])).get(activityId) ?? null;
+}
+
+async function readLinks(ids: string[]): Promise<Map<string, ActivityCalendarInfo>> {
+  const supabase = await createServerSupabaseClient();
+  const rows: LinkRow[] = [];
+  // A função aceita até 200 por chamada.
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await supabase.rpc("list_activity_calendar_links", { p_activity_ids: ids.slice(i, i + 200) });
+    if (error) throw new Error(error.message);
+    rows.push(...((data as unknown as LinkRow[] | null) ?? []));
+  }
+  return new Map(
+    rows.map(({ activityId, ...info }) => [
+      activityId,
+      { ...info, syncState: info.syncState ?? "in_sync", syncOperation: info.syncOperation ?? null },
+    ]),
+  );
 }

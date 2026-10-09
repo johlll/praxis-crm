@@ -51,6 +51,10 @@ function RescheduleActivityDialogBody({ activity, onDone }: { activity: Activity
   const initial = dateTimeInputParts(activity.dueAt, activity.hasTime);
   const caps = useCalendarCapabilities();
   const info = activity.calendar;
+  const live = !!info && info.status !== "cancelled_in_google" && info.status !== "missing_in_google";
+  // Na agenda de outra pessoa (ou com inclusão incerta) não se reagenda — o
+  // servidor recusa de novo antes de salvar.
+  const blocked = caps.enabled && live && (!info.isMine || info.status === "not_linked");
   const editableDuration =
     caps.enabled && caps.canUse && info?.isMine === true && (info.status === "linked" || info.status === "needs_attention");
 
@@ -120,13 +124,18 @@ function RescheduleActivityDialogBody({ activity, onDone }: { activity: Activity
           </FormField>
           <FormField>
             <FormLabel htmlFor="reschedule-time">Horário (opcional)</FormLabel>
-            <Input id="reschedule-time" name="dueTime" type="time" defaultValue={initial.time} />
+            <Input id="reschedule-time" name="dueTime" type="time" defaultValue={initial.time} required={caps.enabled && live} />
           </FormField>
         </div>
-        {info && !info.isMine ? (
-          <p className="text-small text-text-secondary">
-            Este compromisso está na agenda de outra pessoa: o Google Agenda não será alterado.
+        {blocked ? (
+          <p className="text-small text-warning" data-testid="calendar-reschedule-blocked">
+            {info?.status === "not_linked"
+              ? "A inclusão deste compromisso no Google Agenda ficou incerta. Use “Verificar inclusão” antes de reagendar."
+              : "Este compromisso está na agenda de outra pessoa: só ela pode reagendá-lo enquanto estiver vinculado."}
           </p>
+        ) : null}
+        {caps.enabled && live && !blocked ? (
+          <p className="text-meta text-text-tertiary">O horário é obrigatório enquanto o compromisso estiver no Google Agenda.</p>
         ) : null}
         {editableDuration && info ? (
           <FormField>
@@ -150,7 +159,7 @@ function RescheduleActivityDialogBody({ activity, onDone }: { activity: Activity
           </Alert>
         ) : null}
         <DialogFooter>
-          <Button type="submit" disabled={isPending}>
+          <Button type="submit" disabled={isPending || blocked}>
             {isPending ? "Salvando…" : "Reagendar"}
           </Button>
         </DialogFooter>

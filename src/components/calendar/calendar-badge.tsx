@@ -9,12 +9,22 @@ const STATUS_TEXT: Record<ActivityCalendarInfo["status"], string> = {
   needs_attention: "Google Agenda: pendente",
   cancelled_in_google: "Cancelado no Google Agenda",
   missing_in_google: "Evento não encontrado no Google Agenda",
+  not_linked: "Inclusão no Google Agenda incerta",
 };
 
-/** Selo discreto do estado do compromisso na agenda (e o link do Meet). */
+const SYNC_TEXT: Record<ActivityCalendarInfo["syncState"], string | null> = {
+  in_sync: null,
+  pending: "sincronização pendente",
+  failed: "falha na sincronização",
+  uncertain: "resultado incerto — verifique",
+};
+
+/** Selo discreto do estado do compromisso na agenda (e o link do Meet). O
+ * estado de sincronização vem do banco, então continua aqui depois de recarregar. */
 export function CalendarBadge({ info }: { info: ActivityCalendarInfo | null | undefined }) {
   if (!info) return null;
-  const problem = info.status !== "linked";
+  const sync = info.status === "not_linked" ? null : SYNC_TEXT[info.syncState];
+  const problem = info.status !== "linked" || sync !== null;
   const Icon = problem ? TriangleAlert : CalendarCheck;
 
   return (
@@ -25,6 +35,7 @@ export function CalendarBadge({ info }: { info: ActivityCalendarInfo | null | un
       >
         <Icon size={12} aria-hidden />
         {STATUS_TEXT[info.status]}
+        {sync ? ` · ${sync}` : ""}
         {info.isMine ? "" : " · agenda de outra pessoa"}
       </span>
       {info.meetUrl ? (
