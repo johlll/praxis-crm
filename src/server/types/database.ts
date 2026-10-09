@@ -3972,10 +3972,7 @@ export type Database = {
         }
         Returns: Json
       }
-      list_calendar_maintenance: {
-        Args: { p_limit?: number }
-        Returns: Json
-      }
+      list_calendar_maintenance: { Args: { p_limit?: number }; Returns: Json }
       list_clients: {
         Args: {
           p_page?: number
