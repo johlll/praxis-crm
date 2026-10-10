@@ -63,8 +63,9 @@ reset role;
 -- 2) Estado: início
 -- ---------------------------------------------------------------------
 
-select ok(begin_calendar_oauth(:'ws'::uuid, :'dono'::uuid, pg_temp.h('state-1'), pg_temp.h('navegador-1'), pg_temp.h('nonce-1'), 'verificador-cifrado', 'v1')
-  between now() + interval '9 minutes' and now() + interval '11 minutes', 'vale 10 minutos');
+-- (Capturado antes: BETWEEN avaliaria a função duas vezes.)
+select begin_calendar_oauth(:'ws'::uuid, :'dono'::uuid, pg_temp.h('state-1'), pg_temp.h('navegador-1'), pg_temp.h('nonce-1'), 'verificador-cifrado', 'v1') as vence \gset
+select ok(:'vence'::timestamptz between now() + interval '9 minutes' and now() + interval '11 minutes', 'vale 10 minutos');
 select is(
   (select count(*)::int from public.calendar_oauth_states where state_hash = pg_temp.h('state-1') and environment = 'preview'),
   1, 'gravado com o ambiente autenticado'
