@@ -1,15 +1,20 @@
 /**
- * Contrato do provedor de agenda (B2). A fundação roda contra um provedor
- * SIMULADO; o provedor real do Google (OAuth, Calendar API) entra numa
- * etapa posterior, quando houver projeto Google Cloud — nenhuma credencial
- * ou chamada externa existe nesta etapa.
+ * Contrato do provedor de agenda (B2). Dois provedores: o SIMULADO (testes e
+ * desenvolvimento local) e o real do Google (`google/provider.ts`), que só é
+ * usado com a configuração completa (`google/config.ts`).
  */
 export type ProviderTokens = {
   accessToken: string;
-  refreshToken: string;
+  /** `null` = o Google não devolveu um novo (reautorização da mesma conta e
+   * cliente OAuth): o banco decide se o existente pode ser mantido. */
+  refreshToken: string | null;
   accessTokenExpiresAt: Date;
   scopes: string[];
   accountEmail: string;
+  /** Identidade ESTÁVEL da conta (OpenID Connect `sub`); o e-mail pode mudar. */
+  accountSubject: string;
+  /** Cliente OAuth que emitiu os tokens: refresh token de outro cliente não serve. */
+  oauthClientId: string;
 };
 
 export type ProviderCalendar = {
@@ -22,7 +27,9 @@ export type ProviderCalendar = {
 import type { CalendarEventsApi } from "@/server/calendar/events-api";
 
 export interface CalendarProvider extends CalendarEventsApi {
-  /** Troca o resultado do consentimento por tokens (OAuth). */
+  readonly kind: "simulated" | "google";
+  /** Só o SIMULADO: troca um texto de autorização por tokens. O Google usa o
+   * fluxo OAuth (`/api/calendar/oauth/start` → `/callback`). */
   exchangeAuthorization(authorization: string): Promise<ProviderTokens>;
   listCalendars(accessToken: string): Promise<ProviderCalendar[]>;
   /** Novo token de acesso a partir do refresh token (OAuth). */
@@ -38,11 +45,13 @@ export const CALENDAR_SCOPES = [
   "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
 ] as const;
 
+/** Escopos de IDENTIDADE (OpenID Connect): a conta é identificada pelo `sub`
+ * do ID token, não pelo id da agenda principal. */
+export const IDENTITY_SCOPES = ["openid", "email"] as const;
+
 /**
  * O provedor simulado só vale fora de Production e Preview, como os
- * adaptadores de teste da A11: nesses ambientes a variável é ignorada. O
- * provedor real ainda não existe, então lá o resultado é `null` e a tela
- * diz que a integração não está configurada.
+ * adaptadores de teste da A11: nesses ambientes a variável é ignorada.
  */
 export function usesSimulatedCalendarProvider(): boolean {
   const vercelEnv = process.env.VERCEL_ENV;
@@ -50,10 +59,23 @@ export function usesSimulatedCalendarProvider(): boolean {
   return process.env.CALENDAR_PROVIDER === "simulated";
 }
 
+/**
+ * Provedor do ambiente:
+ *  - simulado, só fora de Preview/Production e com `CALENDAR_PROVIDER=simulated`;
+ *  - Google, só com `CALENDAR_PROVIDER=google` E a configuração COMPLETA
+ *    (cliente OAuth, endereço de retorno, cifra dos tokens e assinatura de
+ *    ambiente — `google/config.ts`);
+ *  - senão, `null`: a integração fica desligada e a tela diz que não está
+ *    configurada. Configuração incompleta nunca liga "pela metade".
+ */
 export async function getCalendarProvider(): Promise<CalendarProvider | null> {
   if (usesSimulatedCalendarProvider()) {
     const { getSimulatedCalendarProvider } = await import("@/server/calendar/simulated-provider");
     return getSimulatedCalendarProvider();
   }
-  return null;
+  const { getGoogleCalendarConfig } = await import("@/server/calendar/google/config");
+  const config = getGoogleCalendarConfig();
+  if (!config) return null;
+  const { createGoogleCalendarProvider } = await import("@/server/calendar/google/provider");
+  return createGoogleCalendarProvider(config);
 }

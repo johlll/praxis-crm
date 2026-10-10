@@ -9,12 +9,8 @@ import { uuidSchema } from "@/lib/uuid";
 import { getCalendarProvider } from "@/server/calendar/provider";
 import { adminListOwnChannels } from "@/server/calendar/admin/inbound-store";
 import { describeRecovery, recoverOwnCalendarLinks } from "@/modules/calendar/automation";
-import {
-  adminConnectCalendar,
-  adminDisconnectCalendar,
-  adminGetConnectionTokens,
-  adminSetConnectionCalendar,
-} from "@/server/calendar/admin/connections";
+import { adminConnectCalendar, adminDisconnectCalendar, adminSetConnectionCalendar } from "@/server/calendar/admin/connections";
+import { loadFreshTokens } from "@/server/calendar/connection-context";
 
 export type CalendarActionState = { ok: boolean; error?: string; message?: string };
 
@@ -36,10 +32,10 @@ const PROVIDER_NOT_CONFIGURED = toUserMessage(new Error("calendar_provider_not_c
 const connectSchema = z.object({ authorization: z.string().trim().min(3).max(500) });
 
 /**
- * Conectar a PRÓPRIA conta (`calendar.connect_own`). Nesta etapa só existe o
- * provedor simulado; sem provedor configurado, a ação recusa sem tocar em
- * nada. O `authorization` é o resultado do consentimento (no Google real,
- * o código OAuth devolvido ao retorno da autorização).
+ * Conectar a PRÓPRIA conta (`calendar.connect_own`) com o provedor
+ * SIMULADO (texto de autorização). Com o Google real, a conexão nasce só
+ * pelo fluxo OAuth (`/api/calendar/oauth/start`); sem provedor, a ação
+ * recusa sem tocar em nada.
  */
 export async function connectCalendarAction(
   _prev: CalendarActionState,
@@ -53,6 +49,7 @@ export async function connectCalendarAction(
 
   const provider = await getCalendarProvider();
   if (!provider) return { ok: false, error: PROVIDER_NOT_CONFIGURED };
+  if (provider.kind !== "simulated") return { ok: false, error: "Use o botão “Conectar com Google”." };
 
   try {
     const tokens = await provider.exchangeAuthorization(parsed.data.authorization);
@@ -94,7 +91,8 @@ export async function selectCalendarAction(
   if (!provider) return { ok: false, error: PROVIDER_NOT_CONFIGURED };
 
   try {
-    const tokens = await adminGetConnectionTokens({
+    const tokens = await loadFreshTokens({
+      provider,
       connectionId: parsed.data.connectionId,
       workspaceId: auth.ctx.workspaceId,
       actorUserId: auth.ctx.userId,
@@ -160,7 +158,8 @@ export async function disconnectCalendarAction(
     const provider = await getCalendarProvider();
     if (provider) {
       try {
-        const tokens = await adminGetConnectionTokens({
+        const tokens = await loadFreshTokens({
+          provider,
           connectionId: parsed.data.connectionId,
           workspaceId: auth.ctx.workspaceId,
           actorUserId: auth.ctx.userId,

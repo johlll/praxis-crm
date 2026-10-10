@@ -6,13 +6,14 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { connectMock, tokensMock, setCalendarMock, disconnectMock, providerMock, channelsMock } = vi.hoisted(() => ({
+const { connectMock, tokensMock, setCalendarMock, disconnectMock, providerMock, channelsMock, storeAccessMock } = vi.hoisted(() => ({
   channelsMock: vi.fn(),
   connectMock: vi.fn(),
   tokensMock: vi.fn(),
   setCalendarMock: vi.fn(),
   disconnectMock: vi.fn(),
   providerMock: vi.fn(),
+  storeAccessMock: vi.fn(),
 }));
 let permission: { ctx: { userId: string; workspaceId: string } } | { error: string };
 
@@ -24,6 +25,7 @@ vi.mock("@/server/calendar/admin/connections", () => ({
   adminGetConnectionTokens: tokensMock,
   adminSetConnectionCalendar: setCalendarMock,
   adminDisconnectCalendar: disconnectMock,
+  adminStoreAccessToken: storeAccessMock,
 }));
 vi.mock("@/server/calendar/admin/inbound-store", () => ({ adminListOwnChannels: channelsMock }));
 
@@ -33,6 +35,8 @@ const CTX = {
   ctx: { userId: "11111111-1111-4111-8111-111111111111", workspaceId: "22222222-2222-4222-8222-222222222222" },
 };
 const CONN = "33333333-3333-4333-8333-333333333333";
+/** Token de acesso ainda válido (sem renovação). */
+const VALID = () => new Date(Date.now() + 3600_000);
 
 function form(values: Record<string, string>) {
   const f = new FormData();
@@ -69,8 +73,10 @@ describe("connectCalendarAction", () => {
       accessTokenExpiresAt: new Date(),
       scopes: ["s"],
       accountEmail: "a@b.co",
+      accountSubject: "simulated:a@b.co",
+      oauthClientId: "simulated",
     };
-    providerMock.mockResolvedValue({ exchangeAuthorization: vi.fn().mockResolvedValue(tokens) });
+    providerMock.mockResolvedValue({ kind: "simulated", exchangeAuthorization: vi.fn().mockResolvedValue(tokens) });
     connectMock.mockResolvedValue("id");
     const r = await connectCalendarAction(
       { ok: false },
@@ -83,11 +89,20 @@ describe("connectCalendarAction", () => {
       tokens,
     });
   });
+
+  it("com o Google real, o texto de autorização é recusado: só o fluxo OAuth conecta", async () => {
+    const exchangeAuthorization = vi.fn();
+    providerMock.mockResolvedValue({ kind: "google", exchangeAuthorization });
+    const r = await connectCalendarAction({ ok: false }, form({ authorization: "a@b.co" }));
+    expect(r).toEqual({ ok: false, error: expect.stringContaining("Conectar com Google") });
+    expect(exchangeAuthorization).not.toHaveBeenCalled();
+    expect(connectMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("selectCalendarAction", () => {
   it("só aceita agenda que o provedor devolve para o token da conexão", async () => {
-    tokensMock.mockResolvedValue({ accessToken: "tok", refreshToken: "r" });
+    tokensMock.mockResolvedValue({ accessToken: "tok", refreshToken: "r", accessTokenExpiresAt: VALID(), keyVersion: "v1" });
     providerMock.mockResolvedValue({
       listCalendars: vi.fn().mockResolvedValue([{ id: "ok@cal", summary: "Principal", owned: true }]),
     });
@@ -106,6 +121,18 @@ describe("selectCalendarAction", () => {
     });
   });
 
+  it("token de acesso vencido: renova antes de listar as agendas (e guarda o novo cifrado)", async () => {
+    tokensMock.mockResolvedValue({ accessToken: "velho", refreshToken: "r", accessTokenExpiresAt: new Date(Date.now() - 1000), keyVersion: "v1" });
+    const listCalendars = vi.fn().mockResolvedValue([{ id: "ok@cal", summary: "Principal", owned: true }]);
+    const refreshAccessToken = vi.fn().mockResolvedValue({ accessToken: "novo", accessTokenExpiresAt: VALID() });
+    providerMock.mockResolvedValue({ listCalendars, refreshAccessToken });
+
+    expect((await selectCalendarAction({ ok: false }, form({ connectionId: CONN, calendarId: "ok@cal" }))).ok).toBe(true);
+    expect(refreshAccessToken).toHaveBeenCalledWith("r");
+    expect(listCalendars).toHaveBeenCalledWith("novo");
+    expect(storeAccessMock).toHaveBeenCalledWith(expect.objectContaining({ accessToken: "novo", keyVersion: "v1" }));
+  });
+
   it("conexão de outro ambiente: o erro do banco vira mensagem amigável", async () => {
     tokensMock.mockRejectedValue(new Error("calendar_environment_mismatch"));
     providerMock.mockResolvedValue({ listCalendars: vi.fn() });
@@ -119,7 +146,7 @@ describe("disconnectCalendarAction", () => {
   it("revoga no provedor (melhor esforço) e desconecta; falha da revogação não impede", async () => {
     const revoke = vi.fn().mockRejectedValue(new Error("rede"));
     providerMock.mockResolvedValue({ revoke });
-    tokensMock.mockResolvedValue({ accessToken: "a", refreshToken: "r" });
+    tokensMock.mockResolvedValue({ accessToken: "a", refreshToken: "r", accessTokenExpiresAt: VALID(), keyVersion: "v1" });
     const r = await disconnectCalendarAction({ ok: false }, form({ connectionId: CONN }));
     expect(r.ok).toBe(true);
     expect(revoke).toHaveBeenCalledWith("r");
@@ -136,7 +163,7 @@ describe("disconnectCalendarAction", () => {
       order.push("revoke");
     });
     providerMock.mockResolvedValue({ revoke, stopChannel });
-    tokensMock.mockResolvedValue({ accessToken: "a", refreshToken: "r" });
+    tokensMock.mockResolvedValue({ accessToken: "a", refreshToken: "r", accessTokenExpiresAt: VALID(), keyVersion: "v1" });
     channelsMock.mockResolvedValue([
       { channelId: "canal-1", resourceId: "res-1" },
       { channelId: "canal-2", resourceId: "res-2" },

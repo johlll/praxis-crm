@@ -14,28 +14,37 @@ function tokenContext(workspaceId: string, userId: string): TokenContext {
   return { environment: getCalendarEnvironment(), workspaceId, userId };
 }
 
+/**
+ * Grava a conexão pela IDENTIDADE da conta (`sub`) e pelo cliente OAuth
+ * (`connect_calendar_identity`). Sem refresh token novo, o banco só mantém o
+ * existente se for da mesma conta, do mesmo cliente e da mesma versão de
+ * chave — por isso o token de acesso é cifrado com a versão ATIVA, e uma
+ * troca de chave pede novo consentimento.
+ */
 export async function adminConnectCalendar(params: {
   workspaceId: string;
   actorUserId: string;
   tokens: ProviderTokens;
-}): Promise<string> {
+}): Promise<{ connectionId: string; refreshKept: boolean }> {
   const ctx = tokenContext(params.workspaceId, params.actorUserId);
-  const refresh = encryptCalendarToken(params.tokens.refreshToken, ctx);
   const access = encryptCalendarToken(params.tokens.accessToken, ctx);
+  const refresh = params.tokens.refreshToken ? encryptCalendarToken(params.tokens.refreshToken, ctx, access.keyVersion) : null;
 
   const admin = createCalendarAdminSupabaseClient();
-  const { data, error } = await admin.rpc("connect_calendar_account", {
+  const { data, error } = await admin.rpc("connect_calendar_identity", {
     p_workspace_id: params.workspaceId,
     p_actor_user_id: params.actorUserId,
+    p_google_subject: params.tokens.accountSubject,
+    p_oauth_client_id: params.tokens.oauthClientId,
     p_google_account_email: params.tokens.accountEmail,
     p_scopes: params.tokens.scopes,
-    p_refresh_token_ciphertext: refresh.ciphertextBase64,
+    p_refresh_token_ciphertext: refresh?.ciphertextBase64 ?? "",
     p_access_token_ciphertext: access.ciphertextBase64,
     p_access_token_expires_at: params.tokens.accessTokenExpiresAt.toISOString(),
-    p_key_version: refresh.keyVersion,
+    p_key_version: access.keyVersion,
   });
   if (error) throw new Error(error.message);
-  return data;
+  return data as unknown as { connectionId: string; refreshKept: boolean };
 }
 
 export type DecryptedConnectionTokens = {

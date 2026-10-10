@@ -62,7 +62,7 @@ function failureCode(error: unknown): string {
 }
 
 function snapshotOf(event: CalendarEvent): GoogleSnapshot {
-  const entry = event.conferenceData?.entryPoints?.[0];
+  const entry = event.conferenceData?.entryPoints?.find((e) => e.entryPointType === "video");
   const request = event.conferenceData?.createRequest;
   const meetStatus = entry ? "success" : request?.status === "pending" ? "pending" : request?.status === "failure" ? "failed" : null;
   return {

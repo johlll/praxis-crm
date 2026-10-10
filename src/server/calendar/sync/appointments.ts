@@ -108,7 +108,7 @@ function durationOf(event: { start?: { dateTime?: string | undefined } | undefin
 }
 
 function meetOf(event: CalendarEvent): MeetInfo {
-  const entry = event.conferenceData?.entryPoints?.[0];
+  const entry = event.conferenceData?.entryPoints?.find((e) => e.entryPointType === "video");
   if (entry) return { status: "success", url: entry.uri };
   const request = event.conferenceData?.createRequest;
   if (request?.status === "pending") return { status: "pending", url: null };

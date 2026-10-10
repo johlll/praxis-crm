@@ -9,6 +9,7 @@ import {
   SelectCalendarForm,
 } from "@/components/calendar/calendar-connection-forms";
 import { CalendarHealthNotices } from "@/components/calendar/calendar-health-notices";
+import { GoogleConnectButton, GoogleOAuthOutcome } from "@/components/calendar/google-connect";
 import { loadCalendarHealthNotices } from "@/modules/calendar/automation";
 import { getShellContext } from "@/modules/shell/queries";
 import { listCalendarConnections, listChoosableCalendars } from "@/modules/calendar/queries";
@@ -19,8 +20,13 @@ export const metadata: Metadata = {
   title: "Integrações — Praxis CRM Jurídico",
 };
 
-export default async function IntegracoesPage() {
+export default async function IntegracoesPage({
+  searchParams,
+}: { searchParams?: Promise<{ agenda?: string | string[] }> } = {}) {
   const { user, activeWorkspace } = await getShellContext();
+  // Desfecho do retorno do Google: só valores conhecidos viram mensagem.
+  const agenda = (await searchParams)?.agenda;
+  const outcome = typeof agenda === "string" ? agenda : undefined;
   const membership = await requireMembership();
 
   // Mesmo padrão das outras telas de Configurações: quem não tem a
@@ -40,6 +46,7 @@ export default async function IntegracoesPage() {
         <Topbar title="Integrações" subtitle="Google Agenda" user={user} />
         <main className="flex-1 overflow-y-auto p-5">
           <div className="mx-auto flex max-w-[560px] flex-col gap-4">
+            <GoogleOAuthOutcome outcome={outcome} />
             <div className="rounded-lg border border-border bg-surface p-4 text-body">
               A integração com o Google Agenda ainda não está configurada neste ambiente.
             </div>
@@ -69,6 +76,7 @@ export default async function IntegracoesPage() {
       <Topbar title="Integrações" subtitle="Google Agenda" user={user} />
       <main className="flex-1 overflow-y-auto p-5">
         <div className="mx-auto flex max-w-[560px] flex-col gap-4">
+          <GoogleOAuthOutcome outcome={outcome} />
           <CalendarHealthNotices notices={healthNotices} />
           {mine ? (
             <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
@@ -81,6 +89,11 @@ export default async function IntegracoesPage() {
                   <p className="text-meta text-danger">A conexão precisa ser autorizada novamente.</p>
                 ) : null}
               </div>
+              {mine.status === "needs_reauth" && provider.kind === "google" ? (
+                <div>
+                  <GoogleConnectButton label="Autorizar novamente" />
+                </div>
+              ) : null}
               {calendars.length > 0 ? (
                 <SelectCalendarForm
                   connectionId={mine.id}
@@ -92,7 +105,19 @@ export default async function IntegracoesPage() {
             </div>
           ) : (
             <div className="rounded-lg border border-border bg-surface p-4">
-              <ConnectCalendarForm />
+              {provider.kind === "google" ? (
+                <div className="flex flex-col gap-2">
+                  <p className="text-body">
+                    Conecte a sua conta Google para levar os compromissos do CRM à sua agenda. O Praxis pede acesso só aos
+                    eventos das agendas de que você é dono, à disponibilidade e à lista de agendas.
+                  </p>
+                  <div>
+                    <GoogleConnectButton />
+                  </div>
+                </div>
+              ) : (
+                <ConnectCalendarForm />
+              )}
             </div>
           )}
 

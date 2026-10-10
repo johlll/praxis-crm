@@ -192,8 +192,10 @@ export type Database = {
           disconnected_at: string | null
           environment: Database["public"]["Enums"]["calendar_environment"]
           google_account_email: string
+          google_subject: string | null
           id: string
           key_version: string | null
+          oauth_client_id: string | null
           refresh_token_ciphertext: string | null
           scopes: string[]
           status: Database["public"]["Enums"]["calendar_connection_status"]
@@ -210,8 +212,10 @@ export type Database = {
           disconnected_at?: string | null
           environment: Database["public"]["Enums"]["calendar_environment"]
           google_account_email: string
+          google_subject?: string | null
           id?: string
           key_version?: string | null
+          oauth_client_id?: string | null
           refresh_token_ciphertext?: string | null
           scopes: string[]
           status?: Database["public"]["Enums"]["calendar_connection_status"]
@@ -228,8 +232,10 @@ export type Database = {
           disconnected_at?: string | null
           environment?: Database["public"]["Enums"]["calendar_environment"]
           google_account_email?: string
+          google_subject?: string | null
           id?: string
           key_version?: string | null
+          oauth_client_id?: string | null
           refresh_token_ciphertext?: string | null
           scopes?: string[]
           status?: Database["public"]["Enums"]["calendar_connection_status"]
@@ -446,6 +452,56 @@ export type Database = {
           },
           {
             foreignKeyName: "calendar_event_links_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      calendar_oauth_states: {
+        Row: {
+          browser_hash: string
+          created_at: string
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          expires_at: string
+          id: string
+          key_version: string
+          nonce_hash: string
+          state_hash: string
+          user_id: string
+          verifier_ciphertext: string
+          workspace_id: string
+        }
+        Insert: {
+          browser_hash: string
+          created_at?: string
+          environment: Database["public"]["Enums"]["calendar_environment"]
+          expires_at: string
+          id?: string
+          key_version: string
+          nonce_hash: string
+          state_hash: string
+          user_id: string
+          verifier_ciphertext: string
+          workspace_id: string
+        }
+        Update: {
+          browser_hash?: string
+          created_at?: string
+          environment?: Database["public"]["Enums"]["calendar_environment"]
+          expires_at?: string
+          id?: string
+          key_version?: string
+          nonce_hash?: string
+          state_hash?: string
+          user_id?: string
+          verifier_ciphertext?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "calendar_oauth_states_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
@@ -3575,6 +3631,18 @@ export type Database = {
         }
         Returns: string
       }
+      begin_calendar_oauth: {
+        Args: {
+          p_actor_user_id: string
+          p_browser_hash: string
+          p_key_version: string
+          p_nonce_hash: string
+          p_state_hash: string
+          p_verifier_ciphertext: string
+          p_workspace_id: string
+        }
+        Returns: string
+      }
       begin_proposal_document: {
         Args: { p_actor_user_id: string; p_proposal_id: string }
         Returns: {
@@ -3640,6 +3708,30 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: string
+      }
+      connect_calendar_identity: {
+        Args: {
+          p_access_token_ciphertext: string
+          p_access_token_expires_at: string
+          p_actor_user_id: string
+          p_google_account_email: string
+          p_google_subject: string
+          p_key_version: string
+          p_oauth_client_id: string
+          p_refresh_token_ciphertext: string
+          p_scopes: string[]
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      consume_calendar_oauth: {
+        Args: {
+          p_actor_user_id: string
+          p_browser_hash: string
+          p_state_hash: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       contact_has_sensitive: {
         Args: { p_contact_id: string }
