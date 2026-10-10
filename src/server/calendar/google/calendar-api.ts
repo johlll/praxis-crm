@@ -2,6 +2,7 @@ import {
   ProviderHttpError,
   type CalendarEvent,
   type CalendarEventsApi,
+  type ConferenceData,
   type EventInput,
   type EventListItem,
   type EventListPage,
@@ -39,11 +40,49 @@ type GoogleEvent = {
   start?: GoogleDateTime;
   end?: GoogleDateTime;
   extendedProperties?: { private?: Record<string, string> };
-  conferenceData?: CalendarEvent["conferenceData"];
+  conferenceData?: GoogleConferenceData;
   recurrence?: string[];
   recurringEventId?: string;
   updated?: string;
 };
+
+/** `conferenceData` como o Google devolve (Calendar API v3). */
+type GoogleConferenceData = {
+  createRequest?: { requestId?: string; status?: { statusCode?: string } };
+  entryPoints?: Array<{ entryPointType?: string; uri?: string }>;
+};
+
+const MEET_STATUS = new Set(["pending", "success", "failure"]);
+
+/**
+ * Leitura do Meet: o Google traz `createRequest.status.statusCode` (objeto);
+ * o contrato usa a string. Endereço só do entryPoint de VÍDEO — telefone,
+ * "more" e SIP podem vir antes e nunca viram o link da reunião.
+ */
+function fromGoogleConference(raw: GoogleConferenceData | undefined): ConferenceData | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: ConferenceData = {};
+  const request = raw.createRequest;
+  const statusCode = request?.status?.statusCode;
+  if (request && typeof request.requestId === "string" && typeof statusCode === "string" && MEET_STATUS.has(statusCode)) {
+    out.createRequest = { requestId: request.requestId, status: statusCode as "pending" | "success" | "failure" };
+  }
+  const video = Array.isArray(raw.entryPoints)
+    ? raw.entryPoints.find((e) => e?.entryPointType === "video" && typeof e.uri === "string" && e.uri.startsWith("https://"))
+    : undefined;
+  if (video?.uri) out.entryPoints = [{ entryPointType: "video", uri: video.uri }];
+  return out.createRequest || out.entryPoints ? out : undefined;
+}
+
+/**
+ * Escrita do Meet: só `requestId` e `conferenceSolutionKey` (hangoutsMeet).
+ * `status` e `entryPoints` são do Google (somente leitura) e nunca vão no corpo.
+ */
+function toGoogleConference(input: ConferenceData): Record<string, unknown> | undefined {
+  const requestId = input.createRequest?.requestId;
+  if (!requestId) return undefined;
+  return { createRequest: { requestId, conferenceSolutionKey: { type: "hangoutsMeet" } } };
+}
 
 const enc = encodeURIComponent;
 const eventsUrl = (calendarId: string) => `${BASE}/calendars/${enc(calendarId)}/events`;
@@ -64,7 +103,7 @@ function toEvent(raw: GoogleEvent): CalendarEvent {
     start: utc(raw.start),
     end: utc(raw.end),
     extendedProperties: raw.extendedProperties?.private ? { private: { ...raw.extendedProperties.private } } : undefined,
-    conferenceData: raw.conferenceData,
+    conferenceData: fromGoogleConference(raw.conferenceData),
     recurrence: raw.recurrence,
     recurringEventId: raw.recurringEventId,
     updated: raw.updated ?? "",
@@ -92,7 +131,10 @@ function toBody(input: EventInput): Record<string, unknown> {
   if (input.start !== undefined) body.start = { dateTime: input.start.dateTime };
   if (input.end !== undefined) body.end = { dateTime: input.end.dateTime };
   if (input.extendedProperties !== undefined) body.extendedProperties = input.extendedProperties;
-  if (input.conferenceData !== undefined) body.conferenceData = input.conferenceData;
+  if (input.conferenceData !== undefined) {
+    const conference = toGoogleConference(input.conferenceData);
+    if (conference) body.conferenceData = conference;
+  }
   if (input.attendees !== undefined) body.attendees = input.attendees.map((a) => ({ email: a.email }));
   return body;
 }
@@ -230,24 +272,37 @@ export function createGoogleCalendarApi(http: GoogleHttp): CalendarEventsApi & {
     },
 
     async freeBusy(accessToken, calendarIds, timeMin, timeMax) {
-      const raw = await googleRequest<{
-        calendars?: Record<string, { busy?: Array<{ start: string; end: string }>; errors?: Array<{ reason?: string }> }>;
-      }>(http, {
+      const raw = await googleRequest<unknown>(http, {
         method: "POST",
         url: `${BASE}/freeBusy`,
         accessToken,
         json: { timeMin, timeMax, items: calendarIds.map((id) => ({ id })) },
       });
+      // Disponibilidade desconhecida NUNCA é "livre": resposta malformada,
+      // agenda ausente, `busy` que não é lista, intervalo ilegível ou erro por
+      // agenda (com ou sem motivo) → erro. Só `busy: []` com a agenda
+      // presente e sem erro significa livre.
+      const unknown = (reason?: string) => new ProviderHttpError(503, "google_freebusy_unknown", reason);
+      const calendars = (raw as { calendars?: unknown } | null)?.calendars;
+      if (!calendars || typeof calendars !== "object" || Array.isArray(calendars)) throw unknown();
       const busy: Array<{ start: string; end: string }> = [];
       for (const id of calendarIds) {
-        const entry = raw?.calendars?.[id];
-        const reason = entry?.errors?.[0]?.reason;
-        if (reason) {
-          // Agenda sem disponibilidade conhecida: nunca "livre" por omissão.
+        const entry = (calendars as Record<string, unknown>)[id] as
+          | { busy?: unknown; errors?: unknown }
+          | undefined;
+        if (!entry || typeof entry !== "object") throw unknown();
+        // `errors` presente (e não uma lista vazia): agenda com erro.
+        if (entry.errors !== undefined && !(Array.isArray(entry.errors) && entry.errors.length === 0)) {
+          const errors = Array.isArray(entry.errors) ? (entry.errors as Array<{ reason?: unknown }>) : [];
+          const reason = errors.map((e) => e?.reason).find((r): r is string => typeof r === "string" && /^[A-Za-z_]{1,64}$/.test(r));
           throw new ProviderHttpError(reason === "notFound" ? 404 : 503, "google_freebusy_error", reason);
         }
-        for (const b of entry?.busy ?? []) {
-          busy.push({ start: new Date(b.start).toISOString(), end: new Date(b.end).toISOString() });
+        if (!Array.isArray(entry.busy)) throw unknown();
+        for (const b of entry.busy as Array<{ start?: unknown; end?: unknown }>) {
+          const s = typeof b?.start === "string" ? Date.parse(b.start) : NaN;
+          const e = typeof b?.end === "string" ? Date.parse(b.end) : NaN;
+          if (!Number.isFinite(s) || !Number.isFinite(e)) throw unknown();
+          busy.push({ start: new Date(s).toISOString(), end: new Date(e).toISOString() });
         }
       }
       return busy;

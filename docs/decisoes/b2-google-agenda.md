@@ -605,8 +605,8 @@ estiver completa.
   (a listagem nunca pede título); `If-Match` nas escritas; `sendUpdates`
   explícito; id do cliente (409); 410 de evento = inexistente (404), 410 da
   listagem = token inválido; horários em UTC; mesmos parâmetros em todas as
-  páginas; vencimento EFETIVO do canal; disponibilidade com erro nunca vira
-  "livre"; `calendarAccessible` por `calendarList.get` (escopo
+  páginas; vencimento EFETIVO do canal; `calendarAccessible` e demais
+  detalhes abaixo; `calendarAccessible` por `calendarList.get` (escopo
   `calendarlist.readonly`). Erros pelo código **e pelo motivo**: limite de
   chamadas (403 `rateLimitExceeded`, `userRateLimitExceeded`, `quotaExceeded`,
   `dailyLimitExceeded`… ou 429) → 429 temporário, nunca perda de acesso; API
@@ -615,8 +615,36 @@ estiver completa.
   antes de repetir). Renovação: `invalid_grant` → a reautorizar. Revogação
   pelo endpoint do Google. Token de acesso vencido é renovado também ao listar
   agendas e ao desconectar.
+- **Meet** (tradução explícita no adaptador): na leitura, o
+  `createRequest.status.statusCode` do Google (objeto) vira a string do
+  contrato (`pending`/`success`/`failure`; outro valor = sem pedido), e o
+  endereço vem só do entryPoint `video` com https — telefone, `more` ou SIP
+  podem vir antes e são ignorados. Na escrita, o corpo leva só
+  `createRequest.requestId` e `conferenceSolutionKey: {type: "hangoutsMeet"}`;
+  `status` e `entryPoints` são somente leitura e nunca são enviados. O
+  orquestrador também escolhe o entryPoint de vídeo, nunca o primeiro.
+- **Disponibilidade desconhecida não é livre**: resposta malformada, sem
+  `calendars`, agenda pedida ausente, `busy` que não é lista, intervalo com
+  data ilegível ou `errors` por agenda (com ou sem motivo) → erro (503; 404
+  para `notFound`). Só a agenda presente, sem erro e com `busy: []` é livre.
+  Com `requireFree`, o erro acontece antes de qualquer criação: zero chamadas
+  de inclusão de evento (testado com o orquestrador real).
 - **Logs**: só desfecho e código interno; nunca código OAuth, token, state,
   segredo, e-mail ou `sub` (testado).
+- **Por que a assinatura do ID token não é conferida** (exceção conferida,
+  sem ampliar o OAuth): OpenID Connect Core 1.0 §3.1.3.7, item 6 — no fluxo
+  de código, quando o ID token é recebido por comunicação direta entre o
+  cliente e o endpoint de token, a validação do servidor por TLS PODE
+  substituir a verificação da assinatura; a documentação do Google ("Obtain
+  user information from the ID token") diz o mesmo para o canal HTTPS direto
+  com o segredo do cliente. As condições valem aqui e estão no código
+  (`google/oauth.ts`): `response_type=code`; o ID token só é lido da resposta
+  do POST a `https://oauth2.googleapis.com/token` (endereço fixo, TLS
+  verificado pelo runtime), autenticado com o segredo do cliente e o
+  verificador PKCE; nunca de parâmetro do navegador. As demais declarações
+  (`iss`, `aud`, `exp`, `iat`, `nonce`, `sub`, e-mail verificado) continuam
+  conferidas. Se um ID token um dia vier por outro caminho (navegador,
+  fluxo implícito ou híbrido), a assinatura passa a ser obrigatória.
 
 **Roteiro externo (etapa 4b, nada feito)** — Preview primeiro:
 
