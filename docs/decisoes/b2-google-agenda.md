@@ -676,6 +676,36 @@ estiver completa.
    5xx, limite de chamadas; coberta pelos testes) — nunca deve virar perda
    de acesso.
 
+### 6.13 Validação controlada no Preview (etapa 4b, em andamento)
+Preview da branch `validacao-b2`, conta Google de teste, agenda secundária
+"Praxis — Testes B2.", workspace "Escritório Demonstração (A10)". Production
+sem variáveis de agenda; agendamentos e alertas desligados.
+
+- **10/10/2026 — conexão:** OAuth completo (5 escopos), agenda escolhida e
+  conexão salva.
+- **10/10/2026 — criação (CRM → Google):** "QA B2 — Primeiro compromisso",
+  13/10 10h–11h, 60 min, sem Meet e sem convidados; um único evento, uma
+  única tentativa, vínculo `preview` em dia.
+- **10/10/2026 — edição e reagendamento:**
+  - CRM → Google: título trocado para "QA B2 — Compromisso reagendado" e
+    reagendamento para 14h–15h; mesmo id de evento, sem duplicação;
+  - Google → CRM: remoção do Meet e mudança para 15h–16h30, aplicadas pela
+    sincronização sob demanda (Meet some do vínculo e da tela; início 15h,
+    90 min; mesma atividade e mesmo evento; sem conflito).
+- **Desvio de execução (10/10/2026):** durante a validação, um clique
+  automatizado acertou o botão "Criar link do Meet" no lugar de "Reagendar"
+  e criou um Meet no evento de QA (sem convidados, nenhum e-mail enviado). O
+  Meet foi removido pelo Google com autorização e a remoção chegou ao CRM.
+  Isto **não** substitui o teste planejado de Meet, que continua pendente.
+  Medida: cada botão passa a ser localizado pelo rótulo exato e conferido
+  antes do clique.
+- **Observado:** a sincronização sob demanda respeita o intervalo mínimo de
+  5 min; uma segunda abertura da Agenda dentro desse prazo não busca nada
+  (esperado).
+- **Pendência de usabilidade (não implementada):** a página Agenda mostra
+  sempre só a semana atual, sem navegação entre semanas; um compromisso da
+  semana seguinte não aparece nela.
+
 ## 7. Isolamento entre ambientes
 
 O Supabase é compartilhado, então o isolamento é de duas camadas:
