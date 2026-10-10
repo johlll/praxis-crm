@@ -80,3 +80,34 @@ describe("Integrações — deployment com a migration da B2 ainda ausente", () 
     expect(html).not.toContain("não está configurada");
   });
 });
+
+describe("Integrações — provedor Google real (etapa 4a)", () => {
+  it("sem conexão: \"Conectar com Google\" é um link para o início do OAuth; nenhum campo de texto", async () => {
+    providerMock.mockResolvedValue({ kind: "google" });
+    listConnectionsMock.mockResolvedValue([]);
+    const html = renderToStaticMarkup(await IntegracoesPage());
+    expect(html).toContain('href="/api/calendar/oauth/start"');
+    expect(html).toContain("Conectar com Google");
+    expect(html).not.toContain('data-testid="connect"');
+  });
+
+  it("conexão a reautorizar: \"Autorizar novamente\" pelo mesmo fluxo", async () => {
+    providerMock.mockResolvedValue({ kind: "google" });
+    listConnectionsMock.mockResolvedValue([
+      { id: "c-1", userId: "u-1", isMine: true, googleAccountEmail: "teste.qa@exemplo.test", calendarId: "a@x", calendarSummary: "A", status: "needs_reauth", createdAt: "" },
+    ]);
+    const html = renderToStaticMarkup(await IntegracoesPage());
+    expect(html).toContain("Autorizar novamente");
+    expect(html).toContain('href="/api/calendar/oauth/start"');
+  });
+
+  it("desfecho do retorno: mensagem fixa; valor desconhecido não aparece", async () => {
+    providerMock.mockResolvedValue({ kind: "google" });
+    listConnectionsMock.mockResolvedValue([]);
+    const ok = renderToStaticMarkup(await IntegracoesPage({ searchParams: Promise.resolve({ agenda: "partial_scopes" }) }));
+    expect(ok).toContain("Nem todas as permissões pedidas foram concedidas");
+    const injected = renderToStaticMarkup(await IntegracoesPage({ searchParams: Promise.resolve({ agenda: "<b>oi</b>" }) }));
+    expect(injected).not.toContain("oi</b>");
+    expect(injected).not.toContain("&lt;b&gt;");
+  });
+});

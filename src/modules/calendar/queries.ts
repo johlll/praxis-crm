@@ -1,7 +1,7 @@
 import { createServerSupabaseClient } from "@/server/supabase/server";
 import { DataLoadError } from "@/server/data/load-error";
 import { getCalendarProvider, type ProviderCalendar } from "@/server/calendar/provider";
-import { adminGetConnectionTokens } from "@/server/calendar/admin/connections";
+import { loadFreshTokens } from "@/server/calendar/connection-context";
 
 export type CalendarConnectionListItem = {
   id: string;
@@ -32,6 +32,6 @@ export async function listChoosableCalendars(params: {
 }): Promise<ProviderCalendar[]> {
   const provider = await getCalendarProvider();
   if (!provider) return [];
-  const tokens = await adminGetConnectionTokens(params);
+  const tokens = await loadFreshTokens({ provider, ...params });
   return provider.listCalendars(tokens.accessToken);
 }

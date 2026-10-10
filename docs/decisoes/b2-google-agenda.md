@@ -447,6 +447,7 @@ Primeira parte (**3a**), implementada com o provedor **simulado** (migration
 | Reconexão reencontra os vínculos pela marca (critério 12) | **3b** | feito |
 | Restauração do valor do CRM que perdeu num conflito (critério 7) | **3b** | feito (título e horário) |
 | Conflito e restauração na timeline do lead (critério 7) | **3b** | feito |
+| Adaptador Google real e fluxo OAuth (§6.12) | **4a** | feito, **desligado** sem configuração completa; só respostas HTTP simuladas |
 | `CALENDAR_WEBHOOK_URL` e liberação da proteção do Preview para o webhook | **4** | pendente |
 | Comportamento real do Google (token, paginação, `410`, vida dos canais, cabeçalhos) e metas do §9.5 | **4** | pendente |
 | Pendências do administrador do Workspace e da conta de teste (§12) | **4** (validação externa) | pendente |
@@ -550,6 +551,102 @@ continua desligado depois do merge.**
   valor do CRM guardado, com "Restaurar valor do CRM" para quem pode) e a
   restauração como fato próprio. Só conflitos do ambiente autenticado da
   requisição; sem ambiente, nenhum.
+
+### 6.12 Adaptador Google real e OAuth (etapa 4a)
+Implementado e testado só com respostas HTTP **simuladas** (migration
+`20261013100000_b2_google_oauth`, não aplicada ao hospedado). Nenhuma
+credencial foi criada e nada chama o Google enquanto a configuração não
+estiver completa.
+
+- **Liga só completa** (`src/server/calendar/google/config.ts`):
+  `CALENDAR_PROVIDER=google`, `GOOGLE_OAUTH_CLIENT_ID`,
+  `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`, `CALENDAR_TOKEN_*`
+  válidas e `CALENDAR_ENV_SIGNING_KEY` (≥ 32). Faltando qualquer uma, o
+  provedor é `null` e a tela diz "não configurada". O simulado continua
+  impossível em Preview e Production.
+- **Endereço de retorno** só o configurado: https, caminho exato
+  `/api/calendar/oauth/callback`, sem query, fragmento ou credencial (http só
+  em `localhost`, fora da Vercel). Nada da requisição define para onde se
+  volta; depois do retorno, sempre `/configuracoes/integracoes?agenda=<desfecho>`
+  com mensagem fixa.
+- **Início** (`GET /api/calendar/oauth/start`, link "Conectar com Google";
+  GET porque o `form-action 'self'` do CSP barraria um formulário seguindo
+  para o Google): exige `calendar.connect_own`; recusa chamada de outro site
+  (`Sec-Fetch-Site: cross-site`) e outra origem que não a do retorno.
+  Gera `state` (32 bytes), `nonce` do OpenID Connect, verificador PKCE (S256)
+  e um cookie do navegador (httpOnly, Secure, SameSite=Lax, só no caminho do
+  OAuth, 10 min). O banco (`calendar_oauth_states`) guarda só os **hashes**
+  do state, do nonce e do cookie, e o verificador **cifrado** com a chave de
+  tokens do ambiente — com usuário, workspace e ambiente autenticado.
+  Escopos: `openid email` + os três de agenda; `access_type=offline`,
+  `prompt=consent select_account`, `include_granted_scopes=false`.
+- **Retorno** (`GET /api/calendar/oauth/callback`): o state é **consumido**
+  primeiro (uso único, mesmo quando o Google devolveu erro); só então se
+  conferem prazo (10 min), ambiente, sessão (mesmo usuário e workspace) e
+  navegador (mesmo cookie). Depois: troca do código com PKCE e o retorno
+  configurado; **ID token** (`iss` do Google, `aud` = este cliente, `exp`,
+  `nonce` desta autorização, `sub`, e-mail verificado — sem conferir a
+  assinatura, porque o token vem direto do endpoint de token por TLS,
+  OpenID Connect Core §3.1.3.7 item 6); **escopos concedidos** (faltando
+  algum de agenda: nada é guardado e nada é revogado — revogar derrubaria uma
+  autorização anterior ainda válida da mesma conta). Cookie apagado sempre.
+- **Identidade da conta**: o `sub` do ID token (estável; o e-mail pode
+  mudar), nunca o id da agenda principal. A conexão
+  (`connect_calendar_identity`) guarda `google_subject` e `oauth_client_id`:
+  - refresh token ausente numa conexão NOVA, a reautorizar, de outro cliente
+    ou outra versão de chave → `refresh_missing` (novo consentimento);
+  - refresh token ausente na reautorização da MESMA conta e cliente → mantém
+    o existente (não apaga);
+  - outra conta sobre a conexão existente → `account_mismatch` (desconectar
+    antes); a mesma conta por outra pessoa do workspace → `account_in_use`;
+  - a função antiga (`connect_calendar_account`) nunca sobrescreve conexão já
+    identificada.
+- **Adaptador** (`google/calendar-api.ts`, `google/http.ts`): campos mínimos
+  (a listagem nunca pede título); `If-Match` nas escritas; `sendUpdates`
+  explícito; id do cliente (409); 410 de evento = inexistente (404), 410 da
+  listagem = token inválido; horários em UTC; mesmos parâmetros em todas as
+  páginas; vencimento EFETIVO do canal; disponibilidade com erro nunca vira
+  "livre"; `calendarAccessible` por `calendarList.get` (escopo
+  `calendarlist.readonly`). Erros pelo código **e pelo motivo**: limite de
+  chamadas (403 `rateLimitExceeded`, `userRateLimitExceeded`, `quotaExceeded`,
+  `dailyLimitExceeded`… ou 429) → 429 temporário, nunca perda de acesso; API
+  desligada no projeto (403 `accessNotConfigured`) → 503; demais 401/403 →
+  perda de acesso; prazo (15 s) ou rede → resultado incerto (a saída consulta
+  antes de repetir). Renovação: `invalid_grant` → a reautorizar. Revogação
+  pelo endpoint do Google. Token de acesso vencido é renovado também ao listar
+  agendas e ao desconectar.
+- **Logs**: só desfecho e código interno; nunca código OAuth, token, state,
+  segredo, e-mail ou `sub` (testado).
+
+**Roteiro externo (etapa 4b, nada feito)** — Preview primeiro:
+
+1. **Organização do Google Cloud:** conferir se a Vizentini já tem uma
+   (Cloud Console → seletor de projetos → "Todos"; ou Admin do Workspace →
+   conta → Google Cloud) **antes** de propor criar outra. Só Production
+   (app interno) depende dela.
+2. **Contas separadas:**
+   - *Preview:* uma conta **Gmail dedicada** (não do domínio), com uma agenda
+     secundária só para teste, usuária de teste do projeto externo em modo
+     de teste;
+   - *Production (app interno):* uma conta **do domínio**
+     `vizentiniadvocacia.com.br` criada pelo administrador do Workspace,
+     também com agenda só de teste. A conta do Henrique só na etapa
+     controlada, com autorização expressa.
+3. **Branch de validação** `validacao-b2`, com alias estável
+   `https://praxis-crm-git-validacao-b2-johllls-projects.vercel.app`; o
+   **endereço de retorno exato** do cliente OAuth do Preview é
+   `https://praxis-crm-git-validacao-b2-johllls-projects.vercel.app/api/calendar/oauth/callback`
+   (o de Production será
+   `https://praxis-crm-eight.vercel.app/api/calendar/oauth/callback`).
+4. **Reautorização sem esperar 7 dias:** revogar a autorização da conta de
+   teste em `myaccount.google.com/permissions` (ou pelo "Desconectar" do
+   CRM) e conectar de novo; a renovação seguinte devolve `invalid_grant` e a
+   conexão fica a reautorizar.
+5. **Acesso revogado ≠ falha de comunicação:** acesso revogado = tirar a
+   permissão da agenda ou revogar a autorização (espera-se "a reautorizar" ou
+   vínculo para atenção); falha de comunicação = simulada no código (prazo,
+   5xx, limite de chamadas; coberta pelos testes) — nunca deve virar perda
+   de acesso.
 
 ## 7. Isolamento entre ambientes
 

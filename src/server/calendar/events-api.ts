@@ -79,11 +79,18 @@ export type EventInput = {
 
 export type SendUpdates = "none" | "all";
 
-/** Resposta HTTP de erro do Google (409, 412, 404...). */
+/**
+ * Resposta HTTP de erro do Google (409, 412, 404...). `reason` é o motivo
+ * devolvido pelo Google (`errors[].reason`), só para diagnóstico. O
+ * adaptador real NORMALIZA o status quando o código sozinho engana: limite
+ * de chamadas que o Google devolve como 403 vira 429 (temporário, nunca
+ * "perda de acesso"); evento apagado (410) vira 404.
+ */
 export class ProviderHttpError extends Error {
   constructor(
     public readonly status: number,
     message?: string | undefined,
+    public readonly reason?: string | undefined,
   ) {
     super(message ?? `provider_http_${status}`);
     this.name = "ProviderHttpError";

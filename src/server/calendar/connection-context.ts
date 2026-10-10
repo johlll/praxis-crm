@@ -30,22 +30,7 @@ export async function loadConnectionContext(params: {
   if (connection.status !== "active") throw new Error("connection_not_active");
   if (!connection.calendarId) throw new Error("calendar_not_selected");
 
-  const tokens = await adminGetConnectionTokens({ connectionId: connection.id, workspaceId, actorUserId });
-
-  const now = (params.now ?? new Date()).getTime();
-  let accessToken = tokens.accessToken;
-  if (!tokens.accessTokenExpiresAt || tokens.accessTokenExpiresAt.getTime() - REFRESH_MARGIN_MS <= now) {
-    const refreshed = await provider.refreshAccessToken(tokens.refreshToken);
-    accessToken = refreshed.accessToken;
-    await adminStoreAccessToken({
-      connectionId: connection.id,
-      workspaceId,
-      actorUserId,
-      accessToken,
-      accessTokenExpiresAt: refreshed.accessTokenExpiresAt,
-      keyVersion: tokens.keyVersion,
-    });
-  }
+  const { accessToken } = await loadFreshTokens({ provider, connectionId: connection.id, workspaceId, actorUserId, now: params.now });
 
   return {
     connectionId: connection.id,
@@ -53,4 +38,34 @@ export async function loadConnectionContext(params: {
     environment: getCalendarEnvironment(),
     accessToken,
   };
+}
+
+/**
+ * Tokens da PRÓPRIA conexão com o de acesso válido: renova (e guarda cifrado)
+ * quando vencido ou perto de vencer. Serve também a telas que ainda não têm
+ * agenda escolhida (lista de agendas) e à desconexão (encerrar canais).
+ */
+export async function loadFreshTokens(params: {
+  provider: CalendarProvider;
+  connectionId: string;
+  workspaceId: string;
+  actorUserId: string;
+  now?: Date | undefined;
+}): Promise<{ accessToken: string; refreshToken: string }> {
+  const { provider, connectionId, workspaceId, actorUserId } = params;
+  const tokens = await adminGetConnectionTokens({ connectionId, workspaceId, actorUserId });
+  const now = (params.now ?? new Date()).getTime();
+  if (tokens.accessTokenExpiresAt && tokens.accessTokenExpiresAt.getTime() - REFRESH_MARGIN_MS > now) {
+    return { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken };
+  }
+  const refreshed = await provider.refreshAccessToken(tokens.refreshToken);
+  await adminStoreAccessToken({
+    connectionId,
+    workspaceId,
+    actorUserId,
+    accessToken: refreshed.accessToken,
+    accessTokenExpiresAt: refreshed.accessTokenExpiresAt,
+    keyVersion: tokens.keyVersion,
+  });
+  return { accessToken: refreshed.accessToken, refreshToken: tokens.refreshToken };
 }

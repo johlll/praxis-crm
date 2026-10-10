@@ -82,6 +82,7 @@ const queryKey = (q: ListQuery) =>
   JSON.stringify([q.syncToken ?? null, q.showDeleted ?? null, q.singleEvents ?? null, q.maxResults ?? null]);
 
 export class SimulatedCalendarProvider implements CalendarProvider {
+  readonly kind = "simulated" as const;
   private issued = new Map<string, { email: string; calendars: ProviderCalendar[] }>();
   private refreshIssued = new Map<string, string>();
   readonly revoked: string[] = [];
@@ -137,6 +138,9 @@ export class SimulatedCalendarProvider implements CalendarProvider {
       accessTokenExpiresAt: new Date(Date.now() + 3600_000),
       scopes: [...CALENDAR_SCOPES],
       accountEmail: email.toLowerCase(),
+      // Identidade estável fictícia (no Google, o `sub` do ID token).
+      accountSubject: `simulated:${email.toLowerCase()}`,
+      oauthClientId: "simulated",
     };
   }
 

@@ -85,7 +85,8 @@ describe("desligado por padrão", () => {
   });
 
   it("o workflow da recuperação adicional só roda à mão: sem agendamento, sem endereço padrão, com segredo próprio", () => {
-    const yml = readFileSync(join(process.cwd(), ".github/workflows/b2-calendar-recovery.yml"), "utf8");
+    // Fim de linha normalizado: o checkout no Windows pode trazer CRLF.
+    const yml = readFileSync(join(process.cwd(), ".github/workflows/b2-calendar-recovery.yml"), "utf8").replace(/\r\n/g, "\n");
     const active = yml
       .split("\n")
       .filter((line) => !line.trim().startsWith("#"))
