@@ -719,6 +719,27 @@ sem variáveis de agenda; agendamentos e alertas desligados.
   consulta olha só a agenda vinculada ("Praxis — Testes B2."), não as
   demais agendas da conta; os casos de resposta desconhecida do Google
   (agenda ausente, erro) só estão cobertos pelos testes automatizados.
+- **11–12/10/2026 — Conflito de título e restauração:**
+  - 1ª tentativa NÃO validada: entre a mudança no Google ("QA B2 — Título
+    Google") e a edição no CRM, a aba do CRM estava na página Agenda e foi
+    recarregada; a sincronização sob demanda trouxe o título do Google sem
+    conflito (o CRM ainda não tinha mudado). Erro de execução, não defeito.
+  - 2ª tentativa, validada: base "QA B2 — Título Google" em dia; no Google,
+    título → "QA B2 — Título Google 2"; sem sincronização no meio (página do
+    lead), no CRM título → "QA B2 — Título CRM". Resultado: "o Google
+    prevaleceu"; atividade e base com "Título Google 2"; conflito `title`
+    `google_prevails` com o valor do CRM guardado; timeline "Conflito com o
+    Google Agenda (título)" com "Restaurar valor do CRM".
+  - Restauração pela ação oficial: atividade, base e Google com "QA B2 —
+    Título CRM"; conflito com `restored_at`/`restored_by` (o próprio usuário)
+    e versão da atividade; timeline "Valor do CRM restaurado (título) —
+    restaurado por Demo Proprietária (A10)" e o conflito "Já restaurado".
+    Horário (15h–16h30), 90 min, Meet, sem convidados, mesmo evento, 1
+    vínculo e 1 evento na busca do Google, persistentes após recarregar.
+  - **Observação de usabilidade (não corrigida):** depois de clicar em
+    "Restaurar valor do CRM", nenhuma confirmação aparece: a mensagem fica no
+    estado do próprio botão, que some quando a página é revalidada (a
+    entrada deixa de ser restaurável). O resultado só aparece na timeline.
 - **Pendência de usabilidade (não implementada):** a página Agenda mostra
   sempre só a semana atual, sem navegação entre semanas; um compromisso da
   semana seguinte não aparece nela.
