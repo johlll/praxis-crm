@@ -702,6 +702,23 @@ sem variáveis de agenda; agendamentos e alertas desligados.
 - **Observado:** a sincronização sob demanda respeita o intervalo mínimo de
   5 min; uma segunda abertura da Agenda dentro desse prazo não busca nada
   (esperado).
+- **11/10/2026 — Meet planejado (CRM → Google):** um único clique em
+  "Criar link do Meet" no compromisso de 13/10 15h–16h30. Concluído na
+  primeira tentativa (tentativa `meet` registrada como concluída, sem
+  repetição). Vínculo com Meet `success` e link `meet.google.com/…`; no
+  Google, o mesmo evento passou a ter a videoconferência, com título e
+  horário preservados e sem convidados; a busca encontra 1 evento; a tela
+  mostra "Entrar no Meet" depois de recarregar. Limitação: confere o link de
+  vídeo pelo formato `meet.google.com`; a escolha do entryPoint de vídeo
+  entre vários (telefone antes) só está coberta pelos testes automatizados.
+- **11/10/2026 — Disponibilidade (somente consulta):** pelo "Verificar
+  disponibilidade" do diálogo de nova atividade, fechado sem criar nada.
+  13/10 15h30–16h → "Ocupado na sua agenda: 15:30–16:00." (o Google recorta
+  o ocupado à janela pedida); 13/10 10h–11h → "Horário livre na sua
+  agenda.". Nenhuma atividade, vínculo ou tentativa nova. Limitação: a
+  consulta olha só a agenda vinculada ("Praxis — Testes B2."), não as
+  demais agendas da conta; os casos de resposta desconhecida do Google
+  (agenda ausente, erro) só estão cobertos pelos testes automatizados.
 - **Pendência de usabilidade (não implementada):** a página Agenda mostra
   sempre só a semana atual, sem navegação entre semanas; um compromisso da
   semana seguinte não aparece nela.
