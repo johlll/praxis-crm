@@ -66,6 +66,23 @@ describe("ação Restaurar valor do CRM", () => {
   });
 
   it.each([
+    ["pendente", "Salvo no CRM. O Google Agenda não respondeu (provider_503). A alteração ficou pendente: tente sincronizar de novo."],
+    ["incerto", "Salvo no CRM. Resultado incerto no Google Agenda: não foi possível confirmar se a alteração foi aplicada."],
+    ["novo conflito", "Salvo no CRM. O evento também foi alterado no Google Agenda ao mesmo tempo (título): o Google prevaleceu."],
+  ])("restaurado só no CRM (%s): aviso, nunca sucesso completo", async (_case, syncMessage) => {
+    m.restore.mockResolvedValueOnce({ status: "restored", activityId: ACTIVITY_ID, lockVersion: 6 });
+    m.sync.mockResolvedValueOnce({ level: "warning", message: syncMessage });
+
+    const result = await restoreCalendarConflictAction(CONFLICT_ID);
+
+    expect(result.ok).toBe(true);
+    expect(result.notice?.level).toBe("warning");
+    expect(result.notice?.message).toMatch(/^Valor do CRM restaurado no CRM, mas a restauração não foi concluída no Google Agenda\. /);
+    expect(result.notice?.message).toContain(syncMessage.replace(/^Salvo no CRM\. /, ""));
+    expect(result.notice?.message).not.toMatch(/Google Agenda atualizado/);
+  });
+
+  it.each([
     ["outdated", /mudou depois do conflito/],
     ["not_owner", /agenda de outra pessoa/],
     ["already_restored", /já foi restaurado/],
