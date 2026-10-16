@@ -48,10 +48,16 @@ export async function restoreCalendarConflictAction(conflictId: string): Promise
   revalidatePath("/leads/[id]", "page");
   revalidatePath("/atividades");
   revalidatePath("/agenda");
+  // Sucesso só quando o Google ficou igual ao CRM. Qualquer aviso (envio
+  // pendente, recusado, incerto, novo conflito, acesso perdido) quer dizer que
+  // a restauração ficou só no CRM: o texto diz isso antes do motivo.
+  if (!notice) return { ok: true, notice: { level: "success", message: "Valor do CRM restaurado. O Google Agenda já estava igual." } };
+  const reason = notice.message.replace(/^Salvo no CRM\. /, "");
   return {
     ok: true,
-    notice: notice
-      ? { ...notice, message: notice.message.replace(/^Salvo no CRM\. /, "Valor do CRM restaurado. ") }
-      : { level: "success", message: "Valor do CRM restaurado. O Google Agenda já estava igual." },
+    notice:
+      notice.level === "success"
+        ? { ...notice, message: `Valor do CRM restaurado. ${reason}` }
+        : { ...notice, message: `Valor do CRM restaurado no CRM, mas a restauração não foi concluída no Google Agenda. ${reason}` },
   };
 }
