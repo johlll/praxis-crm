@@ -764,6 +764,13 @@ sem variáveis de agenda; agendamentos e alertas desligados.
   o título, 1/1 vínculo, 10/10 tentativas de escrita (1/1 de criação); no
   Google, o dia 27/10 continua só com o compromisso original e a busca por
   "Bloqueio" não encontra nada. Compromisso original intacto.
+- **16/10/2026 — Intervalo completo na timeline (PR #31) conferido:** no
+  Preview, com o conflito histórico real e sem nova escrita (só a página do
+  lead; nenhuma sincronização, conflito, restauração ou escrita no Google),
+  a timeline mostra "o Google prevaleceu: 27/10/2026, 16:00–18:00 (120 min).
+  Valor do CRM guardado: 27/10/2026, 17:00–18:30 (90 min). Já restaurado." e
+  "restaurado por Demo Proprietária (A10): 27/10/2026, 17:00–18:30 (90 min)",
+  sem botão de restaurar.
 - **Pendência de usabilidade (não implementada):** a página Agenda mostra
   sempre só a semana atual, sem navegação entre semanas; um compromisso da
   semana seguinte não aparece nela.
