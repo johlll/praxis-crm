@@ -771,6 +771,39 @@ sem variáveis de agenda; agendamentos e alertas desligados.
   Valor do CRM guardado: 27/10/2026, 17:00–18:30 (90 min). Já restaurado." e
   "restaurado por Demo Proprietária (A10): 27/10/2026, 17:00–18:30 (90 min)",
   sem botão de restaurar.
+- **16/10/2026 — Desconexão pelo CRM, reconexão da mesma conta e
+  recuperação (validado):**
+  - Antes: conexão `953c3361-d1f8-4176-a31e-64ae8999e941` ativa; evento
+    `epkf8gohljlt6hj5rknrf7vsr8q3p15m`, atividade `5e044c2a-…`, vínculo
+    `ac694db5-2a8b-4746-b8b5-de56c33edeb4`; "QA B2 — Título CRM", 27/10
+    17h–18h30, 90 min, Meet, sem convidados; 1 evento, 1 vínculo, 2 conflitos
+    restaurados; 133 atividades, 10 tentativas de escrita (1 de criação).
+  - "Desconectar" (uma vez): conexão `disconnected`, sem token de acesso nem
+    de renovação (só presença conferida); vínculo `unlinked` (mesmo id);
+    atividade e conflitos intactos; auditoria `calendar.connection.disconnected`;
+    evento intacto no Google. A ação revoga o token no Google por melhor
+    esforço e ignora a resposta: o resultado dessa revogação não é observável
+    e NÃO foi validado.
+  - Durante a desconexão, no Google: título → "QA B2 — Reconexão validada";
+    o CRM manteve o título anterior.
+  - Reconexão pela mesma conta, com novo consentimento: o banco criou uma
+    conexão NOVA, `61af033c-263f-4654-8cc2-d88cd4640ee1` (a antiga continua
+    `disconnected`); agenda escolhida pelo id salvo.
+  - Recuperação automática ao "Vincular": vínculo reencontrado (mesmo id,
+    agora na conexão nova), listagem completa trouxe o título do Google para
+    o CRM, uma tentativa `update` do mesmo evento com valores já iguais
+    (nenhuma criação), recuperação concluída, vínculo em dia. Resultado: CRM
+    e Google "QA B2 — Reconexão validada", 27/10 17h–18h30, 90 min, Meet,
+    sem convidados.
+  - "Reencontrar compromissos" duas vezes: "Nenhum compromisso de uma
+    conexão anterior para reencontrar."; contagens idênticas (1 vínculo, 11
+    tentativas, 1 de criação, 133 atividades, 2 conflitos, versão 13, 36
+    registros de auditoria de agenda). 1 evento no Google.
+  - **Limitação de usabilidade observada:** o relatório da recuperação não
+    aparece para o usuário: o formulário de "Vincular" só mostra erros e some
+    depois que a agenda é escolhida (mesmo padrão corrigido na PR #30).
+  - Fora deste teste: revogação externa pelo painel do Google, expiração do
+    consentimento e recuperação interrompida.
 - **Pendência de usabilidade (não implementada):** a página Agenda mostra
   sempre só a semana atual, sem navegação entre semanas; um compromisso da
   semana seguinte não aparece nela.
