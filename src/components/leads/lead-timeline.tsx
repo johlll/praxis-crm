@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { formatDateTime } from "@/lib/timezone";
+import { formatDateTime, formatInterval } from "@/lib/timezone";
 import { ACTIVITY_TYPE_LABEL } from "@/components/activities/labels";
 import { MESSAGE_STATUS_LABEL } from "@/components/conversations/labels";
 import type { LeadTimelineEvent, LeadTimelineEventType } from "@/modules/timeline/queries";
@@ -30,12 +30,17 @@ const CALENDAR_FIELD_LABEL: Record<string, string> = {
   meet: "Meet",
 };
 
-/** Valor de um lado do conflito de agenda, legível (título ou início do horário). */
+/**
+ * Valor de um lado do conflito de agenda, legível: o título, ou o horário
+ * COMPLETO (início, término e duração) — restaurar um horário também muda a
+ * duração, e quem decide precisa ver isso.
+ */
 function conflictValue(field: string, value: unknown): string {
   if (field === "title") return typeof value === "string" ? `“${value}”` : "—";
   if (field === "schedule" && value && typeof value === "object" && "start" in value) {
-    const start = (value as { start?: unknown }).start;
-    return typeof start === "string" ? formatDateTime(start) : "—";
+    const { start, end } = value as { start?: unknown; end?: unknown };
+    if (typeof start !== "string") return "—";
+    return formatInterval(start, typeof end === "string" ? end : null) ?? "—";
   }
   if (field === "cancellation") return "evento cancelado no Google";
   return "—";
