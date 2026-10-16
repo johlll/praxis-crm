@@ -740,6 +740,30 @@ sem variáveis de agenda; agendamentos e alertas desligados.
     "Restaurar valor do CRM", nenhuma confirmação aparece: a mensagem fica no
     estado do próprio botão, que some quando a página é revalidada (a
     entrada deixa de ser restaurável). O resultado só aparece na timeline.
+- **16/10/2026 — Transferência para data futura:** reagendado pelo CRM de
+  13/10 para 27/10/2026 15h–16h30 (90 min), mesmo evento, Meet preservado,
+  sem convidados, 1 evento e 1 vínculo.
+- **16/10/2026 — Conflito de horário e restauração (validado):** base 27/10
+  15h–16h30; no Google, 16h–18h (120 min); sem sincronização no meio (página
+  do lead), no CRM "Reagendar" para 17h com 90 min, enviado uma vez.
+  Resultado: "o Google prevaleceu (horário)"; atividade e vínculo 16h–18h,
+  120 min; conflito `schedule` com valor do CRM 17h–18h30 (início e fim) e
+  do Google 16h–18h; timeline "Conflito com o Google Agenda (horário)".
+  "Restaurar valor do CRM" uma vez: CRM e Google 17h–18h30, 90 min, vínculo
+  em dia; conflito com `restored_at`, autor e versão; timeline "Valor do CRM
+  restaurado (horário)". Mesmo evento, atividade e vínculo; Meet presente;
+  sem convidados; 1 evento.
+- **16/10/2026 — Confirmação da PR #30 no ambiente real:** "Valor do CRM
+  restaurado. Google Agenda atualizado." em verde (`synced`), visível 3 s e
+  13 s depois do clique, já com a timeline atualizada sozinha (entrada de
+  restauração presente, botão removido), sem recarga manual.
+- **16/10/2026 — "Só criar se o horário estiver livre" (validado):** nova
+  reunião "QA B2 — Bloqueio por horário ocupado", 27/10 17h30–18h30, 60 min,
+  sem Meet e sem convidados, enviada uma vez. Recusa: "O horário está ocupado
+  no Google Agenda…". Antes/depois: 133/133 atividades no workspace, 0/0 com
+  o título, 1/1 vínculo, 10/10 tentativas de escrita (1/1 de criação); no
+  Google, o dia 27/10 continua só com o compromisso original e a busca por
+  "Bloqueio" não encontra nada. Compromisso original intacto.
 - **Pendência de usabilidade (não implementada):** a página Agenda mostra
   sempre só a semana atual, sem navegação entre semanas; um compromisso da
   semana seguinte não aparece nela.
