@@ -30,6 +30,27 @@ export function formatTime(iso: string): string {
 }
 
 /**
+ * Intervalo no fuso do escritório, com início, término e duração:
+ * "27/10/2026, 16:00–18:00 (120 min)"; atravessando a meia-noite,
+ * "27/10/2026, 23:30 – 28/10/2026, 00:30 (60 min)". Término ausente,
+ * inválido ou anterior ao início: só o início ("27/10/2026, 16:00"), sem
+ * inventar duração. Início inválido: `null` (quem chama decide o texto).
+ */
+export function formatInterval(startIso: string, endIso?: string | null): string | null {
+  const start = Date.parse(startIso);
+  if (!Number.isFinite(start)) return null;
+  const end = endIso ? Date.parse(endIso) : NaN;
+  const startText = `${formatDate(startIso)}, ${formatTime(startIso)}`;
+  if (!Number.isFinite(end) || end <= start) return startText;
+  const minutes = Math.round((end - start) / 60_000);
+  const endIsoNorm = new Date(end).toISOString();
+  const sameDay = formatDate(startIso) === formatDate(endIsoNorm);
+  return sameDay
+    ? `${startText}–${formatTime(endIsoNorm)} (${minutes} min)`
+    : `${startText} – ${formatDate(endIsoNorm)}, ${formatTime(endIsoNorm)} (${minutes} min)`;
+}
+
+/**
  * Igual a formatDateTime()/formatDate(), mas escolhendo o formato conforme
  * hasTime — o par que due_at/has_time sempre andam juntos nas telas de
  * atividade.
