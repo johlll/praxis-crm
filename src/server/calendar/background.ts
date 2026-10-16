@@ -26,7 +26,8 @@ export function calendarWebhookAddress(): string | null {
 }
 
 /** Abre a conexão em nome do DONO (só ele obtém os tokens). Refresh token
- * inválido vira "a reautorizar"; qualquer outra falha, "indisponível agora". */
+ * inválido vira "a reautorizar" (já marcada pela renovação); qualquer outra
+ * falha, "indisponível agora". */
 export async function openOwnerConnection(
   provider: CalendarProvider,
   owner: { connectionId: string; userId: string; workspaceId: string; calendarId: string },
@@ -41,7 +42,7 @@ export async function openOwnerConnection(
     return { accessToken: ctx.accessToken };
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    return /refresh_token_invalid|invalid_grant/.test(message) ? "needs_reauth" : null;
+    return message === "calendar_reauth_required" ? "needs_reauth" : null;
   }
 }
 
