@@ -941,3 +941,13 @@ Cada etapa em PR própria, com CI verde e sem merge sem autorização.
   mostra "não configurada" e não consulta nada de B2.
 - Nenhuma credencial, usuário, licença ou serviço externo foi criado ou
   contratado nesta etapa.
+- **Usabilidade — navegação entre semanas na Agenda (pendente, separada):** a
+  página Agenda mostra sempre só a semana atual; um compromisso da semana
+  seguinte não aparece nela (observado na validação do Preview, §6.13 da
+  branch `validacao-b2`). Não implementado.
+- **Confirmação de "Restaurar valor do CRM" (corrigida):** a mensagem ficava
+  no estado do botão, que some quando a ação revalida a página; agora a
+  timeline guarda o desfecho e o mostra acima da lista. Sucesso (verde) só
+  com o Google igual ao CRM; restaurado só no CRM (envio pendente, recusado,
+  incerto, novo conflito ou acesso perdido) é aviso e diz que a restauração
+  não foi concluída no Google Agenda. Regras de sincronização inalteradas.

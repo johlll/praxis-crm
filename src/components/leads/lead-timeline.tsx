@@ -45,46 +45,65 @@ function conflictValue(field: string, value: unknown): string {
  * Conflito de agenda (B2, §6.4): o Google prevaleceu e o valor do CRM ficou
  * gravado. Quem pode, restaura o valor do CRM — o servidor confere tudo de
  * novo (dono da agenda, alcance, valor ainda atual) antes de alterar.
+ *
+ * O resultado NÃO fica no botão: a ação revalida a página, o conflito volta
+ * já restaurado (sem botão) e a mensagem sumiria junto. Quem guarda o
+ * desfecho é a `LeadTimeline` (`onResult`), que o mostra fora da lista.
  */
-function RestoreConflictButton({ conflictId }: { conflictId: string }) {
+function RestoreConflictButton({
+  conflictId,
+  onResult,
+}: {
+  conflictId: string;
+  onResult: (result: RestoreResult) => void;
+}) {
   const [pending, startTransition] = useTransition();
-  const [notice, setNotice] = useState<CalendarNotice | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
   return (
-    <div className="mt-1 flex flex-col gap-1">
-      {notice ? null : (
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          className="self-start"
-          disabled={pending}
-          onClick={() => {
-            setFailure(null);
-            startTransition(async () => {
-              const result = await restoreCalendarConflictAction(conflictId);
-              if (!result.ok) {
-                setFailure(result.error ?? "Não foi possível restaurar.");
-                return;
-              }
-              setNotice(result.notice ?? null);
-            });
-          }}
-        >
-          {pending ? "Restaurando…" : "Restaurar valor do CRM"}
-        </Button>
-      )}
-      {notice ? (
-        <Alert variant={notice.level === "warning" ? "warning" : "success"}>
-          <AlertDescription>{notice.message}</AlertDescription>
-        </Alert>
-      ) : null}
-      {failure ? (
-        <Alert variant="danger">
-          <AlertDescription>{failure}</AlertDescription>
-        </Alert>
-      ) : null}
-    </div>
+    <Button
+      type="button"
+      variant="secondary"
+      size="sm"
+      className="mt-1 self-start"
+      disabled={pending}
+      onClick={() => {
+        startTransition(async () => {
+          const result = await restoreCalendarConflictAction(conflictId);
+          onResult(
+            result.ok
+              ? {
+                  conflictId,
+                  notice: result.notice ?? { level: "success", message: "Valor do CRM restaurado." },
+                }
+              : { conflictId, error: result.error ?? "Não foi possível restaurar." },
+          );
+        });
+      }}
+    >
+      {pending ? "Restaurando…" : "Restaurar valor do CRM"}
+    </Button>
+  );
+}
+
+/** Desfecho de "Restaurar valor do CRM", guardado pela timeline. */
+type RestoreResult = { conflictId: string; notice: CalendarNotice } | { conflictId: string; error: string };
+
+/**
+ * Sucesso só quando o Google ficou igual ao CRM; salvo só no CRM (envio
+ * pendente, recusado, incerto ou novo conflito) é aviso, nunca sucesso.
+ */
+function RestoreOutcome({ result }: { result: RestoreResult }) {
+  if ("error" in result) {
+    return (
+      <Alert variant="danger" data-restore-outcome="refused">
+        <AlertDescription>{result.error}</AlertDescription>
+      </Alert>
+    );
+  }
+  const synced = result.notice.level === "success";
+  return (
+    <Alert variant={synced ? "success" : "warning"} data-restore-outcome={synced ? "synced" : "crm_only"}>
+      <AlertDescription>{result.notice.message}</AlertDescription>
+    </Alert>
   );
 }
 
@@ -97,10 +116,15 @@ function EventRow({
   event,
   members,
   canRestoreCalendar,
+  restoredIds,
+  onRestoreResult,
 }: {
   event: LeadTimelineEvent;
   members: TeamMember[];
   canRestoreCalendar: boolean;
+  /** Conflitos já restaurados nesta tela (a lista do servidor pode ainda não saber). */
+  restoredIds: ReadonlySet<string>;
+  onRestoreResult: (result: RestoreResult) => void;
 }) {
   const p = event.payload;
   let restoreId: string | null = null;
@@ -174,7 +198,7 @@ function EventRow({
       <span className="text-body font-semibold text-text">{title}</span>
       {detail ? <span className="text-meta text-text-secondary">{detail}</span> : null}
       <span className="font-mono text-meta text-text-tertiary">{formatDateTime(event.occurredAt)}</span>
-      {restoreId ? <RestoreConflictButton conflictId={restoreId} /> : null}
+      {restoreId && !restoredIds.has(restoreId) ? <RestoreConflictButton conflictId={restoreId} onResult={onRestoreResult} /> : null}
     </li>
   );
 }
@@ -201,6 +225,16 @@ export function LeadTimeline({
   const [syncedInitialItems, setSyncedInitialItems] = useState(initialItems);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // Desfecho da última restauração e conflitos já restaurados nesta tela.
+  // Ficam AQUI (e não no botão nem nos itens) para sobreviver à revalidação
+  // que a própria ação dispara — o reset de `initialItems` abaixo não os toca.
+  const [restoreResult, setRestoreResult] = useState<RestoreResult | null>(null);
+  const [restoredIds, setRestoredIds] = useState<ReadonlySet<string>>(() => new Set());
+
+  function handleRestoreResult(result: RestoreResult) {
+    setRestoreResult(result);
+    if (!("error" in result)) setRestoredIds((prev) => new Set(prev).add(result.conflictId));
+  }
 
   // useState só usa initialItems no primeiro mount — sem isto, uma
   // anotação/proposta criada por uma Server Action IRMÃ (composer,
@@ -290,6 +324,12 @@ export function LeadTimeline({
         </div>
       ) : null}
 
+      {restoreResult ? (
+        <div role="status" aria-live="polite">
+          <RestoreOutcome result={restoreResult} />
+        </div>
+      ) : null}
+
       {items.length === 0 ? (
         <p className="py-4 text-body text-text-tertiary">
           {pending ? "Carregando…" : "Nenhum evento ainda."}
@@ -297,7 +337,14 @@ export function LeadTimeline({
       ) : (
         <ul className="flex flex-col gap-0">
           {items.map((event) => (
-            <EventRow key={`${event.eventType}-${event.id}`} event={event} members={members} canRestoreCalendar={canRestoreCalendar} />
+            <EventRow
+              key={`${event.eventType}-${event.id}`}
+              event={event}
+              members={members}
+              canRestoreCalendar={canRestoreCalendar}
+              restoredIds={restoredIds}
+              onRestoreResult={handleRestoreResult}
+            />
           ))}
         </ul>
       )}
