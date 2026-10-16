@@ -951,3 +951,12 @@ Cada etapa em PR própria, com CI verde e sem merge sem autorização.
   com o Google igual ao CRM; restaurado só no CRM (envio pendente, recusado,
   incerto, novo conflito ou acesso perdido) é aviso e diz que a restauração
   não foi concluída no Google Agenda. Regras de sincronização inalteradas.
+- **Intervalo completo no conflito de horário (corrigido):** o mecanismo de
+  conflito e restauração de horário passou no Google real (validação de
+  16/10/2026 no Preview, Google 16h–18h × CRM 17h–18h30). A validação revelou
+  que a timeline mostrava só os inícios ("16:00:00" e "17:00:00"),
+  escondendo o término e a duração — e restaurar um horário também muda a
+  duração. Agora o conflito e a restauração mostram o intervalo completo no
+  fuso do escritório ("27/10/2026, 16:00–18:00 (120 min)"; atravessando a
+  meia-noite, com as duas datas). Só apresentação dos valores que o banco já
+  guardava (`start` e `end`): sem mudança de sincronização, banco ou dados.
