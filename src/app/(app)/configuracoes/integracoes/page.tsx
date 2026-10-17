@@ -68,6 +68,7 @@ export default async function IntegracoesPage({
           connectionId: mine.id,
           workspaceId: activeWorkspace.id,
           actorUserId: membership.userId,
+          accountEmail: mine.googleAccountEmail,
         })
       : [];
 
@@ -94,11 +95,24 @@ export default async function IntegracoesPage({
                   <GoogleConnectButton label="Autorizar novamente" />
                 </div>
               ) : null}
-              {calendars.length > 0 ? (
-                <SelectCalendarForm
-                  connectionId={mine.id}
-                  calendars={calendars.map((c) => ({ id: c.id, summary: c.summary }))}
-                />
+              {mine.status === "active" && !mine.calendarId ? (
+                calendars.length > 0 ? (
+                  <div className="flex flex-col gap-2">
+                    <p className="text-meta text-text-tertiary">
+                      Aparecem só as agendas de que esta conta é dona. Agendas compartilhadas por outras pessoas ainda
+                      não podem ser usadas.
+                    </p>
+                    <SelectCalendarForm
+                      connectionId={mine.id}
+                      calendars={calendars.map((c) => ({ id: c.id, summary: c.summary }))}
+                    />
+                  </div>
+                ) : (
+                  <p className="text-meta text-text-tertiary">
+                    Nenhuma agenda desta conta disponível. Só podem ser usadas agendas de que a conta é dona; agendas
+                    compartilhadas por outras pessoas ainda não são aceitas.
+                  </p>
+                )
               ) : null}
               {mine.status === "active" && mine.calendarId ? <RecoverCalendarLinksForm /> : null}
               <DisconnectCalendarForm connectionId={mine.id} />

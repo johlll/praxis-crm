@@ -17,12 +17,39 @@ export type ProviderTokens = {
   oauthClientId: string;
 };
 
+/**
+ * Agenda da lista da conta (CalendarList). A PROPRIEDADE não vem pronta do
+ * provedor: depende da conta conectada (`isOwnCalendar`).
+ */
 export type ProviderCalendar = {
   id: string;
   summary: string;
-  /** O usuário é dono da agenda? `calendar.events.owned` só alcança estas. */
-  owned: boolean;
+  /** Agenda principal da conta autenticada (`primary`; ausente = não). */
+  primary: boolean;
+  /** E-mail do dono dos dados (`dataOwner`, só em secundárias); `null` se ausente. */
+  dataOwner: string | null;
 };
+
+function normalizeEmail(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+/**
+ * A agenda pertence à conta conectada? Primeira versão da B2: só estas podem
+ * ser escolhidas — o escopo `calendar.events.owned` não alcança agenda de
+ * outra conta. Própria = a principal da conta OU uma secundária cujo
+ * `dataOwner` é o e-mail da conta (comparação sem espaços nem maiúsculas).
+ *
+ * NÃO valem como prova: `accessRole: "owner"` (o Google o dá também a quem
+ * recebeu uma agenda de outra conta com "gerenciar compartilhamento") nem o
+ * e-mail no id da agenda. Campo ausente = não própria.
+ */
+export function isOwnCalendar(calendar: ProviderCalendar, accountEmail: string): boolean {
+  if (calendar.primary === true) return true;
+  const account = normalizeEmail(accountEmail);
+  if (!account || typeof calendar.dataOwner !== "string") return false;
+  return normalizeEmail(calendar.dataOwner) === account;
+}
 
 import type { CalendarEventsApi } from "@/server/calendar/events-api";
 

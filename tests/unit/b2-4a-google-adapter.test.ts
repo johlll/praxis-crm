@@ -201,15 +201,15 @@ describe("listagem, canais, disponibilidade e agendas", () => {
     ).toMatchObject({ status: 429 });
   });
 
-  it("lista de agendas: todas as páginas; dono marcado", async () => {
+  it("lista de agendas: todas as páginas; primary e dataOwner como vieram (sem inferir pelo accessRole)", async () => {
     const { api: g, requests } = api((req) =>
       req.url.searchParams.get("pageToken")
-        ? { status: 200, json: { items: [{ id: "compartilhada@x", summary: "Do escritório", accessRole: "reader" }] } }
-        : { status: 200, json: { items: [{ id: CALENDAR_ID, summary: "Principal", accessRole: "owner" }], nextPageToken: "p2" } },
+        ? { status: 200, json: { items: [{ id: "compartilhada@x", summary: "Do escritório", accessRole: "owner", dataOwner: "outra@x" }] } }
+        : { status: 200, json: { items: [{ id: CALENDAR_ID, summary: "Principal", accessRole: "owner", primary: true }], nextPageToken: "p2" } },
     );
     expect(await g.listCalendars(TOKEN)).toEqual([
-      { id: CALENDAR_ID, summary: "Principal", owned: true },
-      { id: "compartilhada@x", summary: "Do escritório", owned: false },
+      { id: CALENDAR_ID, summary: "Principal", primary: true, dataOwner: null },
+      { id: "compartilhada@x", summary: "Do escritório", primary: false, dataOwner: "outra@x" },
     ]);
     expect(requests).toHaveLength(2);
   });

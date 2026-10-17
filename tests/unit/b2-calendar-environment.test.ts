@@ -179,7 +179,8 @@ describe("provedor simulado só fora de Production e Preview", () => {
     expect(tokens.accountEmail).toBe("ana@vizentini.test");
     const calendars = await p.listCalendars(tokens.accessToken);
     expect(calendars.map((c) => c.summary)).toEqual(["pessoal", "equipe"]);
-    expect(calendars[0]!.owned).toBe(true);
+    expect(calendars.map((c) => c.primary)).toEqual([true, false]);
+    expect(calendars[1]!.dataOwner).toBe("Ana@Vizentini.test");
     await expect(p.listCalendars("token-inventado")).rejects.toThrow();
     await expect(p.exchangeAuthorization("nao-e-email")).rejects.toThrow();
   });

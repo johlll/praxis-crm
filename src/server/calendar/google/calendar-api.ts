@@ -308,23 +308,29 @@ export function createGoogleCalendarApi(http: GoogleHttp): CalendarEventsApi & {
       return busy;
     },
 
-    /** Agendas da conta; `owned` = dono (o escopo `events.owned` só alcança estas). */
+    /** Agendas da conta, com `primary` e `dataOwner` para conferir a
+     * propriedade (`isOwnCalendar`); o `accessRole` não prova propriedade. */
     async listCalendars(accessToken) {
       const calendars: ProviderCalendar[] = [];
       let pageToken: string | undefined;
       for (let page = 0; page < 20; page++) {
         const raw = await googleRequest<{
-          items?: Array<{ id: string; summary?: string; summaryOverride?: string; accessRole?: string }>;
+          items?: Array<{ id: string; summary?: string; summaryOverride?: string; primary?: boolean; dataOwner?: string }>;
           nextPageToken?: string;
         }>(http, {
           method: "GET",
           url:
             `${BASE}/users/me/calendarList` +
-            query({ maxResults: 250, pageToken, fields: "items(id,summary,summaryOverride,accessRole),nextPageToken" }),
+            query({ maxResults: 250, pageToken, fields: "items(id,summary,summaryOverride,primary,dataOwner),nextPageToken" }),
           accessToken,
         });
         for (const item of raw?.items ?? []) {
-          calendars.push({ id: item.id, summary: item.summaryOverride ?? item.summary ?? item.id, owned: item.accessRole === "owner" });
+          calendars.push({
+            id: item.id,
+            summary: item.summaryOverride ?? item.summary ?? item.id,
+            primary: item.primary === true,
+            dataOwner: typeof item.dataOwner === "string" ? item.dataOwner : null,
+          });
         }
         pageToken = raw?.nextPageToken;
         if (!pageToken) break;

@@ -6,7 +6,8 @@ import { z } from "zod";
 import { requirePermissionSafe } from "@/server/authz/safe";
 import { toUserMessage } from "@/lib/errors";
 import { uuidSchema } from "@/lib/uuid";
-import { getCalendarProvider } from "@/server/calendar/provider";
+import { getCalendarProvider, isOwnCalendar } from "@/server/calendar/provider";
+import { ownConnectionAccountEmail } from "@/modules/calendar/queries";
 import { adminListOwnChannels } from "@/server/calendar/admin/inbound-store";
 import { describeRecovery, recoverOwnCalendarLinks } from "@/modules/calendar/automation";
 import { adminConnectCalendar, adminDisconnectCalendar, adminSetConnectionCalendar } from "@/server/calendar/admin/connections";
@@ -73,7 +74,10 @@ export async function connectCalendarAction(
 const selectSchema = z.object({ connectionId: uuidSchema, calendarId: z.string().trim().min(1).max(1024) });
 
 /** Escolher a agenda da PRÓPRIA conexão. O id escolhido é conferido contra
- * a lista que o provedor devolve para este token — nunca aceito às cegas. */
+ * a lista que o provedor devolve para este token — nunca aceito às cegas — e
+ * precisa pertencer à conta conectada (`isOwnCalendar`): agenda de outra
+ * conta é recusada mesmo com `accessRole: "owner"`, sem gravar nada e sem
+ * escrita no Google (só a leitura da lista). */
 export async function selectCalendarAction(
   _prev: CalendarActionState,
   formData: FormData,
@@ -97,9 +101,12 @@ export async function selectCalendarAction(
       workspaceId: auth.ctx.workspaceId,
       actorUserId: auth.ctx.userId,
     });
+    const accountEmail = await ownConnectionAccountEmail({ workspaceId: auth.ctx.workspaceId, connectionId: parsed.data.connectionId });
+    if (!accountEmail) return { ok: false, error: toUserMessage(new Error("calendar_id_required")) };
     const calendars = await provider.listCalendars(tokens.accessToken);
     const chosen = calendars.find((c) => c.id === parsed.data.calendarId);
     if (!chosen) return { ok: false, error: toUserMessage(new Error("calendar_id_required")) };
+    if (!isOwnCalendar(chosen, accountEmail)) return { ok: false, error: toUserMessage(new Error("calendar_not_owned")) };
 
     await adminSetConnectionCalendar({
       connectionId: parsed.data.connectionId,
