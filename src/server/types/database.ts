@@ -4029,6 +4029,10 @@ export type Database = {
       flag_stuck_webhook_events: { Args: { p_limit?: number }; Returns: Json }
       get_activity: { Args: { p_activity_id: string }; Returns: Json }
       get_activity_counts: { Args: { p_workspace_id: string }; Returns: Json }
+      get_calendar_channel_for_stop: {
+        Args: { p_channel_id: string }
+        Returns: Json
+      }
       get_calendar_connection_secrets: {
         Args: { p_actor_user_id: string; p_connection_id: string }
         Returns: {
