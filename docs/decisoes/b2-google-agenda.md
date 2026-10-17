@@ -1143,6 +1143,54 @@ sem variáveis de agenda; agendamentos e alertas desligados.
     locais; não identificada evidência de exposição externa. As capturas
     foram apagadas, o que não elimina todo o risco; a revogação depende de
     decisão.
+- **Cancelamentos (17/10/2026, Preview, autorizado):** três reuniões
+  fictícias criadas pela interface no lead de teste, na agenda "Praxis —
+  Testes B2." (conexão `61af033c`), 60 min, sem Meet e sem convidados;
+  resposta "Adicionado ao Google Agenda." em todas. Inngest pausado,
+  agendador, alertas e webhook desligados; Production inalterada.
+
+  | | Atividade | Vínculo | Evento |
+  |---|---|---|---|
+  | A | `c3c133ef` (28/10 10:00) | `ad98c19f` | `5tibsrape34nh4jdfh281l2d0ighc4af` |
+  | B | `2dd735de` (28/10 14:00) | `d8b95736` | `2ru760kcdtnfk8k5i5gm1gcj0cnv7pqi` |
+  | C | `4d5b7790` (29/10 10:00) | `ed024cf5` | `2tv8gv8l3lme43qtn1m7oklhqi0490v4` |
+
+  - **A — cancelamento no Google:** evento A excluído na interface do
+    Google ("Excluir evento" → "Evento excluído", 16:49 UTC). Sincronização
+    sob demanda pela abertura da página Agenda, respeitado o intervalo de 5
+    min (anterior às 16:46:56; nova às 16:52:19). Banco: vínculo
+    `cancelled_in_google`, `base_cancelled = true`, sem erro; atividade
+    mantida (`pending`, versão 0); auditoria `calendar.inbound.applied`.
+    Lead recarregado: a linha mostra "Cancelado no Google Agenda", sem
+    "Remover do Google Agenda" nem "Criar link do Meet". Nova sincronização às
+    16:57:34: nada mudou e o evento não foi recriado no Google.
+  - **B — remover pelo CRM:** botão "Remover QA B2 — Remoção B (CRM) do
+    Google Agenda"; confirmação "Remover "QA B2 — Remoção B (CRM)" do
+    Google Agenda? A atividade continua no CRM."; resposta "Removido do
+    Google Agenda." Banco: vínculo `unlinked`, `base_cancelled = true`;
+    atividade mantida (`pending`, versão 0); auditoria
+    `calendar.effect.delete` (16:53:37). Recarregado: sem marcador e com
+    "Adicionar … ao Google Agenda" (desvinculada). Google: evento ausente;
+    a sincronização seguinte não o recriou.
+  - **C — excluir a atividade vinculada:** botão "Excluir QA B2 — Exclusão
+    C (CRM)"; confirmação "… Esta ação não pode ser desfeita. O evento
+    também será removido do Google Agenda."; nenhuma mensagem depois (por
+    desenho, só aviso de nível "warning" aparece, porque a linha some).
+    Banco: atividade inexistente; vínculo `ed024cf5` preservado como
+    `unlinked`, `base_cancelled = true`, sem atividade; auditoria
+    `calendar.effect.delete` e `activity.deleted` (16:55:15). Google:
+    evento ausente.
+  - **Diferença entre os três:** A = cancelado no Google, a atividade fica e
+    o vínculo registra o cancelamento (`cancelled_in_google`); B =
+    desvinculado pelo CRM, o evento sai do Google e a atividade fica livre
+    para ser adicionada de novo (`unlinked`); C = exclusão, o evento sai do
+    Google antes e a atividade deixa de existir, restando o vínculo
+    `unlinked` e a auditoria.
+  - Depois: no Google, só o evento do compromisso "QA B2 — Reconexão
+    validada" na semana; esse compromisso continua na versão 17, com o
+    mesmo etag, o Meet `wai-vuvn-vte` e 1 vínculo. Resíduos de QA
+    preservados para conferência: atividades A e B e os vínculos de A, B e
+    C.
 - **Pendência de usabilidade (não implementada):** a página Agenda mostra
   sempre só a semana atual, sem navegação entre semanas; um compromisso da
   semana seguinte não aparece nela.
