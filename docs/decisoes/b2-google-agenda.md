@@ -1205,6 +1205,20 @@ sem variáveis de agenda; agendamentos e alertas desligados.
   API. O Google não envia convite ao próprio autor da alteração, e a dona
   da agenda já vê o evento: não haveria convite independente a comprovar.
   Nenhuma reunião foi criada; a frente aguarda outro endereço controlado.
+- **Convite real controlado: executado (17/10/2026, autorizado).** Convidado
+  único `niero.joao@outlook.com` (fora da conta conectada). Pela interface do
+  Preview, uma única submissão (17:34:55Z) de "QA B2 — Convite controlado",
+  reunião em 22/10/2026 15:00, 60 min, sem Meet, sem exigir horário livre,
+  com a confirmação explícita de envio marcada. Retorno: "Atividade criada" e
+  "Adicionado ao Google Agenda". Conferido após recarregar:
+  - banco: 1 atividade `63565008` (tipo reunião) e 1 vínculo `31a945ad`,
+    `linked`/`in_sync`, 60 min, `meet_url` nulo, agenda de testes, sem erro;
+  - Google: evento na agenda "Praxis — Testes B2." (organizadora), 15:00–16:00,
+    "1 convidado — 1: pendente", `niero.joao@outlook.com`, criado pela conta
+    conectada;
+  - CRM: a página do lead mostra a atividade com "No Google Agenda".
+  O evento foi preservado sem edição nem cancelamento. A confirmação de
+  recebimento e o eventual aceite ficam com o João (pendente de registro).
 - **Pendência de usabilidade (não implementada):** ao excluir uma atividade
   vinculada com sucesso, a interface não mostra confirmação nenhuma (só um
   aviso de nível "warning" aparece, porque a linha some); a remoção do
