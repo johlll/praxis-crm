@@ -140,8 +140,6 @@ export interface InboundStore {
     },
   ): Promise<ApplyInboundResult>;
 
-  markNeedsReauth(actorUserId: string, connectionId: string, reason: string): Promise<void>;
-
   /** Sob demanda: agendas da PRÓPRIA conexão com vínculo ativo. */
   listOwnSyncTargets(
     actorUserId: string,

@@ -35,7 +35,8 @@ export const FULL_SYNC_INTERVAL_MS = 24 * 3600_000;
 export const MAINTENANCE_BATCH_SIZE = 25;
 
 /** Resultado de abrir a conexão de um dono: o contexto, "a reautorizar"
- * (refresh token inválido) ou indisponível agora. */
+ * (refresh token inválido — a conexão JÁ foi marcada por `loadFreshTokens`,
+ * com a proteção contra falha atrasada) ou indisponível agora. */
 export type OpenedConnection = { accessToken: string } | "needs_reauth" | null;
 
 export type MaintenanceDeps = InboundDeps & {
@@ -89,9 +90,10 @@ export async function runCalendarMaintenance(deps: MaintenanceDeps): Promise<Mai
       pending = (async () => {
         const result = await deps.openConnection(t).catch(() => null);
         if (result === "needs_reauth") {
-          // Refresh token inválido: a conexão fica a reautorizar (aviso ao
-          // usuário), sem tentar de novo em laço.
-          await deps.store.markNeedsReauth(t.userId, t.connectionId, "refresh_token_invalid");
+          // Refresh token inválido: a renovação (`loadFreshTokens`) já deixou
+          // a conexão a reautorizar — uma vez só, e só se o token que falhou
+          // ainda era o gravado. Aqui só conta; a conexão sai dos alvos e
+          // não há laço.
           report.needsReauth += 1;
           return null;
         }

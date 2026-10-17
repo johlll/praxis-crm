@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { createCalendarAdminSupabaseClient } from "@/server/calendar/admin/supabase";
 import { getCalendarEnvironment } from "@/server/calendar/environment";
 import { decryptCalendarToken, encryptCalendarToken, type TokenContext } from "@/server/calendar/token-crypto";
@@ -52,7 +54,15 @@ export type DecryptedConnectionTokens = {
   refreshToken: string;
   accessTokenExpiresAt: Date | null;
   keyVersion: string;
+  /** SHA-256 (hex) do refresh token CIFRADO lido: identifica QUAL credencial
+   * uma renovação usou, sem expor o token (§6.12, reautorização). */
+  refreshFingerprint: string;
 };
+
+/** Mesma conta do banco: `encode(digest(refresh_token_ciphertext, 'sha256'), 'hex')`. */
+export function refreshTokenFingerprint(ciphertextBase64: string): string {
+  return createHash("sha256").update(ciphertextBase64, "utf8").digest("hex");
+}
 
 /** Só o DONO da conexão obtém os tokens (a RPC recusa qualquer outro, e
  * recusa conexão de outro ambiente). */
@@ -77,7 +87,36 @@ export async function adminGetConnectionTokens(params: {
     accessToken: decryptCalendarToken(row.access_token_ciphertext, row.key_version, ctx),
     accessTokenExpiresAt: row.access_token_expires_at ? new Date(row.access_token_expires_at) : null,
     keyVersion: row.key_version,
+    refreshFingerprint: refreshTokenFingerprint(row.refresh_token_ciphertext),
   };
+}
+
+export type NeedsReauthOutcome = "marked" | "already" | "stale" | "disconnected";
+
+/**
+ * Marca a conexão "a reautorizar" só se o refresh token que falhou ainda é o
+ * gravado (`refreshFingerprint`). A RPC confere dono, workspace e ambiente e
+ * trava a linha: uma falha atrasada do token VELHO devolve "stale" (houve
+ * reautorização) ou "disconnected", sem mudar nada.
+ */
+export async function adminMarkNeedsReauthIfCurrent(params: {
+  connectionId: string;
+  workspaceId: string;
+  actorUserId: string;
+  refreshFingerprint: string;
+  reason: string;
+}): Promise<NeedsReauthOutcome> {
+  const admin = createCalendarAdminSupabaseClient();
+  const { data, error } = await admin.rpc("mark_calendar_connection_needs_reauth_if_current", {
+    p_connection_id: params.connectionId,
+    p_workspace_id: params.workspaceId,
+    p_actor_user_id: params.actorUserId,
+    p_refresh_fingerprint: params.refreshFingerprint,
+    p_reason: params.reason,
+  });
+  if (error) throw new Error(error.message);
+  if (data === "marked" || data === "already" || data === "stale" || data === "disconnected") return data;
+  throw new Error("needs_reauth_unexpected_result");
 }
 
 export async function adminSetConnectionCalendar(params: {
