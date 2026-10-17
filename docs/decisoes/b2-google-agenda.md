@@ -830,6 +830,35 @@ sem variáveis de agenda; agendamentos e alertas desligados.
   - Pronto para o teste de revogação externa (ainda **não** validado):
     passar por `needs_reauth` e "Autorizar novamente", sem
     desconectar/reconectar como atalho.
+- **16–17/10/2026 — revogação externa e reautorização (horários em UTC):**
+  - Antes (00:57): conexão `61af033c` `active`/`preview`, agenda conferida
+    pelo id (`acd0bd23…@group.calendar.google.com`), token de acesso guardado
+    já vencido desde 23:52 (sem espera). Compromisso "QA B2 — Reconexão
+    validada", 27/10/2026 17h (São Paulo), 90 min, Meet `wai-vuvn-vte`;
+    vínculo `ac694db5` `linked`/`in_sync`, evento `epkf8gohljlt6hj5rknrf7vsr8q3p15m`;
+    1 vínculo, 1 conexão não desconectada, 4 atividades no lead.
+  - **Revogação — comprovada (01:01:35):** no painel de apps vinculados da
+    conta de teste havia uma única entrada "Praxis CRM — Teste", com acesso
+    concedido a `praxis-crm-git-validacao-b2-johllls-projects.vercel.app` e os
+    mesmos escopos da conexão. Google: "Remover o acesso que você concedeu a
+    Praxis CRM — Teste?" → Confirmar; o app saiu da lista (contagens 94→93
+    e 8→7: só ele).
+  - **Detecção — comprovada (01:02:45):** ao abrir a Agenda, a renovação
+    falhou e a conexão passou a `needs_reauth`; uma única auditoria
+    `calendar.connection.needs_reauth` com `reason: refresh_token_invalid`,
+    pelo dono. Compromisso, vínculo, evento, Meet e histórico iguais aos de
+    antes; a única escrita foi a transição de status. Integrações: "A conexão
+    precisa ser autorizada novamente." com "Autorizar novamente" e
+    "Desconectar".
+  - **Reautorização — pendente (bloqueio):** "Autorizar novamente" levou à
+    escolha de conta do Google às 01:04:38; o retorno chegou depois do limite
+    de 10 minutos do fluxo e o CRM mostrou "A autorização demorou mais de 10
+    minutos e expirou. Comece de novo." (`?agenda=expired`). Às 01:18 a
+    conexão seguia `needs_reauth`, sem nova auditoria, sem duplicação
+    (contagens iguais) e sem concessão nova no painel do Google. Estado
+    preservado; falta repetir "Autorizar novamente" concluindo em menos de
+    10 minutos e então verificar conexão ativa, mesma conexão/conta/agenda e
+    uma sincronização sob demanda.
 - **Pendência de usabilidade (não implementada):** a página Agenda mostra
   sempre só a semana atual, sem navegação entre semanas; um compromisso da
   semana seguinte não aparece nela.
