@@ -1041,6 +1041,32 @@ sem variáveis de agenda; agendamentos e alertas desligados.
       identificada evidência de exposição externa. As capturas foram
       apagadas — isso não elimina todo o risco; a rotação da chave está
       planejada e depende de autorização.
+    - **Rotação feita (17/10/2026, autorizada).** Chave nova criada no
+      painel às 11:40 (horário de Brasília); Production na Vercel passou a ter
+      `INNGEST_SIGNING_KEY` = nova e `INNGEST_SIGNING_KEY_FALLBACK` =
+      anterior (Sensitive, gravadas por stdin, sem arquivo nem impressão);
+      redeploy `dpl_FLFr4pxpB3iCZxqEEgaFrAoiUCVA`. Antes do passo
+      irreversível, introspecção GET assinada no alias
+      `praxis-crm-eight.vercel.app/api/inngest`: com a chave NOVA → 200,
+      autenticada, app `praxis-crm`, 1 função, chave do deploy = nova,
+      fallback = anterior; com a ANTERIOR → 200, autenticada (pelo
+      fallback); sem assinatura → 401. Depois, "Rotate key" (a anterior foi
+      apagada do Inngest) e Resync (11:47, "No change"). Fallback removido,
+      redeploy `dpl_DVrCDqy7DXeeV6tmRsc1SndAjmLi` (alias atual): chave nova
+      → 200, autenticada, sem fallback; chave aleatória no mesmo formato e
+      sem assinatura → 401; Resync final 11:51, "No change". Nenhuma função
+      da A11 executada, nenhum evento criado.
+    - **Limite da prova final:** a chave anterior não pôde ser usada para
+      assinar depois da rotação (o painel a apaga e o valor não foi
+      guardado). A recusa dela no alias atual é comprovada pela
+      introspecção — o deploy tem só a chave nova, sem fallback, e a nova é
+      diferente da anterior — e não por uma requisição assinada com ela.
+    - **Risco residual:** os deployments de Production anteriores ao alias
+      atual ainda contêm a chave anterior (17, de 01/10 a 17/10; em
+      `dpl_FLFr4pxp…`, como fallback) e a aceitariam. Estão atrás da
+      proteção SSO (302 para o login da Vercel) e o Inngest só chama o
+      alias, mas quem tiver um bypass do projeto os alcança. A remoção da
+      chave de TODOS os deployments não foi feita; retirada a decidir.
 - **Pendência de usabilidade (não implementada):** a página Agenda mostra
   sempre só a semana atual, sem navegação entre semanas; um compromisso da
   semana seguinte não aparece nela.
