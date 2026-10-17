@@ -7,8 +7,8 @@
 begin;
 select plan(17);
 
-\set dono '27000000-0000-0000-0000-000000000001'
-\set adv  '27000000-0000-0000-0000-000000000002'
+\set dono '20000000-0000-0000-0000-000000000001'
+\set adv  '20000000-0000-0000-0000-000000000002'
 
 insert into public.calendar_environment_keys (environment, signing_key) values
   ('production', 'chave-de-producao-de-teste-0123456789ab'),
