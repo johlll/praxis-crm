@@ -1,17 +1,19 @@
 # B2 — Integração com Google Agenda: plano consolidado
 
-Status: **plano aprovado para consolidação documental; nada implementado.**
-Não há credencial criada, usuário criado, licença contratada nem serviço
-externo configurado. Escopo: B2 do plano (§10 e marco B). A B1 não é
-reaberta; o chatbot é um projeto separado e fica fora.
+Status: **desenvolvimento da B2 concluído e validação controlada em
+Preview concluída. A B2 NÃO está operacional em Production**: Production
+segue sem configuração de Google/Calendar, e a ativação é uma etapa futura e
+controlada. A B3 não foi iniciada. Encerramento e checklist: §13.
+Escopo: B2 do plano (§10 e marco B). A B1 não é reaberta; o chatbot é um
+projeto separado e fica fora.
 
 Data das verificações na documentação oficial: 08/10/2026. O que não foi
 confirmado está marcado como **a validar**.
 
 ## 1. Decisões já tomadas
 
-1. Primeira conexão: a conta do Henrique (`j.henrique@vizentiniadvocacia.com.br`,
-   Google Workspace), autorizada por ele via OAuth. Ele escolhe a agenda.
+1. Primeira conexão: a conta Google Workspace do Henrique, autorizada por
+   ele via OAuth. Ele escolhe a agenda.
 2. Sincronização nos dois sentidos, **só para compromissos vinculados ao
    CRM**: criação, reagendamento e cancelamento. Eventos pessoais ou externos
    nunca viram lead nem atividade; só bloqueiam disponibilidade.
@@ -713,12 +715,10 @@ estiver completa.
      `vizentiniadvocacia.com.br` criada pelo administrador do Workspace,
      também com agenda só de teste. A conta do Henrique só na etapa
      controlada, com autorização expressa.
-3. **Branch de validação** `validacao-b2`, com alias estável
-   `https://praxis-crm-git-validacao-b2-johllls-projects.vercel.app`; o
-   **endereço de retorno exato** do cliente OAuth do Preview é
-   `https://praxis-crm-git-validacao-b2-johllls-projects.vercel.app/api/calendar/oauth/callback`
-   (o de Production será
-   `https://praxis-crm-eight.vercel.app/api/calendar/oauth/callback`).
+3. **Branch de validação** `validacao-b2`, com endereço estável de Preview;
+   o **endereço de retorno exato** do cliente OAuth é esse endereço seguido
+   de `/api/calendar/oauth/callback` (em Production, o domínio de Production
+   com o mesmo caminho).
 4. **Reautorização sem esperar 7 dias:** revogar a autorização da conta de
    teste em `myaccount.google.com/permissions` (ou pelo "Desconectar" do
    CRM) e conectar de novo; a renovação seguinte devolve `invalid_grant` e a
@@ -1051,9 +1051,8 @@ Configuração mínima no Preview (`validacao-b2`): `INNGEST_SIGNING_KEY` de
 ambientes de branch e `CALENDAR_SCHEDULER_ENABLED=true`. Não precisa de
 `INNGEST_EVENT_KEY` (não publica eventos), nem da configuração da A11, nem de
 `CALENDAR_WEBHOOK_URL`/`CALENDAR_ALERTS_ENABLED`. O Inngest alcança o
-Preview protegido pela URL de sincronização com `x-vercel-protection-bypass`
-(bypass dedicado, alcance do projeto inteiro; a URL com o segredo fica na
-configuração do app no Inngest).
+Preview protegido pela URL de sincronização com o mecanismo de bypass de
+automação da Vercel.
 
 Ativação: variáveis → redeploy → sincronizar `praxis-crm-agenda` no ambiente
 de branch `validacao-b2` pela URL `/api/inngest/calendar?...bypass` →
@@ -1164,7 +1163,7 @@ e reportados como medição, não como promessa.
 
 Cada etapa em PR própria, com CI verde e sem merge sem autorização.
 
-## 12. Pendências (nada foi criado ou configurado)
+## 12. Pendências do plano (registro histórico; situação atual no §13)
 
 - **Identificar o super administrador do Workspace** da Vizentini (quem cria
   a organização do Google Cloud, libera o app no Admin e cria o usuário de
@@ -1218,3 +1217,148 @@ Cada etapa em PR própria, com CI verde e sem merge sem autorização.
   fuso do escritório ("27/10/2026, 16:00–18:00 (120 min)"; atravessando a
   meia-noite, com as duas datas). Só apresentação dos valores que o banco já
   guardava (`start` e `end`): sem mudança de sincronização, banco ou dados.
+
+## 13. Encerramento do desenvolvimento
+
+### 13.1 Status oficial
+- **Desenvolvimento da B2 concluído** (código na `main` até a PR #38).
+- **Validação controlada em Preview concluída**, com conta Google e agenda
+  secundária dedicadas a teste e dados fictícios.
+- **A B2 NÃO está operacional em Production.** Production continua sem
+  nenhuma configuração de Google/Calendar; a integração não está
+  configurada nem ativada.
+- A **ativação em Production** é uma etapa futura e controlada (§13.8),
+  cada passo com autorização.
+- **A B3 não foi iniciada.**
+
+### 13.2 Validado com o Google real (Preview)
+Cada fluxo foi exercitado uma vez, com uma única submissão, conferindo CRM,
+banco e Google depois de recarregar:
+- **OAuth e escolha da agenda:** conexão com os escopos mínimos e escolha de
+  agenda própria; tokens cifrados com a chave do ambiente.
+- **CRM → Google:** criação, edição de título e reagendamento no mesmo
+  evento; durações de 60, 90 e 120 min e horários no fuso do escritório.
+- **Disponibilidade:** consulta de livre/ocupado e recusa de criação com
+  "só criar se o horário estiver livre", sem efeito colateral.
+- **Meet:** criação sob demanda, link visível após o Google concluir;
+  remoção pelo Google refletida no CRM.
+- **Convidados:** ausentes por padrão; um convite com confirmação explícita
+  foi recebido e aceito por um endereço controlado fora da conta conectada.
+- **Google → CRM:** título, horário, Meet e cancelamento aplicados pela
+  sincronização sob demanda, pelo webhook (com manutenção manual) e pelo
+  agendador.
+- **Conflitos:** título e horário editados nos dois lados; o Google
+  prevalece, o valor do CRM fica guardado na timeline e "Restaurar valor do
+  CRM" o devolve ao Google, com confirmação visível.
+- **Revogação e reautorização:** acesso revogado no Google → conexão
+  "a reautorizar" na renovação seguinte → "Autorizar novamente" devolve a
+  MESMA conexão, sem nova escolha de agenda e sem duplicar nada.
+- **Reconexão e reencontro:** desconectar e reconectar a mesma conta
+  reencontrou o vínculo e trouxe a mudança feita no Google enquanto
+  desconectado; repetir "Reencontrar compromissos" não altera nada.
+- **Cancelamentos:** evento excluído no Google (atividade mantida, vínculo
+  "cancelado no Google", sem recriação); remoção pelo CRM (evento sai, a
+  atividade fica livre); exclusão da atividade (evento removido antes).
+- **Webhook:** canal criado, notificação aceita, mudança aplicada e canal
+  encerrado no Google e no banco.
+- **Agendador:** três execuções automáticas consecutivas do Inngest, com
+  mudança no Google aplicada em cerca de 13 min sem abrir a Agenda
+  (amostra, não garantia); pausa conferida.
+- **Recuperação adicional e alerta:** com o agendador parado, o disparo
+  manual sincronizou e enviou um único alerta (recebido); o segundo
+  disparo respeitou o intervalo e não reenviou.
+- **Sem duplicação:** em todos os cenários exercitados, um evento e um
+  vínculo por compromisso, e nenhum conflito espúrio.
+
+O recurso temporário de videoconferência usado na validação foi removido
+do compromisso de QA.
+
+### 13.3 Comprovado só por testes automatizados
+- paginação da listagem e avanço do `syncToken` só na última página;
+- `syncToken` inválido (410), inclusive em página posterior;
+- concorrência e idempotência: duplo clique, 409 com marca divergente,
+  resultado incerto, travas de sincronização e de renovação;
+- renovação de canais perto do vencimento, com sobreposição e TTL curto;
+- isolamento Preview × Production e entre workspaces (RLS, pgTAP);
+- respostas malformadas e falhas do provedor (Meet, disponibilidade,
+  renovação de token, permissões perdidas);
+- rejeições do webhook; recusa de agenda que não pertence à conta.
+
+### 13.4 Matriz dos critérios de aceite (§10)
+Real = validado com o Google real em Preview · Auto = só teste automatizado
+· Prod = ainda depende da ativação em Production.
+
+| # | Critério | Situação |
+|---|---|---|
+| 1 | Escopos mínimos, agenda própria, cifra por ambiente | Real · Auto (cifra do ambiente oposto) · Prod |
+| 2 | Um evento por compromisso | Real · Auto (duplo clique, 409) |
+| 3 | Resultado incerto sem duplicar nem perder | Auto |
+| 4 | Meet opcional e falha visível | Real · Auto (falha) |
+| 5 | Convidados só com confirmação explícita | Real · Prod (remetente) |
+| 6 | Google → CRM e defasagem | Real (amostra) · Prod |
+| 7 | Conflito sem perda silenciosa | Real (título, horário) · Auto (cancelamento, Meet, 412) |
+| 8 | Evento sem vínculo intocado | Auto |
+| 9 | `syncToken` e 410 | Auto (limitação aceita, §13.5) |
+| 10 | Exclusão reconhecida pelo vínculo local | Real |
+| 11 | Sem loop | Real |
+| 12 | Desconexão e reconexão | Real · Auto (revogação do token e encerramento de canal na desconexão) |
+| 13 | Renovação de canais | Auto (limitação aceita, §13.5) |
+| 14 | Isolamento Preview × Production | Auto · Prod |
+| 15 | Papéis, RLS, auditoria, logs | Auto · Real (auditoria) |
+| 16 | Webhook | Real · Auto (rejeições) |
+| 17 | Agendamento, batimento, alertas | Real · Prod (objetivos do §9.8) |
+| 18 | Teste só com conta de teste; Henrique depois | Real · Prod |
+
+### 13.5 Limitações aceitas para o piloto
+- **Agenda compartilhada:** fora da primeira versão (§1, decisão 8). Será
+  evolução futura, com o escopo `calendar.events`, novo consentimento e
+  validação real.
+- **Paginação, 410 e renovação perto do vencimento** não foram provocados
+  no Google real; têm cobertura automatizada e não bloqueiam o piloto. A
+  primeira listagem completa grande e a primeira renovação serão
+  observadas na ativação.
+- **Conta de teste do domínio da Vizentini:** recomendada, não
+  obrigatória. Se não existir ou tiver custo, a alternativa é uma ativação
+  controlada diretamente com a conta do Henrique, com autorização expressa.
+- **Remetente dos convites:** numa agenda secundária o destinatário vê o
+  identificador técnico da agenda. A recomendação inicial é a agenda
+  principal do Henrique — **a confirmar**: não foi validada; a
+  apresentação deve ser conferida com um convite controlado na ativação.
+- **Agendador, webhook e alertas** ficam desligados fora das rodadas
+  controladas.
+- **Recuperação interrompida:** os vínculos ficam pendentes até
+  "Reencontrar compromissos".
+
+### 13.6 Melhorias futuras de interface
+- navegação entre semanas na Agenda (hoje só a semana atual);
+- retorno visível da recuperação automática depois de "Vincular";
+- confirmação após excluir uma atividade vinculada;
+- localização de compromissos futuros em listas extensas (uma reunião da
+  semana seguinte não foi encontrada na Central de Atividades; não
+  investigado).
+
+### 13.7 Resíduos de QA
+Dados e vínculos fictícios de QA foram preservados no ambiente de
+validação para rastreabilidade. A limpeza será decidida no encerramento
+desse ambiente.
+
+### 13.8 Checklist futuro de Production
+Em ordem, cada passo com autorização:
+1. Confirmar o administrador do Google Workspace da Vizentini.
+2. Decidir entre conta de teste do domínio e ativação controlada com a
+   conta do Henrique (§13.5).
+3. Criar e configurar o projeto Google Cloud de Production (público
+   interno; confirmar dispensa de verificação).
+4. Configurar o cliente OAuth com o endereço de retorno de Production.
+5. Provisionar as chaves próprias de Production (assinatura de ambiente e
+   cifra de tokens), distintas das do Preview.
+6. Cadastrar a assinatura de ambiente no banco.
+7. Validar primeiro uma agenda própria (conexão, criação, edição,
+   Google → CRM).
+8. Configurar e validar o webhook.
+9. Ativar e medir o agendador (execuções conferidas no painel e no
+   batimento).
+10. Ativar os alertas para os destinatários reais.
+11. Validar um convite controlado e a apresentação do remetente.
+12. Confirmar o isolamento Preview × Production com registros reais.
+13. Só então autorizar o uso regular.
