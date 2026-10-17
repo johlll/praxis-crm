@@ -1092,6 +1092,57 @@ sem variáveis de agenda; agendamentos e alertas desligados.
       proteção SSO (302 para o login da Vercel) e o Inngest só chama o
       alias, mas quem tiver um bypass do projeto os alcança. A remoção da
       chave de TODOS os deployments não foi feita; retirada a decidir.
+- **Recuperação adicional e alerta (17/10/2026, Preview, autorizado):**
+  dois disparos manuais do workflow (código da `main` `8461345`, PR #37)
+  contra o único destino aprovado, com a função do Inngest **pausada**
+  (atraso real, sem mexer em horários do banco). Alvo único: a conexão
+  `61af033c` (agenda fictícia de teste) e o compromisso "QA B2 — Reconexão
+  validada" (1 vínculo).
+  - Configuração temporária só na `validacao-b2`:
+    `CALENDAR_SCHEDULER_ENABLED`, `CALENDAR_ALERTS_ENABLED`,
+    `CALENDAR_ALERTS_TEST_RECIPIENT` (endereço confirmado pelo
+    responsável), `RESEND_FROM_EMAIL` (`propostas@mail.collios.cloud`),
+    `RESEND_API_KEY` (chave dedicada, só envio, restrita a
+    `mail.collios.cloud`), novo `CRON_SECRET` (o mesmo valor em
+    `B2_CALENDAR_CRON_SECRET` no GitHub) e bypass dedicado à B2
+    (`B2_CALENDAR_BYPASS_SECRET`; os 3 bypasses existentes intactos).
+    Valores gerados em memória e entregues só por stdin. As variáveis não
+    secretas foram regravadas como não sensíveis para conferir o valor
+    antes do envio. Deployment `dpl_AstWaLpNyRvgCfoHFrKJSEC1n3bD`.
+  - Antes: batimento `inngest` com última execução às 05:15:13 UTC, 0
+    alertas, nenhum batimento `github`, função Paused com 3 execuções e
+    nenhuma em andamento. Integrações (16:09 UTC): "Sincronização automática
+    atrasada: a última execução do agendador principal foi há 10 horas."
+  - 1º disparo (run 39048203065, 16:09 UTC): HTTP 200, `outcome: ok`,
+    `detector: stale_alert_sent`, `synced: 1`; batimento `github` 1;
+    alerta `df6bca6d-6ad5-41c9-97a0-2b3b6637212e` `sent`, nota
+    `test_recipient`. Resend: e-mail `01a14aa0-8df4-7ee5-a72f-4416688ce555`
+    aceito (Sent 16:09 UTC) e entregue ao servidor de destino (Delivered
+    16:10 UTC), com o texto novo; recebimento na caixa ainda a confirmar
+    pelo destinatário. Integrações (16:11 UTC): o aviso de atraso do
+    principal **permaneceu**, e a recuperação apareceu à parte ("última
+    execução há 1 minuto, sem falhas… não comprova que o agendador
+    principal esteja funcionando").
+  - 2º disparo (run 39048331003, 16:11 UTC): HTTP 200,
+    `detector: stale_cooldown`, `synced: 0` (mesmo período de 15 min);
+    nenhum alerta novo (total 1), nenhum e-mail novo; batimento `github` 2.
+    O disparo opcional contra destino recusado não foi feito (coberto
+    pelos testes).
+  - Limpeza: as duas chaves de ativação, o destinatário de teste e as
+    variáveis do Resend saíram da branch; redeploy
+    `dpl_Bs1sAMz63fLXv8c7e6ggkKqn7k2D`; Integrações voltou a "desligada
+    neste ambiente". Chave do Resend apagada, bypass da B2 revogado (restam
+    os 3 anteriores) e `B2_CALENDAR_*` apagados do GitHub. O novo
+    `CRON_SECRET` e a signing key de branch ficam no Preview. Depois:
+    função Paused (3 execuções), conexão ativa (token renovado pela
+    rodada), compromisso na versão 17 com o mesmo etag, Meet
+    `wai-vuvn-vte`, 1 vínculo.
+  - Achado lateral: três capturas locais de 30/09 (pasta ignorada pelo
+    git) continham a chave `praxis-crm-b1-propostas` do Resend (só envio,
+    do Preview `feat/b1-proposals-pdf`). Chave encontrada em capturas
+    locais; não identificada evidência de exposição externa. As capturas
+    foram apagadas, o que não elimina todo o risco; a revogação depende de
+    decisão.
 - **Pendência de usabilidade (não implementada):** a página Agenda mostra
   sempre só a semana atual, sem navegação entre semanas; um compromisso da
   semana seguinte não aparece nela.
