@@ -65,11 +65,11 @@ select is((:'r'::jsonb) ->> 'calendarId', 'agenda-prev@x', 'agenda vem do regist
 select is((:'r'::jsonb) ->> 'status', 'creating', 'estado atual do canal');
 select ok(:'r' !~ '(aaaa|refresh-|acesso-|conta@)', 'nenhum hash de segredo, token ou e-mail na resposta');
 
--- 4) Inconsistência entre canal e conexão
-update public.calendar_watch_channels set workspace_id = (select id from public.workspaces where id <> :'ws'::uuid limit 1)
-where channel_id = 'canal-prev';
-select throws_ok($$ select get_calendar_channel_for_stop('canal-prev') $$, 'P0001', 'channel_inconsistent',
-  'canal e conexão de workspaces diferentes: recusa');
+-- 4) Inconsistência entre canal e conexão: o próprio banco a impede (FK
+-- composta conexão+workspace); a conferência da função é defesa extra.
+select throws_ok(
+  format($i$ update public.calendar_watch_channels set workspace_id = gen_random_uuid() where channel_id = 'canal-prev' $i$),
+  '23503', null, 'canal não pode apontar para workspace diferente do da conexão');
 
 select * from finish();
 rollback;
