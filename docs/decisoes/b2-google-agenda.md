@@ -1191,6 +1191,24 @@ sem variáveis de agenda; agendamentos e alertas desligados.
     mesmo etag, o Meet `wai-vuvn-vte` e 1 vínculo. Resíduos de QA
     preservados para conferência: atividades A e B e os vínculos de A, B e
     C.
+- **Chave antiga do Resend revogada (17/10/2026, autorizado):**
+  `praxis-crm-b1-propostas` (só envio, domínio `mail.collios.cloud`, último
+  uso há 17 dias) apagada no painel do Resend; `RESEND_API_KEY` e
+  `RESEND_FROM_EMAIL` removidas só do Preview `feat/b1-proposals-pdf` (PR
+  #21, mesclada em 01/10). A associação entre a chave e essas variáveis foi
+  INFERIDA (mesma data de criação), não comprovada pelo segredo. Preservadas
+  a `praxis-crm-production`, as demais chaves e as variáveis de Production;
+  nenhum deployment excluído nem redeploy.
+- **Convite real controlado: não executado.** O endereço autorizado
+  (`joaoniero2@gmail.com`) é a própria conta Google da conexão `61af033c`,
+  dona da agenda "Praxis — Testes B2." (organizadora) e autora da chamada à
+  API. O Google não envia convite ao próprio autor da alteração, e a dona
+  da agenda já vê o evento: não haveria convite independente a comprovar.
+  Nenhuma reunião foi criada; a frente aguarda outro endereço controlado.
+- **Pendência de usabilidade (não implementada):** ao excluir uma atividade
+  vinculada com sucesso, a interface não mostra confirmação nenhuma (só um
+  aviso de nível "warning" aparece, porque a linha some); a remoção do
+  evento no Google não é comunicada.
 - **Pendência de usabilidade (não implementada):** a página Agenda mostra
   sempre só a semana atual, sem navegação entre semanas; um compromisso da
   semana seguinte não aparece nela.
