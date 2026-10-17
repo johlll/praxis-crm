@@ -17,3 +17,27 @@ export function calendarSchedulerEnabled(): boolean {
 export function calendarAlertsEnabled(): boolean {
   return process.env.CALENDAR_ALERTS_ENABLED === "true";
 }
+
+/**
+ * Destinatário de TESTE do alerta (`CALENDAR_ALERTS_TEST_RECIPIENT`), para a
+ * validação controlada: vale SÓ com `VERCEL_ENV === "preview"`. Em Production
+ * (ou fora da Vercel) é ignorado e o alerta segue para os destinatários reais.
+ *
+ *  - `off`: sem a variável (ou fora do Preview) — destinatários reais;
+ *  - `test`: um único endereço válido — o alerta vai só para ele;
+ *  - `invalid`: variável presente no Preview, mas inválida — o alerta falha
+ *    sem enviar (nunca cai para os destinatários reais por engano).
+ */
+export type AlertTestRecipient = { mode: "off" } | { mode: "test"; email: string } | { mode: "invalid" };
+
+// Um único endereço, sem nome, vírgula, espaço nem colchetes angulares.
+const SINGLE_ADDRESS = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
+
+export function calendarAlertTestRecipient(): AlertTestRecipient {
+  if (process.env.VERCEL_ENV !== "preview") return { mode: "off" };
+  const raw = process.env.CALENDAR_ALERTS_TEST_RECIPIENT;
+  if (raw === undefined || raw === "") return { mode: "off" };
+  const email = raw.trim();
+  if (email.length > 254 || !SINGLE_ADDRESS.test(email)) return { mode: "invalid" };
+  return { mode: "test", email };
+}

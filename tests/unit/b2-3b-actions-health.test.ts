@@ -176,14 +176,22 @@ describe("Detector 2: avisos de saúde", () => {
     ]);
   });
 
-  it("ligado: atrasado sem execução, atrasado há mais de 60 min, em dia; manual não conta", () => {
+  it("ligado: atrasado sem execução, atrasado há mais de 60 min, em dia; manual e recuperação não contam como o principal", () => {
     expect(syncHealthNotices(health(), { now, schedulerEnabled: true })[0]).toMatchObject({ level: "warning", message: expect.stringMatching(/nenhuma execução/) });
     const at = (minutes: number) => new Date(now.getTime() - minutes * 60_000).toISOString();
     expect(
       syncHealthNotices(health({ schedulers: [{ scheduler: "inngest", lastRunAt: at(61), lastOutcome: "ok", lastSuccessAt: at(61) }] }), { now, schedulerEnabled: true })[0],
     ).toMatchObject({ message: expect.stringMatching(/há 61 minutos/) });
+    // Só a recuperação adicional recente: o principal continua sem execução
+    // (a recuperação aparece à parte, como informação).
     expect(
       syncHealthNotices(health({ schedulers: [{ scheduler: "github", lastRunAt: at(10), lastOutcome: "ok", lastSuccessAt: at(10) }] }), { now, schedulerEnabled: true }),
+    ).toEqual([
+      expect.objectContaining({ level: "warning", message: expect.stringMatching(/nenhuma execução registrada/) }),
+      expect.objectContaining({ level: "info", message: expect.stringMatching(/^Recuperação adicional/) }),
+    ]);
+    expect(
+      syncHealthNotices(health({ schedulers: [{ scheduler: "inngest", lastRunAt: at(10), lastOutcome: "ok", lastSuccessAt: at(10) }] }), { now, schedulerEnabled: true }),
     ).toEqual([]);
     expect(
       syncHealthNotices(health({ schedulers: [{ scheduler: "manual", lastRunAt: at(1), lastOutcome: "ok", lastSuccessAt: at(1) }] }), { now, schedulerEnabled: true })[0],

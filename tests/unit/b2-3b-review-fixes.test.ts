@@ -296,9 +296,13 @@ describe("2. falha total ou parcial não aparece como saúde normal", () => {
       expect.objectContaining({ level: "warning", message: expect.stringMatching(/parte das agendas; as demais foram atualizadas/) }),
     ]);
     expect(notice({ scheduler: "inngest", lastRunAt: at(70), lastOutcome: "failed", lastSuccessAt: null })).toEqual([
-      expect.objectContaining({ message: expect.stringMatching(/atrasada: a última execução foi há 70 minutos/) }),
+      expect.objectContaining({ message: expect.stringMatching(/atrasada: a última execução do agendador principal foi há 70 minutos/) }),
     ]);
-    expect(notice({ scheduler: "github", lastRunAt: at(5), lastOutcome: "ok", lastSuccessAt: at(5) })).toEqual([]);
+    // Só a recuperação adicional: não conta como o principal (aviso dele + informação à parte).
+    expect(notice({ scheduler: "github", lastRunAt: at(5), lastOutcome: "ok", lastSuccessAt: at(5) })).toEqual([
+      expect.objectContaining({ level: "warning", message: expect.stringMatching(/nenhuma execução registrada/) }),
+      expect.objectContaining({ level: "info", message: expect.stringMatching(/^Recuperação adicional: última execução há 5 minutos, sem falhas/) }),
+    ]);
     // Integração com o agendador desligado: só o aviso informativo, qualquer que seja o batimento.
     expect(
       syncHealthNotices(

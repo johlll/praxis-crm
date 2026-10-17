@@ -1,3 +1,4 @@
+import type { AlertTestRecipient } from "@/server/calendar/automation-flags";
 import type { MaintenanceReport } from "@/server/calendar/sync/maintenance";
 
 /**
@@ -45,6 +46,8 @@ export type ScheduledDeps = {
   alertsEnabled: boolean;
   /** `null` = sem provedor de e-mail configurado. */
   sendAlert: ((message: AlertMessage) => Promise<void>) | null;
+  /** Destinatário de teste (só Preview; ver `calendarAlertTestRecipient`). Ausente = `off`. */
+  testRecipient?: AlertTestRecipient;
 };
 
 /** Agendador principal sem batimento há mais que isto: atrasado (§9.3). */
@@ -126,18 +129,27 @@ export async function checkPrimaryScheduler(deps: ScheduledDeps): Promise<Detect
     await deps.store.finishAlert(claim.alertId, "failed", "no_recipients");
     return "stale_alert_failed";
   }
+  // Modo de teste (só Preview): a configuração inválida falha SEM enviar; a
+  // válida troca a lista inteira por um único endereço — um envio por alerta,
+  // por mais administradores que a consulta devolva.
+  const test = deps.testRecipient ?? { mode: "off" };
+  if (test.mode === "invalid") {
+    await deps.store.finishAlert(claim.alertId, "failed", "test_recipient_invalid");
+    return "stale_alert_failed";
+  }
+  const recipients = test.mode === "test" ? [{ email: test.email }] : claim.recipients;
 
   const since = primary ? `desde ${new Date(last!).toISOString()}` : "desde que foi ligada (nenhuma execução registrada)";
   let failed = 0;
   // Um e-mail por destinatário: ninguém vê o endereço dos outros.
-  for (const { email } of claim.recipients) {
+  for (const { email } of recipients) {
     try {
       await deps.sendAlert({
         to: email,
         subject: "Praxis CRM: sincronização automática do Google Agenda atrasada",
         text: [
           `A sincronização automática do Google Agenda não roda ${since}.`,
-          "As alterações feitas no Google podem demorar a aparecer no CRM. Abrir a agenda no CRM força uma atualização da sua agenda.",
+          "As alterações feitas no Google podem demorar a aparecer no CRM. Abrir a página Agenda no CRM pode disparar a atualização da sua agenda conectada, no máximo uma vez a cada 5 minutos.",
           "Este aviso é enviado no máximo a cada 6 horas enquanto o atraso continuar.",
         ].join("\n\n"),
         idempotencyKey: `${claim.alertId}:${email}`,
@@ -146,10 +158,11 @@ export async function checkPrimaryScheduler(deps: ScheduledDeps): Promise<Detect
       failed += 1;
     }
   }
-  if (failed === claim.recipients.length) {
+  if (failed === recipients.length) {
     await deps.store.finishAlert(claim.alertId, "failed", "send_failed");
     return "stale_alert_failed";
   }
-  await deps.store.finishAlert(claim.alertId, "sent", failed > 0 ? `partial_${failed}` : null);
+  // No modo de teste, o registro diz que o envio foi só ao endereço de teste.
+  await deps.store.finishAlert(claim.alertId, "sent", test.mode === "test" ? "test_recipient" : failed > 0 ? `partial_${failed}` : null);
   return "stale_alert_sent";
 }
