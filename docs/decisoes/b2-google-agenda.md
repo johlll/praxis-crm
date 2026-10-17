@@ -808,6 +808,28 @@ sem variáveis de agenda; agendamentos e alertas desligados.
     depois que a agenda é escolhida (mesmo padrão corrigido na PR #30).
   - Fora deste teste: revogação externa pelo painel do Google, expiração do
     consentimento e recuperação interrompida.
+- **16/10/2026 — publicação da correção de reautorização (PR #32, §6.14):**
+  - Migration `20261017100000_b2_reauth_if_current` aplicada no
+    `praxis-crm-dev` (`rgoeppjwnltcbeqipovh`) depois de dry-run com ela como
+    única pendente; novo dry-run sem pendências. `EXECUTE` da função nova:
+    `service_role` sim; `PUBLIC`, `anon` e `authenticated` não. A função não
+    foi chamada contra a conexão real.
+  - PR #32 mesclada em `67e2dc6` (pais `9990ba5` e `e66024a`); Production
+    `dpl_JD4iXqHDzLJYqtB73YigSytCLktA` sem variáveis de agenda, sem testes
+    funcionais lá. `main` incorporada nesta branch em `e621351` (conflito só
+    neste documento, §6.13 e §6.14 preservados); Preview
+    `dpl_FuBq6UH3pLj4kygzBUPyHaDqfFeY` no endereço estável.
+  - Conferência limitada, sem abrir a Agenda: conexão `61af033c` ativa, agenda
+    "Praxis — Testes B2.", vínculo `linked`/`in_sync` com o mesmo evento e
+    Meet, compromisso "QA B2 — Reconexão validada" intacto, nenhuma auditoria
+    `needs_reauth`; Integrações sem erro de função ausente, e abri-la não
+    alterou conexão nem vínculo.
+  - Divergência de texto: o aviso de Integrações diz que a agenda "é
+    atualizada quando você abre esta tela", mas a sincronização sob demanda
+    roda pela página Agenda (e nas edições), não por Integrações.
+  - Pronto para o teste de revogação externa (ainda **não** validado):
+    passar por `needs_reauth` e "Autorizar novamente", sem
+    desconectar/reconectar como atalho.
 - **Pendência de usabilidade (não implementada):** a página Agenda mostra
   sempre só a semana atual, sem navegação entre semanas; um compromisso da
   semana seguinte não aparece nela.
