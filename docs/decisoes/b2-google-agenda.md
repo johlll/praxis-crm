@@ -1032,9 +1032,12 @@ sem variáveis de agenda; agendamentos e alertas desligados.
     - O contador de execuções do painel seguia em 0/50.000 às 05:35;
       pelo modelo de cobrança a rodada consumiu 6 (3 execuções + 3 etapas)
       — não confirmado no painel.
-    - Achado de segurança tratado: duas capturas antigas do navegador
-      automatizado (28/09, rodada da A11; pasta ignorada pelo git) tinham a
-      signing key de PRODUCTION em texto; apagadas.
+    - Achado de segurança: a signing key de PRODUCTION (a em uso desde
+      28/09 23:47) foi encontrada em duas capturas locais do navegador
+      automatizado (28/09, rodada da A11; pasta ignorada pelo git); não
+      identificada evidência de exposição externa. As capturas foram
+      apagadas — isso não elimina todo o risco; a rotação da chave está
+      planejada e depende de autorização.
 - **Pendência de usabilidade (não implementada):** a página Agenda mostra
   sempre só a semana atual, sem navegação entre semanas; um compromisso da
   semana seguinte não aparece nela.
