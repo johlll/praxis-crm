@@ -114,6 +114,12 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   environment_required: "Não foi possível identificar o ambiente. Tente novamente.",
   connection_not_found: "Conexão de agenda não encontrada.",
   connection_not_active: "A conexão com a agenda precisa ser reautorizada.",
+  calendar_reauth_required:
+    "A autorização do Google Agenda deixou de valer (foi revogada ou expirou). Abra Configurações → Integrações e use “Autorizar novamente”.",
+  calendar_refresh_unavailable:
+    "Não foi possível renovar o acesso ao Google Agenda agora. Tente de novo em instantes.",
+  calendar_oauth_misconfigured:
+    "A integração com o Google Agenda está com a configuração inválida neste ambiente. Avise o administrador do sistema; sua conexão não precisa ser refeita.",
   calendar_id_required: "Escolha uma agenda.",
   calendar_not_selected: "Escolha a agenda da conexão antes de vincular compromissos.",
   activity_not_appointment: "Só compromissos com horário (reuniões) podem ser vinculados à agenda.",

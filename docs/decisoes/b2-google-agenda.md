@@ -199,7 +199,9 @@ pelo mesmo caminho de escrita com `If-Match`. Por campo:
   sync. **Não apaga eventos do Google nem compromissos do CRM**; os vínculos
   viram `unlinked`. Reconectar faz sync completo e reencontra os eventos pela
   marca e pelo `event_id`.
-- Token inválido (`invalid_grant`): conexão `needs_reauth`, aviso ao usuário.
+- Token inválido (`invalid_grant`): conexão `needs_reauth`, aviso ao usuário
+  ("Autorizar novamente"). Reconhecido em QUALQUER renovação — sob demanda,
+  ações e manutenção agendada (§6.14).
 
 ### 6.6 Convidados e Meet
 - **Convidados desativados por padrão**: sem `attendees`, e `sendUpdates=none`.
@@ -612,7 +614,8 @@ estiver completa.
   `dailyLimitExceeded`… ou 429) → 429 temporário, nunca perda de acesso; API
   desligada no projeto (403 `accessNotConfigured`) → 503; demais 401/403 →
   perda de acesso; prazo (15 s) ou rede → resultado incerto (a saída consulta
-  antes de repetir). Renovação: `invalid_grant` → a reautorizar. Revogação
+  antes de repetir). Renovação: `invalid_grant` → a reautorizar (no ponto
+  único `loadFreshTokens`, §6.14). Revogação
   pelo endpoint do Google. Token de acesso vencido é renovado também ao listar
   agendas e ao desconectar.
 - **Meet** (tradução explícita no adaptador): na leitura, o
@@ -669,7 +672,8 @@ estiver completa.
 4. **Reautorização sem esperar 7 dias:** revogar a autorização da conta de
    teste em `myaccount.google.com/permissions` (ou pelo "Desconectar" do
    CRM) e conectar de novo; a renovação seguinte devolve `invalid_grant` e a
-   conexão fica a reautorizar.
+   conexão fica a reautorizar (§6.14: só quando o token de acesso guardado
+   vence e é renovado, até ~1 h depois).
 5. **Acesso revogado ≠ falha de comunicação:** acesso revogado = tirar a
    permissão da agenda ou revogar a autorização (espera-se "a reautorizar" ou
    vínculo para atenção); falha de comunicação = simulada no código (prazo,
@@ -807,6 +811,49 @@ sem variáveis de agenda; agendamentos e alertas desligados.
 - **Pendência de usabilidade (não implementada):** a página Agenda mostra
   sempre só a semana atual, sem navegação entre semanas; um compromisso da
   semana seguinte não aparece nela.
+
+### 6.14 Reautorização reconhecida sem o agendador
+**Lacuna encontrada** (validação no Preview, 16/10/2026, antes de revogar a
+conta de teste): só a manutenção agendada (`runCalendarMaintenance`, pela
+rota de cron) marcava `needs_reauth`. A sincronização sob demanda e as ações
+interativas engoliam o `invalid_grant` (só o log `calendar_on_demand_failed`
+ou "O Google Agenda não foi atualizado…"), a conexão continuava `active` e a
+tela de Integrações nunca mostrava "Autorizar novamente" — e o agendador está
+desligado em Preview e Production. O comentário de `loadConnectionContext`
+dizia o contrário.
+
+**Correção:** o reconhecimento fica no ponto único por onde passam todas as
+renovações, `loadFreshTokens` (sob demanda, edição/criação/reagendamento,
+disponibilidade, lista de agendas, desconexão, recuperação e manutenção):
+
+| Falha da renovação | Erro de domínio | Conexão | Mensagem |
+|---|---|---|---|
+| `invalid_grant` (revogado, vencido, senha trocada, 7 dias do modo de teste) | `calendar_reauth_required` | `needs_reauth` | "…use “Autorizar novamente”." |
+| `invalid_client`, `unauthorized_client` | `calendar_oauth_misconfigured` | inalterada | configuração do ambiente; o usuário não precisa refazer nada |
+| rede, prazo, limite de chamadas, erro temporário | `calendar_refresh_unavailable` | inalterada | "tente de novo em instantes" |
+
+Em todos os casos a operação para ANTES de qualquer chamada de calendário;
+atividade, vínculo, evento e histórico ficam intactos. Numa edição já salva
+no CRM, a mensagem continua "Salvo no CRM. O Google Agenda não foi
+atualizado: …" (nada é apresentado como desfeito). Perda de permissão de
+UMA agenda (401/403 da Calendar API) continua sendo atenção no vínculo, não
+reautorização: um 401 isolado não comprova `invalid_grant`.
+
+**Consistência** (migration `20261017100000_b2_reauth_if_current`, nova;
+nenhuma migration aplicada foi editada): a marcação usa
+`mark_calendar_connection_needs_reauth_if_current`, que confere dono,
+workspace e ambiente, trava a linha e compara a impressão digital (SHA-256)
+do refresh token CIFRADO que a renovação usou com a do gravado. Assim:
+- a mesma falha repetida devolve "already", sem nova transição nem auditoria;
+- uma falha atrasada do token VELHO, depois de uma reautorização concluída,
+  devolve "stale" e não derruba a conexão nova;
+- uma conexão desconectada continua desconectada ("disconnected").
+A manutenção agendada passou a só contar o caso (a renovação já marcou),
+sem a segunda marcação sem essa proteção.
+
+**Limitação:** enquanto o token de acesso guardado não vence (até ~1 h), não
+há renovação — uma revogação feita no Google só é reconhecida na próxima
+renovação. Não há detecção imediata.
 
 ## 7. Isolamento entre ambientes
 
@@ -1083,6 +1130,18 @@ Cada etapa em PR própria, com CI verde e sem merge sem autorização.
   com o Google igual ao CRM; restaurado só no CRM (envio pendente, recusado,
   incerto, novo conflito ou acesso perdido) é aviso e diz que a restauração
   não foi concluída no Google Agenda. Regras de sincronização inalteradas.
+- **Retorno da recuperação automática na tela (pendente, conhecida desde a
+  etapa 3b):** depois de "Vincular" a agenda numa reconexão, o relatório da
+  recuperação ("… reencontrado(s) … concluída(s)") não aparece: o formulário
+  de "Vincular" só mostra erros e some quando a agenda é escolhida (mesmo
+  padrão corrigido na PR #30). Evidência real em 16/10/2026 (Preview): a
+  recuperação concluiu (auditoria `calendar.link.recovered`,
+  `calendar.inbound.applied`, `calendar.link.recovery_completed`) sem nenhuma
+  mensagem; "Reencontrar compromissos" mostra o resultado. Não corrigido.
+- **Atualização redundante na recuperação (registrada, sem otimização):** na
+  mesma recuperação, depois de a entrada trazer o título do Google, a saída
+  ainda fez um `update` do mesmo evento com valores já iguais (nenhuma
+  criação, nenhum efeito visível).
 - **Intervalo completo no conflito de horário (corrigido):** o mecanismo de
   conflito e restauração de horário passou no Google real (validação de
   16/10/2026 no Preview, Google 16h–18h × CRM 17h–18h30). A validação revelou

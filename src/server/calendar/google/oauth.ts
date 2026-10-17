@@ -181,7 +181,8 @@ export async function refreshAccessToken(
     });
   } catch (error) {
     // `invalid_grant` (revogado, vencido, senha trocada, 7 dias do modo de
-    // teste): a conexão fica a reautorizar — `background.ts` reconhece o código.
+    // teste): `loadFreshTokens` reconhece o código e deixa a conexão a
+    // reautorizar; os demais códigos não culpam o usuário.
     const code = oauthErrorCode(error);
     throw new Error(code === "invalid_grant" ? "refresh_token_invalid" : `refresh_failed:${code}`);
   }

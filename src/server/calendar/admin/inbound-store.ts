@@ -85,15 +85,6 @@ export function createSupabaseInboundStore(): InboundStore {
       return data as unknown as ApplyInboundResult;
     },
 
-    async markNeedsReauth(actorUserId, connectionId, reason) {
-      const { error } = await admin.rpc("mark_calendar_connection_needs_reauth", {
-        p_connection_id: connectionId,
-        p_actor_user_id: actorUserId,
-        p_reason: reason,
-      });
-      check(error);
-    },
-
     async listOwnSyncTargets(actorUserId, connectionId) {
       const { data, error } = await admin.rpc("list_own_calendar_sync_targets", {
         p_connection_id: connectionId,

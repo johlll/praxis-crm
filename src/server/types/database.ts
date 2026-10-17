@@ -4300,6 +4300,16 @@ export type Database = {
         }
         Returns: undefined
       }
+      mark_calendar_connection_needs_reauth_if_current: {
+        Args: {
+          p_actor_user_id: string
+          p_connection_id: string
+          p_reason: string
+          p_refresh_fingerprint: string
+          p_workspace_id: string
+        }
+        Returns: string
+      }
       mark_calendar_link_pending: {
         Args: {
           p_activity_id: string

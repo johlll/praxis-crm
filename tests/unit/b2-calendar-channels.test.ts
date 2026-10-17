@@ -127,10 +127,17 @@ describe("rodada de manutenção", () => {
   });
 
   it("refresh token inválido: conexão a reautorizar, nada é chamado no Google", async () => {
-    opened = "needs_reauth";
-    expect(await maintain()).toMatchObject({ needsReauth: 1, synced: 0 });
+    // Quem abre a conexão é a renovação real (`loadFreshTokens`), que já
+    // marca "a reautorizar" ao devolver "needs_reauth": aqui, simulada.
+    const openAsRenewal = async (): Promise<OpenedConnection> => {
+      await inbound.markNeedsReauth("user-1", "conn-1", "refresh_token_invalid");
+      return "needs_reauth";
+    };
+    expect(await maintain({ openConnection: openAsRenewal })).toMatchObject({ needsReauth: 1, synced: 0 });
     expect(inbound.connections.get("conn-1")!.status).toBe("needs_reauth");
     expect(f.provider.calls).toEqual([]);
+    // A manutenção não marca de novo: uma única transição registrada.
+    expect(inbound.audit.filter((a) => a.action === "calendar.connection.needs_reauth")).toHaveLength(1);
     // Na rodada seguinte a conexão nem é alvo: sem laço.
     expect(await maintain()).toMatchObject({ targets: 0, needsReauth: 0 });
   });
