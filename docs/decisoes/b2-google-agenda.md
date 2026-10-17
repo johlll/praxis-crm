@@ -1235,6 +1235,53 @@ sem variáveis de agenda; agendamentos e alertas desligados.
 - **Pendência de usabilidade (não implementada):** a página Agenda mostra
   sempre só a semana atual, sem navegação entre semanas; um compromisso da
   semana seguinte não aparece nela.
+- **Revisão de fechamento técnico (17/10/2026, só leitura; corrigida):**
+  - **Defeito encontrado e decisão:** a escolha de agenda inferia
+    propriedade por `accessRole: "owner"` — que NÃO equivale a dono dos
+    dados (o Google o dá também a quem recebe agenda de outra conta com
+    "gerenciar compartilhamento") — e nem usava o resultado: a tela oferecia
+    e a ação aceitava qualquer agenda da lista. Decisão para a primeira
+    versão: só a agenda principal ou secundária cujo `dataOwner` é a conta
+    conectada; agenda compartilhada é evolução futura (escopo
+    `calendar.events`, novo consentimento, validação real). Correção na
+    PR #38 (reprodução vermelha → verde; sem mudança de escopo nem
+    migration). O teste real com agenda compartilhada NÃO foi feito.
+  - Trocar a agenda escolhida afeta só compromissos novos; os existentes
+    continuam na agenda registrada no próprio vínculo.
+  - O procedimento de desligamento do §9.7 já foi corrigido pela PR #36
+    (pausa no painel; lista vazia recusada).
+  - Paginação, `syncToken` inválido/410 e renovação de canais ficam como
+    limitações documentadas (cobertas por testes automatizados; o
+    comportamento real é observado no piloto: primeira listagem completa
+    grande e primeira renovação) e NÃO bloqueiam o piloto. Recuperação
+    interrompida idem, com "Reencontrar compromissos" como instrução.
+  - Production: recomendada inicialmente a agenda PRINCIPAL do Henrique,
+    sobretudo com convidados (o destinatário vê o nome e o e-mail dele, não
+    o id técnico de uma secundária); a apresentação do remetente deve ser
+    conferida com um convite controlado.
+  - **Matriz de aceite (§10)** — Real = serviço real no Preview; Auto = só
+    teste automatizado; Prod = depende de Production:
+
+    | # | Situação | Observação |
+    |---|---|---|
+    | 1 | Real · Auto · Prod | OAuth e cifra reais; "ambiente oposto não decifra" só Auto; escolha só de agenda própria pela PR #38 (Auto) |
+    | 2 | Real (parcial) · Auto | 1 evento por criação real; duplo clique/409 Auto |
+    | 3 | Auto | resultado incerto |
+    | 4 | Real · Auto | Meet real; falha visível Auto |
+    | 5 | Real · Prod | convite recebido e aceito; agenda remetente em Production a decidir |
+    | 6 | Real · Prod | defasagem amostrada (~13 min) |
+    | 7 | Real (parcial) · Auto | título e horário reais; cancelamento, Meet e 412 Auto |
+    | 8 | Auto | evento externo |
+    | 9 | Auto (limitação documentada) | paginação e 410 |
+    | 10 | Real | cenário A |
+    | 11 | Real | sem loop |
+    | 12 | Real (parcial) | revogação pela ação e encerramento de canal na desconexão não observados |
+    | 13 | Auto (limitação documentada) | criar e parar canal reais; renovação Auto |
+    | 14 | Auto · Prod | isolamento com registros reais exige Production |
+    | 15 | Auto | pgTAP `20_`–`27_b2_*`; auditoria conferida nos cenários reais |
+    | 16 | Real (parcial) · Auto | rejeições Auto |
+    | 17 | Real (parcial) · Prod | objetivos do §9.8 não medidos por completo |
+    | 18 | Real · pendente | etapa do Henrique |
 
 ### 6.14 Reautorização reconhecida sem o agendador
 **Lacuna encontrada** (validação no Preview, 16/10/2026, antes de revogar a
