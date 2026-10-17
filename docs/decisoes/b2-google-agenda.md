@@ -1,9 +1,12 @@
 # B2 — Integração com Google Agenda: plano consolidado
 
-Status: **plano aprovado para consolidação documental; nada implementado.**
-Não há credencial criada, usuário criado, licença contratada nem serviço
-externo configurado. Escopo: B2 do plano (§10 e marco B). A B1 não é
-reaberta; o chatbot é um projeto separado e fica fora.
+Status: **B2 — desenvolvimento concluído. A integração permanece desativada
+em Production. A configuração do Google Workspace da Vizentini, a validação
+no ambiente de Production e a conexão controlada da conta do Henrique
+pertencem à etapa posterior de implantação.** A B2 NÃO está operacional em
+Production. Encerramento, matriz de aceite e checklist de implantação: §13.
+Escopo: B2 do plano (§10 e marco B). A B1 não é reaberta; o chatbot é um
+projeto separado e fica fora.
 
 Data das verificações na documentação oficial: 08/10/2026. O que não foi
 confirmado está marcado como **a validar**.
@@ -730,6 +733,526 @@ estiver completa.
    5xx, limite de chamadas; coberta pelos testes) — nunca deve virar perda
    de acesso.
 
+### 6.13 Validação controlada no Preview (etapa 4b, concluída)
+Preview da branch `validacao-b2`, conta Google de teste, agenda secundária
+"Praxis — Testes B2.", workspace "Escritório Demonstração (A10)". Production
+sem variáveis de agenda; agendamentos e alertas desligados.
+
+- **10/10/2026 — conexão:** OAuth completo (5 escopos), agenda escolhida e
+  conexão salva.
+- **10/10/2026 — criação (CRM → Google):** "QA B2 — Primeiro compromisso",
+  13/10 10h–11h, 60 min, sem Meet e sem convidados; um único evento, uma
+  única tentativa, vínculo `preview` em dia.
+- **10/10/2026 — edição e reagendamento:**
+  - CRM → Google: título trocado para "QA B2 — Compromisso reagendado" e
+    reagendamento para 14h–15h; mesmo id de evento, sem duplicação;
+  - Google → CRM: remoção do Meet e mudança para 15h–16h30, aplicadas pela
+    sincronização sob demanda (Meet some do vínculo e da tela; início 15h,
+    90 min; mesma atividade e mesmo evento; sem conflito).
+- **Desvio de execução (10/10/2026):** durante a validação, um clique
+  automatizado acertou o botão "Criar link do Meet" no lugar de "Reagendar"
+  e criou um Meet no evento de QA (sem convidados, nenhum e-mail enviado). O
+  Meet foi removido pelo Google com autorização e a remoção chegou ao CRM.
+  Isto **não** substitui o teste planejado de Meet, que continua pendente.
+  Medida: cada botão passa a ser localizado pelo rótulo exato e conferido
+  antes do clique.
+- **Observado:** a sincronização sob demanda respeita o intervalo mínimo de
+  5 min; uma segunda abertura da Agenda dentro desse prazo não busca nada
+  (esperado).
+- **11/10/2026 — Meet planejado (CRM → Google):** um único clique em
+  "Criar link do Meet" no compromisso de 13/10 15h–16h30. Concluído na
+  primeira tentativa (tentativa `meet` registrada como concluída, sem
+  repetição). Vínculo com Meet `success` e link `meet.google.com/…`; no
+  Google, o mesmo evento passou a ter a videoconferência, com título e
+  horário preservados e sem convidados; a busca encontra 1 evento; a tela
+  mostra "Entrar no Meet" depois de recarregar. Limitação: confere o link de
+  vídeo pelo formato `meet.google.com`; a escolha do entryPoint de vídeo
+  entre vários (telefone antes) só está coberta pelos testes automatizados.
+- **11/10/2026 — Disponibilidade (somente consulta):** pelo "Verificar
+  disponibilidade" do diálogo de nova atividade, fechado sem criar nada.
+  13/10 15h30–16h → "Ocupado na sua agenda: 15:30–16:00." (o Google recorta
+  o ocupado à janela pedida); 13/10 10h–11h → "Horário livre na sua
+  agenda.". Nenhuma atividade, vínculo ou tentativa nova. Limitação: a
+  consulta olha só a agenda vinculada ("Praxis — Testes B2."), não as
+  demais agendas da conta; os casos de resposta desconhecida do Google
+  (agenda ausente, erro) só estão cobertos pelos testes automatizados.
+- **11–12/10/2026 — Conflito de título e restauração:**
+  - 1ª tentativa NÃO validada: entre a mudança no Google ("QA B2 — Título
+    Google") e a edição no CRM, a aba do CRM estava na página Agenda e foi
+    recarregada; a sincronização sob demanda trouxe o título do Google sem
+    conflito (o CRM ainda não tinha mudado). Erro de execução, não defeito.
+  - 2ª tentativa, validada: base "QA B2 — Título Google" em dia; no Google,
+    título → "QA B2 — Título Google 2"; sem sincronização no meio (página do
+    lead), no CRM título → "QA B2 — Título CRM". Resultado: "o Google
+    prevaleceu"; atividade e base com "Título Google 2"; conflito `title`
+    `google_prevails` com o valor do CRM guardado; timeline "Conflito com o
+    Google Agenda (título)" com "Restaurar valor do CRM".
+  - Restauração pela ação oficial: atividade, base e Google com "QA B2 —
+    Título CRM"; conflito com `restored_at`/`restored_by` (o próprio usuário)
+    e versão da atividade; timeline "Valor do CRM restaurado (título) —
+    restaurado por Demo Proprietária (A10)" e o conflito "Já restaurado".
+    Horário (15h–16h30), 90 min, Meet, sem convidados, mesmo evento, 1
+    vínculo e 1 evento na busca do Google, persistentes após recarregar.
+  - **Observação de usabilidade (não corrigida):** depois de clicar em
+    "Restaurar valor do CRM", nenhuma confirmação aparece: a mensagem fica no
+    estado do próprio botão, que some quando a página é revalidada (a
+    entrada deixa de ser restaurável). O resultado só aparece na timeline.
+- **16/10/2026 — Transferência para data futura:** reagendado pelo CRM de
+  13/10 para 27/10/2026 15h–16h30 (90 min), mesmo evento, Meet preservado,
+  sem convidados, 1 evento e 1 vínculo.
+- **16/10/2026 — Conflito de horário e restauração (validado):** base 27/10
+  15h–16h30; no Google, 16h–18h (120 min); sem sincronização no meio (página
+  do lead), no CRM "Reagendar" para 17h com 90 min, enviado uma vez.
+  Resultado: "o Google prevaleceu (horário)"; atividade e vínculo 16h–18h,
+  120 min; conflito `schedule` com valor do CRM 17h–18h30 (início e fim) e
+  do Google 16h–18h; timeline "Conflito com o Google Agenda (horário)".
+  "Restaurar valor do CRM" uma vez: CRM e Google 17h–18h30, 90 min, vínculo
+  em dia; conflito com `restored_at`, autor e versão; timeline "Valor do CRM
+  restaurado (horário)". Mesmo evento, atividade e vínculo; Meet presente;
+  sem convidados; 1 evento.
+- **16/10/2026 — Confirmação da PR #30 no ambiente real:** "Valor do CRM
+  restaurado. Google Agenda atualizado." em verde (`synced`), visível 3 s e
+  13 s depois do clique, já com a timeline atualizada sozinha (entrada de
+  restauração presente, botão removido), sem recarga manual.
+- **16/10/2026 — "Só criar se o horário estiver livre" (validado):** nova
+  reunião "QA B2 — Bloqueio por horário ocupado", 27/10 17h30–18h30, 60 min,
+  sem Meet e sem convidados, enviada uma vez. Recusa: "O horário está ocupado
+  no Google Agenda…". Antes/depois: 133/133 atividades no workspace, 0/0 com
+  o título, 1/1 vínculo, 10/10 tentativas de escrita (1/1 de criação); no
+  Google, o dia 27/10 continua só com o compromisso original e a busca por
+  "Bloqueio" não encontra nada. Compromisso original intacto.
+- **16/10/2026 — Intervalo completo na timeline (PR #31) conferido:** no
+  Preview, com o conflito histórico real e sem nova escrita (só a página do
+  lead; nenhuma sincronização, conflito, restauração ou escrita no Google),
+  a timeline mostra "o Google prevaleceu: 27/10/2026, 16:00–18:00 (120 min).
+  Valor do CRM guardado: 27/10/2026, 17:00–18:30 (90 min). Já restaurado." e
+  "restaurado por Demo Proprietária (A10): 27/10/2026, 17:00–18:30 (90 min)",
+  sem botão de restaurar.
+- **16/10/2026 — Desconexão pelo CRM, reconexão da mesma conta e
+  recuperação (validado):**
+  - Antes: conexão `953c3361-d1f8-4176-a31e-64ae8999e941` ativa; evento
+    `epkf8gohljlt6hj5rknrf7vsr8q3p15m`, atividade `5e044c2a-…`, vínculo
+    `ac694db5-2a8b-4746-b8b5-de56c33edeb4`; "QA B2 — Título CRM", 27/10
+    17h–18h30, 90 min, Meet, sem convidados; 1 evento, 1 vínculo, 2 conflitos
+    restaurados; 133 atividades, 10 tentativas de escrita (1 de criação).
+  - "Desconectar" (uma vez): conexão `disconnected`, sem token de acesso nem
+    de renovação (só presença conferida); vínculo `unlinked` (mesmo id);
+    atividade e conflitos intactos; auditoria `calendar.connection.disconnected`;
+    evento intacto no Google. A ação revoga o token no Google por melhor
+    esforço e ignora a resposta: o resultado dessa revogação não é observável
+    e NÃO foi validado.
+  - Durante a desconexão, no Google: título → "QA B2 — Reconexão validada";
+    o CRM manteve o título anterior.
+  - Reconexão pela mesma conta, com novo consentimento: o banco criou uma
+    conexão NOVA, `61af033c-263f-4654-8cc2-d88cd4640ee1` (a antiga continua
+    `disconnected`); agenda escolhida pelo id salvo.
+  - Recuperação automática ao "Vincular": vínculo reencontrado (mesmo id,
+    agora na conexão nova), listagem completa trouxe o título do Google para
+    o CRM, uma tentativa `update` do mesmo evento com valores já iguais
+    (nenhuma criação), recuperação concluída, vínculo em dia. Resultado: CRM
+    e Google "QA B2 — Reconexão validada", 27/10 17h–18h30, 90 min, Meet,
+    sem convidados.
+  - "Reencontrar compromissos" duas vezes: "Nenhum compromisso de uma
+    conexão anterior para reencontrar."; contagens idênticas (1 vínculo, 11
+    tentativas, 1 de criação, 133 atividades, 2 conflitos, versão 13, 36
+    registros de auditoria de agenda). 1 evento no Google.
+  - **Limitação de usabilidade observada:** o relatório da recuperação não
+    aparece para o usuário: o formulário de "Vincular" só mostra erros e some
+    depois que a agenda é escolhida (mesmo padrão corrigido na PR #30).
+  - Fora deste teste: revogação externa pelo painel do Google, expiração do
+    consentimento e recuperação interrompida.
+- **16/10/2026 — publicação da correção de reautorização (PR #32, §6.14):**
+  - Migration `20261017100000_b2_reauth_if_current` aplicada no
+    `praxis-crm-dev` (`rgoeppjwnltcbeqipovh`) depois de dry-run com ela como
+    única pendente; novo dry-run sem pendências. `EXECUTE` da função nova:
+    `service_role` sim; `PUBLIC`, `anon` e `authenticated` não. A função não
+    foi chamada contra a conexão real.
+  - PR #32 mesclada em `67e2dc6` (pais `9990ba5` e `e66024a`); Production
+    `dpl_JD4iXqHDzLJYqtB73YigSytCLktA` sem variáveis de agenda, sem testes
+    funcionais lá. `main` incorporada nesta branch em `e621351` (conflito só
+    neste documento, §6.13 e §6.14 preservados); Preview
+    `dpl_FuBq6UH3pLj4kygzBUPyHaDqfFeY` no endereço estável.
+  - Conferência limitada, sem abrir a Agenda: conexão `61af033c` ativa, agenda
+    "Praxis — Testes B2.", vínculo `linked`/`in_sync` com o mesmo evento e
+    Meet, compromisso "QA B2 — Reconexão validada" intacto, nenhuma auditoria
+    `needs_reauth`; Integrações sem erro de função ausente, e abri-la não
+    alterou conexão nem vínculo.
+  - Divergência de texto: o aviso de Integrações diz que a agenda "é
+    atualizada quando você abre esta tela", mas a sincronização sob demanda
+    roda pela página Agenda (e nas edições), não por Integrações.
+  - Pronto para o teste de revogação externa (ainda **não** validado):
+    passar por `needs_reauth` e "Autorizar novamente", sem
+    desconectar/reconectar como atalho.
+- **16–17/10/2026 — revogação externa e reautorização (horários em UTC):**
+  - Antes (00:57): conexão `61af033c` `active`/`preview`, agenda conferida
+    pelo id (`acd0bd23…@group.calendar.google.com`), token de acesso guardado
+    já vencido desde 23:52 (sem espera). Compromisso "QA B2 — Reconexão
+    validada", 27/10/2026 17h (São Paulo), 90 min, Meet `wai-vuvn-vte`;
+    vínculo `ac694db5` `linked`/`in_sync`, evento `epkf8gohljlt6hj5rknrf7vsr8q3p15m`;
+    1 vínculo, 1 conexão não desconectada, 4 atividades no lead.
+  - **Revogação — comprovada (01:01:35):** no painel de apps vinculados da
+    conta de teste havia uma única entrada "Praxis CRM — Teste", com acesso
+    concedido a `praxis-crm-git-validacao-b2-johllls-projects.vercel.app` e os
+    mesmos escopos da conexão. Google: "Remover o acesso que você concedeu a
+    Praxis CRM — Teste?" → Confirmar; o app saiu da lista (contagens 94→93
+    e 8→7: só ele).
+  - **Detecção — comprovada (01:02:45):** ao abrir a Agenda, a renovação
+    falhou e a conexão passou a `needs_reauth`; uma única auditoria
+    `calendar.connection.needs_reauth` com `reason: refresh_token_invalid`,
+    pelo dono. Compromisso, vínculo, evento, Meet e histórico iguais aos de
+    antes; a única escrita foi a transição de status. Integrações: "A conexão
+    precisa ser autorizada novamente." com "Autorizar novamente" e
+    "Desconectar".
+  - **Reautorização — pendente (bloqueio):** "Autorizar novamente" levou à
+    escolha de conta do Google às 01:04:38; o retorno chegou depois do limite
+    de 10 minutos do fluxo e o CRM mostrou "A autorização demorou mais de 10
+    minutos e expirou. Comece de novo." (`?agenda=expired`). Às 01:18 a
+    conexão seguia `needs_reauth`, sem nova auditoria, sem duplicação
+    (contagens iguais) e sem concessão nova no painel do Google. Estado
+    preservado.
+  - **Reautorização — comprovada (01:31:56, segunda tentativa):** novo
+    "Autorizar novamente" concluído a tempo. A MESMA conexão `61af033c` voltou
+    a `active`, mesma conta e mesma agenda (id conferido), sem nova escolha de
+    agenda (`calendar_selected` continua 1); tokens presentes e cifrados
+    (`key_version` p1, valores não lidos), novo vencimento 02:31:55. Auditoria:
+    `calendar.connection.connected` 1→2. Contagens iguais: 1 conexão não
+    desconectada, 1 vínculo da atividade, 1 vínculo do evento, 4 atividades
+    no lead.
+  - **Acesso funcionando — comprovado (01:32:57):** abrir a Agenda rodou a
+    sincronização sob demanda sem erro (`calendar_sync_state.last_run_at` e
+    novo `sync_token_at`; `last_error` vazio). Escritas do fluxo: a
+    reautorização gravou tokens/estado da conexão e a sincronização gravou o
+    estado incremental; nenhuma intenção de escrita no Google
+    (`calendar_effect_intents` = 0 desde 01:00), nenhuma auditoria de efeito,
+    compromisso e vínculo sem alteração (`lock_version` 13, `base_etag` e
+    `last_synced_at` iguais).
+  - Conferência no Google (só leitura): "QA B2 — Reconexão validada", terça,
+    27/10, 17:00–18:30, agenda "Praxis — Testes B2.", Meet
+    `meet.google.com/wai-vuvn-vte`, organizador a própria agenda, nenhum
+    convidado; um único evento com esse título na semana.
+  - Observado: o fluxo OAuth expira em 10 minutos e o aviso é claro; a
+    primeira tentativa (concluída depois do limite) não deixou efeito.
+- **17/10/2026 — preparação do webhook (interrompida antes de criar recursos):**
+  - PR #33 (autenticação da manutenção só com `CRON_SECRET`) mesclada em
+    `f5272ad` (pais `67e2dc6` e `6b11c24`); Production
+    `dpl_2QZXYHaGNNddHaX8NGnhQC9UwUY3`, integração desligada. `main`
+    incorporada nesta branch em `f0196d4`, sem conflito; Preview
+    `dpl_4Ee6RcahuTGfCVP94Tf6iqjYWAUd` no endereço estável.
+  - Executor local de encerramento do canal preparado (adaptador
+    `stopChannel` + `stop_calendar_channel`, motivo `validation_end`), mas
+    NÃO executável: as variáveis Sensitive do Preview voltam do
+    `vercel env pull` como marcadores de 11 caracteres, não os valores.
+    Faltam localmente `CALENDAR_TOKEN_KEY_VERSIONS`/`CALENDAR_TOKEN_ACTIVE_KEY_VERSION`
+    (gerada só para o Preview, sem cópia local) e `CALENDAR_ENV_SIGNING_KEY`.
+    Por isso não foram criados bypass, variáveis nem canal.
+- **17/10/2026 — webhook: transporte e processamento manual (UTC):**
+  - Migration `20261018100000_b2_channel_for_stop` aplicada no
+    `praxis-crm-dev` (única pendente, sem drift; dry-run final sem
+    pendências); `EXECUTE` só `service_role`. PR #34 mesclada em `7e053e1`
+    (pais `f5272ad` e `0e639f8`); Production `dpl_CyQxZQJj5qjGAT1EHbrbhFxCoPcK`,
+    agenda desligada. `main` incorporada aqui em `faf31d3`, sem conflito.
+  - Configuração temporária: bypass de automação dedicado "webhook B2 teste"
+    (criado em `1792205344234`, alcance do projeto inteiro; os 3 anteriores
+    intactos); `CRON_SECRET` novo e `CALENDAR_WEBHOOK_URL` só em Preview
+    (`validacao-b2`); redeploy `dpl_HyfztSKA3xgZs2kjgQmczgijXeLX`. Rota de
+    encerramento no deployment real: sem Bearer 401; UUID inexistente 404,
+    zero canais e zero auditorias.
+  - Alcance conferido antes de cada rodada: um único alvo (`61af033c`,
+    "Praxis — Testes B2.", preview).
+  - **Transporte autenticado — comprovado.** Manutenção nº 1 (02:52:41):
+    `ok`, `targets 1`, `synced 1`, `full 0`, `channelsCreated 1`. Canal
+    `72690d92-bc11-4cd0-847b-0464b0f4cc52` `active`, recurso gravado,
+    vencimento 24/10 02:52:43 (7 dias, `renew_at` 22/10 00:28). Mensagem
+    inicial do Google aceita pelo webhook (canal, segredo e ambiente
+    conferidos no banco): `sync_received_at` 02:52:44, mensagem nº 1.
+  - **Processamento manual — comprovado.** Título alterado no Google para
+    "QA B2 — Webhook" (salvo 02:55:01; a 1ª tentativa ficou presa num aviso
+    informativo do Meet, sem salvar). Notificação 02:55:02 → `dirty_at`
+    02:55:02, depois da última sincronização (02:52:44). Manutenção nº 2
+    (02:55:34, dentro dos 15 min — o polling não estava vencido, então só a
+    marcação justificava a sincronização): `synced 1`; CRM com o novo título,
+    `calendar.inbound.applied` 5→6, versão 13→14, horário/duração/Meet
+    iguais, `dirty_at` limpo. CRM mantido fora da Agenda no intervalo.
+  - **Restauração do título — comprovada.** Google de volta a "QA B2 —
+    Reconexão validada" (02:56:53); notificação 02:57:00 → `dirty_at`
+    depois da sincronização de 02:55:36; manutenção nº 3 (02:57:28): `synced
+    1`; CRM restaurado, `inbound.applied` 6→7, versão 14→15.
+  - Escritas do fluxo: renovação do token na nº 1 (conexão 02:52:42);
+    criação e atualizações do canal; estado incremental; 3 batimentos
+    `manual`; duas aplicações Google → CRM. O CRM não escreveu nos EVENTOS
+    do Google (`calendar.effect.update` continua 8), nenhum conflito novo —
+    mas criar e parar o canal foram operações reais no Google.
+  - **Encerramento — comprovado remoto e local.** Rota
+    `stop-channel` (02:58:17) com o id do canal: HTTP 200,
+    `remote: stopped` (o Google confirmou), `local: stopped`; canal
+    `stopped`/`operator_stop`, uma auditoria `calendar.channel.stopped`.
+    Depois: `CALENDAR_WEBHOOK_URL` removida, bypass dedicado revogado (só
+    os 3 anteriores restam; o webhook com o segredo revogado recebe 302 da
+    proteção), redeploy `dpl_AjGEmn63VGQRWW4sAPSaFjYFtM3m`, arquivos
+    temporários com segredos apagados. `CRON_SECRET` da branch mantido.
+  - Estado final: conexão `active`; compromisso "QA B2 — Reconexão
+    validada", 27/10 17:00–18:30, 90 min, Meet `wai-vuvn-vte`, sem
+    convidados (conferido no Google), um único evento, 1 vínculo `in_sync`.
+  - Limitações: o processamento foi por manutenção MANUAL; agendador e
+    alertas desligados — sincronização automática e meta de atraso NÃO
+    validadas. Os números de mensagem do Google não são sequenciais (1,
+    137162, 249343): não servem para contar notificações.
+- **17/10/2026 — agendador principal (Inngest), sem webhook (UTC):**
+  - PR #35 mesclada em `d31212f` (pais `7e053e1` e `1710d8d`); Production
+    `dpl_46qSKrDg25yUmWhZ17ioGtya7V5h`, agenda desligada. `main` incorporada
+    aqui em `00e83c5`, sem conflito.
+  - Painel do Inngest (organização "Praxis CRM", só leitura): plano Hobby,
+    0/50.000 execuções/mês na organização inteira (cota compartilhada com
+    Production), 5 etapas simultâneas, 1 de 3 usuários; ambientes de branch
+    disponíveis (o da A11 já estava arquivado). App de Production
+    `praxis-crm` intacto antes e depois (sincronizado em 28/09, 1 função da
+    A11).
+  - Configuração temporária: `INNGEST_SIGNING_KEY` = chave dos AMBIENTES DE
+    BRANCH (prefixo `signkey-branch-`; o painel: "shared for all branch
+    environments"), Sensitive, só Preview/`validacao-b2`; bypass dedicado
+    "inngest B2 teste" (`1792211520455`, alcance do projeto inteiro);
+    `CALENDAR_SCHEDULER_ENABLED=true` só na branch; webhook, alertas, Resend,
+    Event Key e A11 ausentes. Redeploy `dpl_HAnCUWUNQvjt6HrtVSCboSxHAPHc`.
+  - Sincronização (04:34:57, PUT do SDK): ambiente de branch `validacao-b2`
+    criado; app `praxis-crm-agenda`, URL do endereço estável
+    `/api/inngest/calendar` com o bypass; função
+    `praxis-crm-agenda-b2-calendar-maintenance`, gatilho
+    `TZ=UTC */15 * * * *`, 0 retries, concorrência 1 (escopo da função).
+  - Alvo e estado inicial: um único alvo (`61af033c`, vínculo `ac694db5`,
+    "Praxis — Testes B2.", preview); único canal `stopped`; compromisso
+    versão 15; CRM fora da Agenda, sem edição e sem manutenção manual em
+    toda a medição.
+  - **Execuções automáticas — comprovadas (3 consecutivas, todas do cron):**
+
+    | Previsto | Run ID | Início–fim (Inngest) | Etapa `maintenance` | Técnico | Sincronização (retorno e batimento) |
+    |---|---|---|---|---|---|
+    | 04:45:00 | `01M542TW70ZAVQCKAF6DMX0H0Y` | 04:45:03–04:45:08 | 04:45:05–04:45:08 | Completed | `ok`, targets 1, synced 1, failed 0 (batimento 04:45:08; token renovado 04:45:07) |
+    | 05:00:00 | `01M543PB40ZAVQCKAF6DMX0H0Y` | 05:00:31–05:00:36 | 05:00:33–05:00:35 | Completed | `ok`, synced 1, failed 0 (batimento 05:00:35) |
+    | 05:15:00 | `01M544HT10ZAVQCKAF6DMX0H0Y` | 05:15:08–05:15:13 | 05:15:10–05:15:13 | Completed | `ok`, synced 1, failed 0 (batimento 05:15:13) |
+
+    Gatilho de cada uma: `inngest/scheduled.timer`, "Scheduled for" e "Fired
+    at" no horário nominal. Nenhuma falha, nenhuma nova tentativa; batimento
+    `inngest` 0→3, sempre `ok`; espera do Inngest até começar: 3 s, 31 s e
+    8 s.
+  - **Mudança e restauração do título — comprovadas (só o título):**
+    "QA B2 — Agendador" salvo no Google às 04:47:41 → aplicado no CRM às
+    05:00:35 pela execução das 05:00 (**12 min 54 s**; versão 15→16);
+    restaurado no Google às 05:02:13 → aplicado às 05:15:13 pela execução
+    das 05:15 (**13 min 00 s**; versão 16→17). Amostra observada abaixo da
+    meta de 20 min — evidência inicial, não garantia. O pior caso esperado é
+    perto de 15 min + a espera do Inngest + a rodada.
+  - Escritas do fluxo: renovação de token (04:45:07), estado incremental e
+    batimentos a cada rodada, duas aplicações Google → CRM
+    (`calendar.inbound.applied` 7→9). O CRM não escreveu nos eventos do
+    Google (`calendar.effect.update` continua 8); nenhum conflito novo.
+  - **Desligamento — com divergência:** chave removida (05:16), redeploy
+    `dpl_AQ9nyrA7RTJNK5bpCCLVZZfbY8SP`, nova sincronização com a lista vazia
+    (05:18:07) RECUSADA pela API do Inngest: HTTP 500 "No functions
+    registered within your app", `modified: false` — o Inngest não aceita
+    app sem funções, então o cron continuaria disparando. Desativação pelo
+    painel: função PAUSADA às 05:19:30 (reversível; "No new runs will be
+    queued or invoked"). Às 05:32 nenhuma execução nova no horário das 05:30
+    (painel com 3 execuções, todas concluídas; batimento parado em 3). O
+    painel continua mostrando "Next run" do cron mesmo pausada. Bypass
+    revogado às 05:33:30 (restam os 3 anteriores; a rota recebe 302 com o
+    segredo revogado). Signing key de branch mantida na `validacao-b2`;
+    `CRON_SECRET` intacto; arquivos temporários com segredos apagados;
+    nenhuma captura com chave ou bypass.
+  - Estado final: conexão `active`; compromisso "QA B2 — Reconexão
+    validada", 27/10 17:00–18:30, 90 min, Meet `wai-vuvn-vte`, sem
+    convidados (conferido no Google), um único evento, 1 vínculo `in_sync`.
+  - Pendências e limitações:
+    - O §9.7 promete "sincronizar a lista vazia retira a função" — FALSO
+      contra o Inngest real. O app `praxis-crm-agenda` continua no ambiente
+      de branch `validacao-b2`, com a função PAUSADA e a URL do bypass já
+      revogado; o ambiente de branch se arquiva sozinho 3 dias depois da
+      última atividade. Corrigir o procedimento (pausar/arquivar no painel,
+      ou manter a função registrada sem gatilho quando desligada) exige
+      decisão e PR.
+    - A PR #35 descreveu a introspecção sem assinatura como "só a
+      contagem": no SDK instalado, em modo cloud, ela responde 401.
+    - O contador de execuções do painel seguia em 0/50.000 às 05:35;
+      pelo modelo de cobrança a rodada consumiu 6 (3 execuções + 3 etapas)
+      — não confirmado no painel.
+    - Achado de segurança: a signing key de PRODUCTION (a em uso desde
+      28/09 23:47) foi encontrada em duas capturas locais do navegador
+      automatizado (28/09, rodada da A11; pasta ignorada pelo git); não
+      identificada evidência de exposição externa. As capturas foram
+      apagadas — isso não elimina todo o risco; a rotação da chave está
+      planejada e depende de autorização.
+    - **Rotação feita (17/10/2026, autorizada).** Chave nova criada no
+      painel às 11:40 (horário de Brasília); Production na Vercel passou a ter
+      `INNGEST_SIGNING_KEY` = nova e `INNGEST_SIGNING_KEY_FALLBACK` =
+      anterior (Sensitive, gravadas por stdin, sem arquivo nem impressão);
+      redeploy `dpl_FLFr4pxpB3iCZxqEEgaFrAoiUCVA`. Antes do passo
+      irreversível, introspecção GET assinada no alias
+      `praxis-crm-eight.vercel.app/api/inngest`: com a chave NOVA → 200,
+      autenticada, app `praxis-crm`, 1 função, chave do deploy = nova,
+      fallback = anterior; com a ANTERIOR → 200, autenticada (pelo
+      fallback); sem assinatura → 401. Depois, "Rotate key" (a anterior foi
+      apagada do Inngest) e Resync (11:47, "No change"). Fallback removido,
+      redeploy `dpl_DVrCDqy7DXeeV6tmRsc1SndAjmLi` (alias atual): chave nova
+      → 200, autenticada, sem fallback; chave aleatória no mesmo formato e
+      sem assinatura → 401; Resync final 11:51, "No change". Nenhuma função
+      da A11 executada, nenhum evento criado.
+    - **Limite da prova final:** a chave anterior não pôde ser usada para
+      assinar depois da rotação (o painel a apaga e o valor não foi
+      guardado). A recusa dela no alias atual é comprovada pela
+      introspecção — o deploy tem só a chave nova, sem fallback, e a nova é
+      diferente da anterior — e não por uma requisição assinada com ela.
+    - **Risco residual:** os deployments de Production anteriores ao alias
+      atual ainda contêm a chave anterior (17, de 01/10 a 17/10; em
+      `dpl_FLFr4pxp…`, como fallback) e a aceitariam. Estão atrás da
+      proteção SSO (302 para o login da Vercel) e o Inngest só chama o
+      alias, mas quem tiver um bypass do projeto os alcança. A remoção da
+      chave de TODOS os deployments não foi feita; retirada a decidir.
+- **Recuperação adicional e alerta (17/10/2026, Preview, autorizado):**
+  dois disparos manuais do workflow (código da `main` `8461345`, PR #37)
+  contra o único destino aprovado, com a função do Inngest **pausada**
+  (atraso real, sem mexer em horários do banco). Alvo único: a conexão
+  `61af033c` (agenda fictícia de teste) e o compromisso "QA B2 — Reconexão
+  validada" (1 vínculo).
+  - Configuração temporária só na `validacao-b2`:
+    `CALENDAR_SCHEDULER_ENABLED`, `CALENDAR_ALERTS_ENABLED`,
+    `CALENDAR_ALERTS_TEST_RECIPIENT` (endereço confirmado pelo
+    responsável), `RESEND_FROM_EMAIL` (`propostas@mail.collios.cloud`),
+    `RESEND_API_KEY` (chave dedicada, só envio, restrita a
+    `mail.collios.cloud`), novo `CRON_SECRET` (o mesmo valor em
+    `B2_CALENDAR_CRON_SECRET` no GitHub) e bypass dedicado à B2
+    (`B2_CALENDAR_BYPASS_SECRET`; os 3 bypasses existentes intactos).
+    Valores gerados em memória e entregues só por stdin. As variáveis não
+    secretas foram regravadas como não sensíveis para conferir o valor
+    antes do envio. Deployment `dpl_AstWaLpNyRvgCfoHFrKJSEC1n3bD`.
+  - Antes: batimento `inngest` com última execução às 05:15:13 UTC, 0
+    alertas, nenhum batimento `github`, função Paused com 3 execuções e
+    nenhuma em andamento. Integrações (16:09 UTC): "Sincronização automática
+    atrasada: a última execução do agendador principal foi há 10 horas."
+  - 1º disparo (run 39048203065, 16:09 UTC): HTTP 200, `outcome: ok`,
+    `detector: stale_alert_sent`, `synced: 1`; batimento `github` 1;
+    alerta `df6bca6d-6ad5-41c9-97a0-2b3b6637212e` `sent`, nota
+    `test_recipient`. Resend: e-mail `01a14aa0-8df4-7ee5-a72f-4416688ce555`
+    aceito (Sent 16:09 UTC) e entregue ao servidor de destino (Delivered
+    16:10 UTC), com o texto novo; recebimento na caixa de entrada
+    confirmado pelo destinatário (17/10/2026). Integrações (16:11 UTC): o aviso de atraso do
+    principal **permaneceu**, e a recuperação apareceu à parte ("última
+    execução há 1 minuto, sem falhas… não comprova que o agendador
+    principal esteja funcionando").
+  - 2º disparo (run 39048331003, 16:11 UTC): HTTP 200,
+    `detector: stale_cooldown`, `synced: 0` (mesmo período de 15 min);
+    nenhum alerta novo (total 1), nenhum e-mail novo; batimento `github` 2.
+    O disparo opcional contra destino recusado não foi feito (coberto
+    pelos testes).
+  - Limpeza: as duas chaves de ativação, o destinatário de teste e as
+    variáveis do Resend saíram da branch; redeploy
+    `dpl_Bs1sAMz63fLXv8c7e6ggkKqn7k2D`; Integrações voltou a "desligada
+    neste ambiente". Chave do Resend apagada, bypass da B2 revogado (restam
+    os 3 anteriores) e `B2_CALENDAR_*` apagados do GitHub. O novo
+    `CRON_SECRET` e a signing key de branch ficam no Preview. Depois:
+    função Paused (3 execuções), conexão ativa (token renovado pela
+    rodada), compromisso na versão 17 com o mesmo etag, Meet
+    `wai-vuvn-vte`, 1 vínculo.
+  - Achado lateral: três capturas locais de 30/09 (pasta ignorada pelo
+    git) continham a chave `praxis-crm-b1-propostas` do Resend (só envio,
+    do Preview `feat/b1-proposals-pdf`). Chave encontrada em capturas
+    locais; não identificada evidência de exposição externa. As capturas
+    foram apagadas, o que não elimina todo o risco; a revogação depende de
+    decisão.
+- **Cancelamentos (17/10/2026, Preview, autorizado):** três reuniões
+  fictícias criadas pela interface no lead de teste, na agenda "Praxis —
+  Testes B2." (conexão `61af033c`), 60 min, sem Meet e sem convidados;
+  resposta "Adicionado ao Google Agenda." em todas. Inngest pausado,
+  agendador, alertas e webhook desligados; Production inalterada.
+
+  | | Atividade | Vínculo | Evento |
+  |---|---|---|---|
+  | A | `c3c133ef` (28/10 10:00) | `ad98c19f` | `5tibsrape34nh4jdfh281l2d0ighc4af` |
+  | B | `2dd735de` (28/10 14:00) | `d8b95736` | `2ru760kcdtnfk8k5i5gm1gcj0cnv7pqi` |
+  | C | `4d5b7790` (29/10 10:00) | `ed024cf5` | `2tv8gv8l3lme43qtn1m7oklhqi0490v4` |
+
+  - **A — cancelamento no Google:** evento A excluído na interface do
+    Google ("Excluir evento" → "Evento excluído", 16:49 UTC). Sincronização
+    sob demanda pela abertura da página Agenda, respeitado o intervalo de 5
+    min (anterior às 16:46:56; nova às 16:52:19). Banco: vínculo
+    `cancelled_in_google`, `base_cancelled = true`, sem erro; atividade
+    mantida (`pending`, versão 0); auditoria `calendar.inbound.applied`.
+    Lead recarregado: a linha mostra "Cancelado no Google Agenda", sem
+    "Remover do Google Agenda" nem "Criar link do Meet". Nova sincronização às
+    16:57:34: nada mudou e o evento não foi recriado no Google.
+  - **B — remover pelo CRM:** botão "Remover QA B2 — Remoção B (CRM) do
+    Google Agenda"; confirmação "Remover "QA B2 — Remoção B (CRM)" do
+    Google Agenda? A atividade continua no CRM."; resposta "Removido do
+    Google Agenda." Banco: vínculo `unlinked`, `base_cancelled = true`;
+    atividade mantida (`pending`, versão 0); auditoria
+    `calendar.effect.delete` (16:53:37). Recarregado: sem marcador e com
+    "Adicionar … ao Google Agenda" (desvinculada). Google: evento ausente;
+    a sincronização seguinte não o recriou.
+  - **C — excluir a atividade vinculada:** botão "Excluir QA B2 — Exclusão
+    C (CRM)"; confirmação "… Esta ação não pode ser desfeita. O evento
+    também será removido do Google Agenda."; nenhuma mensagem depois (por
+    desenho, só aviso de nível "warning" aparece, porque a linha some).
+    Banco: atividade inexistente; vínculo `ed024cf5` preservado como
+    `unlinked`, `base_cancelled = true`, sem atividade; auditoria
+    `calendar.effect.delete` e `activity.deleted` (16:55:15). Google:
+    evento ausente.
+  - **Diferença entre os três:** A = cancelado no Google, a atividade fica e
+    o vínculo registra o cancelamento (`cancelled_in_google`); B =
+    desvinculado pelo CRM, o evento sai do Google e a atividade fica livre
+    para ser adicionada de novo (`unlinked`); C = exclusão, o evento sai do
+    Google antes e a atividade deixa de existir, restando o vínculo
+    `unlinked` e a auditoria.
+  - Depois: no Google, só o evento do compromisso "QA B2 — Reconexão
+    validada" na semana; esse compromisso continua na versão 17, com o
+    mesmo etag, o Meet `wai-vuvn-vte` e 1 vínculo. Resíduos de QA
+    preservados para conferência: atividades A e B e os vínculos de A, B e
+    C.
+- **Chave antiga do Resend revogada (17/10/2026, autorizado):**
+  `praxis-crm-b1-propostas` (só envio, domínio `mail.collios.cloud`, último
+  uso há 17 dias) apagada no painel do Resend; `RESEND_API_KEY` e
+  `RESEND_FROM_EMAIL` removidas só do Preview `feat/b1-proposals-pdf` (PR
+  #21, mesclada em 01/10). A associação entre a chave e essas variáveis foi
+  INFERIDA (mesma data de criação), não comprovada pelo segredo. Preservadas
+  a `praxis-crm-production`, as demais chaves e as variáveis de Production;
+  nenhum deployment excluído nem redeploy.
+- **Convite real controlado: não executado.** O endereço autorizado
+  (`joaoniero2@gmail.com`) é a própria conta Google da conexão `61af033c`,
+  dona da agenda "Praxis — Testes B2." (organizadora) e autora da chamada à
+  API. O Google não envia convite ao próprio autor da alteração, e a dona
+  da agenda já vê o evento: não haveria convite independente a comprovar.
+  Nenhuma reunião foi criada; a frente aguarda outro endereço controlado.
+- **Convite real controlado: executado (17/10/2026, autorizado).** Convidado
+  único `niero.joao@outlook.com` (fora da conta conectada). Pela interface do
+  Preview, uma única submissão (17:34:55Z) de "QA B2 — Convite controlado",
+  reunião em 22/10/2026 15:00, 60 min, sem Meet, sem exigir horário livre,
+  com a confirmação explícita de envio marcada. Retorno: "Atividade criada" e
+  "Adicionado ao Google Agenda". Conferido após recarregar:
+  - banco: 1 atividade `63565008` (tipo reunião) e 1 vínculo `31a945ad`,
+    `linked`/`in_sync`, 60 min, `meet_url` nulo, agenda de testes, sem erro;
+  - Google: evento na agenda "Praxis — Testes B2." (organizadora), 15:00–16:00,
+    "1 convidado — 1: pendente", `niero.joao@outlook.com`, criado pela conta
+    conectada;
+  - CRM: a página do lead mostra a atividade com "No Google Agenda".
+  O evento foi preservado sem edição nem cancelamento. A confirmação de
+  recebimento e o eventual aceite ficam com o João (registrado abaixo).
+  Recebimento confirmado pelo João (17/10/2026): o convite chegou à caixa
+  de entrada do Outlook às 17:35 do Outlook, que bate com o envio às 17:34:55Z; ele aceitou às 18:05.
+  Remetente e organizador aparecem como o ID técnico da agenda secundária
+  (`acd0bd23…@group.calendar.google.com`), não como "Praxis — Testes B2." nem
+  como pessoa: é o comportamento do Google para agendas secundárias. O
+  Outlook exibiu 18:00–19:00, o que corresponde a 15:00 BRT porque o fuso
+  do Outlook está em UTC (o horário de chegada confirma). Pendência de produto para
+  Production: decidir em qual agenda criar eventos com convidados (a
+  principal mostraria o nome e o e-mail do advogado).
+- **Pendência de usabilidade (não implementada):** ao excluir uma atividade
+  vinculada com sucesso, a interface não mostra confirmação nenhuma (só um
+  aviso de nível "warning" aparece, porque a linha some); a remoção do
+  evento no Google não é comunicada.
+- **Pendência de usabilidade (não implementada):** a página Agenda mostra
+  sempre só a semana atual, sem navegação entre semanas; um compromisso da
+  semana seguinte não aparece nela.
+- **Revisão de fechamento técnico (17/10/2026):** encontrou que a escolha de
+  agenda inferia propriedade por `accessRole: "owner"`; corrigido pela PR
+  #38 (§1, decisão 8). Matriz de aceite e encerramento: §13.
+
 ### 6.14 Reautorização reconhecida sem o agendador
 **Lacuna encontrada** (validação no Preview, 16/10/2026, antes de revogar a
 conta de teste): só a manutenção agendada (`runCalendarMaintenance`, pela
@@ -1164,7 +1687,7 @@ e reportados como medição, não como promessa.
 
 Cada etapa em PR própria, com CI verde e sem merge sem autorização.
 
-## 12. Pendências (nada foi criado ou configurado)
+## 12. Pendências da implantação (registro histórico; checklist atual no §13.8)
 
 - **Identificar o super administrador do Workspace** da Vizentini (quem cria
   a organização do Google Cloud, libera o app no Admin e cria o usuário de
@@ -1218,3 +1741,149 @@ Cada etapa em PR própria, com CI verde e sem merge sem autorização.
   fuso do escritório ("27/10/2026, 16:00–18:00 (120 min)"; atravessando a
   meia-noite, com as duas datas). Só apresentação dos valores que o banco já
   guardava (`start` e `end`): sem mudança de sincronização, banco ou dados.
+
+## 13. Encerramento do desenvolvimento (17/10/2026)
+
+**B2 — desenvolvimento concluído. A integração permanece desativada em
+Production. A configuração do Google Workspace da Vizentini, a validação no
+ambiente de Production e a conexão controlada da conta do Henrique pertencem
+à etapa posterior de implantação.**
+
+Código na `main` até a PR #38 (`7860f15`). Validação real no Preview
+`validacao-b2`, com conta Google e agenda secundária de teste ("Praxis —
+Testes B2."); evidências no §6.13. Production
+(`dpl_4ADMDtqprNNEGZnfnup2gbLMbU3i`) sem nenhuma variável de agenda: a
+integração não está configurada nem ativada.
+
+### 13.1 Matriz dos critérios de aceite (§10)
+Real = validado com o Google real no Preview · Auto = só teste automatizado
+· Prod = depende da configuração de Production.
+
+| # | Critério | Situação | Evidência |
+|---|---|---|---|
+| 1 | Escopos mínimos, escolha da agenda, token cifrado | Real · Auto · Prod | OAuth com 5 escopos, agenda escolhida, tokens cifrados (`p1`). "Ambiente oposto não decifra": `b2-calendar-environment.test.ts`. Só agenda própria: `b2-own-calendars.test.ts` (PR #38). |
+| 2 | Um evento por compromisso; 409 divergente não adotado | Real (parcial) · Auto | Toda criação real: 1 evento, 1 vínculo. Duplo clique e 409: `b2-appointments-create.test.ts`. |
+| 3 | Resultado incerto sem duplicar nem perder | Auto | `b2-appointments-create.test.ts`, `b2-create-recovery.test.ts`. |
+| 4 | Meet opcional; falha visível | Real · Auto | Meet criado (11/10). Falha: `b2-4a-meet-freebusy.test.ts`. |
+| 5 | Convidados só com confirmação explícita | Real · Prod | Sem convidados por padrão em todos os cenários; convite controlado recebido e aceito (17/10). Remetente em Production: §13.8. |
+| 6 | Google → CRM e defasagem | Real · Prod | Título, horário, Meet e cancelamento. Defasagem amostrada: 12 min 54 s e 13 min 00 s (amostra, não garantia). |
+| 7 | Conflito sem perda silenciosa | Real (parcial) · Auto | Título e horário com restauração (real). Cancelamento, Meet e 412: `b2-inbound-sync.test.ts`, `b2-appointments-review.test.ts`. |
+| 8 | Evento sem vínculo intocado e não persistido | Auto | `b2-inbound-sync.test.ts`. |
+| 9 | `syncToken` só no fim; 410 refaz sem apagar | Auto | `b2-inbound-sync.test.ts`, `b2-4a-google-adapter.test.ts`. Limitação documentada (§13.4). |
+| 10 | Exclusão reconhecida pelo vínculo local | Real | Cenário A (`cancelled_in_google`, sem recriação). |
+| 11 | Sem loop | Real | Edições do CRM não voltaram como mudança externa nem geraram conflito. |
+| 12 | Desconexão e reconexão | Real (parcial) | Desconexão, reconexão e recuperação reais. Não observados: o resultado da revogação do token pela ação e o encerramento de canal na desconexão. |
+| 13 | Renovação de canais | Auto | `b2-calendar-channels.test.ts`. Criar e parar canal são reais. Limitação documentada (§13.4). |
+| 14 | Isolamento Preview × Production | Auto · Prod | `b2-calendar-environment.test.ts`, pgTAP. Registros reais de Production: na implantação. |
+| 15 | Papéis, RLS, auditoria, logs | Auto | pgTAP `20_` a `27_b2_*`, `b2-calendar-actions.test.ts`; auditoria conferida nos cenários reais. |
+| 16 | Webhook | Real (parcial) · Auto | Canal conhecido aceito e processado. Rejeições: `b2-calendar-routes.test.ts`. |
+| 17 | Agendamento, batimento, alertas | Real (parcial) · Prod | 3 execuções do Inngest, batimento, alerta entregue e recebido, avisos separados. Objetivos do §9.8 não medidos por completo. |
+| 18 | Teste inicial só com conta de teste | Real · Prod | Cumprido no Preview. Henrique: etapa de implantação. |
+
+### 13.2 Fluxos validados com o Google real (Preview)
+- conexão OAuth e escolha da agenda;
+- criação, edição e reagendamento CRM → Google; Meet;
+- disponibilidade e "só criar se o horário estiver livre";
+- Google → CRM: título, horário, Meet e cancelamento;
+- conflitos de título e de horário, com restauração;
+- desconexão, reconexão e recuperação dos vínculos;
+- revogação externa, `needs_reauth` e reautorização;
+- webhook: transporte, processamento manual e encerramento de canal;
+- agendador Inngest: 3 execuções automáticas, defasagem amostrada, pausa;
+- recuperação adicional e alerta por e-mail (recebido);
+- cancelamentos A (no Google), B (remover pelo CRM) e C (excluir atividade);
+- convite controlado a convidado externo, recebido e aceito.
+
+### 13.3 Cobertos somente por testes automatizados
+Resultado incerto, duplo clique e 409; falha do Meet; conflito de
+cancelamento e de Meet e o 412; evento externo sem vínculo; paginação e
+410; renovação de canal com sobreposição e trava; isolamento entre
+ambientes; RLS e papéis; rejeições do webhook; recusa de agenda não
+própria.
+
+### 13.4 Limitações documentadas (não bloqueiam o piloto)
+- **Paginação real:** a agenda de teste tem poucos eventos; a primeira
+  listagem completa grande será observada na implantação (sem `last_error`,
+  token gravado, nenhum evento externo importado).
+- **410 real:** não provocado; o tratamento depende só do status HTTP, e a
+  listagem completa diária reduz a dependência dele.
+- **Renovação real de canal:** criar e parar canal são reais; a combinação
+  (canal novo, `sync` nº 1, aposentar o velho) só em teste. Uma falha nela
+  não perde dado: o polling recupera. Observar a primeira renovação.
+- **Recuperação interrompida:** os vínculos ficam `unlinked` até
+  "Reencontrar compromissos" (instrução operacional).
+
+### 13.5 Decisões de escopo da primeira versão
+- **Só agendas da própria conta** (§1, decisão 8; PR #38): a principal ou
+  uma secundária cujo `dataOwner` é a conta conectada. `accessRole` "owner"
+  não equivale a dono dos dados. Trocar a agenda escolhida afeta só
+  compromissos novos; os existentes continuam na agenda do próprio vínculo.
+- **Agenda compartilhada: evolução futura.** Exigirá `calendar.events`,
+  novo consentimento de todos e validação real.
+
+### 13.6 Estado ao encerrar
+- **Production:** sem variáveis de agenda; agendador, webhook e alertas não
+  configurados. App `praxis-crm` do Inngest (A11) intacto; signing key de
+  Production rotacionada em 17/10.
+- **Preview `validacao-b2`:** conexão de teste `61af033c` ativa, agenda
+  "Praxis — Testes B2." (conferida após a PR #38, sem alteração).
+  - agendador DESLIGADO: função `b2-calendar-maintenance` pausada no
+    ambiente de branch do Inngest; sem `CALENDAR_SCHEDULER_ENABLED`;
+  - webhook DESLIGADO: sem `CALENDAR_WEBHOOK_URL`, canal `stopped`, bypass
+    revogado;
+  - alertas DESLIGADOS: sem `CALENDAR_ALERTS_*` nem variáveis do Resend;
+  - permanecem a signing key de branch do Inngest e o `CRON_SECRET` da
+    branch.
+- Chave antiga do Resend `praxis-crm-b1-propostas` revogada.
+
+### 13.7 Resíduos de QA, melhorias e operação
+- **Resíduos de QA preservados (não limpos):** compromisso "QA B2 —
+  Reconexão validada" (27/10, Meet); "QA B2 — Convite controlado" (22/10,
+  convidado externo que aceitou — removê-lo notificaria o convidado);
+  atividades A e B e os vínculos de A, B e C dos cancelamentos; conexão
+  anterior `953c3361`, desconectada.
+- **Melhorias de interface pendentes (não bloqueiam):** confirmação ao
+  excluir atividade vinculada; navegação entre semanas na Agenda; relatório
+  da recuperação depois de "Vincular"; texto de Integrações que atribui a
+  atualização à própria tela; atividade futura não vista na Central de
+  Atividades (não investigado).
+- **Operação a decidir:** 17 deployments antigos de Production com a chave
+  anterior do Inngest; origem da `INNGEST_SIGNING_KEY` no Preview
+  `feat/a11-forms-attribution`; destino do app `praxis-crm-agenda` no
+  ambiente de branch `validacao-b2`; consumo real do Inngest (contador do
+  painel); agendamento da recuperação adicional.
+
+### 13.8 Checklist de implantação em Production (etapa posterior)
+Bloqueadores, nesta ordem, cada passo com autorização:
+1. **Workspace da Vizentini:** identificar o super administrador; criar ou
+   confirmar a organização do Google Cloud; papel de criação de projetos;
+   liberar o app na política de acesso a APIs; criar conta de teste no
+   domínio.
+2. **Projeto Google "Vizentini" (público interno):** tela de consentimento
+   com os escopos atuais; cliente OAuth com o redirect de Production;
+   confirmar dispensa de verificação e ausência do limite de 7 dias.
+3. **Configurar Production sem ligar nada:** conferir as migrations da B2
+   no banco de Production; `CALENDAR_ENV_SIGNING_KEY` e a linha em
+   `calendar_environment_keys`; `CALENDAR_TOKEN_*` distintas do Preview;
+   `CALENDAR_PROVIDER` e OAuth.
+4. **Validar com a conta de teste do domínio:** conexão, criação e edição,
+   Google → CRM, isolamento com registros reais (critério 14).
+5. **Agenda dos convites:** recomendada inicialmente a agenda PRINCIPAL do
+   Henrique, sobretudo com convidados (o destinatário vê o nome e o e-mail
+   dele, não o id técnico de uma secundária); conferir a apresentação do
+   remetente com um convite controlado.
+6. **Ativar em ordem:** agendador (chave, redeploy, sincronizar
+   `praxis-crm-agenda` no ambiente de Production do Inngest, 3 execuções
+   conferidas); webhook; alertas para destinatários reais; recuperação
+   adicional (incluir o destino de Production em `APPROVED_TARGETS`, por PR).
+7. **Monitorar:** batimento semanal (Detector 3), consumo do Inngest,
+   primeira renovação de canal, primeira listagem completa grande.
+8. **Desligar (§9.7):** pausar a função no painel do Inngest (a lista
+   vazia é recusada); remover `CALENDAR_WEBHOOK_URL` e encerrar os canais
+   pela rota; desligar os alertas.
+9. **Conexão controlada do Henrique:** só com autorização expressa dele,
+   depois dos itens 1 a 6, com a agenda principal dele e um roteiro curto
+   do que fazer e do que evitar.
+
+Não bloqueiam a implantação: as melhorias de interface e a limpeza de QA do
+§13.7.
