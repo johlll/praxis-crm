@@ -466,8 +466,11 @@ continua desligado depois do merge.**
   `/api/inngest/calendar`) — separado do app da A11 (`praxis-crm`,
   `/api/inngest`), cuja validação exige toda a configuração da A11. Só é
   oferecida ao Inngest com `CALENDAR_SCHEDULER_ENABLED=true` (só o valor
-  exato liga); sem ela a lista de funções volta vazia e nada é agendado.
-  Mesmo ligada, sem provedor configurado a rodada não toca em nada. Rodada
+  exato liga); sem ela a lista de funções volta vazia e nada é agendado —
+  enquanto a função nunca tiver sido sincronizada. Uma função já
+  sincronizada NÃO sai do Inngest por isso: interrompe-se com a pausa no
+  painel (§9.7). Mesmo ligada, sem provedor configurado a rodada não toca
+  em nada. Rodada
   `failed` vira FALHA da execução no Inngest (§9.7).
 - **Sob demanda** (§9.2.3): abrir a Agenda, criar ou editar um compromisso
   sincroniza as agendas da PRÓPRIA conexão cuja última execução tem mais de
@@ -1346,7 +1349,7 @@ Seis coisas distintas — não confundir:
 | Ambiente Vercel | `VERCEL_ENV` (`preview`/`production`), que define o ambiente da agenda (§7) | variáveis da Vercel |
 | Signing key | `INNGEST_SIGNING_KEY`: a de ambientes de branch (uma só, compartilhada por todas as branches) ou a de Production. É ela que separa os ambientes — nunca a de Production num Preview: a sincronização iria para o app de Production | Vercel, por ambiente/branch |
 | App id | `praxis-crm-agenda` (agenda) × `praxis-crm` (A11). Separa os APPS dentro de um ambiente; NÃO isola ambientes | código |
-| Lista de funções | `b2-calendar-maintenance` só com `CALENDAR_SCHEDULER_ENABLED=true`; montada no carregamento — mudar a chave exige redeploy + nova sincronização do app | código + Vercel |
+| Lista de funções | `b2-calendar-maintenance` só com `CALENDAR_SCHEDULER_ENABLED=true`; montada no carregamento — LIGAR exige redeploy + nova sincronização do app; DESLIGAR a chave não retira a função do Inngest (lista vazia é recusada): a interrupção é a pausa no painel | código + Vercel |
 | Resultado | TÉCNICO (execução no Inngest: concluída ou falha) × da SINCRONIZAÇÃO (`outcome` ok/partial/failed, contagens, batimento `inngest`) | painel do Inngest × banco |
 
 Resultado técnico: `ok` e `partial` concluem a execução (o retorno traz
@@ -1371,12 +1374,38 @@ conferir a função e o cron no painel e que o app de Production não mudou.
 Medição: ≥ 3 execuções automáticas consecutivas (início/fim no Inngest,
 batimento `inngest`, desfecho), mudança e restauração de título no Google
 com os horários da mudança, da execução e da aplicação no CRM, sem abrir a
-Agenda, sem edição e sem manutenção manual; consumo de execuções (cada
-rodada = 1 execução + 1 etapa).
-Desligamento: remover `CALENDAR_SCHEDULER_ENABLED` → redeploy →
-sincronizar de novo (lista vazia) → conferir que a função saiu, sem
-execução em andamento e sem nova execução no horário seguinte → revogar o
-bypass. A signing key de branch pode ficar na `validacao-b2`.
+Agenda, sem edição e sem manutenção manual. Consumo: ESTIMADO pelo modelo
+de cobrança (cada rodada = 1 execução + 1 etapa); o contador do painel não
+o confirmou na medição de 17/10/2026 (seguia 0/50.000).
+
+**Interrupção temporária — a PAUSA no painel do Inngest** (ambiente certo →
+Functions → `b2-calendar-maintenance` → All actions → Pause): é o que
+impede novas execuções. Antes de pausar, conferir execuções em andamento
+(Runs); depois, conferir o estado "Paused" (o menu passa a oferecer
+"Resume") e que nenhuma execução nova aparece no horário nominal seguinte.
+O painel pode continuar exibindo "Next run" do cron com a função pausada.
+
+Sincronizar a lista vazia NÃO retira a função: com a chave desligada o SDK
+apresenta zero funções, mas o serviço RECUSA o registro ("No functions
+registered within your app", HTTP 500, `modified: false`; 17/10/2026) e a
+função antiga continua registrada, com o cron. Não usar o arquivamento
+automático do ambiente de branch como desligamento: é limpeza, não
+interrupção controlada.
+
+Medidas COMPLEMENTARES (não substituem a pausa): remover
+`CALENDAR_SCHEDULER_ENABLED` e fazer redeploy (o deployment deixa de
+oferecer a função — uma chamada do Inngest para ele falharia, não seria
+"desligada"); revogar o bypass dedicado (a Vercel barra as chamadas do
+Inngest ao Preview; a configuração do app no Inngest não muda). A signing
+key de branch pode ficar na `validacao-b2`.
+
+**Retomada** (só com decisão explícita): conferir, nesta ordem, o
+deployment do Preview (commit esperado, `Ready`, alias estável),
+`CALENDAR_SCHEDULER_ENABLED=true` só na branch, `INNGEST_SIGNING_KEY` de
+branch, o ambiente do Inngest (`validacao-b2`, não Production), a URL do app
+acessível (bypass válido; introspecção ASSINADA respondendo pelo SDK) e a
+função sincronizada com o cron esperado — só então "Resume". Sem
+assinatura válida o SDK responde 401 a tudo, inclusive à introspecção.
 
 ### 9.8 Objetivos a validar (não garantias existentes)
 - Nenhum canal vence sem substituto por mais de 1 h.
