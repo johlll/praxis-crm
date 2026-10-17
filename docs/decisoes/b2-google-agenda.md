@@ -887,6 +887,19 @@ sem variáveis de agenda; agendamentos e alertas desligados.
     convidado; um único evento com esse título na semana.
   - Observado: o fluxo OAuth expira em 10 minutos e o aviso é claro; a
     primeira tentativa (concluída depois do limite) não deixou efeito.
+- **17/10/2026 — preparação do webhook (interrompida antes de criar recursos):**
+  - PR #33 (autenticação da manutenção só com `CRON_SECRET`) mesclada em
+    `f5272ad` (pais `67e2dc6` e `6b11c24`); Production
+    `dpl_2QZXYHaGNNddHaX8NGnhQC9UwUY3`, integração desligada. `main`
+    incorporada nesta branch em `f0196d4`, sem conflito; Preview
+    `dpl_4Ee6RcahuTGfCVP94Tf6iqjYWAUd` no endereço estável.
+  - Executor local de encerramento do canal preparado (adaptador
+    `stopChannel` + `stop_calendar_channel`, motivo `validation_end`), mas
+    NÃO executável: as variáveis Sensitive do Preview voltam do
+    `vercel env pull` como marcadores de 11 caracteres, não os valores.
+    Faltam localmente `CALENDAR_TOKEN_KEY_VERSIONS`/`CALENDAR_TOKEN_ACTIVE_KEY_VERSION`
+    (gerada só para o Preview, sem cópia local) e `CALENDAR_ENV_SIGNING_KEY`.
+    Por isso não foram criados bypass, variáveis nem canal.
 - **Pendência de usabilidade (não implementada):** a página Agenda mostra
   sempre só a semana atual, sem navegação entre semanas; um compromisso da
   semana seguinte não aparece nela.
