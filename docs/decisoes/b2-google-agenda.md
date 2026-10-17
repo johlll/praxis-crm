@@ -1218,7 +1218,16 @@ sem variáveis de agenda; agendamentos e alertas desligados.
     conectada;
   - CRM: a página do lead mostra a atividade com "No Google Agenda".
   O evento foi preservado sem edição nem cancelamento. A confirmação de
-  recebimento e o eventual aceite ficam com o João (pendente de registro).
+  recebimento e o eventual aceite ficam com o João (registrado abaixo).
+  Recebimento confirmado pelo João (17/10/2026): o convite chegou à caixa
+  de entrada do Outlook às 17:35 (horário local dele), e ele o aceitou às 18:05.
+  Remetente e organizador aparecem como o ID técnico da agenda secundária
+  (`acd0bd23…@group.calendar.google.com`), não como "Praxis — Testes B2." nem
+  como pessoa: é o comportamento do Google para agendas secundárias. O
+  Outlook exibiu 18:00–19:00, o que corresponde a 15:00 BRT apenas se o fuso
+  do Outlook for UTC (não verificado). Pendência de produto para
+  Production: decidir em qual agenda criar eventos com convidados (a
+  principal mostraria o nome e o e-mail do advogado).
 - **Pendência de usabilidade (não implementada):** ao excluir uma atividade
   vinculada com sucesso, a interface não mostra confirmação nenhuma (só um
   aviso de nível "warning" aparece, porque a linha some); a remoção do
