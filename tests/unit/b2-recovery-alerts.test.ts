@@ -47,9 +47,10 @@ describe("A. CALENDAR_ALERTS_TEST_RECIPIENT: só em Preview", () => {
     expect(calendarAlertTestRecipient()).toEqual({ mode: "off" });
   });
 
-  it("Preview sem a variável: destinatários reais (comportamento de hoje)", () => {
+  it("Preview sem a variável (ausente de fato): destinatários reais (comportamento de hoje)", () => {
     vi.stubEnv("VERCEL_ENV", "preview");
-    vi.stubEnv("CALENDAR_ALERTS_TEST_RECIPIENT", "");
+    vi.stubEnv("CALENDAR_ALERTS_TEST_RECIPIENT", undefined);
+    expect("CALENDAR_ALERTS_TEST_RECIPIENT" in process.env).toBe(false);
     expect(calendarAlertTestRecipient()).toEqual({ mode: "off" });
   });
 
@@ -60,6 +61,7 @@ describe("A. CALENDAR_ALERTS_TEST_RECIPIENT: só em Preview", () => {
     ["sem domínio", "qa@exemplo"],
     ["sem arroba", "qa.exemplo.test"],
     ["com espaço no meio", "q a@exemplo.test"],
+    ["vazia", ""],
     ["só espaços", "   "],
     ["quebra de linha", "qa@exemplo.test\nBcc: x@exemplo.test"],
   ])("Preview com configuração inválida (%s): inválida", (_label, value) => {
@@ -132,6 +134,19 @@ describe("A. alerta com destinatário de teste (Detector 1)", () => {
     expect(await staleRound(deps())).toBe("stale_alert_sent");
     expect(sent.map((m) => m.to)).toEqual(["dona@exemplo.test", "admin@exemplo.test", "outro-admin@exemplo.test"]);
     expect(store.alerts.at(-1)).toMatchObject({ status: "sent", error: null });
+  });
+
+  it.each([
+    ["vazia", ""],
+    ["só espaços", "   "],
+  ])("Preview com a variável presente mas %s: falha sem enviar, não cai para os destinatários reais", async (_label, value) => {
+    vi.stubEnv("VERCEL_ENV", "preview");
+    vi.stubEnv("CALENDAR_ALERTS_TEST_RECIPIENT", value);
+    const send = vi.fn(async (_m: AlertMessage) => {});
+    expect(store.recipients.length).toBeGreaterThan(0);
+    expect(await staleRound(deps({ sendAlert: send }))).toBe("stale_alert_failed");
+    expect(send).not.toHaveBeenCalled();
+    expect(store.alerts).toEqual([expect.objectContaining({ status: "failed", error: "test_recipient_invalid" })]);
   });
 
   it("Preview com configuração inválida: falha SEM enviar a ninguém, e a falha não conta para o intervalo", async () => {
