@@ -856,9 +856,29 @@ sem variáveis de agenda; agendamentos e alertas desligados.
     minutos e expirou. Comece de novo." (`?agenda=expired`). Às 01:18 a
     conexão seguia `needs_reauth`, sem nova auditoria, sem duplicação
     (contagens iguais) e sem concessão nova no painel do Google. Estado
-    preservado; falta repetir "Autorizar novamente" concluindo em menos de
-    10 minutos e então verificar conexão ativa, mesma conexão/conta/agenda e
-    uma sincronização sob demanda.
+    preservado.
+  - **Reautorização — comprovada (01:31:56, segunda tentativa):** novo
+    "Autorizar novamente" concluído a tempo. A MESMA conexão `61af033c` voltou
+    a `active`, mesma conta e mesma agenda (id conferido), sem nova escolha de
+    agenda (`calendar_selected` continua 1); tokens presentes e cifrados
+    (`key_version` p1, valores não lidos), novo vencimento 02:31:55. Auditoria:
+    `calendar.connection.connected` 1→2. Contagens iguais: 1 conexão não
+    desconectada, 1 vínculo da atividade, 1 vínculo do evento, 4 atividades
+    no lead.
+  - **Acesso funcionando — comprovado (01:32:57):** abrir a Agenda rodou a
+    sincronização sob demanda sem erro (`calendar_sync_state.last_run_at` e
+    novo `sync_token_at`; `last_error` vazio). Escritas do fluxo: a
+    reautorização gravou tokens/estado da conexão e a sincronização gravou o
+    estado incremental; nenhuma intenção de escrita no Google
+    (`calendar_effect_intents` = 0 desde 01:00), nenhuma auditoria de efeito,
+    compromisso e vínculo sem alteração (`lock_version` 13, `base_etag` e
+    `last_synced_at` iguais).
+  - Conferência no Google (só leitura): "QA B2 — Reconexão validada", terça,
+    27/10, 17:00–18:30, agenda "Praxis — Testes B2.", Meet
+    `meet.google.com/wai-vuvn-vte`, organizador a própria agenda, nenhum
+    convidado; um único evento com esse título na semana.
+  - Observado: o fluxo OAuth expira em 10 minutos e o aviso é claro; a
+    primeira tentativa (concluída depois do limite) não deixou efeito.
 - **Pendência de usabilidade (não implementada):** a página Agenda mostra
   sempre só a semana atual, sem navegação entre semanas; um compromisso da
   semana seguinte não aparece nela.
