@@ -934,8 +934,9 @@ sem variáveis de agenda; agendamentos e alertas desligados.
     1`; CRM restaurado, `inbound.applied` 6→7, versão 14→15.
   - Escritas do fluxo: renovação do token na nº 1 (conexão 02:52:42);
     criação e atualizações do canal; estado incremental; 3 batimentos
-    `manual`; duas aplicações Google → CRM. Nenhuma escrita do CRM no
-    Google (`calendar.effect.update` continua 8), nenhum conflito novo.
+    `manual`; duas aplicações Google → CRM. O CRM não escreveu nos EVENTOS
+    do Google (`calendar.effect.update` continua 8), nenhum conflito novo —
+    mas criar e parar o canal foram operações reais no Google.
   - **Encerramento — comprovado remoto e local.** Rota
     `stop-channel` (02:58:17) com o id do canal: HTTP 200,
     `remote: stopped` (o Google confirmou), `local: stopped`; canal
