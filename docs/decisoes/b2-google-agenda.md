@@ -445,13 +445,13 @@ Primeira parte (**3a**), implementada com o provedor **simulado** (migration
 | Agendador principal: função agendada do Inngest, a cada 15 min, por ambiente (§9.2.1), e sincronização sob demanda ao abrir a agenda ou criar/editar um compromisso (§9.2.3) | **3b**; ligar e medir frequência e consumo na **4** | feito na 3b, **desligado** (`CALENDAR_SCHEDULER_ENABLED`) |
 | Recuperação adicional: workflow próprio no GitHub Actions (§9.2.2); o workflow da A11 não muda | **3b**; agendar e disparar de verdade na **4** | feito na 3b, **só disparo manual** e segredo próprio ainda inexistente |
 | Cron diário da Vercel como recuperação adicional | **4**, se o plano da conta permitir | não feito: um cron em `vercel.json` passaria a chamar Production sozinho |
-| Batimento do agendador e alertas: batimento, e-mail do Detector 1, aviso na tela do Detector 2 (§9.3) | **3b**; medição do §9.5 na **4** | feito na 3b, e-mail **desligado** (`CALENDAR_ALERTS_ENABLED`) |
+| Batimento do agendador e alertas: batimento, e-mail do Detector 1, aviso na tela do Detector 2 (§9.3) | **3b**; medição do §9.6 na **4** | feito na 3b, e-mail **desligado** (`CALENDAR_ALERTS_ENABLED`) |
 | Reconexão reencontra os vínculos pela marca (critério 12) | **3b** | feito |
 | Restauração do valor do CRM que perdeu num conflito (critério 7) | **3b** | feito (título e horário) |
 | Conflito e restauração na timeline do lead (critério 7) | **3b** | feito |
 | Adaptador Google real e fluxo OAuth (§6.12) | **4a** | feito, **desligado** sem configuração completa; só respostas HTTP simuladas |
 | `CALENDAR_WEBHOOK_URL` e liberação da proteção do Preview para o webhook | **4** | pendente |
-| Comportamento real do Google (token, paginação, `410`, vida dos canais, cabeçalhos) e metas do §9.5 | **4** | pendente |
+| Comportamento real do Google (token, paginação, `410`, vida dos canais, cabeçalhos) e metas do §9.6 | **4** | pendente |
 | Pendências do administrador do Workspace e da conta de teste (§12) | **4** (validação externa) | pendente |
 
 ### 6.11 Agendadores, alertas, reconexão e restauração (etapa 3b)
@@ -475,6 +475,14 @@ continua desligado depois do merge.**
   informa), com segredo próprio `B2_CALENDAR_CRON_SECRET` (mesmo valor do
   `CRON_SECRET` do ambiente; ainda não existe). Chama
   `/api/cron/calendar?source=github`. Agendá-lo é decisão da etapa 4.
+- **Autenticação da rota** (`src/server/calendar/cron-auth.ts`): só o
+  `CRON_SECRET` do ambiente, no cabeçalho `Authorization: Bearer`. Falha
+  fechada com segredo ausente ou com menos de 16 caracteres; segredo na URL
+  não vale; nada é registrado. Até a correção (16/10/2026, preparação do
+  webhook) a rota lia o segredo por `getIngestConfig()`, que exige TODA a
+  configuração da A11 (Turnstile, Upstash, chaves A11, Inngest): num
+  ambiente só com a agenda — o Preview de validação — a chamada correta
+  recebia 401 e a manutenção nunca rodava. As rotas da A11 não mudaram.
 - **Batimento** (`calendar_scheduler_heartbeats`): toda rodada — Inngest,
   recuperação adicional ou chamada manual — grava quando rodou, o desfecho
   e só contagens (o banco descarta qualquer valor que não seja número).
@@ -1099,7 +1107,59 @@ Um agendador não pode se vigiar. Camadas, nenhuma garantida sozinha:
 - Falha ao criar o novo: o velho continua, com tentativa e backoff e alerta
   se faltar menos de 25% da vida.
 
-### 9.5 Objetivos a validar (não garantias existentes)
+### 9.5 Encerrar um canal (procedimento operacional)
+O mecanismo existe: `stopChannel` (`sync/channels.ts`) pede ao Google
+`channels.stop` (adaptador `stopChannel` em `google/calendar-api.ts`) e
+depois encerra o canal no banco (`stop_calendar_channel`, só
+`service_role`; o webhook passa a responder "ignorado"). Hoje ele só é
+usado pela manutenção (canal vencido, abandonado, substituído ou sem
+vínculo) e pela desconexão. O que falta é uma AÇÃO operacional exposta para
+encerrar um canal específico — não há tela nem rota para isso, de propósito.
+
+**Atenção:** o helper absorve a falha da chamada ao Google (devolve só
+"tentou") e encerra no banco de qualquer jeito. Terminar sem erro NÃO
+prova que o canal parou no Google — e a Calendar API não lista canais, então
+a única prova é a resposta do próprio `channels.stop`.
+
+Desfechos que precisam ser distinguidos:
+| Desfecho | Como se comprova |
+|---|---|
+| Encerrado no Google | `channels.stop` respondeu sucesso (2xx) para o id e o `resourceId` do canal |
+| Já não existia no Google | `channels.stop` respondeu 404 (venceu ou já foi parado) |
+| Só local | qualquer outra falha (401/403, 5xx, rede): o banco o encerra, o Google continua enviando até o vencimento — o webhook as ignora |
+| Entrega bloqueada | removido o bypass (ou a URL), as notificações param na proteção da Vercel antes do CRM; o canal continua existindo no Google |
+| Vencimento | `expires_at` gravado do valor devolvido pelo Google na criação |
+
+**Procedimento mínimo para o canal de teste** (com as funções existentes,
+sem tela nova; preparado, não executado):
+1. Ler no banco o canal do teste — `channel_id`, `resource_id`, `status`,
+   `expires_at` —, conferindo que é o único da conexão e da agenda de teste
+   e do ambiente `preview`.
+2. Obter um token de acesso da própria conexão por `loadFreshTokens` (a
+   renovação de sempre, com a proteção do §6.14).
+3. Chamar o ADAPTADOR (`provider.stopChannel`) diretamente, não o helper,
+   para registrar o status real (sucesso, 404 ou erro).
+4. Encerrar no banco com `stop_calendar_channel(channel_id, dono,
+   'validation_end')`, qualquer que seja o passo 3.
+5. Registrar qual dos desfechos acima ocorreu; se "só local", registrar o
+   `expires_at` como prazo em que o canal some do Google.
+6. Depois: remover a URL temporária do webhook e o bypass dedicado (os
+   bypasses existentes não mudam) e fazer redeploy.
+
+A execução dos passos 2–4 precisa de um executor com a configuração do
+Preview (chave de cifra dos tokens, assinatura do ambiente, cliente OAuth,
+chave do Supabase): um script local avulso que leia essa configuração sem
+imprimi-la, ou uma chamada equivalente — decisão da rodada de validação.
+
+**Bypass dedicado:** o "Protection Bypass for Automation" da Vercel vale
+para o projeto inteiro, não para um deployment ou branch. Ser dedicado
+facilita revogá-lo sem afetar os outros, mas não reduz esse alcance (no
+plano Hobby não há exceção por domínio). Com ele na URL do canal, o segredo
+fica na variável do ambiente, na configuração do canal no Google e
+possivelmente nos logs de requisição da Vercel; o CRM não guarda o endereço
+no banco nem o registra em log.
+
+### 9.6 Objetivos a validar (não garantias existentes)
 - Nenhum canal vence sem substituto por mais de 1 h.
 - Defasagem de sincronização ≤ 20 min **com o webhook desligado**, supondo o
   agendador principal vivo; sem ele, vale a sincronização sob demanda e a
@@ -1121,7 +1181,7 @@ e reportados como medição, não como promessa.
 5. Convidados: ausentes por padrão; só enviados com opção explícita
    confirmada.
 6. Google → CRM: título, horário e cancelamento de evento vinculado refletem
-   no CRM; defasagem medida (§9.5).
+   no CRM; defasagem medida (§9.6).
 7. **Conflito:** edição simultânea nos dois lados nunca perde um valor em
    silêncio: o do CRM fica em `calendar_sync_conflicts` e na timeline, com
    restauração; cobre título, horário, cancelamento e Meet; `412` provoca
@@ -1148,7 +1208,7 @@ e reportados como medição, não como promessa.
 16. Webhook: 2xx rápido para canal conhecido do ambiente; rejeita canal,
     token ou ambiente desconhecidos.
 17. Agendamento: batimento gravado, alertas e avisos conforme §9.3, objetivos
-    do §9.5 medidos e reportados.
+    do §9.6 medidos e reportados.
 18. Validação inicial só com conta e calendário de teste; a agenda real do
     Henrique só depois, com autorização expressa.
 

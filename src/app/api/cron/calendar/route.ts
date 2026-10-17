@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { runScheduledCalendarMaintenance } from "@/server/calendar/background";
+import { isAuthorizedCalendarCron } from "@/server/calendar/cron-auth";
 import type { SchedulerSource } from "@/server/calendar/sync/scheduled";
-import { getIngestConfig, IngestConfigError } from "@/server/ingest/config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,8 +12,9 @@ export const dynamic = "force-dynamic";
  * CRM dos eventos vinculados, canais de notificação (criar, renovar,
  * encerrar) e reconciliação. Idempotente — as travas do banco garantem uma
  * sincronização e uma renovação por vez —, então pode ser chamada por mais
- * de um agendador. Mesmo segredo dos crons da A11 (o workflow da A11 não
- * muda; quem chamará esta rota é definido na validação).
+ * de um agendador. Mesmo segredo dos crons da A11 (`CRON_SECRET`), mas lido
+ * sozinho (`cron-auth.ts`): a rota não depende do resto da configuração da
+ * A11. Quem chamará esta rota é definido na validação.
  *
  * Sem provedor configurado (hoje, em Preview e Production) não toca em nada.
  * A resposta tem só contagens, nunca conteúdo de evento.
@@ -29,19 +30,8 @@ function sourceOf(request: Request): SchedulerSource {
   return source === "github" ? "github" : "manual";
 }
 
-function authorized(request: Request): boolean {
-  let secret: string;
-  try {
-    secret = getIngestConfig().CRON_SECRET;
-  } catch (error) {
-    if (error instanceof IngestConfigError) return false;
-    throw error;
-  }
-  return request.headers.get("authorization") === `Bearer ${secret}`;
-}
-
 export async function POST(request: Request) {
-  if (!authorized(request)) {
+  if (!isAuthorizedCalendarCron(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   try {

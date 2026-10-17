@@ -6,7 +6,7 @@
  * hoje, em Preview e Production) nenhuma das duas toca no banco nem no
  * Google. Dados fictícios.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ACTIVITY_ID, CALENDAR_ID, activity, makeFixture } from "../support/calendar-fixture";
 import { InboundMemoryStore } from "../support/calendar-inbound-store";
@@ -21,10 +21,6 @@ const m = vi.hoisted(() => ({
   accessToken: { value: "" },
 }));
 
-vi.mock("@/server/ingest/config", () => ({
-  IngestConfigError: class extends Error {},
-  getIngestConfig: () => ({ CRON_SECRET: "segredo-de-teste" }),
-}));
 vi.mock("@/server/calendar/provider", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getCalendarProvider: async () => m.provider.value,
@@ -61,6 +57,12 @@ beforeEach(() => {
   m.scheduler.value = null;
   m.schedulerCreated.mockClear();
   vi.spyOn(console, "error").mockImplementation(() => {});
+  // Só o segredo do cron: a rota da agenda não depende do resto da A11.
+  vi.stubEnv("CRON_SECRET", "segredo-de-teste");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe("/api/cron/calendar", () => {
