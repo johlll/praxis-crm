@@ -1,5 +1,6 @@
 import { createCalendarAdminSupabaseClient } from "@/server/calendar/admin/supabase";
 import type { Json } from "@/server/types/database";
+import type { ChannelForStop } from "@/server/calendar/sync/channel-stop";
 import type {
   ApplyInboundResult,
   InboundLink,
@@ -200,4 +201,15 @@ export async function adminListOwnChannels(params: {
   });
   if (error) throw new Error(error.message);
   return (data as unknown as Array<{ channelId: string; resourceId: string }> | null) ?? [];
+}
+
+/** UM canal, resolvido pelo registro gravado, para o encerramento pelo
+ * operador (`get_calendar_channel_for_stop`: ambiente assinado, canal e
+ * conexão consistentes, nenhum segredo). */
+export async function adminGetChannelForStop(channelId: string): Promise<ChannelForStop> {
+  const admin = createCalendarAdminSupabaseClient();
+  const { data, error } = await admin.rpc("get_calendar_channel_for_stop", { p_channel_id: channelId });
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("channel_not_found");
+  return data as unknown as ChannelForStop;
 }

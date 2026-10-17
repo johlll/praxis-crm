@@ -1122,47 +1122,64 @@ Um agendador não pode se vigiar. Camadas, nenhuma garantida sozinha:
 
 ### 9.5 Encerrar um canal (procedimento operacional)
 O mecanismo existe: `stopChannel` (`sync/channels.ts`) pede ao Google
-`channels.stop` (adaptador `stopChannel` em `google/calendar-api.ts`) e
-depois encerra o canal no banco (`stop_calendar_channel`, só
-`service_role`; o webhook passa a responder "ignorado"). Hoje ele só é
-usado pela manutenção (canal vencido, abandonado, substituído ou sem
-vínculo) e pela desconexão. O que falta é uma AÇÃO operacional exposta para
-encerrar um canal específico — não há tela nem rota para isso, de propósito.
+`channels.stop` e depois encerra o canal no banco (`stop_calendar_channel`;
+o webhook passa a responder "ignorado"). A manutenção o usa para canal
+vencido, abandonado, substituído ou sem vínculo, e a desconexão também para
+os canais. Esse helper absorve a falha da chamada ao Google — terminar sem
+erro NÃO prova que o canal parou lá. A Calendar API não lista canais: a
+única prova remota é a resposta do próprio `channels.stop`.
 
-**Atenção:** o helper absorve a falha da chamada ao Google (devolve só
-"tentou") e encerra no banco de qualquer jeito. Terminar sem erro NÃO
-prova que o canal parou no Google — e a Calendar API não lista canais, então
-a única prova é a resposta do próprio `channels.stop`.
+**Executor no servidor** — `POST /api/cron/calendar/stop-channel`
+(`sync/channel-stop.ts`), para encerrar UM canal específico:
+- só existe com `VERCEL_ENV=preview`; em Production, ou sem ambiente, 404
+  antes de qualquer consulta;
+- `Authorization: Bearer <CRON_SECRET>` (`cron-auth.ts`), nunca na URL;
+  sem isso, 401 sem efeitos;
+- corpo `{ "channelId": "<uuid>" }`, e nada mais (campo extra: 400). Conexão,
+  dono, workspace, agenda e recurso vêm do registro gravado
+  (`get_calendar_channel_for_stop`, migration `20261018100000`: ambiente
+  assinado, canal e conexão do mesmo ambiente e workspace, nenhum segredo
+  devolvido). Canal de outro ambiente, inexistente ou inconsistente: 404,
+  sem Google nem alteração;
+- token pela renovação normal da própria conexão; parada pelo ADAPTADOR
+  (`provider.stopChannel`), depois encerramento local com o motivo fixo
+  `operator_stop`. Não desconecta, não renova canal e não toca em
+  atividade, vínculo, evento, Meet ou convidados;
+- sem repetição automática; repetir num canal já encerrado devolve
+  `already_stopped` sem nova chamada ao Google;
+- conexão sem token agora (a reautorizar, falha temporária): nada é
+  encerrado (409), para a parada no Google poder ser tentada de novo;
+- resposta só com códigos (`remote`, `local`, `reason`), nunca token,
+  endereço, cabeçalho ou corpo de erro do Google. A restrição ao canal de uma
+  validação específica é conferida no procedimento, não no código.
 
-Desfechos que precisam ser distinguidos:
-| Desfecho | Como se comprova |
-|---|---|
-| Encerrado no Google | `channels.stop` respondeu sucesso (2xx) para o id e o `resourceId` do canal |
-| Já não existia no Google | `channels.stop` respondeu 404 (venceu ou já foi parado) |
-| Só local | qualquer outra falha (401/403, 5xx, rede): o banco o encerra, o Google continua enviando até o vencimento — o webhook as ignora |
-| Entrega bloqueada | removido o bypass (ou a URL), as notificações param na proteção da Vercel antes do CRM; o canal continua existindo no Google |
-| Vencimento | `expires_at` gravado do valor devolvido pelo Google na criação |
+| `remote` | Significa | HTTP |
+|---|---|---|
+| `stopped` | o Google confirmou a parada (2xx) | 200 |
+| `provider_404` | o Google respondeu 404: o canal já não existia lá | 200 |
+| `http_<status>` | outra resposta do Google: não parou | 202 |
+| `indeterminate` | sem resposta (timeout, rede): NÃO se sabe se parou — não prova que continua ativo | 202 |
+| `not_attempted` | sem chamada (`reason`: já encerrado, sem recurso, `polling_only`, conexão sem token) | 200 ou 409 |
 
-**Procedimento mínimo para o canal de teste** (com as funções existentes,
-sem tela nova; preparado, não executado):
-1. Ler no banco o canal do teste — `channel_id`, `resource_id`, `status`,
-   `expires_at` —, conferindo que é o único da conexão e da agenda de teste
-   e do ambiente `preview`.
-2. Obter um token de acesso da própria conexão por `loadFreshTokens` (a
-   renovação de sempre, com a proteção do §6.14).
-3. Chamar o ADAPTADOR (`provider.stopChannel`) diretamente, não o helper,
-   para registrar o status real (sucesso, 404 ou erro).
-4. Encerrar no banco com `stop_calendar_channel(channel_id, dono,
-   'validation_end')`, qualquer que seja o passo 3.
-5. Registrar qual dos desfechos acima ocorreu; se "só local", registrar o
-   `expires_at` como prazo em que o canal some do Google.
-6. Depois: remover a URL temporária do webhook e o bypass dedicado (os
-   bypasses existentes não mudam) e fazer redeploy.
+`local`: `stopped`, `already_stopped`, `unchanged` (409) ou `failed` (500 —
+nunca sucesso completo, mesmo com `remote: stopped`).
 
-A execução dos passos 2–4 precisa de um executor com a configuração do
-Preview (chave de cifra dos tokens, assinatura do ambiente, cliente OAuth,
-chave do Supabase): um script local avulso que leia essa configuração sem
-imprimi-la, ou uma chamada equivalente — decisão da rodada de validação.
+**Outras formas de cortar as notificações** (não são parada no Google):
+- remover `CALENDAR_WEBHOOK_URL` NÃO muda o endereço de um canal já
+  registrado: o Google continua enviando para o endereço gravado nele até
+  o canal parar ou vencer; a variável só afeta canais criados depois;
+- revogar o bypass de automação bloqueia a ENTREGA pela proteção da Vercel
+  (as notificações não chegam ao CRM), mas o canal continua existindo no
+  Google;
+- o canal some sozinho no vencimento (`expires_at`, o valor devolvido pelo
+  Google na criação).
+
+**Procedimento para o canal de uma validação:** ler no banco o canal — id,
+ambiente `preview`, conexão e agenda esperadas, único vivo —; chamar a rota
+com esse id; registrar `remote` e `local`; se `indeterminate` ou
+`http_<status>`, registrar o `expires_at` como prazo em que o canal some do
+Google; depois remover a URL temporária e revogar o bypass dedicado (os
+outros não mudam) e fazer redeploy.
 
 **Bypass dedicado:** o "Protection Bypass for Automation" da Vercel vale
 para o projeto inteiro, não para um deployment ou branch. Ser dedicado
