@@ -31,6 +31,20 @@ import type { ChannelRecord, InboundConnection, InboundDeps } from "@/server/cal
 
 export const FULL_SYNC_INTERVAL_MS = 24 * 3600_000;
 
+/**
+ * O polling venceu? Um por PERÍODO de 15 min alinhado em UTC — os mesmos
+ * períodos do cron (`TZ=UTC *\/15`). A regra antiga (`agora - última >= 15
+ * min`) fazia a rodada nominal seguinte pular a agenda sempre que a anterior
+ * terminava segundos depois do horário (o `last_run_at` é gravado no FIM),
+ * dobrando a defasagem para ~30 min. Por período: o próximo horário nominal
+ * sempre sincroniza, e chamadas repetidas no mesmo período (manual, outro
+ * agendador) continuam sem sincronizar de novo.
+ */
+export function pollDue(now: number, lastRun: number | null): boolean {
+  if (lastRun === null) return true;
+  return Math.floor(now / POLL_INTERVAL_MS) > Math.floor(lastRun / POLL_INTERVAL_MS);
+}
+
 /** Agendas por rodada (padrão). */
 export const MAINTENANCE_BATCH_SIZE = 25;
 
@@ -123,8 +137,7 @@ export async function runCalendarMaintenance(deps: MaintenanceDeps): Promise<Mai
     const fullAt = ms(target.fullSyncAt);
     const dirty = ms(target.dirtyAt);
     const full = fullAt === null || now - fullAt >= FULL_SYNC_INTERVAL_MS;
-    const due =
-      full || !target.hasSyncToken || lastRun === null || (dirty !== null && dirty >= lastRun) || now - lastRun >= POLL_INTERVAL_MS;
+    const due = full || !target.hasSyncToken || (dirty !== null && lastRun !== null && dirty >= lastRun) || pollDue(now, lastRun);
     if (!due) continue;
 
     const outcome = await syncCalendar(deps, conn, { forceFull: full });
