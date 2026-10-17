@@ -5,7 +5,8 @@
  *
  * "Executou recentemente" e "sincronizou com sucesso" são coisas
  * diferentes: um agendador que roda e falha não está atrasado, mas também
- * não está em dia — cada caso tem o seu aviso.
+ * não está em dia — cada caso tem o seu aviso. O atraso é medido só pelo
+ * agendador principal; a recuperação adicional aparece à parte.
  */
 
 export type CalendarSyncHealth = {
@@ -26,6 +27,22 @@ export const HEALTH_STALE_MS = 60 * 60_000;
 
 const minutesSince = (now: Date, iso: string) => Math.round((now.getTime() - Date.parse(iso)) / 60_000);
 
+/** "há N minutos" até 2 h; depois em horas e, passado 2 dias, em dias. */
+function ago(now: Date, iso: string): string {
+  const minutes = minutesSince(now, iso);
+  if (minutes < 1) return "há menos de 1 minuto";
+  if (minutes < 120) return `há ${minutes} ${minutes === 1 ? "minuto" : "minutos"}`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `há ${hours} horas`;
+  return `há ${Math.floor(hours / 24)} dias`;
+}
+
+const RECOVERY_RESULT: Record<"ok" | "partial" | "failed", string> = {
+  ok: "sem falhas",
+  partial: "com falha em parte das agendas",
+  failed: "com falha",
+};
+
 export function syncHealthNotices(
   health: CalendarSyncHealth,
   opts: { now: Date; schedulerEnabled: boolean },
@@ -37,34 +54,47 @@ export function syncHealthNotices(
     notices.push({
       level: "info",
       message:
-        "A sincronização automática com o Google Agenda está desligada neste ambiente. A agenda é atualizada quando você abre esta tela e quando cria ou edita um compromisso.",
+        "A sincronização automática com o Google Agenda está desligada neste ambiente. Abrir a página Agenda pode disparar a atualização da sua agenda conectada, no máximo uma vez a cada 5 minutos; criar ou editar um compromisso também pode dispará-la.",
     });
   } else {
-    // Só os agendadores automáticos contam (chamada manual não prova nada).
-    // Atraso = nenhuma EXECUÇÃO recente, qualquer que tenha sido o desfecho.
-    const latest = health.schedulers
-      .filter((h) => h.scheduler !== "manual")
-      .sort((a, b) => Date.parse(b.lastRunAt) - Date.parse(a.lastRunAt))[0];
-    if (!latest) {
-      notices.push({ level: "warning", message: "Sincronização automática atrasada: nenhuma execução registrada neste ambiente." });
-    } else if (opts.now.getTime() - Date.parse(latest.lastRunAt) > HEALTH_STALE_MS) {
+    // A saúde AUTOMÁTICA é a do agendador principal (Inngest), e só dele: a
+    // recuperação adicional (GitHub) roda por outro caminho e não prova que o
+    // principal voltou; a chamada manual não prova nada. Atraso = nenhuma
+    // EXECUÇÃO recente do principal, qualquer que tenha sido o desfecho.
+    const primary = health.schedulers.find((h) => h.scheduler === "inngest");
+    if (!primary) {
       notices.push({
         level: "warning",
-        message: `Sincronização automática atrasada: a última execução foi há ${minutesSince(opts.now, latest.lastRunAt)} minutos. Alterações feitas no Google podem demorar a aparecer.`,
+        message: "Sincronização automática atrasada: o agendador principal não tem nenhuma execução registrada neste ambiente.",
       });
-    } else if (latest.lastOutcome === "failed") {
-      const success = latest.lastSuccessAt
-        ? `A última execução sem falhas foi há ${minutesSince(opts.now, latest.lastSuccessAt)} minutos.`
+    } else if (opts.now.getTime() - Date.parse(primary.lastRunAt) > HEALTH_STALE_MS) {
+      notices.push({
+        level: "warning",
+        message: `Sincronização automática atrasada: a última execução do agendador principal foi ${ago(opts.now, primary.lastRunAt)}. Alterações feitas no Google podem demorar a aparecer.`,
+      });
+    } else if (primary.lastOutcome === "failed") {
+      const success = primary.lastSuccessAt
+        ? `A última execução sem falhas foi ${ago(opts.now, primary.lastSuccessAt)}.`
         : "Nenhuma execução sem falhas foi registrada.";
       notices.push({
         level: "warning",
         message: `A sincronização automática está rodando, mas a última execução falhou. ${success} Alterações feitas no Google podem não ter chegado ao CRM; a próxima execução tenta de novo.`,
       });
-    } else if (latest.lastOutcome === "partial") {
+    } else if (primary.lastOutcome === "partial") {
       notices.push({
         level: "warning",
         message:
           "A última execução da sincronização automática não conseguiu atualizar parte das agendas; as demais foram atualizadas. A próxima execução tenta de novo.",
+      });
+    }
+
+    // Recuperação adicional: informação SEPARADA, com horário e resultado.
+    // Nunca apaga nem suaviza o aviso do principal.
+    const recovery = health.schedulers.find((h) => h.scheduler === "github");
+    if (recovery) {
+      notices.push({
+        level: "info",
+        message: `Recuperação adicional: última execução ${ago(opts.now, recovery.lastRunAt)}, ${RECOVERY_RESULT[recovery.lastOutcome]}. Ela roda por outro caminho e não comprova que o agendador principal esteja funcionando.`,
       });
     }
   }

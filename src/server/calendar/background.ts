@@ -1,6 +1,6 @@
 import { createSupabaseInboundStore } from "@/server/calendar/admin/inbound-store";
 import { createResendAlertSender, createSupabaseSchedulerStore } from "@/server/calendar/admin/scheduler-store";
-import { calendarAlertsEnabled, calendarSchedulerEnabled } from "@/server/calendar/automation-flags";
+import { calendarAlertTestRecipient, calendarAlertsEnabled, calendarSchedulerEnabled } from "@/server/calendar/automation-flags";
 import { runScheduledMaintenance, type ScheduledResult, type SchedulerSource } from "@/server/calendar/sync/scheduled";
 import { loadConnectionContext } from "@/server/calendar/connection-context";
 import { getCalendarEnvironment } from "@/server/calendar/environment";
@@ -81,6 +81,7 @@ export async function runScheduledCalendarMaintenance(source: SchedulerSource): 
       schedulerEnabled: calendarSchedulerEnabled(),
       alertsEnabled,
       sendAlert: alertsEnabled ? createResendAlertSender() : null,
+      testRecipient: calendarAlertTestRecipient(),
     },
     source,
   );
