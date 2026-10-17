@@ -97,7 +97,9 @@ describe("desligado por padrão", () => {
     expect(active).not.toMatch(/default:/);
     expect(active).not.toMatch(/praxis-crm-eight|vercel\.app/);
     expect(active).toContain("secrets.B2_CALENDAR_CRON_SECRET");
-    expect(active).toContain("source=github");
+    // A chamada (source=github) fica no script, com a lista de destinos aprovados.
+    expect(active).toContain("node scripts/b2-calendar-recovery.ts");
+    expect(readFileSync(join(process.cwd(), "scripts/b2-calendar-recovery.ts"), "utf8")).toContain("/api/cron/calendar?source=github");
   });
 
   it("nenhum cron da Vercel foi registrado", () => {

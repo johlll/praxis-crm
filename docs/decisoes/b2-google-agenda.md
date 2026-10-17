@@ -476,11 +476,21 @@ continua desligado depois do merge.**
   sincroniza as agendas da PRÓPRIA conexão cuja última execução tem mais de
   5 min — depois da resposta (`after`), com a mesma trava da manutenção, no
   máximo 5 agendas por vez. Não depende de chave: sem provedor, nada.
-- **Recuperação adicional** (`.github/workflows/b2-calendar-recovery.yml`):
-  só `workflow_dispatch`, sem `schedule`, sem endereço padrão (quem dispara
-  informa), com segredo próprio `B2_CALENDAR_CRON_SECRET` (mesmo valor do
-  `CRON_SECRET` do ambiente; ainda não existe). Chama
-  `/api/cron/calendar?source=github`. Agendá-lo é decisão da etapa 4.
+- **Recuperação adicional** (`.github/workflows/b2-calendar-recovery.yml`
+  + `scripts/b2-calendar-recovery.ts`): só `workflow_dispatch`, sem
+  `schedule`, sem endereço padrão. Quem dispara informa o destino, e o
+  script só aceita os da lista APROVADA, por comparação exata da string
+  (hoje, só o Preview da `validacao-b2`): barra no fim, `http`,
+  credenciais embutidas, caminho, parâmetro, porta, domínio parecido ou
+  outro ambiente são recusados **antes de qualquer requisição**. Segredos
+  próprios da B2, que ainda não existem: `B2_CALENDAR_CRON_SECRET` (mesmo
+  valor do `CRON_SECRET` do ambiente) e `B2_CALENDAR_BYPASS_SECRET` (bypass
+  da Vercel dedicado à B2 — o `VERCEL_AUTOMATION_BYPASS_SECRET` é da A11 e
+  não é usado nem alterado). Chama `/api/cron/calendar?source=github` com o
+  segredo e o bypass só em cabeçalhos (nada na URL) e não segue
+  redirecionamento. Até a correção (17/10/2026) o workflow aceitava
+  qualquer `target_url` HTTPS e mandava o bypass da A11 na URL. Agendá-lo é
+  decisão da etapa 4.
 - **Autenticação da rota** (`src/server/calendar/cron-auth.ts`): só o
   `CRON_SECRET` do ambiente, no cabeçalho `Authorization: Bearer`. Falha
   fechada com segredo ausente ou com menos de 16 caracteres; segredo na URL
@@ -515,15 +525,30 @@ continua desligado depois do merge.**
   (`claim_calendar_scheduler_alert`, no máximo um alerta a cada 6 h; falha
   não conta), um e-mail por destinatário (owner/admin dos workspaces com
   vínculo no ambiente; ninguém vê o endereço dos outros), sem conteúdo de
-  evento, pelo Resend já usado nas propostas.
+  evento, pelo Resend já usado nas propostas. **Destinatário de teste**
+  (`CALENDAR_ALERTS_TEST_RECIPIENT`, só com `VERCEL_ENV=preview`; em
+  Production é ignorada): um único endereço substitui a lista inteira — um
+  envio por alerta, por mais owner/admin que a consulta devolva; a reserva
+  e o intervalo de 6 h são os mesmos, e o alerta enviado fica registrado
+  com a nota `test_recipient`. Configuração presente mas inválida (dois
+  endereços, nome, quebra de linha…) falha sem enviar a ninguém
+  (`test_recipient_invalid`, não conta para o intervalo) — nunca cai para
+  os destinatários reais.
 - **Detector 2** (§9.3): na Agenda e em Integrações, owner/admin veem aviso
-  quando há compromissos vinculados e a sincronização automática está
-  atrasada (nenhuma execução automática em 60 min, ou nunca rodou), quando
-  ela roda mas a última execução falhou (com quando foi a última sem
-  falhas), quando parte das agendas falhou (as demais foram atualizadas) ou
-  há canal com menos de 25% da vida — cada caso com a sua mensagem.
-  Com o agendador desligado, o aviso é informativo ("desligada neste
-  ambiente; atualizada ao abrir a agenda e ao editar compromissos").
+  quando há compromissos vinculados e o agendador PRINCIPAL (Inngest) está
+  atrasado (nenhuma execução dele em 60 min, ou nunca rodou), quando ele
+  roda mas a última execução falhou (com quando foi a última sem falhas),
+  quando parte das agendas falhou (as demais foram atualizadas) ou há canal
+  com menos de 25% da vida — cada caso com a sua mensagem. A recuperação
+  adicional (GitHub) aparece como **informação à parte**, com horário e
+  resultado, e não apaga nem suaviza o aviso do principal: ela não comprova
+  que o principal funciona. Chamada manual não conta para nada. Até a
+  correção (17/10/2026) o atraso era medido pela execução automática mais
+  recente de qualquer agendador, e uma recuperação bem-sucedida escondia o
+  Inngest parado. Com o agendador desligado, o aviso é informativo: abrir a
+  página Agenda pode disparar a atualização da agenda conectada, no máximo
+  uma vez a cada 5 min (a regra da sob demanda), e criar ou editar um
+  compromisso também.
 - **Reconexão** (§6.5, critério 12): desconectar desfaz os vínculos; ao
   conectar de novo (com a agenda escolhida) ou pelo botão "Reencontrar
   compromissos", o banco lista os vínculos desfeitos de conexões
@@ -1258,7 +1283,9 @@ Um agendador não pode se vigiar. Camadas, nenhuma garantida sozinha:
   envia e-mail (Resend) aos owner/admin do workspace.
 - **Detector 2 (passivo, não depende de agendador):** ao abrir a agenda ou
   `Configurações > Integrações`, owner/admin veem aviso "sincronização
-  atrasada" se o batimento passou de 60 min ou se algum canal tem pouca vida.
+  atrasada" se o batimento do agendador principal passou de 60 min ou se
+  algum canal tem pouca vida; a recuperação adicional aparece à parte e não
+  conta como o principal.
 - **Detector 3 (humano):** verificação semanal manual do batimento durante o
   piloto, enquanto não houver monitoramento da B5/B6.
 - Honestidade do desenho: se **todos** os agendadores falharem juntos, o
