@@ -900,6 +900,57 @@ sem variáveis de agenda; agendamentos e alertas desligados.
     Faltam localmente `CALENDAR_TOKEN_KEY_VERSIONS`/`CALENDAR_TOKEN_ACTIVE_KEY_VERSION`
     (gerada só para o Preview, sem cópia local) e `CALENDAR_ENV_SIGNING_KEY`.
     Por isso não foram criados bypass, variáveis nem canal.
+- **17/10/2026 — webhook: transporte e processamento manual (UTC):**
+  - Migration `20261018100000_b2_channel_for_stop` aplicada no
+    `praxis-crm-dev` (única pendente, sem drift; dry-run final sem
+    pendências); `EXECUTE` só `service_role`. PR #34 mesclada em `7e053e1`
+    (pais `f5272ad` e `0e639f8`); Production `dpl_CyQxZQJj5qjGAT1EHbrbhFxCoPcK`,
+    agenda desligada. `main` incorporada aqui em `faf31d3`, sem conflito.
+  - Configuração temporária: bypass de automação dedicado "webhook B2 teste"
+    (criado em `1792205344234`, alcance do projeto inteiro; os 3 anteriores
+    intactos); `CRON_SECRET` novo e `CALENDAR_WEBHOOK_URL` só em Preview
+    (`validacao-b2`); redeploy `dpl_HyfztSKA3xgZs2kjgQmczgijXeLX`. Rota de
+    encerramento no deployment real: sem Bearer 401; UUID inexistente 404,
+    zero canais e zero auditorias.
+  - Alcance conferido antes de cada rodada: um único alvo (`61af033c`,
+    "Praxis — Testes B2.", preview).
+  - **Transporte autenticado — comprovado.** Manutenção nº 1 (02:52:41):
+    `ok`, `targets 1`, `synced 1`, `full 0`, `channelsCreated 1`. Canal
+    `72690d92-bc11-4cd0-847b-0464b0f4cc52` `active`, recurso gravado,
+    vencimento 24/10 02:52:43 (7 dias, `renew_at` 22/10 00:28). Mensagem
+    inicial do Google aceita pelo webhook (canal, segredo e ambiente
+    conferidos no banco): `sync_received_at` 02:52:44, mensagem nº 1.
+  - **Processamento manual — comprovado.** Título alterado no Google para
+    "QA B2 — Webhook" (salvo 02:55:01; a 1ª tentativa ficou presa num aviso
+    informativo do Meet, sem salvar). Notificação 02:55:02 → `dirty_at`
+    02:55:02, depois da última sincronização (02:52:44). Manutenção nº 2
+    (02:55:34, dentro dos 15 min — o polling não estava vencido, então só a
+    marcação justificava a sincronização): `synced 1`; CRM com o novo título,
+    `calendar.inbound.applied` 5→6, versão 13→14, horário/duração/Meet
+    iguais, `dirty_at` limpo. CRM mantido fora da Agenda no intervalo.
+  - **Restauração do título — comprovada.** Google de volta a "QA B2 —
+    Reconexão validada" (02:56:53); notificação 02:57:00 → `dirty_at`
+    depois da sincronização de 02:55:36; manutenção nº 3 (02:57:28): `synced
+    1`; CRM restaurado, `inbound.applied` 6→7, versão 14→15.
+  - Escritas do fluxo: renovação do token na nº 1 (conexão 02:52:42);
+    criação e atualizações do canal; estado incremental; 3 batimentos
+    `manual`; duas aplicações Google → CRM. Nenhuma escrita do CRM no
+    Google (`calendar.effect.update` continua 8), nenhum conflito novo.
+  - **Encerramento — comprovado remoto e local.** Rota
+    `stop-channel` (02:58:17) com o id do canal: HTTP 200,
+    `remote: stopped` (o Google confirmou), `local: stopped`; canal
+    `stopped`/`operator_stop`, uma auditoria `calendar.channel.stopped`.
+    Depois: `CALENDAR_WEBHOOK_URL` removida, bypass dedicado revogado (só
+    os 3 anteriores restam; o webhook com o segredo revogado recebe 302 da
+    proteção), redeploy `dpl_AjGEmn63VGQRWW4sAPSaFjYFtM3m`, arquivos
+    temporários com segredos apagados. `CRON_SECRET` da branch mantido.
+  - Estado final: conexão `active`; compromisso "QA B2 — Reconexão
+    validada", 27/10 17:00–18:30, 90 min, Meet `wai-vuvn-vte`, sem
+    convidados (conferido no Google), um único evento, 1 vínculo `in_sync`.
+  - Limitações: o processamento foi por manutenção MANUAL; agendador e
+    alertas desligados — sincronização automática e meta de atraso NÃO
+    validadas. Os números de mensagem do Google não são sequenciais (1,
+    137162, 249343): não servem para contar notificações.
 - **Pendência de usabilidade (não implementada):** a página Agenda mostra
   sempre só a semana atual, sem navegação entre semanas; um compromisso da
   semana seguinte não aparece nela.
