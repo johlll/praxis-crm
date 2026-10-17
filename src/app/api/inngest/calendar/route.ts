@@ -14,7 +14,10 @@ export const dynamic = "force-dynamic";
  * Autenticação pelo próprio SDK (assinatura com `INNGEST_SIGNING_KEY`). Em
  * Preview e Production a signing key é obrigatória: sem ela, 503 sanitizado
  * antes do SDK. Com a chave válida e `CALENDAR_SCHEDULER_ENABLED` desligada,
- * o app sincroniza uma lista VAZIA — é assim que a função sai do Inngest.
+ * o SDK apresenta uma lista VAZIA — mas o Inngest recusa registrar app sem
+ * funções, então isso não retira uma função já sincronizada: a interrupção
+ * é a pausa no painel (§9.7). Sem assinatura válida, o SDK (modo cloud)
+ * responde 401 até à introspecção.
  *
  * A lista de funções é montada no carregamento do módulo: mudar a chave de
  * ativação exige redeploy e nova sincronização do app.

@@ -128,7 +128,9 @@ describe("/api/inngest/calendar — app próprio da agenda, sem a A11", () => {
     expect(prod.body).toMatchObject({ env: "main" });
   });
 
-  it("flag desligada: lista VAZIA (é assim que a função sai do Inngest), sem bloquear", async () => {
+  // O SDK apresenta zero funções; o serviço do Inngest RECUSA sincronizar
+  // app sem funções (17/10/2026) — isto não retira uma função já registrada.
+  it("flag desligada: o SDK apresenta lista VAZIA, sem bloquear a rota", async () => {
     vi.stubEnv("CALENDAR_SCHEDULER_ENABLED", "");
     const route = await loadCalendarRoute();
     const { status, body } = await introspect(route, "/api/inngest/calendar");
@@ -145,9 +147,11 @@ describe("/api/inngest/calendar — app próprio da agenda, sem a A11", () => {
     expect(m.run).not.toHaveBeenCalled();
   });
 
-  it("introspecção sem assinatura: nada além da contagem (sem app, ambiente ou hash de chave)", async () => {
+  it("introspecção sem assinatura: 401 (modo cloud), sem app, ambiente ou hash de chave", async () => {
     const route = await loadCalendarRoute();
-    const { body } = await introspect(route, "/api/inngest/calendar", false);
+    const { status, body } = await introspect(route, "/api/inngest/calendar", false);
+    expect(status).toBe(401);
+    expect(body).toEqual({ message: "Unauthorized" });
     expect(body).not.toHaveProperty("authentication_succeeded");
     expect(body).not.toHaveProperty("signing_key_hash");
     expect(body).not.toHaveProperty("env");

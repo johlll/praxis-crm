@@ -12,8 +12,11 @@ import type { ScheduledResult } from "@/server/calendar/sync/scheduled";
  * Production) e o ambiente anunciado pelo SDK (`VERCEL_GIT_COMMIT_REF`).
  *
  * Só é oferecida ao Inngest com `CALENDAR_SCHEDULER_ENABLED=true`: desligada
- * (o padrão), a lista volta vazia — e sincronizar o app com a lista vazia é
- * o que retira a função do Inngest.
+ * (o padrão), a lista volta vazia. ATENÇÃO: isso NÃO retira do Inngest uma
+ * função já sincronizada — o SDK apresenta zero funções, mas o serviço
+ * RECUSA registrar um app sem funções ("No functions registered within your
+ * app", validação de 17/10/2026). Para interromper, pausar a função no
+ * painel (§9.7).
  */
 
 export const CALENDAR_INNGEST_APP_ID = "praxis-crm-agenda";
