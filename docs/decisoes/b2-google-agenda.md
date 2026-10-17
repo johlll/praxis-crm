@@ -1118,8 +1118,8 @@ sem variáveis de agenda; agendamentos e alertas desligados.
     alerta `df6bca6d-6ad5-41c9-97a0-2b3b6637212e` `sent`, nota
     `test_recipient`. Resend: e-mail `01a14aa0-8df4-7ee5-a72f-4416688ce555`
     aceito (Sent 16:09 UTC) e entregue ao servidor de destino (Delivered
-    16:10 UTC), com o texto novo; recebimento na caixa ainda a confirmar
-    pelo destinatário. Integrações (16:11 UTC): o aviso de atraso do
+    16:10 UTC), com o texto novo; recebimento na caixa de entrada
+    confirmado pelo destinatário (17/10/2026). Integrações (16:11 UTC): o aviso de atraso do
     principal **permaneceu**, e a recuperação apareceu à parte ("última
     execução há 1 minuto, sem falhas… não comprova que o agendador
     principal esteja funcionando").
