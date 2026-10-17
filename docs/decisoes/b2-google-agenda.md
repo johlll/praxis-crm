@@ -445,13 +445,13 @@ Primeira parte (**3a**), implementada com o provedor **simulado** (migration
 | Agendador principal: função agendada do Inngest, a cada 15 min, por ambiente (§9.2.1), e sincronização sob demanda ao abrir a agenda ou criar/editar um compromisso (§9.2.3) | **3b**; ligar e medir frequência e consumo na **4** | feito na 3b, **desligado** (`CALENDAR_SCHEDULER_ENABLED`) |
 | Recuperação adicional: workflow próprio no GitHub Actions (§9.2.2); o workflow da A11 não muda | **3b**; agendar e disparar de verdade na **4** | feito na 3b, **só disparo manual** e segredo próprio ainda inexistente |
 | Cron diário da Vercel como recuperação adicional | **4**, se o plano da conta permitir | não feito: um cron em `vercel.json` passaria a chamar Production sozinho |
-| Batimento do agendador e alertas: batimento, e-mail do Detector 1, aviso na tela do Detector 2 (§9.3) | **3b**; medição do §9.6 na **4** | feito na 3b, e-mail **desligado** (`CALENDAR_ALERTS_ENABLED`) |
+| Batimento do agendador e alertas: batimento, e-mail do Detector 1, aviso na tela do Detector 2 (§9.3) | **3b**; medição do §9.8 na **4** | feito na 3b, e-mail **desligado** (`CALENDAR_ALERTS_ENABLED`) |
 | Reconexão reencontra os vínculos pela marca (critério 12) | **3b** | feito |
 | Restauração do valor do CRM que perdeu num conflito (critério 7) | **3b** | feito (título e horário) |
 | Conflito e restauração na timeline do lead (critério 7) | **3b** | feito |
 | Adaptador Google real e fluxo OAuth (§6.12) | **4a** | feito, **desligado** sem configuração completa; só respostas HTTP simuladas |
 | `CALENDAR_WEBHOOK_URL` e liberação da proteção do Preview para o webhook | **4** | pendente |
-| Comportamento real do Google (token, paginação, `410`, vida dos canais, cabeçalhos) e metas do §9.6 | **4** | pendente |
+| Comportamento real do Google (token, paginação, `410`, vida dos canais, cabeçalhos) e metas do §9.8 | **4** | pendente |
 | Pendências do administrador do Workspace e da conta de teste (§12) | **4** (validação externa) | pendente |
 
 ### 6.11 Agendadores, alertas, reconexão e restauração (etapa 3b)
@@ -462,10 +462,13 @@ continua desligado depois do merge.**
 
 - **Agendador principal** (`src/server/calendar/inngest.ts`): função do
   Inngest a cada 15 min (`TZ=UTC */15 * * * *`), uma por vez, sem novas
-  tentativas em laço. Só é oferecida ao Inngest com
-  `CALENDAR_SCHEDULER_ENABLED=true` (só o valor exato liga); sem ela a lista
-  de funções volta vazia e nada é agendado. Mesmo ligada, sem provedor
-  configurado a rodada não toca em nada.
+  tentativas em laço, num app PRÓPRIO (`praxis-crm-agenda`, rota
+  `/api/inngest/calendar`) — separado do app da A11 (`praxis-crm`,
+  `/api/inngest`), cuja validação exige toda a configuração da A11. Só é
+  oferecida ao Inngest com `CALENDAR_SCHEDULER_ENABLED=true` (só o valor
+  exato liga); sem ela a lista de funções volta vazia e nada é agendado.
+  Mesmo ligada, sem provedor configurado a rodada não toca em nada. Rodada
+  `failed` vira FALHA da execução no Inngest (§9.7).
 - **Sob demanda** (§9.2.3): abrir a Agenda, criar ou editar um compromisso
   sincroniza as agendas da PRÓPRIA conexão cuja última execução tem mais de
   5 min — depois da resposta (`after`), com a mesma trava da manutenção, no
@@ -1241,7 +1244,58 @@ fica na variável do ambiente, na configuração do canal no Google e
 possivelmente nos logs de requisição da Vercel; o CRM não guarda o endereço
 no banco nem o registra em log.
 
-### 9.6 Objetivos a validar (não garantias existentes)
+### 9.6 Cadência do polling sob o cron
+O polling vence uma vez por PERÍODO de 15 min alinhado em UTC (os mesmos
+períodos do cron), não por "15 min desde a última". A regra antiga fazia a
+rodada nominal seguinte pular a agenda sempre que a anterior terminava
+segundos depois do horário (`last_run_at` é gravado no fim): a mudança no
+Google ficava para a outra rodada, ~30 min depois (reproduzido em
+`tests/unit/b2-poll-cadence.test.ts`). Agora o próximo horário nominal
+sempre sincroniza, e chamadas repetidas no mesmo período (manual, outro
+agendador) continuam sem sincronizar de novo. Marcação do webhook e sync
+completo de 24 h não mudaram.
+
+### 9.7 Agendador principal: ativação, medição e desligamento
+Seis coisas distintas — não confundir:
+| | O que é | Onde |
+|---|---|---|
+| Ambiente do Inngest | Production ou um ambiente de BRANCH; o SDK anuncia o nome a partir de `VERCEL_GIT_COMMIT_REF` (no Preview, `validacao-b2`; em Production, `main`) | painel do Inngest |
+| Ambiente Vercel | `VERCEL_ENV` (`preview`/`production`), que define o ambiente da agenda (§7) | variáveis da Vercel |
+| Signing key | `INNGEST_SIGNING_KEY`: a de ambientes de branch (uma só, compartilhada por todas as branches) ou a de Production. É ela que separa os ambientes — nunca a de Production num Preview: a sincronização iria para o app de Production | Vercel, por ambiente/branch |
+| App id | `praxis-crm-agenda` (agenda) × `praxis-crm` (A11). Separa os APPS dentro de um ambiente; NÃO isola ambientes | código |
+| Lista de funções | `b2-calendar-maintenance` só com `CALENDAR_SCHEDULER_ENABLED=true`; montada no carregamento — mudar a chave exige redeploy + nova sincronização do app | código + Vercel |
+| Resultado | TÉCNICO (execução no Inngest: concluída ou falha) × da SINCRONIZAÇÃO (`outcome` ok/partial/failed, contagens, batimento `inngest`) | painel do Inngest × banco |
+
+Resultado técnico: `ok` e `partial` concluem a execução (o retorno traz
+`outcome` e as contagens — `partial` nunca é sincronização integral);
+`failed` ou exceção vira `StepFailed` com código fixo
+(`calendar_maintenance_failed` / `calendar_maintenance_error`), sem pilha
+nem mensagem original, sem nova tentativa (`retries: 0`). O batimento já
+gravou o desfecho verdadeiro antes. Na medição, conferir os DOIS: verde no
+painel não basta.
+
+Configuração mínima no Preview (`validacao-b2`): `INNGEST_SIGNING_KEY` de
+ambientes de branch e `CALENDAR_SCHEDULER_ENABLED=true`. Não precisa de
+`INNGEST_EVENT_KEY` (não publica eventos), nem da configuração da A11, nem de
+`CALENDAR_WEBHOOK_URL`/`CALENDAR_ALERTS_ENABLED`. O Inngest alcança o
+Preview protegido pela URL de sincronização com `x-vercel-protection-bypass`
+(bypass dedicado, alcance do projeto inteiro; a URL com o segredo fica na
+configuração do app no Inngest).
+
+Ativação: variáveis → redeploy → sincronizar `praxis-crm-agenda` no ambiente
+de branch `validacao-b2` pela URL `/api/inngest/calendar?...bypass` →
+conferir a função e o cron no painel e que o app de Production não mudou.
+Medição: ≥ 3 execuções automáticas consecutivas (início/fim no Inngest,
+batimento `inngest`, desfecho), mudança e restauração de título no Google
+com os horários da mudança, da execução e da aplicação no CRM, sem abrir a
+Agenda, sem edição e sem manutenção manual; consumo de execuções (cada
+rodada = 1 execução + 1 etapa).
+Desligamento: remover `CALENDAR_SCHEDULER_ENABLED` → redeploy →
+sincronizar de novo (lista vazia) → conferir que a função saiu, sem
+execução em andamento e sem nova execução no horário seguinte → revogar o
+bypass. A signing key de branch pode ficar na `validacao-b2`.
+
+### 9.8 Objetivos a validar (não garantias existentes)
 - Nenhum canal vence sem substituto por mais de 1 h.
 - Defasagem de sincronização ≤ 20 min **com o webhook desligado**, supondo o
   agendador principal vivo; sem ele, vale a sincronização sob demanda e a
@@ -1263,7 +1317,7 @@ e reportados como medição, não como promessa.
 5. Convidados: ausentes por padrão; só enviados com opção explícita
    confirmada.
 6. Google → CRM: título, horário e cancelamento de evento vinculado refletem
-   no CRM; defasagem medida (§9.6).
+   no CRM; defasagem medida (§9.8).
 7. **Conflito:** edição simultânea nos dois lados nunca perde um valor em
    silêncio: o do CRM fica em `calendar_sync_conflicts` e na timeline, com
    restauração; cobre título, horário, cancelamento e Meet; `412` provoca
@@ -1290,7 +1344,7 @@ e reportados como medição, não como promessa.
 16. Webhook: 2xx rápido para canal conhecido do ambiente; rejeita canal,
     token ou ambiente desconhecidos.
 17. Agendamento: batimento gravado, alertas e avisos conforme §9.3, objetivos
-    do §9.6 medidos e reportados.
+    do §9.8 medidos e reportados.
 18. Validação inicial só com conta e calendário de teste; a agenda real do
     Henrique só depois, com autorização expressa.
 
