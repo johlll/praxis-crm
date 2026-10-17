@@ -955,6 +955,86 @@ sem variáveis de agenda; agendamentos e alertas desligados.
     alertas desligados — sincronização automática e meta de atraso NÃO
     validadas. Os números de mensagem do Google não são sequenciais (1,
     137162, 249343): não servem para contar notificações.
+- **17/10/2026 — agendador principal (Inngest), sem webhook (UTC):**
+  - PR #35 mesclada em `d31212f` (pais `7e053e1` e `1710d8d`); Production
+    `dpl_46qSKrDg25yUmWhZ17ioGtya7V5h`, agenda desligada. `main` incorporada
+    aqui em `00e83c5`, sem conflito.
+  - Painel do Inngest (organização "Praxis CRM", só leitura): plano Hobby,
+    0/50.000 execuções/mês na organização inteira (cota compartilhada com
+    Production), 5 etapas simultâneas, 1 de 3 usuários; ambientes de branch
+    disponíveis (o da A11 já estava arquivado). App de Production
+    `praxis-crm` intacto antes e depois (sincronizado em 28/09, 1 função da
+    A11).
+  - Configuração temporária: `INNGEST_SIGNING_KEY` = chave dos AMBIENTES DE
+    BRANCH (prefixo `signkey-branch-`; o painel: "shared for all branch
+    environments"), Sensitive, só Preview/`validacao-b2`; bypass dedicado
+    "inngest B2 teste" (`1792211520455`, alcance do projeto inteiro);
+    `CALENDAR_SCHEDULER_ENABLED=true` só na branch; webhook, alertas, Resend,
+    Event Key e A11 ausentes. Redeploy `dpl_HAnCUWUNQvjt6HrtVSCboSxHAPHc`.
+  - Sincronização (04:34:57, PUT do SDK): ambiente de branch `validacao-b2`
+    criado; app `praxis-crm-agenda`, URL do endereço estável
+    `/api/inngest/calendar` com o bypass; função
+    `praxis-crm-agenda-b2-calendar-maintenance`, gatilho
+    `TZ=UTC */15 * * * *`, 0 retries, concorrência 1 (escopo da função).
+  - Alvo e estado inicial: um único alvo (`61af033c`, vínculo `ac694db5`,
+    "Praxis — Testes B2.", preview); único canal `stopped`; compromisso
+    versão 15; CRM fora da Agenda, sem edição e sem manutenção manual em
+    toda a medição.
+  - **Execuções automáticas — comprovadas (3 consecutivas, todas do cron):**
+
+    | Previsto | Run ID | Início–fim (Inngest) | Etapa `maintenance` | Técnico | Sincronização (retorno e batimento) |
+    |---|---|---|---|---|---|
+    | 04:45:00 | `01M542TW70ZAVQCKAF6DMX0H0Y` | 04:45:03–04:45:08 | 04:45:05–04:45:08 | Completed | `ok`, targets 1, synced 1, failed 0 (batimento 04:45:08; token renovado 04:45:07) |
+    | 05:00:00 | `01M543PB40ZAVQCKAF6DMX0H0Y` | 05:00:31–05:00:36 | 05:00:33–05:00:35 | Completed | `ok`, synced 1, failed 0 (batimento 05:00:35) |
+    | 05:15:00 | `01M544HT10ZAVQCKAF6DMX0H0Y` | 05:15:08–05:15:13 | 05:15:10–05:15:13 | Completed | `ok`, synced 1, failed 0 (batimento 05:15:13) |
+
+    Gatilho de cada uma: `inngest/scheduled.timer`, "Scheduled for" e "Fired
+    at" no horário nominal. Nenhuma falha, nenhuma nova tentativa; batimento
+    `inngest` 0→3, sempre `ok`; espera do Inngest até começar: 3 s, 31 s e
+    8 s.
+  - **Mudança e restauração do título — comprovadas (só o título):**
+    "QA B2 — Agendador" salvo no Google às 04:47:41 → aplicado no CRM às
+    05:00:35 pela execução das 05:00 (**12 min 54 s**; versão 15→16);
+    restaurado no Google às 05:02:13 → aplicado às 05:15:13 pela execução
+    das 05:15 (**13 min 00 s**; versão 16→17). Amostra observada abaixo da
+    meta de 20 min — evidência inicial, não garantia. O pior caso esperado é
+    perto de 15 min + a espera do Inngest + a rodada.
+  - Escritas do fluxo: renovação de token (04:45:07), estado incremental e
+    batimentos a cada rodada, duas aplicações Google → CRM
+    (`calendar.inbound.applied` 7→9). O CRM não escreveu nos eventos do
+    Google (`calendar.effect.update` continua 8); nenhum conflito novo.
+  - **Desligamento — com divergência:** chave removida (05:16), redeploy
+    `dpl_AQ9nyrA7RTJNK5bpCCLVZZfbY8SP`, nova sincronização com a lista vazia
+    (05:18:07) RECUSADA pela API do Inngest: HTTP 500 "No functions
+    registered within your app", `modified: false` — o Inngest não aceita
+    app sem funções, então o cron continuaria disparando. Desativação pelo
+    painel: função PAUSADA às 05:19:30 (reversível; "No new runs will be
+    queued or invoked"). Às 05:32 nenhuma execução nova no horário das 05:30
+    (painel com 3 execuções, todas concluídas; batimento parado em 3). O
+    painel continua mostrando "Next run" do cron mesmo pausada. Bypass
+    revogado às 05:33:30 (restam os 3 anteriores; a rota recebe 302 com o
+    segredo revogado). Signing key de branch mantida na `validacao-b2`;
+    `CRON_SECRET` intacto; arquivos temporários com segredos apagados;
+    nenhuma captura com chave ou bypass.
+  - Estado final: conexão `active`; compromisso "QA B2 — Reconexão
+    validada", 27/10 17:00–18:30, 90 min, Meet `wai-vuvn-vte`, sem
+    convidados (conferido no Google), um único evento, 1 vínculo `in_sync`.
+  - Pendências e limitações:
+    - O §9.7 promete "sincronizar a lista vazia retira a função" — FALSO
+      contra o Inngest real. O app `praxis-crm-agenda` continua no ambiente
+      de branch `validacao-b2`, com a função PAUSADA e a URL do bypass já
+      revogado; o ambiente de branch se arquiva sozinho 3 dias depois da
+      última atividade. Corrigir o procedimento (pausar/arquivar no painel,
+      ou manter a função registrada sem gatilho quando desligada) exige
+      decisão e PR.
+    - A PR #35 descreveu a introspecção sem assinatura como "só a
+      contagem": no SDK instalado, em modo cloud, ela responde 401.
+    - O contador de execuções do painel seguia em 0/50.000 às 05:35;
+      pelo modelo de cobrança a rodada consumiu 6 (3 execuções + 3 etapas)
+      — não confirmado no painel.
+    - Achado de segurança tratado: duas capturas antigas do navegador
+      automatizado (28/09, rodada da A11; pasta ignorada pelo git) tinham a
+      signing key de PRODUCTION em texto; apagadas.
 - **Pendência de usabilidade (não implementada):** a página Agenda mostra
   sempre só a semana atual, sem navegação entre semanas; um compromisso da
   semana seguinte não aparece nela.
