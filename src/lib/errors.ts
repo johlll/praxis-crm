@@ -121,6 +121,7 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   calendar_oauth_misconfigured:
     "A integração com o Google Agenda está com a configuração inválida neste ambiente. Avise o administrador do sistema; sua conexão não precisa ser refeita.",
   calendar_id_required: "Escolha uma agenda.",
+  calendar_not_owned: "Só podem ser usadas agendas de que a sua conta Google é dona. Agendas compartilhadas por outras pessoas ainda não são aceitas.",
   calendar_not_selected: "Escolha a agenda da conexão antes de vincular compromissos.",
   activity_not_appointment: "Só compromissos com horário (reuniões) podem ser vinculados à agenda.",
   invites_require_confirmation: "Confirme explicitamente o envio dos convites antes de convidar alguém.",

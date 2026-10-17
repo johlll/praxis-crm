@@ -1,6 +1,6 @@
 import { createServerSupabaseClient } from "@/server/supabase/server";
 import { DataLoadError } from "@/server/data/load-error";
-import { getCalendarProvider, type ProviderCalendar } from "@/server/calendar/provider";
+import { getCalendarProvider, isOwnCalendar, type ProviderCalendar } from "@/server/calendar/provider";
 import { loadFreshTokens } from "@/server/calendar/connection-context";
 
 export type CalendarConnectionListItem = {
@@ -23,15 +23,27 @@ export async function listCalendarConnections(workspaceId: string): Promise<Cale
   return (data as unknown as CalendarConnectionListItem[] | null) ?? [];
 }
 
+/** E-mail da conta Google da PRÓPRIA conexão (lido no banco pela sessão,
+ * nunca do formulário); `null` se a conexão não é do usuário. */
+export async function ownConnectionAccountEmail(params: { workspaceId: string; connectionId: string }): Promise<string | null> {
+  const connections = await listCalendarConnections(params.workspaceId);
+  const own = connections.find((c) => c.isMine && c.id === params.connectionId);
+  return own ? own.googleAccountEmail : null;
+}
+
 /** Agendas que o usuário pode escolher, lidas no provedor com o token da
- * PRÓPRIA conexão. Vazio quando o provedor não está configurado. */
+ * PRÓPRIA conexão: só as que pertencem à conta conectada (`isOwnCalendar`).
+ * Vazio quando o provedor não está configurado. */
 export async function listChoosableCalendars(params: {
   connectionId: string;
   workspaceId: string;
   actorUserId: string;
+  accountEmail: string;
 }): Promise<ProviderCalendar[]> {
   const provider = await getCalendarProvider();
   if (!provider) return [];
-  const tokens = await loadFreshTokens({ provider, ...params });
-  return provider.listCalendars(tokens.accessToken);
+  const { accountEmail, ...context } = params;
+  const tokens = await loadFreshTokens({ provider, ...context });
+  const calendars = await provider.listCalendars(tokens.accessToken);
+  return calendars.filter((c) => isOwnCalendar(c, accountEmail));
 }

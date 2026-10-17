@@ -125,11 +125,19 @@ export class SimulatedCalendarProvider implements CalendarProvider {
     this.counter += 1;
     const accessToken = `sim-access-${this.counter}`;
     const refreshToken = `sim-refresh-${this.counter}`;
-    const calendars: ProviderCalendar[] = (extra ? extra.split(",") : ["principal"]).map((name, index) => ({
-      id: `${name.trim()}@calendar.simulated`,
-      summary: name.trim(),
-      owned: index === 0,
-    }));
+    // "email|principal,secundaria,compartilhada=dono@x,sem-dono=": a
+    // primeira é a principal; as demais são secundárias da própria conta,
+    // salvo "=dono" (agenda de OUTRA conta) ou "=" (resposta sem `dataOwner`).
+    const calendars: ProviderCalendar[] = (extra ? extra.split(",") : ["principal"]).map((entry, index) => {
+      const [rawName = "", owner] = entry.split("=");
+      const name = rawName.trim();
+      return {
+        id: `${name}@calendar.simulated`,
+        summary: name,
+        primary: index === 0,
+        dataOwner: index === 0 ? null : owner === undefined ? email : owner.trim() || null,
+      };
+    });
     this.issued.set(accessToken, { email, calendars });
     this.refreshIssued.set(refreshToken, email);
     return {

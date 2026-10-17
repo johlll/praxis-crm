@@ -22,6 +22,17 @@ confirmado está marcado como **a validar**.
 6. Validação inicial com conta e calendário **dedicados de teste**; a agenda
    real do Henrique entra numa etapa controlada posterior.
 7. Convidados desativados por padrão (§6.6).
+8. **Só agendas da própria conta na primeira versão** (decisão de 17/10/2026):
+   cada usuário escolhe a agenda principal ou uma secundária cujo `dataOwner`
+   (CalendarList) é o e-mail da conta conectada. Agenda de outra conta fica
+   fora, mesmo com `accessRole` "owner" ou "writer" — `accessRole` "owner"
+   NÃO equivale a dono dos dados: o Google o dá também a quem recebeu a
+   agenda com "fazer alterações e gerenciar compartilhamento". O escopo
+   continua `calendar.events.owned`. Agenda compartilhada é evolução futura:
+   exigirá `calendar.events`, novo consentimento de todos e validação real.
+   A regra vale no servidor (`isOwnCalendar`, `selectCalendarAction`), não só
+   na tela. Trocar a agenda escolhida afeta só compromissos NOVOS: os
+   existentes continuam na agenda registrada no próprio vínculo.
 
 ## 2. O que a documentação oficial confirma
 
@@ -33,7 +44,7 @@ confirmado está marcado como **a validar**.
 | `syncToken` | **Incompatível** com `iCalUID`, `orderBy`, `privateExtendedProperty`, `q`, `sharedExtendedProperty`, `timeMin`, `timeMax`, `updatedMin`. Parâmetros idênticos do sync inicial em diante, senão `400`. `showDeleted` não pode ser `false`: eventos apagados vêm sempre. `nextSyncToken` só vem na última página. `410` = descartar o estado local e refazer o sync completo. |
 | Escritas | `If-Match` com o `etag`: se mudou, `412`; a orientação é reler e reaplicar. |
 | Meet | `conferenceData.createRequest` com `requestId` novo e `conferenceDataVersion=1`; criação assíncrona (`pending` → `success`). Antes de habilitar conferência em app que guarda eventos, fazer sync completo. |
-| Escopos | Mais estreitos: `calendar.events.owned` (eventos de agendas **das quais o usuário é dono**), `calendar.freebusy`, `calendar.calendarlist.readonly`. O escopo amplo `calendar` não é necessário. Agenda compartilhada da qual o usuário não é dono exige `calendar.events`: **a validar** na primeira conexão. |
+| Escopos | Mais estreitos: `calendar.events.owned` (eventos de agendas **das quais o usuário é dono**), `calendar.freebusy`, `calendar.calendarlist.readonly`. O escopo amplo `calendar` não é necessário. Agenda de outra conta exigiria `calendar.events` ("View and edit events on all your calendars"); fora da primeira versão (decisão 8). A CalendarList traz `primary` e `dataOwner` ("The email of the owner of the calendar. Set only for secondary calendars"); `accessRole` é o papel efetivo, não a propriedade. |
 | Público OAuth | "Interno" exige projeto dentro de uma **Organização do Google Cloud**; ter conta Workspace não basta. Em modo de teste (público externo): até 100 usuários e autorização que **expira em 7 dias**. Externo em produção exige verificação para escopos sensíveis. Dispensa de verificação para app interno: **a validar** no console. |
 
 ## 3. Google Cloud, público OAuth e acessos administrativos
@@ -1161,8 +1172,9 @@ Cada etapa em PR própria, com CI verde e sem merge sem autorização.
 - **Disponibilidade de uma conta de teste no domínio** com agenda própria. Sem
   ela, o teste usa só o projeto externo em modo de teste (conta dedicada) e o
   app interno é exercitado apenas na etapa do Henrique.
-- A validar na implementação: `calendar.events.owned` contra agenda
-  compartilhada; dispensa de verificação do app interno; frequência mínima e
+- Agenda compartilhada: decidida como evolução futura (§1, decisão 8); não
+  é mais pendência de validação da primeira versão.
+- A validar na implementação: dispensa de verificação do app interno; frequência mínima e
   alertas do cron do Inngest e consumo real de execuções; plano atual da
   Vercel; bypass de proteção do Preview para o webhook.
 - **Passos para execução posterior (nada feito):** (1) aplicar a migration da
