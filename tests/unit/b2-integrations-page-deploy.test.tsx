@@ -111,3 +111,26 @@ describe("Integrações — provedor Google real (etapa 4a)", () => {
     expect(injected).not.toContain("&lt;b&gt;");
   });
 });
+
+describe("Integrações — só agendas da própria conta", () => {
+  const ACTIVE = { id: "c-1", userId: "u-1", isMine: true, googleAccountEmail: "teste.qa@exemplo.test", calendarId: null, calendarSummary: null, status: "active", createdAt: "" };
+
+  it("lista as agendas com o e-mail da conexão e explica que só as próprias aparecem", async () => {
+    providerMock.mockResolvedValue({ kind: "google" });
+    listConnectionsMock.mockResolvedValue([ACTIVE]);
+    listCalendarsMock.mockResolvedValue([{ id: "a@x", summary: "Praxis — Testes B2.", primary: false, dataOwner: "teste.qa@exemplo.test" }]);
+    const html = renderToStaticMarkup(await IntegracoesPage());
+    expect(listCalendarsMock).toHaveBeenCalledWith(expect.objectContaining({ connectionId: "c-1", accountEmail: "teste.qa@exemplo.test" }));
+    expect(html).toContain('data-testid="select"');
+    expect(html).toContain("Aparecem só as agendas de que esta conta é dona");
+  });
+
+  it("nenhuma agenda própria: sem formulário de escolha, com explicação", async () => {
+    providerMock.mockResolvedValue({ kind: "google" });
+    listConnectionsMock.mockResolvedValue([ACTIVE]);
+    listCalendarsMock.mockResolvedValue([]);
+    const html = renderToStaticMarkup(await IntegracoesPage());
+    expect(html).not.toContain('data-testid="select"');
+    expect(html).toContain("Nenhuma agenda desta conta disponível");
+  });
+});

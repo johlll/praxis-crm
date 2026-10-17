@@ -19,7 +19,11 @@ let permission: { ctx: { userId: string; workspaceId: string } } | { error: stri
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/server/authz/safe", () => ({ requirePermissionSafe: async () => permission }));
-vi.mock("@/server/calendar/provider", () => ({ getCalendarProvider: () => providerMock() }));
+vi.mock("@/server/calendar/provider", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getCalendarProvider: () => providerMock(),
+}));
+vi.mock("@/modules/calendar/queries", () => ({ ownConnectionAccountEmail: async () => "dono@cal" }));
 vi.mock("@/server/calendar/admin/connections", () => ({
   adminConnectCalendar: connectMock,
   adminGetConnectionTokens: tokensMock,
@@ -104,7 +108,7 @@ describe("selectCalendarAction", () => {
   it("só aceita agenda que o provedor devolve para o token da conexão", async () => {
     tokensMock.mockResolvedValue({ accessToken: "tok", refreshToken: "r", accessTokenExpiresAt: VALID(), keyVersion: "v1" });
     providerMock.mockResolvedValue({
-      listCalendars: vi.fn().mockResolvedValue([{ id: "ok@cal", summary: "Principal", owned: true }]),
+      listCalendars: vi.fn().mockResolvedValue([{ id: "ok@cal", summary: "Principal", primary: true, dataOwner: null }]),
     });
 
     const recusada = await selectCalendarAction({ ok: false }, form({ connectionId: CONN, calendarId: "outra@cal" }));
@@ -123,7 +127,7 @@ describe("selectCalendarAction", () => {
 
   it("token de acesso vencido: renova antes de listar as agendas (e guarda o novo cifrado)", async () => {
     tokensMock.mockResolvedValue({ accessToken: "velho", refreshToken: "r", accessTokenExpiresAt: new Date(Date.now() - 1000), keyVersion: "v1" });
-    const listCalendars = vi.fn().mockResolvedValue([{ id: "ok@cal", summary: "Principal", owned: true }]);
+    const listCalendars = vi.fn().mockResolvedValue([{ id: "ok@cal", summary: "Principal", primary: true, dataOwner: null }]);
     const refreshAccessToken = vi.fn().mockResolvedValue({ accessToken: "novo", accessTokenExpiresAt: VALID() });
     providerMock.mockResolvedValue({ listCalendars, refreshAccessToken });
 
