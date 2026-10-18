@@ -7,8 +7,10 @@ controlada. A B3 não foi iniciada. Encerramento e checklist: §13.
 Escopo: B2 do plano (§10 e marco B). A B1 não é reaberta; o chatbot é um
 projeto separado e fica fora.
 
-Data das verificações na documentação oficial: 08/10/2026. O que não foi
-confirmado está marcado como **a validar**.
+A consulta inicial às fontes oficiais ocorreu em 08/10/2026; as decisões e
+o encerramento da validação foram atualizados até 17/10/2026. O que permanece
+não confirmado está explicitamente marcado como **a validar** ou como
+dependente de Production.
 
 ## 1. Decisões já tomadas
 
@@ -1165,6 +1167,12 @@ Cada etapa em PR própria, com CI verde e sem merge sem autorização.
 
 ## 12. Pendências do plano (registro histórico; situação atual no §13)
 
+Esta seção preserva o retrato do planejamento anterior à implementação.
+Afirmações como "nada feito", "a validar" e "execução posterior" descrevem
+aquele momento e foram superadas durante o desenvolvimento. Ela não deve ser
+usada como estado atual nem como checklist operacional; o estado vigente está
+no §13.
+
 - **Identificar o super administrador do Workspace** da Vizentini (quem cria
   a organização do Google Cloud, libera o app no Admin e cria o usuário de
   teste).
@@ -1176,7 +1184,7 @@ Cada etapa em PR própria, com CI verde e sem merge sem autorização.
 - A validar na implementação: dispensa de verificação do app interno; frequência mínima e
   alertas do cron do Inngest e consumo real de execuções; plano atual da
   Vercel; bypass de proteção do Preview para o webhook.
-- **Passos para execução posterior (nada feito):** (1) aplicar a migration da
+- **Passos previstos naquela etapa de planejamento:** (1) aplicar a migration da
   B2 no hospedado (ref, `--dry-run`, confirmação); (2) gerar duas chaves de
   assinatura distintas (≥ 32 caracteres) e gravar uma em cada ambiente da
   Vercel como `CALENDAR_ENV_SIGNING_KEY`; (3) inserir as MESMAS duas chaves,
@@ -1184,8 +1192,8 @@ Cada etapa em PR própria, com CI verde e sem merge sem autorização.
   (4) gerar as chaves de cifra dos tokens (`CALENDAR_TOKEN_*`), também
   distintas por ambiente. Até a migration ser aplicada, a tela de Integrações
   mostra "não configurada" e não consulta nada de B2.
-- Nenhuma credencial, usuário, licença ou serviço externo foi criado ou
-  contratado nesta etapa.
+- Naquela etapa de planejamento, nenhuma credencial, usuário, licença ou
+  serviço externo havia sido criado ou contratado.
 - **Usabilidade — navegação entre semanas na Agenda (pendente, separada):** a
   página Agenda mostra sempre só a semana atual; um compromisso da semana
   seguinte não aparece nela (observado na validação do Preview, §6.13 da
@@ -1232,8 +1240,10 @@ Cada etapa em PR própria, com CI verde e sem merge sem autorização.
 - **A B3 não foi iniciada.**
 
 ### 13.2 Validado com o Google real (Preview)
-Cada fluxo foi exercitado uma vez, com uma única submissão, conferindo CRM,
-banco e Google depois de recarregar:
+Os fluxos abaixo foram exercitados de forma controlada no Preview. Em cada
+cenário, os efeitos relevantes foram conferidos no CRM, no banco e no Google.
+As repetições necessárias para validar cron, cooldown, webhook, reautorização
+e idempotência estão explicitadas nos respectivos resultados.
 - **OAuth e escolha da agenda:** conexão com os escopos mínimos e escolha de
   agenda própria; tokens cifrados com a chave do ambiente.
 - **CRM → Google:** criação, edição de título e reagendamento no mesmo
