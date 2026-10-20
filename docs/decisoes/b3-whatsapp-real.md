@@ -497,6 +497,9 @@ nada em Preview ou Production sem autorização.
 
 ### B3.1 Fundação do provedor
 
+Implementada só com o provedor simulado; o registro do que foi feito está
+no §14.
+
 - **Interface `WhatsAppProvider`:**
   - `verifyWebhook`;
   - `parseWebhook` → eventos normalizados;
@@ -925,3 +928,130 @@ YCloud:
 - Preço:
   https://docs.ycloud.com/en/documentation/whatsapp-business-platform/pricing-limits-and-quality/whatsapp-pricing.md
 - Planos: https://www.ycloud.com/pricing
+
+## 14. B3.1 — o que foi implementado
+
+Fundação interna e **somente simulada**. Nenhuma configuração externa foi
+feita: nenhuma conta, canal, chave ou endpoint na YCloud ou na Meta, nenhum
+número, nenhuma variável na Vercel, nenhuma migration no Supabase hospedado
+e nenhuma alteração no chatbot. Os portões P1–P9 (§6.7) continuam
+**pendentes**.
+
+### 14.1 Entregue
+
+- **Contrato `WhatsAppProvider`** (`src/server/whatsapp/provider/contract.ts`):
+  verificar assinatura de webhook, normalizar eventos, enviar texto, enviar
+  template, consultar mensagem, buscar mídia e descrever capacidades. Tipos
+  normalizados próprios do CRM, sem campos da Meta ou da YCloud.
+- **Provedor simulado** (`provider/simulated.ts`): verifica a assinatura de
+  um webhook simulado (esquema próprio do simulador) e normaliza um payload
+  simulado. Enviar, consultar e buscar mídia respondem `unsupported`
+  explicitamente, nunca sucesso.
+- **Seleção por `WHATSAPP_PROVIDER`** (`provider/index.ts`): ausente, vazio
+  ou desconhecido → desligado; `ycloud` e `meta` → desligados
+  (`not_available`); `simulated` só fora de Production.
+- **Ambiente próprio do WhatsApp** (`src/server/whatsapp/environment.ts` e
+  `private.whatsapp_request_environment()`):
+  - cabeçalho `X-Praxis-WhatsApp-Env` no formato
+    `v1.<ambiente>.<expira>.<hmac>`;
+  - mensagem assinada `praxis:whatsapp:env:v1|<ambiente>|<expira>`;
+  - chave `WHATSAPP_ENV_SIGNING_KEY`, uma por ambiente, e tabela
+    `whatsapp_environment_keys`;
+  - validade emitida de 5 minutos, e o banco recusa mais de 15.
+- **Cifra das credenciais** (`src/server/whatsapp/credential-crypto.ts`):
+  - AES-256-GCM com `WHATSAPP_CREDENTIAL_ACTIVE_KEY_VERSION` e
+    `WHATSAPP_CREDENTIAL_KEY_VERSIONS`;
+  - AAD `praxis:whatsapp:credential:v1|ambiente|workspace|canal|provedor|propósito`.
+- **Cliente administrativo próprio** (`src/server/whatsapp/admin/supabase.ts`),
+  que envia só o cabeçalho do WhatsApp. O lint proíbe outro cliente
+  `service_role` e qualquer import do calendário em `src/server/whatsapp/**`.
+- **Operações internas de canal** (`src/modules/whatsapp-channels/service.ts`):
+  - listar sem credenciais e consultar o estado seguro;
+  - cadastrar canal simulado e alterar nome e número exibido;
+  - pausar, reativar e desligar o envio.
+
+  Não são Server Actions e nenhuma tela as expõe. Workspace e usuário vêm
+  da sessão; a entrada é estrita e recusa `workspaceId`, `actorUserId`,
+  `role`, `environment` e `provider` vindos do formulário.
+- **Permissão `channel.manage`**: owner e admin. As permissões da A7 ficaram
+  sem mudança.
+
+### 14.2 Decisões técnicas
+
+- **Uma fonte de verdade.** `whatsapp_channels` (A7) evoluiu em vez de
+  ganhar uma tabela paralela.
+  - Linha legada (A7): sem ambiente, simulador, com `phone_number_id` e
+    `routing_key = phone_number_id`; continua visível por SELECT direto e
+    funcionando no simulador e na Central de Conversas.
+  - Linha da B3: com ambiente e sem `phone_number_id`, então as funções da
+    A7 nunca a alcançam. É invisível por SELECT direto e administrada só
+    pelas funções de service_role.
+- **Unicidade global** por `(provider, routing_key)`, mais forte que "por
+  ambiente": a mesma chave de roteamento nunca existe em dois ambientes.
+- **Identidade imutável**: workspace, ambiente, provedor, chave de
+  roteamento e modo do canal não mudam depois da criação (gatilho).
+- **Credencial amarrada ao canal** por FK composta
+  `(workspace, canal, ambiente, provedor)`.
+- **Canal simulado nunca habilita envio** (restrição). Nenhuma função desta
+  etapa liga o envio; desligar o envio e pausar existem.
+- **Segredo simulado de webhook** gerado no servidor, cifrado com a AAD do
+  canal e gravado na mesma transação da criação. O id do canal é gerado pela
+  aplicação porque entra na AAD.
+- **`send_message` da A7 não foi alterada.** O estado do canal (pausado,
+  envio desligado) vale para o caminho real da B3.3; o simulador da A7 nunca
+  envia nada para fora.
+
+### 14.3 Migrations
+
+- `20261019120000_b3_whatsapp_foundation.sql`. Nenhuma migration aplicada
+  foi editada. Antes dela, toda linha de `whatsapp_channels` era um canal
+  simulado da A7 sem ambiente. Depois, as mesmas linhas ficam como legadas,
+  com `routing_key` igual ao `phone_number_id`, e nenhuma vira canal real.
+
+### 14.4 Testes
+
+- **Unitários:**
+  - `b3-whatsapp-environment` (assinatura, vetor compartilhado com o SQL,
+    finalidade, validade, separação da B2);
+  - `b3-whatsapp-credential-crypto` (ida e volta, AAD por ambiente,
+    workspace, canal, provedor e propósito, adulteração, chaves e
+    ciphertext da B2 recusados, erros sem segredo);
+  - `b3-whatsapp-provider` (seleção, capacidades, `unsupported`,
+    assinatura, normalização);
+  - `b3-whatsapp-channel-service` (matriz de papéis, A7 sem regressão,
+    recusa antes de efeito, sessão como única fonte de workspace e ator,
+    nenhuma credencial em retorno ou erro);
+  - `b3-a7-channel-compat` (simulador da A7 nunca recebe canal da B3).
+- **pgTAP:**
+  - `29_b3_whatsapp_foundation`: RLS forçada, GRANTs, funções só de
+    service_role, ambiente ausente, forjado, vencido, eterno, com chave
+    trocada ou no formato e finalidade da B2, papéis, workspace e ambiente
+    diferentes, integridade, unicidade, A7 preservada e auditoria sem
+    segredo;
+  - `01_rls_isolation`, com o caso da B3.1 entre workspaces.
+- **Contagem no CI da PR #42:** 1269 testes unitários (84 arquivos),
+  1312 asserções pgTAP (29 arquivos; 74 da B3.1), 31 no isolamento entre
+  workspaces e 76 testes e2e.
+- **Testes de mutação** (cada mutação aplicada, testada e desfeita):
+
+  | Mutação | Onde rodou | Testes que falharam |
+  |---|---|---|
+  | Conferência de ambiente removida no banco | CI, branch descartável | pgTAP 56, 57, 58, 60 e 73 (Production alcançando canal de Preview; função da B3 alcançando o canal legado) |
+  | Conferência de ambiente removida no servidor | Local | serviço: linha de outro ambiente; leitura de credencial de outro ambiente |
+  | Permissão aceitando manager | Banco no CI; `roles.ts` local | pgTAP 46, 47 e 48; unitário da matriz de papéis |
+  | Parte da AAD removida (canal ou provedor) | Local | 3 e 2 testes da cifra, respectivamente |
+  | Leitura de credencial liberada | CI, branch descartável | pgTAP 7 e 16; isolamento 31 |
+  | Credencial atravessando a projeção do canal | Local | serviço: campos inesperados |
+  | Cabeçalho aceitando a chave do calendário | Local | ambiente: `CALENDAR_ENV_SIGNING_KEY` nunca autentica |
+
+  A branch descartável e a PR temporária de mutação (#43) foram fechadas
+  sem merge e excluídas.
+
+### 14.5 Limites mantidos
+
+- Sem adaptador YCloud ou Meta e sem nenhuma chamada HTTP externa.
+- Sem webhook público, caixa de entrada, Inngest, fila ou reconciliador.
+- Sem envio real, janela de 24 h, templates, mídia, Storage ou BSUID.
+- Sem contrato com o chatbot, eventos para a C1 ou automações.
+- Sem tela nova.
+
