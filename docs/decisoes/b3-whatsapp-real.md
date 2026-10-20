@@ -162,7 +162,7 @@ cliente), §5 e §7 (resolução sem palpite, agora com BSUID), §8
 | Toda saída nasce no CRM | O escritório responde pelo celular (eco), o chatbot responde pela API e o histórico é importado |
 | O CRM é o único que responde | O chatbot e o advogado também respondem pelo mesmo número |
 | O telefone sempre vem no evento | Pode faltar quando o cliente usa nome de usuário (§2, BSUID) |
-| Número desconhecido = cliente novo (§6) | Eventos de histórico, ecos do celular e contatos já atendidos pelo chatbot não podem criar lead nem atividade |
+| Número desconhecido = cliente novo (§6) | Só mensagem recebida de pessoa externa cria lead, depois de procurar contato, lead ou cliente existente; histórico, ecos do celular, mensagens do chatbot, identidades internas e eventos técnicos nunca criam lead nem atividade (§15.10) |
 | Envio síncrono e garantido | O provedor aceita e confirma depois; o resultado pode ser incerto |
 | Janela irrelevante | Texto livre só com a janela de 24 h aberta; mensagens do celular não abrem nem estendem a janela da API |
 | `phone_number_id` roteia | Na YCloud, a chave é `wabaId` + número do escritório |
@@ -387,7 +387,7 @@ Composer ──▶ sendMessageAction (requirePermission + Zod)
 | `whatsapp_webhook_inbox` (nova) | Corpo cifrado (chave própria, §7.1), hash, id do evento, tipo, estado, tentativas, prazo de retenção; única por `(channel_id, provider_event_id)` |
 | `conversations` | `wa_id` passa a opcional; `wa_user_id` (BSUID) opcional; ao menos um dos dois; unicidade por canal e identidade; `last_inbound_at` (janela) |
 | `contact_identifiers` | Novo provedor `whatsapp_bsuid`; vínculo de troca de número pelos eventos de sistema |
-| `messages` | `origin` (`crm`, `business_app`, `chatbot`, `history`, `inbound`, `internal`; decisões 11 e 14); `provider_message_id`; `wa_message_id` opcional até a aceitação; `body_text` opcional com mídia; `sent_by` e `client_dedupe_key` exigidos só para `origin = 'crm'`; `template_name`, `template_language`, `template_category` (a final, conferida no envio); custo devolvido pelo provedor (categoria, modelo, valor, moeda, `cost_is_final`); `content_purged_at` |
+| `messages` | `origin`, a origem técnica (`crm`, `business_app`, `chatbot`, `external_api`, `history` ou `inbound`); `sender_classification`, a classificação do remetente (`external`, `internal`, `automation` ou `unresolved`), separada da origem: `internal` não é origem (regras no §15.10; decisões 11 e 14; modelagem documental, sem schema nesta fase); `provider_message_id`; `wa_message_id` opcional até a aceitação; `body_text` opcional com mídia; `sent_by` e `client_dedupe_key` exigidos só para `origin = 'crm'`; `template_name`, `template_language`, `template_category` (a final, conferida no envio); custo devolvido pelo provedor (categoria, modelo, valor, moeda, `cost_is_final`); `content_purged_at` |
 | `message_status` | `accepted` e `uncertain`; `played` só no log |
 | `message_media` (nova) | Tipo, MIME, tamanho, SHA-256, referência do provedor, caminho no Storage, estado do download, `expires_at`; deny-all |
 | `whatsapp_outbox` (nova) | Uma por mensagem de saída; estados e travas do padrão A11 |
@@ -425,10 +425,12 @@ mensagem do chatbot.
   no Praxis. A B3 não modifica o chatbot; a única mudança prevista nele é a
   do contrato de passagem, em desenvolvimento isolado e desligado, com
   implantação sujeita a nova autorização (decisão 15, §15.6).
-- O CRM **exibe** as mensagens do chatbot com `origin = 'chatbot'` e o
-  rótulo "chatbot/automação" (decisão 11), de preferência pelo evento
-  que a YCloud entrega ao endpoint do CRM (portões P3/P4, §6.7), sem nunca
-  interpretá-las nem criar lead a partir delas.
+- O CRM **exibe** as mensagens do chatbot com `origin = 'chatbot'`,
+  `sender_classification = 'automation'` e o rótulo "chatbot/automação"
+  (decisão 11), de preferência pelo evento que a YCloud entrega ao
+  endpoint do CRM (portões P3/P4, §6.7), sem nunca interpretá-las nem
+  criar lead a partir delas. `chatbot` exige correlação positiva com uma
+  mensagem do chatbot; sem ela, a saída fica como `external_api` (§15.10).
 - Hoje o chatbot pausa uma conversa quando vê o eco do celular. Uma
   resposta humana pelo CRM sai pela API e não gera eco, então **não**
   pausa o chatbot.
@@ -494,8 +496,11 @@ origem), **sem consumidor** na B3:
 
 - `conversation.first_inbound`: primeira mensagem de uma identidade nova;
 - `message.inbound`: inclui se reabriu a janela;
-- `message.outbound_human`: origem `crm` ou `business_app`;
-- `message.outbound_external`: chatbot;
+- `message.outbound_human`: mensagem enviada pelo CRM (`origin = 'crm'`);
+- `message.outbound_external`: qualquer mensagem de saída observada que
+  não nasceu no CRM. O payload leva `origin` (`chatbot`, `business_app` ou
+  `external_api`) e `sender_classification`; a C1 usa esses campos para
+  distinguir a origem, sem inferi-la pelo nome do evento;
 - `message.delivered`, `message.read`, `message.failed`;
 - `window.closing`: calculado na leitura, não por agendador;
 - `conversation.link_resolved`, `consent.granted`, `consent.revoked`;
@@ -553,6 +558,9 @@ no §14.
   - troca de número ou BSUID.
 - Identidade BSUID e telefone opcional, sem nunca criar contato duplicado
   quando o telefone aparecer depois.
+- Origem técnica (`origin`) separada da classificação do remetente
+  (`sender_classification`); `chatbot` só com correlação positiva, senão
+  `external_api`; lead só por `inbound` + `external` (§15.10).
 - Status com a regra corrigida (§1.3).
 - Histórico importado: **ignorado no piloto**. Se for habilitado, grava só
   mensagens, sem lead nem atividade.
@@ -821,8 +829,10 @@ O desenho técnico precisa aceitar qualquer política:
 20. A chave da YCloud não acessa canal fora do alcance esperado; se a
     YCloud não oferecer escopo, o risco aparece registrado e aceito antes
     da configuração (portão P2).
-21. Nenhum evento do chatbot, do histórico ou do eco do celular cria lead,
-    atividade ou automação comercial.
+21. Nenhum evento do chatbot, do histórico, do eco do celular, de
+    identidade interna, de status ou técnico cria lead, atividade ou
+    automação comercial; só `origin = inbound` com
+    `sender_classification = external` pode criar lead.
 22. Nenhuma automação da C1 é antecipada: os eventos do §5.4 não têm
     consumidor e nenhuma regra muda status, cria atividade ou responde
     sozinha.
@@ -891,7 +901,7 @@ pelo levantamento do chatbot (§15), aprovadas em 20/10/2026:
 | 8 | Canal pausado no webhook | **Aprovada** (20/10/2026, merge da PR #42) | Canal **pausado** continua resolvível pela resolução do webhook, com o estado devolvido; a **B3.2 deve definir e testar** quais efeitos são permitidos para evento de canal pausado. Canal **desativado** não é resolvido | O evento de um canal pausado não se perde, e nada é feito com ele sem regra testada | Recusar também o canal pausado (eventos descartados enquanto pausado) |
 | 9 | Papel de `WHATSAPP_PROVIDER` | **Aprovada** (20/10/2026, merge da PR #42) | Durante o piloto, habilita **um único provedor por ambiente**. Nunca substitui o provedor gravado no canal: o adaptador é sempre o do canal, e `adapter.kind === canal.provider === credencial.provider` antes de banco adicional ou rede | Configuração simples no piloto; um canal YCloud nunca usa o simulador | Lista de provedores habilitados por ambiente, se um dia dois provedores precisarem conviver |
 | 10 | Arquitetura de entrada com o chatbot | **Aprovada** (20/10/2026) | **Opção 1:** a YCloud entrega direto e de forma independente ao webhook existente do chatbot e a um webhook próprio do Praxis. O Praxis não entra antes do chatbot, e o chatbot não encaminha ao Praxis o tráfego que recebe (§15.4) | O Praxis vê também os clientes antigos que o chatbot descarta; os sistemas caem e voltam de forma independente | Opção 2 (o chatbot encaminha um envelope) e opção 3 (o Praxis recebe primeiro), ambas rejeitadas |
-| 11 | Leads e mensagens do chatbot | **Aprovada** (20/10/2026) | O Praxis **exibe** as mensagens enviadas pelo chatbot, com origem visual e técnica "chatbot/automação". **Só mensagem recebida de pessoa externa** pode criar lead, e só depois de procurar contato, lead ou cliente existente, sem duplicar. Identidade ambígua, BSUID não resolvido ou possível número interno viram **pendência de identificação**, sem criação por palpite. Mensagem do chatbot, eco do celular, histórico, status, comando interno ou evento técnico nunca criam lead nem atividade. Automação do status comercial fica na C1. As mensagens do chatbot vêm de preferência do evento da YCloud no segundo endpoint (P3/P4); se ele não existir, a alternativa é documentada antes de implementar, sem trabalho síncrono no webhook do chatbot (§15.10) | Conversa completa no CRM, sem lead duplicado nem lead criado por evento técnico | — |
+| 11 | Leads e mensagens do chatbot | **Aprovada** (20/10/2026) | O Praxis **exibe** as mensagens enviadas pelo chatbot, com origem visual e técnica "chatbot/automação" (`origin = chatbot` só com correlação positiva; classificação do remetente separada, §15.10). **Só mensagem recebida de pessoa externa** pode criar lead, e só depois de procurar contato, lead ou cliente existente, sem duplicar. Identidade ambígua, BSUID não resolvido ou possível número interno viram **pendência de identificação**, sem criação por palpite. Mensagem do chatbot, eco do celular, histórico, status, comando interno ou evento técnico nunca criam lead nem atividade. Automação do status comercial fica na C1. As mensagens do chatbot vêm de preferência do evento da YCloud no segundo endpoint (P3/P4); se ele não existir, a alternativa é documentada antes de implementar, sem trabalho síncrono no webhook do chatbot (§15.10) | Conversa completa no CRM, sem lead duplicado nem lead criado por evento técnico | — |
 | 12 | Resumo e qualificação do bot no CRM | **Aprovada para fase posterior** (20/10/2026) | Integração só depois de a entrada real ficar estável. Transfere só dados estruturados necessários, com contato/lead identificado, origem "chatbot", versão, data e idempotência. Nunca prompt, raciocínio interno, logs internos ou conversa completa sem necessidade. **Fora da primeira PR da B3.2** (§15.10) | Contexto para o advogado com dado mínimo | — |
 | 13 | Vencimento da passagem | **Aprovada** (20/10/2026) | O chatbot **fica em silêncio até liberação explícita**. Vencimento ou perda da confirmação bloqueia novos envios pelo CRM, mas **não** reativa a IA. A interface mostra a passagem vencida ou pendente e exige liberar ou assumir de novo (§15.6) | Nunca há resposta dupla por vencimento | O chatbot volta sozinho para a IA, rejeitada |
 | 14 | Identidades internas do canal | **Aprovada** (20/10/2026) | Cadastro por **workspace, canal e ambiente**, administrado por owner/admin (`channel.manage`), aceitando **telefone normalizado e BSUID**. A identificação vem do cadastro confiável, nunca de texto ou campo livre do evento. Mensagens, comandos, ecos e status de identidades internas não criam contato, lead ou atividade de cliente. **Nenhum telefone real no repositório ou neste documento** (§15.10) | Comandos e alertas do Dr. não poluem o CRM | — |
@@ -1365,7 +1375,7 @@ Condições abertas:
 | Contrato `whatsapp_handoffs`, ack e expiração | Adaptar: rota assinada nova que chama a mesma mudança de estado do `assume`/`resume`, mais a tabela de pedidos | Chatbot (mudança mínima) e Praxis |
 | Adaptador YCloud: assinatura sobre bytes e normalização dos eventos | Criar no Praxis. As regras conferidas no chatbot servem de referência; nenhum código copiado | Praxis (B3.2) |
 | Endpoint, inbox cifrada, Inngest e RPCs de entrada | Criar | Praxis (B3.2) |
-| Classificação de origem: cliente, celular, chatbot (`chatbot`), histórico e identidade interna | Criar | Praxis (B3.2) |
+| Origem técnica (`inbound`, `business_app`, `chatbot`, `external_api`, `history`) e classificação do remetente (`external`, `internal`, `automation`, `unresolved`) | Criar (§15.10) | Praxis (B3.2) |
 | Identidades internas do canal (telefone normalizado e BSUID), por workspace, canal e ambiente | Criar (decisão 14); sem isso, os comandos do Dr. criariam lead | Praxis (B3.2) |
 | Pendência de identificação: identidade ambígua, BSUID não resolvido ou possível número interno | Criar (decisão 11); nunca cria lead por palpite | Praxis (B3.2) |
 | Identidade BSUID sem telefone | Adaptar: o contrato já aceita (§14.6); falta persistir | Praxis (B3.2) |
@@ -1412,23 +1422,37 @@ três ações:
   a IA. A interface mostra a passagem vencida ou pendente e exige liberar
   ou assumir de novo.
 
-**Chatbot → Praxis** (fase posterior, decisão 12; fora da primeira PR da
-B3.2):
-- **Mensagens, ecos, status e mídia** chegam ao Praxis direto da YCloud
-  (opção 1); o chatbot não repassa conteúdo.
-- **Estado da conversa:** o chatbot só avisa as mudanças de estado
-  (`handoff_pending`, `human_active`, `ai_active`, pausa geral), com
-  `event_id` (idempotência), `state_version` monotônica e envio por outbox
-  no chatbot, com reentrega.
-- **Ack:** o Praxis responde 200 só depois de gravar.
-- **Mensagens do bot (só se o P3 falhar):** o chatbot avisa os ids das
-  mensagens que enviou (origem `chatbot`), sem texto. Exige a alternativa
-  documentada e aprovada antes (§15.10).
-- **Resumo e qualificação (decisão 12):** só depois de a entrada real
-  ficar estável. Vão apenas dados estruturados necessários, com contato ou
-  lead identificado, origem "chatbot", versão, data e chave de
-  idempotência. Nunca prompt, raciocínio interno, logs internos ou a
-  conversa completa sem necessidade.
+**Chatbot → Praxis.** Mensagens, ecos, status e mídia chegam ao Praxis
+direto da YCloud (opção 1, decisão 10); o chatbot não repassa o tráfego
+que recebe nem conteúdo. Nesta direção há três peças distintas:
+
+1. **Avisos de estado da passagem** (parte opcional do contrato de
+   passagem):
+   - o chatbot só avisa as mudanças de estado (`handoff_pending`,
+     `human_active`, `ai_active`, pausa geral);
+   - cada aviso leva `event_id` (idempotência) e `state_version`
+     monotônica;
+   - sai por outbox no chatbot, com reentrega, fora do webhook;
+   - o Praxis responde 200 só depois de gravar.
+2. **Contingência para respostas do chatbot** (só se P3 falhar e após
+   nova aprovação):
+   - não faz parte da primeira entrega da B3.2;
+   - só existe se o P3 for comprovadamente falso, isto é, se o endpoint
+     do Praxis não receber o `message.updated` das respostas do bot;
+   - exige proposta e autorização separadas antes de qualquer código;
+   - envia apenas os ids das respostas do próprio chatbot;
+   - não repassa mensagens recebidas nem conteúdo (texto, mídia,
+     telefone ou BSUID);
+   - funciona de modo assíncrono, por outbox, com reentrega;
+   - não acrescenta chamada ao webhook nem ao caminho quente do chatbot.
+3. **Resumo e qualificação** (fase posterior autorizada pela decisão 12;
+   fora da primeira PR da B3.2):
+   - só depois de a entrada real ficar estável;
+   - apenas dados estruturados necessários, com contato ou lead
+     identificado, origem "chatbot", versão, data e chave de
+     idempotência;
+   - nunca prompt, raciocínio interno, logs internos ou a conversa
+     completa sem necessidade.
 
 **Logs dos dois lados:** só ids internos, códigos, `state_version` e
 decisões. Nunca telefone, BSUID, texto, mídia, resumo ou segredo.
@@ -1473,8 +1497,9 @@ Condições da decisão 15:
 
 **Riscos:**
 - **R1. Respostas do bot invisíveis.** O CRM pode não ver as respostas do
-  bot (P3). Mitigação: aviso do chatbot com os ids (§15.6) ou
-  reconciliação pela API da YCloud.
+  bot (P3). Sem correlação positiva, elas aparecem como `external_api`.
+  Mitigação, só se o P3 falhar e com nova aprovação: a contingência dos
+  ids do §15.6 ou a reconciliação pela API da YCloud.
 - **R2. Alcance da chave.** A chave do CRM pode alcançar o envio do número
   do chatbot (P1/P2).
 - **R3. Buraco de eventos.** Lacuna se o endpoint do Praxis ficar fora por
@@ -1510,7 +1535,7 @@ ou número.
 | B3.2a | Adaptador YCloud puro: assinatura sobre bytes (`t=,s=`), normalização de entrada, eco, status, histórico (ignorado) e eventos de conta a partir de exemplos oficiais; identidade telefone e/ou BSUID; sem rede | — |
 | B3.2b | `whatsapp_webhook_inbox` cifrada (chave e AAD próprias), única por (canal, id do evento), com prazo de retenção; RPC de gravação; pgTAP | B3.2a |
 | B3.2c | Rota `/api/webhooks/whatsapp/[provider]`: bytes → assinatura → canal pela resolução do webhook (§14.6) → inbox → 2xx → Inngest; 404 sem provedor | B3.2b |
-| B3.2d | Função Inngest e RPCs de serviço: mensagem, eco, status, eventos de conta; origem `contact`, `business_app`, `chatbot` (automação), `history` ou `internal`; cadastro de identidades internas (telefone e BSUID; owner/admin); busca antes de criar lead; pendência de identificação; nada de lead ou atividade para bot, eco, histórico, status, comando interno ou evento técnico; teste de concorrência | B3.2c |
+| B3.2d | Função Inngest e RPCs de serviço: mensagem, eco, status, eventos de conta; origem técnica `inbound`, `business_app`, `chatbot` (só com correlação positiva) ou `external_api` (fallback), `history`, e classificação do remetente `external`, `internal`, `automation` ou `unresolved` (§15.10); cadastro de identidades internas (telefone e BSUID; owner/admin); busca antes de criar lead; pendência de identificação; lead só por `inbound` + `external`; nada de lead ou atividade para bot, eco, histórico, status, comando interno ou evento técnico; teste de concorrência | B3.2c |
 | B3.2e | Reconciliador da inbox parada e batimento do canal (`last_event_at`) | B3.2d |
 | Fora do Praxis | Contrato do §15.6 no chatbot (rota, tabela de pedidos, testes), em branch/PR própria do chatbot, desligado e sem deploy | Decisão 15; implantação real com nova autorização; necessário antes da B3.3 no número do chatbot |
 | Posterior | Resumo e qualificação estruturados do chatbot (decisão 12) | Entrada real estável |
@@ -1520,22 +1545,53 @@ autorização.
 
 ### 15.10 Regras aprovadas para a B3.2 (decisões 10 a 15)
 
+**Origem técnica e classificação do remetente** (decisão de modelagem
+documental; sem schema nem migration nesta fase):
+- `origin` diz por qual caminho a mensagem passou:
+  - `inbound`: recebida no número do canal;
+  - `crm`: enviada pelo CRM;
+  - `business_app`: eco do aplicativo do celular;
+  - `chatbot`: enviada pelo chatbot, com correlação positiva;
+  - `external_api`: enviada por integração externa cuja origem
+    específica não foi comprovada (fallback);
+  - `history`: histórico importado.
+- `sender_classification` diz quem enviou: `external` (pessoa externa),
+  `internal` (identidade do cadastro interno ou usuário do escritório),
+  `automation` (automação comprovada, como o chatbot) ou `unresolved`
+  (sem identificação confiável).
+- `internal` não é origem. Uma mensagem enviada pelo Dr. pelo aplicativo
+  tem `origin = business_app` e `sender_classification = internal`; um
+  comando do Dr. recebido do número pessoal tem `origin = inbound` e
+  `sender_classification = internal`.
+- `origin = chatbot` exige correlação positiva e confiável com uma
+  mensagem do chatbot. Nunca se classifica como chatbot por exclusão ("não
+  saiu do CRM nem do celular"), nem por texto ou campo que qualquer
+  integração da conta possa preencher. A forma de correlação aceita é
+  definida e testada antes de ser usada (P3/P4, ou a contingência do
+  §15.6). Sem ela, a saída fica como `external_api`, com
+  `sender_classification = unresolved`.
+
 **Exibição das mensagens do chatbot (decisão 11):**
-- origem técnica `chatbot` e rótulo visual "chatbot/automação";
+- origem técnica `chatbot`, classificação `automation` e rótulo visual
+  "chatbot/automação";
 - fonte preferida: o `message.updated` entregue pela YCloud ao endpoint
   do Praxis (portões P3/P4);
-- se esse evento não chegar ao segundo endpoint, a alternativa é
-  documentada e aprovada **antes** de implementar. Ela nunca acrescenta
-  trabalho síncrono ao webhook do chatbot nem faz o chatbot repassar o
-  tráfego que recebe (decisão 10).
+- se esse evento não chegar ao segundo endpoint, vale só a contingência
+  do §15.6, com proposta e autorização separadas **antes** de
+  implementar. Ela nunca acrescenta trabalho síncrono ao webhook do
+  chatbot nem faz o chatbot repassar o tráfego que recebe (decisão 10).
 
 **Criação de lead (decisão 11):**
-- só por mensagem recebida, ao vivo, de pessoa externa identificada;
+- só por mensagem recebida ao vivo de pessoa externa identificada
+  (`origin = inbound` e `sender_classification = external`);
 - antes de criar, busca de contato, lead ou cliente existente por
   telefone normalizado e BSUID, sem duplicar;
 - identidade ambígua, BSUID não resolvido ou possível identidade interna
-  viram **pendência de identificação** para decisão humana;
+  viram **pendência de identificação** (`sender_classification =
+  unresolved`) para decisão humana;
 - nunca criam lead nem atividade:
+  - mensagem de saída de qualquer origem (`crm`, `business_app`,
+    `chatbot`, `external_api`);
   - mensagem do chatbot;
   - eco do celular;
   - histórico importado;
@@ -1551,8 +1607,9 @@ autorização.
   com `channel.manage`;
 - a classificação usa só esse cadastro, nunca texto ou campo livre do
   evento;
-- mensagens, comandos, ecos e status dessas identidades ficam registrados
-  como internos, sem contato, lead ou atividade de cliente;
+- mensagens, comandos, ecos e status dessas identidades ficam com
+  `sender_classification = internal`, mantendo a `origin` técnica, sem
+  contato, lead ou atividade de cliente;
 - testes e documentos usam só números fictícios.
 
 **Passagem e vencimento (decisões 13 e 15):** ver §15.6. O CRM não envia no
