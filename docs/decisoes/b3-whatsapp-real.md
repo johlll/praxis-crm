@@ -942,14 +942,18 @@ e nenhuma alteração no chatbot. Os portões P1–P9 (§6.7) continuam
 - **Contrato `WhatsAppProvider`** (`src/server/whatsapp/provider/contract.ts`):
   verificar assinatura de webhook, normalizar eventos, enviar texto, enviar
   template, consultar mensagem, buscar mídia e descrever capacidades. Tipos
-  normalizados próprios do CRM, sem campos da Meta ou da YCloud.
+  normalizados próprios do CRM, sem campos da Meta ou da YCloud. O contato
+  é uma identidade explícita (telefone, BSUID ou ambos) e o webhook é
+  conferido sobre bytes (§14.6).
 - **Provedor simulado** (`provider/simulated.ts`): verifica a assinatura de
   um webhook simulado (esquema próprio do simulador) e normaliza um payload
   simulado. Enviar, consultar e buscar mídia respondem `unsupported`
   explicitamente, nunca sucesso.
-- **Seleção por `WHATSAPP_PROVIDER`** (`provider/index.ts`): ausente, vazio
-  ou desconhecido → desligado; `ycloud` e `meta` → desligados
-  (`not_available`); `simulated` só fora de Production.
+- **Seleção pelo provedor do canal** (`provider/index.ts`): o adaptador
+  segue o provedor gravado no canal; `WHATSAPP_PROVIDER` só habilita um
+  provedor no ambiente. Ausente, vazio, desconhecido ou de outro provedor →
+  desligado; `ycloud` e `meta` → desligados (`not_available`); `simulated`
+  só fora de Production (§14.6).
 - **Ambiente próprio do WhatsApp** (`src/server/whatsapp/environment.ts` e
   `private.whatsapp_request_environment()`):
   - cabeçalho `X-Praxis-WhatsApp-Env` no formato
@@ -1003,8 +1007,9 @@ e nenhuma alteração no chatbot. Os portões P1–P9 (§6.7) continuam
 
 ### 14.3 Migrations
 
-- `20261019120000_b3_whatsapp_foundation.sql`. Nenhuma migration aplicada
-  foi editada. Antes dela, toda linha de `whatsapp_channels` era um canal
+- `20261019120000_b3_whatsapp_foundation.sql` e, na revisão,
+  `20261020120000_b3_1_credencial_contexto_confiavel.sql` (§14.6). Nenhuma
+  migration aplicada foi editada. Antes dela, toda linha de `whatsapp_channels` era um canal
   simulado da A7 sem ambiente. Depois, as mesmas linhas ficam como legadas,
   com `routing_key` igual ao `phone_number_id`, e nenhuma vira canal real.
 
@@ -1029,7 +1034,7 @@ e nenhuma alteração no chatbot. Os portões P1–P9 (§6.7) continuam
     diferentes, integridade, unicidade, A7 preservada e auditoria sem
     segredo;
   - `01_rls_isolation`, com o caso da B3.1 entre workspaces.
-- **Contagem no CI da PR #42:** 1269 testes unitários (84 arquivos),
+- **Contagem no CI da primeira rodada da PR #42:** 1269 testes unitários (84 arquivos),
   1312 asserções pgTAP (29 arquivos; 74 da B3.1), 31 no isolamento entre
   workspaces e 76 testes e2e.
 - **Testes de mutação** (cada mutação aplicada, testada e desfeita):
@@ -1051,7 +1056,101 @@ e nenhuma alteração no chatbot. Os portões P1–P9 (§6.7) continuam
 
 - Sem adaptador YCloud ou Meta e sem nenhuma chamada HTTP externa.
 - Sem webhook público, caixa de entrada, Inngest, fila ou reconciliador.
-- Sem envio real, janela de 24 h, templates, mídia, Storage ou BSUID.
+- Sem envio real, janela de 24 h, templates, mídia ou Storage. O BSUID só
+  existe no contrato: nenhuma persistência, contato ou conversa por BSUID.
 - Sem contrato com o chatbot, eventos para a C1 ou automações.
 - Sem tela nova.
 
+### 14.6 Revisão da PR #42
+
+Esta rodada **começou pelos testes**: os testes de reprodução foram
+escritos e commitados antes da correção (`test(b3.1): reprodução…`) e
+rodados contra o HEAD `3bdb181`. Contra esse HEAD:
+
+- **Unitários novos:** 59 de 67 falham. Os 8 que passam:
+  - "variável ausente" e "variável vazia" (já desligavam);
+  - "canal YCloud nunca recebe o simulador" (passa só porque a função
+    antiga ignorava o canal e desligava por falta de variável);
+  - 5 de assinatura (multibyte, um byte alterado, LF × CRLF, NFC × NFD,
+    BOM). O HMAC do Node já operava sobre bytes quando recebia um
+    `Uint8Array`, apesar de o contrato declarar `string`.
+- **pgTAP novo (`30_b3_1_revisao_credencial`):** 31 de 36 falham, rodado
+  numa PR temporária (#44), fechada sem merge. Os 5 que passam (privilégios
+  e auditoria) passam por vacuidade: as funções novas não existiam.
+
+O que mudou, por ponto:
+
+1. **Leitura de credencial com contexto confiável.**
+   - `whatsapp_get_channel_credential(canal, propósito)` foi removida.
+   - A nova exige canal, workspace, provedor, routing key e propósito. Ela
+     confere tudo contra a linha do canal no ambiente autenticado.
+     Divergência → `channel_not_found`.
+   - No servidor, a leitura só aceita um `ResolvedWhatsAppChannelContext`.
+     Esse contexto é produzido apenas por resolução interna (sessão
+     autorizada ou webhook), com marca de tipo e registro em tempo de
+     execução. Objeto montado à mão é recusado antes do banco.
+   - A linha devolvida tem de bater campo a campo com o contexto antes de
+     decifrar. A AAD é montada do contexto, nunca da linha.
+   - O webhook tem resolução própria e atômica,
+     `whatsapp_resolve_webhook_channel(provedor, routing key)`. Ela
+     devolve o canal e só o segredo do webhook (nunca a chave de API),
+     apenas no ambiente autenticado, e nunca para canal desativado.
+   - Não existe helper que decifre credencial de qualquer workspace só pelo
+     UUID.
+2. **Provedor do canal.** `resolveWhatsAppProvider({ channelProvider })`
+   escolhe o adaptador pelo provedor gravado no canal; a variável só
+   habilita. Antes de ler credencial ou chamar qualquer coisa vale
+   `adapter.kind === canal.provider === credencial.provider`. A divergência
+   falha antes de banco adicional ou rede.
+3. **Identidade sem telefone.** `WhatsAppContactIdentity` aceita telefone,
+   BSUID ou ambos, e nunca nenhum. Um identificador malformado invalida a
+   identidade (falha fechada).
+   - A entrada usa `sender` e a saída usa `recipient`.
+   - O simulador aceita evento só com BSUID.
+   - O formato exato do BSUID será confirmado na B3.2.
+4. **Corpo bruto.** O webhook passa por três etapas separadas
+   (`src/server/whatsapp/webhook.ts`):
+   1. leitura dos bytes exatos, com limite de 256 KiB;
+   2. assinatura conferida sobre `Uint8Array`;
+   3. normalização só de um `VerifiedWebhookBody`, que é uma cópia dos
+      bytes verificados, decodificados em UTF-8 estrita, sem remover BOM.
+
+   Corpo em texto ou não verificado é recusado.
+
+**Contagem no CI final da revisão:**
+
+| Etapa | Resultado |
+|---|---|
+| Testes unitários | 1325 (88 arquivos) |
+| pgTAP | 1348 asserções (30 arquivos; 36 da revisão) |
+| Isolamento entre workspaces | 31 |
+| E2E | 76 |
+
+Typecheck, lint, build e Preview passaram.
+
+**Mutações da revisão** (cada uma aplicada, testada e desfeita):
+
+| Ponto | Mutação | Resultado |
+|---|---|---|
+| 1 | Leitura sem conferir a resolução interna do contexto | 1 teste falha |
+| 1 | Linha de outro workspace aceita (decifra com AAD da linha) | 1 teste falha |
+| 1 | Webhook sem conferir a routing key da linha | 1 teste falha |
+| 1 | Banco: leitura sem conferir o workspace | pgTAP 8, 9 e 13 |
+| 1 | Banco: leitura sem conferir provedor e routing key | pgTAP 10, 11 e 12 |
+| 1 | Banco: webhook devolve qualquer propósito | pgTAP 21 e 22 |
+| 1 | Banco: webhook sem filtro de ambiente | pgTAP 25 e 31 |
+| 2 | Variável substitui o provedor do canal | 6 testes falham |
+| 2 | Adaptador de outro provedor aceito na leitura | 1 teste falha |
+| 2 | Credencial de outro provedor aceita | 1 teste falha |
+| 3 | Evento sem telefone nem BSUID aceito | 2 testes falham |
+| 3 | Simulador ignora o BSUID | 2 testes falham |
+| 3 | BSUID inválido ignorado (falha aberta) | 2 testes falham |
+| 4 | Normaliza corpo não verificado | 1 teste falha |
+| 4 | Decodificação tolerante (remove BOM, troca byte inválido) | 2 testes falham |
+| 4 | Aceita corpo como texto | 1 teste falha |
+| 4 | Corpo verificado não é cópia | 1 teste falha |
+| 4 | Leitura sem limite de tamanho | 1 teste falha |
+| 4 | Pipeline normaliza mesmo com assinatura recusada | 1 teste falha |
+
+As mutações de banco rodaram numa PR temporária (#45), fechada sem merge,
+com a branch excluída. Os portões P1–P9 continuam **pendentes**.
