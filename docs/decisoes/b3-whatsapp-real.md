@@ -864,7 +864,8 @@ Nenhuma é feita agora. Em ordem, cada uma com autorização:
 
 ## 12. Decisões
 
-Situação após a revisão da PR #41 (19/10/2026):
+Situação após a revisão da PR #41 (19/10/2026), com as decisões 8 e 9
+aprovadas no merge da PR #42 (20/10/2026):
 
 | # | Decisão | Situação | O que vale | Impacto | Alternativa |
 |---|---|---|---|---|---|
@@ -875,6 +876,8 @@ Situação após a revisão da PR #41 (19/10/2026):
 | 5 | Quem conecta e administra o canal | **Aprovada** | **Owner e admin** (`channel.manage`) | Poucas pessoas mexem em credencial | — |
 | 6 | Retenção de mensagens, mídia, payload e eventos | **Pendente** (decisão da Vizentini, como controladora) | Nenhum prazo definitivo aprovado. O desenho aceita prazos por categoria, eliminação em lotes, tombstone, trilha e legal hold (§7.2). Piloto com prazo provisório curto, definido antes da validação externa (P9) | Sem a política final, nada vai para o número real do escritório | — |
 | 7 | Passagem chatbot → humano | **Substituída** | O prefixo em `externalId` deixa de ser o mecanismo. Vale o **contrato explícito e autenticado** do §5.2: estado durável, canal autenticado, idempotência, confirmação, expiração e falha fechada. `externalId` fica só como correlação | Exige mudança no chatbot, fora da B3; até a confirmação, o CRM não envia no número do chatbot | O advogado assume só pelo celular, e o CRM fica só de leitura naquele número |
+| 8 | Canal pausado no webhook | **Aprovada** (20/10/2026, merge da PR #42) | Canal **pausado** continua resolvível pela resolução do webhook, com o estado devolvido; a **B3.2 deve definir e testar** quais efeitos são permitidos para evento de canal pausado. Canal **desativado** não é resolvido | O evento de um canal pausado não se perde, e nada é feito com ele sem regra testada | Recusar também o canal pausado (eventos descartados enquanto pausado) |
+| 9 | Papel de `WHATSAPP_PROVIDER` | **Aprovada** (20/10/2026, merge da PR #42) | Durante o piloto, habilita **um único provedor por ambiente**. Nunca substitui o provedor gravado no canal: o adaptador é sempre o do canal, e `adapter.kind === canal.provider === credencial.provider` antes de banco adicional ou rede | Configuração simples no piloto; um canal YCloud nunca usa o simulador | Lista de provedores habilitados por ambiente, se um dia dois provedores precisarem conviver |
 
 ## 13. Fontes oficiais (consultadas em 19/10/2026)
 
@@ -1154,3 +1157,9 @@ Typecheck, lint, build e Preview passaram.
 
 As mutações de banco rodaram numa PR temporária (#45), fechada sem merge,
 com a branch excluída. Os portões P1–P9 continuam **pendentes**.
+
+Decisões aprovadas no merge da PR #42 (20/10/2026): canal pausado continua
+resolvível pelo webhook, e a B3.2 define e testa os efeitos permitidos;
+canal desativado não é resolvido. `WHATSAPP_PROVIDER` habilita um único
+provedor por ambiente no piloto, sem substituir o provedor do canal. Ver
+§12, decisões 8 e 9.
