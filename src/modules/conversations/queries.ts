@@ -226,14 +226,23 @@ export async function listWhatsAppChannels(workspaceId: string): Promise<WhatsAp
     .order("created_at", { ascending: true });
   if (error) throw new ConversationsLoadError(`os canais de WhatsApp do workspace ${workspaceId}`, error);
 
-  return (data ?? []).map((row) => ({
-    id: row.id,
-    label: row.label,
-    phoneNumberId: row.phone_number_id,
-    displayPhoneNumber: row.display_phone_number,
-    isSimulator: row.is_simulator,
-    status: row.status,
-  }));
+  // Só os canais do simulador da A7 têm phone_number_id. Um canal da B3
+  // (com ambiente) nem passa pela RLS desta consulta; o filtro abaixo é a
+  // segunda barreira, para nunca oferecer ao simulador um canal da B3.
+  return (data ?? []).flatMap((row) =>
+    row.phone_number_id === null
+      ? []
+      : [
+          {
+            id: row.id,
+            label: row.label,
+            phoneNumberId: row.phone_number_id,
+            displayPhoneNumber: row.display_phone_number,
+            isSimulator: row.is_simulator,
+            status: row.status,
+          },
+        ],
+  );
 }
 
 export type ContactConsent = {

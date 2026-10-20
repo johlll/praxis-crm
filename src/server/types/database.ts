@@ -3292,16 +3292,72 @@ export type Database = {
           },
         ]
       }
+      whatsapp_channel_credentials: {
+        Row: {
+          channel_id: string
+          ciphertext: string
+          created_at: string
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          key_version: string
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          purpose: Database["public"]["Enums"]["whatsapp_credential_purpose"]
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          channel_id: string
+          ciphertext: string
+          created_at?: string
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          key_version: string
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          purpose: Database["public"]["Enums"]["whatsapp_credential_purpose"]
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          channel_id?: string
+          ciphertext?: string
+          created_at?: string
+          environment?: Database["public"]["Enums"]["whatsapp_environment"]
+          key_version?: string
+          provider?: Database["public"]["Enums"]["whatsapp_provider"]
+          purpose?: Database["public"]["Enums"]["whatsapp_credential_purpose"]
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_channel_credentials_channel_identity_fkey"
+            columns: ["workspace_id", "channel_id", "environment", "provider"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_channels"
+            referencedColumns: ["workspace_id", "id", "environment", "provider"]
+          },
+          {
+            foreignKeyName: "whatsapp_channel_credentials_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       whatsapp_channels: {
         Row: {
           created_at: string
           created_by: string
           display_phone_number: string
+          environment: Database["public"]["Enums"]["whatsapp_environment"] | null
           id: string
           is_simulator: boolean
           label: string
-          phone_number_id: string
+          phone_number_id: string | null
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          routing_key: string
+          send_enabled: boolean
           status: string
+          status_changed_at: string | null
           updated_at: string
           workspace_id: string
         }
@@ -3309,11 +3365,16 @@ export type Database = {
           created_at?: string
           created_by: string
           display_phone_number: string
+          environment?: Database["public"]["Enums"]["whatsapp_environment"] | null
           id?: string
           is_simulator?: boolean
           label: string
-          phone_number_id: string
+          phone_number_id?: string | null
+          provider?: Database["public"]["Enums"]["whatsapp_provider"]
+          routing_key: string
+          send_enabled?: boolean
           status?: string
+          status_changed_at?: string | null
           updated_at?: string
           workspace_id: string
         }
@@ -3321,11 +3382,16 @@ export type Database = {
           created_at?: string
           created_by?: string
           display_phone_number?: string
+          environment?: Database["public"]["Enums"]["whatsapp_environment"] | null
           id?: string
           is_simulator?: boolean
           label?: string
-          phone_number_id?: string
+          phone_number_id?: string | null
+          provider?: Database["public"]["Enums"]["whatsapp_provider"]
+          routing_key?: string
+          send_enabled?: boolean
           status?: string
+          status_changed_at?: string | null
           updated_at?: string
           workspace_id?: string
         }
@@ -3338,6 +3404,24 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      whatsapp_environment_keys: {
+        Row: {
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          signing_key: string
+          updated_at: string
+        }
+        Insert: {
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          signing_key: string
+          updated_at?: string
+        }
+        Update: {
+          environment?: Database["public"]["Enums"]["whatsapp_environment"]
+          signing_key?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       workspace_invitations: {
         Row: {
@@ -3895,11 +3979,16 @@ export type Database = {
           created_at: string
           created_by: string
           display_phone_number: string
+          environment: Database["public"]["Enums"]["whatsapp_environment"] | null
           id: string
           is_simulator: boolean
           label: string
-          phone_number_id: string
+          phone_number_id: string | null
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          routing_key: string
+          send_enabled: boolean
           status: string
+          status_changed_at: string | null
           updated_at: string
           workspace_id: string
         }
@@ -4900,6 +4989,91 @@ export type Database = {
         }
         Returns: Json
       }
+      whatsapp_create_simulated_channel: {
+        Args: {
+          p_actor_user_id: string
+          p_channel_id: string
+          p_display_phone_number: string
+          p_key_version: string
+          p_label: string
+          p_routing_key: string
+          p_webhook_secret_ciphertext: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      whatsapp_disable_channel_send: {
+        Args: {
+          p_actor_user_id: string
+          p_channel_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      whatsapp_get_channel_credential: {
+        Args: {
+          p_channel_id: string
+          p_purpose: Database["public"]["Enums"]["whatsapp_credential_purpose"]
+        }
+        Returns: {
+          channel_id: string
+          ciphertext: string
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          key_version: string
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          purpose: Database["public"]["Enums"]["whatsapp_credential_purpose"]
+          workspace_id: string
+        }[]
+      }
+      whatsapp_get_channel_state: {
+        Args: {
+          p_actor_user_id: string
+          p_channel_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      whatsapp_list_channels: {
+        Args: { p_actor_user_id: string; p_workspace_id: string }
+        Returns: Json
+      }
+      whatsapp_pause_channel: {
+        Args: {
+          p_actor_user_id: string
+          p_channel_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      whatsapp_reactivate_channel: {
+        Args: {
+          p_actor_user_id: string
+          p_channel_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      whatsapp_store_channel_credential: {
+        Args: {
+          p_actor_user_id: string
+          p_channel_id: string
+          p_ciphertext: string
+          p_key_version: string
+          p_purpose: Database["public"]["Enums"]["whatsapp_credential_purpose"]
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      whatsapp_update_channel_settings: {
+        Args: {
+          p_actor_user_id: string
+          p_channel_id: string
+          p_display_phone_number: string
+          p_label: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       win_opportunity: {
         Args: {
           p_fee_model: Database["public"]["Enums"]["fee_model"]
@@ -4989,6 +5163,9 @@ export type Database = {
         | "dead"
         | "expired_unprocessed"
         | "purged"
+      whatsapp_credential_purpose: "api_key" | "webhook_secret"
+      whatsapp_environment: "production" | "preview"
+      whatsapp_provider: "simulated" | "ycloud" | "meta"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -5200,6 +5377,9 @@ export const Constants = {
         "expired_unprocessed",
         "purged",
       ],
+      whatsapp_credential_purpose: ["api_key", "webhook_secret"],
+      whatsapp_environment: ["production", "preview"],
+      whatsapp_provider: ["simulated", "ycloud", "meta"],
     },
   },
 } as const
