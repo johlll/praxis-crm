@@ -162,7 +162,7 @@ cliente), §5 e §7 (resolução sem palpite, agora com BSUID), §8
 | Toda saída nasce no CRM | O escritório responde pelo celular (eco), o chatbot responde pela API e o histórico é importado |
 | O CRM é o único que responde | O chatbot e o advogado também respondem pelo mesmo número |
 | O telefone sempre vem no evento | Pode faltar quando o cliente usa nome de usuário (§2, BSUID) |
-| Número desconhecido = cliente novo (§6) | Eventos de histórico, ecos do celular e contatos já atendidos pelo chatbot não podem criar lead nem atividade |
+| Número desconhecido = cliente novo (§6) | Só mensagem recebida de pessoa externa cria lead, depois de procurar contato, lead ou cliente existente; histórico, ecos do celular, mensagens do chatbot, identidades internas e eventos técnicos nunca criam lead nem atividade (§15.10) |
 | Envio síncrono e garantido | O provedor aceita e confirma depois; o resultado pode ser incerto |
 | Janela irrelevante | Texto livre só com a janela de 24 h aberta; mensagens do celular não abrem nem estendem a janela da API |
 | `phone_number_id` roteia | Na YCloud, a chave é `wabaId` + número do escritório |
@@ -387,7 +387,7 @@ Composer ──▶ sendMessageAction (requirePermission + Zod)
 | `whatsapp_webhook_inbox` (nova) | Corpo cifrado (chave própria, §7.1), hash, id do evento, tipo, estado, tentativas, prazo de retenção; única por `(channel_id, provider_event_id)` |
 | `conversations` | `wa_id` passa a opcional; `wa_user_id` (BSUID) opcional; ao menos um dos dois; unicidade por canal e identidade; `last_inbound_at` (janela) |
 | `contact_identifiers` | Novo provedor `whatsapp_bsuid`; vínculo de troca de número pelos eventos de sistema |
-| `messages` | `origin` (`crm`, `business_app`, `external_api`, `history`, `inbound`); `provider_message_id`; `wa_message_id` opcional até a aceitação; `body_text` opcional com mídia; `sent_by` e `client_dedupe_key` exigidos só para `origin = 'crm'`; `template_name`, `template_language`, `template_category` (a final, conferida no envio); custo devolvido pelo provedor (categoria, modelo, valor, moeda, `cost_is_final`); `content_purged_at` |
+| `messages` | `origin`, a origem técnica (`crm`, `business_app`, `chatbot`, `external_api`, `history` ou `inbound`); `sender_classification`, a classificação do remetente (`external`, `internal`, `automation` ou `unresolved`), separada da origem: `internal` não é origem (regras no §15.10; decisões 11 e 14; modelagem documental, sem schema nesta fase); `provider_message_id`; `wa_message_id` opcional até a aceitação; `body_text` opcional com mídia; `sent_by` e `client_dedupe_key` exigidos só para `origin = 'crm'`; `template_name`, `template_language`, `template_category` (a final, conferida no envio); custo devolvido pelo provedor (categoria, modelo, valor, moeda, `cost_is_final`); `content_purged_at` |
 | `message_status` | `accepted` e `uncertain`; `played` só no log |
 | `message_media` (nova) | Tipo, MIME, tamanho, SHA-256, referência do provedor, caminho no Storage, estado do download, `expires_at`; deny-all |
 | `whatsapp_outbox` (nova) | Uma por mensagem de saída; estados e travas do padrão A11 |
@@ -420,11 +420,17 @@ mensagem do chatbot.
 
 ### 5.2 Chatbot externo
 
-- Continua independente. Nada do Worker, do banco D1, das filas ou dos
-  prompts entra no Praxis. O projeto do chatbot não é modificado.
-- O CRM pode **ver** as mensagens do chatbot como `origin =
-  'external_api'`, se a YCloud as entregar ao endpoint do CRM (portão do
-  §6.7), sem nunca interpretá-las.
+- Continua independente, funcional e em produção: é integrado, não
+  reconstruído. Nada do Worker, do banco D1, das filas ou dos prompts entra
+  no Praxis. A B3 não modifica o chatbot; a única mudança prevista nele é a
+  do contrato de passagem, em desenvolvimento isolado e desligado, com
+  implantação sujeita a nova autorização (decisão 15, §15.6).
+- O CRM **exibe** as mensagens do chatbot com `origin = 'chatbot'`,
+  `sender_classification = 'automation'` e o rótulo "chatbot/automação"
+  (decisão 11), de preferência pelo evento que a YCloud entrega ao
+  endpoint do CRM (portões P3/P4, §6.7), sem nunca interpretá-las nem
+  criar lead a partir delas. `chatbot` exige correlação positiva com uma
+  mensagem do chatbot; sem ela, a saída fica como `external_api` (§15.10).
 - Hoje o chatbot pausa uma conversa quando vê o eco do celular. Uma
   resposta humana pelo CRM sai pela API e não gera eco, então **não**
   pausa o chatbot.
@@ -463,6 +469,13 @@ já pausa o chatbot), e o CRM fica só de leitura naquele número.
 **Enquanto o contrato não existir e não houver confirmação do chatbot,
 `send_enabled` permanece `false` no número do chatbot.**
 
+O levantamento do código do chatbot (§15) confirmou dois pontos. Ele já tem
+o estado durável "humano assumiu", mas não tem nenhuma rota para recebê-lo:
+hoje só o eco do celular e os comandos do operador mudam esse estado. Ele
+também descarta clientes antigos antes de gravar. A proposta mínima de
+contrato está no §15.6, e as decisões 10 a 15 do §12 fecham como ele será
+integrado.
+
 ### 5.3 C1
 
 Pertencem à C1:
@@ -483,8 +496,11 @@ origem), **sem consumidor** na B3:
 
 - `conversation.first_inbound`: primeira mensagem de uma identidade nova;
 - `message.inbound`: inclui se reabriu a janela;
-- `message.outbound_human`: origem `crm` ou `business_app`;
-- `message.outbound_external`: chatbot;
+- `message.outbound_human`: mensagem enviada pelo CRM (`origin = 'crm'`);
+- `message.outbound_external`: qualquer mensagem de saída observada que
+  não nasceu no CRM. O payload leva `origin` (`chatbot`, `business_app` ou
+  `external_api`) e `sender_classification`; a C1 usa esses campos para
+  distinguir a origem, sem inferi-la pelo nome do evento;
 - `message.delivered`, `message.read`, `message.failed`;
 - `window.closing`: calculado na leitura, não por agendador;
 - `conversation.link_resolved`, `consent.granted`, `consent.revoked`;
@@ -542,6 +558,9 @@ no §14.
   - troca de número ou BSUID.
 - Identidade BSUID e telefone opcional, sem nunca criar contato duplicado
   quando o telefone aparecer depois.
+- Origem técnica (`origin`) separada da classificação do remetente
+  (`sender_classification`); `chatbot` só com correlação positiva, senão
+  `external_api`; lead só por `inbound` + `external` (§15.10).
 - Status com a regra corrigida (§1.3).
 - Histórico importado: **ignorado no piloto**. Se for habilitado, grava só
   mensagens, sem lead nem atividade.
@@ -810,8 +829,10 @@ O desenho técnico precisa aceitar qualquer política:
 20. A chave da YCloud não acessa canal fora do alcance esperado; se a
     YCloud não oferecer escopo, o risco aparece registrado e aceito antes
     da configuração (portão P2).
-21. Nenhum evento do chatbot, do histórico ou do eco do celular cria lead,
-    atividade ou automação comercial.
+21. Nenhum evento do chatbot, do histórico, do eco do celular, de
+    identidade interna, de status ou técnico cria lead, atividade ou
+    automação comercial; só `origin = inbound` com
+    `sender_classification = external` pode criar lead.
 22. Nenhuma automação da C1 é antecipada: os eventos do §5.4 não têm
     consumidor e nenhuma regra muda status, cria atividade ou responde
     sozinha.
@@ -865,7 +886,8 @@ Nenhuma é feita agora. Em ordem, cada uma com autorização:
 ## 12. Decisões
 
 Situação após a revisão da PR #41 (19/10/2026), com as decisões 8 e 9
-aprovadas no merge da PR #42 (20/10/2026):
+aprovadas no merge da PR #42 (20/10/2026) e as decisões 10 a 15, abertas
+pelo levantamento do chatbot (§15), aprovadas em 20/10/2026:
 
 | # | Decisão | Situação | O que vale | Impacto | Alternativa |
 |---|---|---|---|---|---|
@@ -878,6 +900,12 @@ aprovadas no merge da PR #42 (20/10/2026):
 | 7 | Passagem chatbot → humano | **Substituída** | O prefixo em `externalId` deixa de ser o mecanismo. Vale o **contrato explícito e autenticado** do §5.2: estado durável, canal autenticado, idempotência, confirmação, expiração e falha fechada. `externalId` fica só como correlação | Exige mudança no chatbot, fora da B3; até a confirmação, o CRM não envia no número do chatbot | O advogado assume só pelo celular, e o CRM fica só de leitura naquele número |
 | 8 | Canal pausado no webhook | **Aprovada** (20/10/2026, merge da PR #42) | Canal **pausado** continua resolvível pela resolução do webhook, com o estado devolvido; a **B3.2 deve definir e testar** quais efeitos são permitidos para evento de canal pausado. Canal **desativado** não é resolvido | O evento de um canal pausado não se perde, e nada é feito com ele sem regra testada | Recusar também o canal pausado (eventos descartados enquanto pausado) |
 | 9 | Papel de `WHATSAPP_PROVIDER` | **Aprovada** (20/10/2026, merge da PR #42) | Durante o piloto, habilita **um único provedor por ambiente**. Nunca substitui o provedor gravado no canal: o adaptador é sempre o do canal, e `adapter.kind === canal.provider === credencial.provider` antes de banco adicional ou rede | Configuração simples no piloto; um canal YCloud nunca usa o simulador | Lista de provedores habilitados por ambiente, se um dia dois provedores precisarem conviver |
+| 10 | Arquitetura de entrada com o chatbot | **Aprovada** (20/10/2026) | **Opção 1:** a YCloud entrega direto e de forma independente ao webhook existente do chatbot e a um webhook próprio do Praxis. O Praxis não entra antes do chatbot, e o chatbot não encaminha ao Praxis o tráfego que recebe (§15.4) | O Praxis vê também os clientes antigos que o chatbot descarta; os sistemas caem e voltam de forma independente | Opção 2 (o chatbot encaminha um envelope) e opção 3 (o Praxis recebe primeiro), ambas rejeitadas |
+| 11 | Leads e mensagens do chatbot | **Aprovada** (20/10/2026) | O Praxis **exibe** as mensagens enviadas pelo chatbot, com origem visual e técnica "chatbot/automação" (`origin = chatbot` só com correlação positiva; classificação do remetente separada, §15.10). **Só mensagem recebida de pessoa externa** pode criar lead, e só depois de procurar contato, lead ou cliente existente, sem duplicar. Identidade ambígua, BSUID não resolvido ou possível número interno viram **pendência de identificação**, sem criação por palpite. Mensagem do chatbot, eco do celular, histórico, status, comando interno ou evento técnico nunca criam lead nem atividade. Automação do status comercial fica na C1. As mensagens do chatbot vêm de preferência do evento da YCloud no segundo endpoint (P3/P4); se ele não existir, a alternativa é documentada antes de implementar, sem trabalho síncrono no webhook do chatbot (§15.10) | Conversa completa no CRM, sem lead duplicado nem lead criado por evento técnico | — |
+| 12 | Resumo e qualificação do bot no CRM | **Aprovada para fase posterior** (20/10/2026) | Integração só depois de a entrada real ficar estável. Transfere só dados estruturados necessários, com contato/lead identificado, origem "chatbot", versão, data e idempotência. Nunca prompt, raciocínio interno, logs internos ou conversa completa sem necessidade. **Fora da primeira PR da B3.2** (§15.10) | Contexto para o advogado com dado mínimo | — |
+| 13 | Vencimento da passagem | **Aprovada** (20/10/2026) | O chatbot **fica em silêncio até liberação explícita**. Vencimento ou perda da confirmação bloqueia novos envios pelo CRM, mas **não** reativa a IA. A interface mostra a passagem vencida ou pendente e exige liberar ou assumir de novo (§15.6) | Nunca há resposta dupla por vencimento | O chatbot volta sozinho para a IA, rejeitada |
+| 14 | Identidades internas do canal | **Aprovada** (20/10/2026) | Cadastro por **workspace, canal e ambiente**, administrado por owner/admin (`channel.manage`), aceitando **telefone normalizado e BSUID**. A identificação vem do cadastro confiável, nunca de texto ou campo livre do evento. Mensagens, comandos, ecos e status de identidades internas não criam contato, lead ou atividade de cliente. **Nenhum telefone real no repositório ou neste documento** (§15.10) | Comandos e alertas do Dr. não poluem o CRM | — |
+| 15 | Mudança mínima no chatbot | **Aprovada só para desenvolvimento isolado** (20/10/2026) | Branch/PR própria, depois de reler por inteiro o livro de regras do chatbot. Desligada por padrão, sem deploy na Cloudflare e sem segredo real. Não altera webhook, fila ou processamento atuais, nem acrescenta chamada externa síncrona ao caminho quente. Testada localmente ou em recursos separados, com dados fictícios, autenticação, horário, nonce, idempotência, timeout, falha fechada e rollback documentado. **Implantar no chatbot real exige nova autorização expressa** (§15.6, §15.10) | Necessária para o portão P7 e para a B3.3 no número do chatbot | O CRM fica só de leitura no número do chatbot |
 
 ## 13. Fontes oficiais (consultadas em 19/10/2026)
 
@@ -1163,3 +1191,429 @@ resolvível pelo webhook, e a B3.2 define e testa os efeitos permitidos;
 canal desativado não é resolvido. `WHATSAPP_PROVIDER` habilita um único
 provedor por ambiente no piloto, sem substituir o provedor do canal. Ver
 §12, decisões 8 e 9.
+
+## 15. Levantamento de compatibilidade da B3.2 com o chatbot (20/10/2026)
+
+Leitura **somente** do projeto do chatbot da Vizentini
+(projeto separado, pacote `vizentini-chatbot`, versão publicada
+`bebd6e2a` de 20/10/2026). Foram lidos o código de entrada, fila, pipeline,
+conversas, entregas, envio, mídia, escopo, pausa, retenção, comandos do
+operador, as 21 migrations do D1, o `STATUS.md` e o documento de contratos.
+De `wrangler.jsonc` foram lidos **só nomes** de bindings, filas, crons e
+variáveis. Nenhum segredo, `.dev.vars`, `.env`, `.secrets/`, `.wrangler/`
+ou histórico de clientes foi aberto. Nada foi alterado no chatbot, no
+Praxis (código), na YCloud, na Cloudflare, na Vercel ou no Supabase.
+
+**O chatbot já está funcional e em produção.** A B3 o **integra**; não o
+reconstrói nem duplica as funções dele (§15.5).
+
+### 15.1 Fatos que mudam ou completam este plano
+
+1. **O chatbot não é um registro completo do número.** Em produção vale o
+   escopo "só contatos novos": o webhook consulta o contato na YCloud e
+   **descarta sem gravar** eventos de quem já tinha conversa com o
+   escritório. Isso inclui mensagens, ecos e status de clientes antigos.
+   Também descarta eventos sem telefone (só BSUID) e tipos que não trata.
+   Encaminhar ao Praxis "depois de gravar" perderia justamente os clientes
+   antigos.
+2. **Assinaturas do webhook do chatbot:** `inbound_message.received`,
+   `smb.message.echoes` e `message.updated`. O histórico (`smb.history`)
+   é tratado pelo código, mas não está assinado.
+3. **Já existe uma máquina de três estados** por conversa:
+   - `AI_ACTIVE`;
+   - `HANDOFF_PENDING`: o bot encaminhou ao Dr. e fica em silêncio;
+   - `HUMAN_ACTIVE`: o eco do celular ou o comando do operador.
+
+   Nenhum estado volta sozinho para a IA: só `npm run session -- resume`.
+   O estado fica em `conversations` (`mode` e `handoff_pending_at`), com
+   trilha em `mode_changes` e `handoffs`.
+4. **Não existe endpoint para assumir ou liberar.** O Worker só tem
+   `POST /webhooks/ycloud`, `GET /resumo/<id>` e `GET /health`. "Assumir",
+   "retomar" e "pausar" são comandos do operador, que rodam SQL pelo
+   `wrangler d1`. O canal de comandos do Dr. (WhatsApp pessoal → número
+   do escritório) trata conversões ("virou cliente", "não fechou",
+   "desfazer", "resumo"), não passagem de atendimento.
+5. **Trafegam no mesmo número mensagens que não são de cliente:**
+   - comandos do Dr. a partir do número pessoal dele;
+   - respostas interativas (botões e listas) ao Dr.;
+   - modelos de alerta ao Dr., como `novo_atendimento_aguardando`
+     (categoria marketing);
+   - retomadas de 24 h a 15 dias, com modelos marketing pendentes e o
+     recurso desligado.
+
+   Um endpoint do Praxis no mesmo número verá esse tráfego e precisa
+   classificá-lo como interno.
+6. **Um único ambiente.** Os recursos `vizentini-chatbot-teste` (Worker,
+   D1, filas) são os que atendem leads reais desde 14 e 16/10/2026. "Teste"
+   é só um conjunto de travas (lista autorizada, sessão de captura) e a
+   pausa geral. Qualquer mudança no chatbot vai direto para o atendimento
+   real.
+7. **Limites do plano gratuito já apertados:**
+   - webhook com até cerca de 7,5 ms de CPU, perto do limite de 10 ms;
+   - consumidor da fila com 49 de 50 subrequisições no pior caso, áudio
+     ou documento.
+
+   Não cabe chamada extra por mensagem no caminho atual.
+8. **Retenção do chatbot:**
+   - 7 dias para mensagens, caixa de entrada bruta, eventos e
+     encaminhamentos;
+   - 60 dias para os dados do lead;
+   - conversa encaminhada ou assumida mantém o estado por até 60 dias.
+
+   Mídia não é guardada, só o link da YCloud (30 dias). A transcrição e a
+   leitura de documentos ficam no D1.
+9. **Uma chave da YCloud para tudo:** envio, "digitando", consulta de
+   contato, download de mídia e eventos de conversão. Isso pesa nos portões
+   P1 e P2: uma chave da conta inteira dada ao CRM teria o mesmo alcance.
+
+### 15.2 Fluxo atual do chatbot
+
+```
+Cliente (WhatsApp)                       Dr. (app WhatsApp Business, coexistência)
+        │                                          │
+        └──────────────► YCloud (conta da Vizentini, número do escritório)
+                          │ webhook do chatbot: inbound_message.received,
+                          │ smb.message.echoes, message.updated
+                          ▼ YCloud-Signature t=,s= (HMAC; tolerância 6 h)
+Worker vizentini-chatbot-teste — POST /webhooks/ycloud
+  1. corpo (≤ 1 MB) → 2. assinatura → 3. JSON com id/type → tipo tratado?
+  4. travas: lista autorizada | sessão | escopo "só contatos novos"
+     (consulta o contato na YCloud) → descartado = 200 SEM gravar
+  5. webhook_inbox (INSERT OR IGNORE por event_id, corpo bruto)
+  6. fila {inboxId} → 200            (falha na fila: o cron recupera)
+          │
+          ▼ fila ...-events (lote 1, max_retries 6, DLQ ...-events-dlq)
+Consumidor: adapta → inbound_events (dedupe) → contato/conversa (telefone|BSUID)
+  ├─ eco do celular ................ conversa → HUMAN_ACTIVE (IA pausa)
+  ├─ message.updated ............... status da resposta (por externalId/wamid)
+  └─ mensagem do cliente → travas (encaminhada, pausa geral, tetos, idade,
+       humano) → transcrição/leitura (OpenAI) → IA → portões
+       → reserva da resposta (id estável = externalId) → sendDirectly
+       → sent | rejected | uncertain (nunca reenvia)
+       → encaminhamento: HANDOFF_PENDING + alerta (modelo) ao Dr. → silêncio
+Cron */5: recupera inbox parada, lembretes, avisos, retomadas, sinais
+Cron diário: retenção 7 d (conversa) / 60 d (lead)
+Operador: npm run session -- assume | resume | pausar | retomar (wrangler d1)
+```
+
+### 15.3 Arquiteturas comparadas
+
+1. YCloud entrega os mesmos eventos ao chatbot e ao Praxis (dois
+   endpoints da mesma conta; a YCloud aceita até 20).
+2. O chatbot recebe e, depois de gravar, encaminha ao Praxis um envelope
+   assinado e idempotente.
+3. O Praxis recebe primeiro e encaminha ao chatbot.
+
+| Critério | 1. YCloud → os dois | 2. Chatbot encaminha | 3. Praxis encaminha |
+|---|---|---|---|
+| Perda | Cada endpoint tem as próprias reentregas; o Praxis fora do ar por mais de cerca de 5 h 40 perde eventos (reconciliação pela API da YCloud a validar) | Perde tudo o que o chatbot descarta (clientes antigos, só BSUID, tipos ignorados, eventos de conta), salvo mudança no caminho quente | Chatbot passa a depender do Praxis; perda no Praxis vira perda no bot |
+| Duplicação | Dedupe independente por id do evento em cada lado | Exige outbox e dedupe novos no chatbot | Idem, no sentido contrário |
+| Atraso | Nenhum a mais | Uma fila e um envio a mais | Uma fila e um envio a mais no caminho do bot, que é sensível a tempo ("digitando", espera de rajada) |
+| Disponibilidade | Independentes | Praxis cego quando o chatbot cai ou é pausado | Bot para quando Vercel, Supabase ou Inngest param |
+| Custo | Nenhum a mais (endpoint grátis) | Subrequisições e operações de fila no plano gratuito, já no limite | Idem no Praxis, e o bot herda o risco |
+| Mudança no chatbot | **Nenhuma** para a entrada | Grande: encaminhar antes das travas, outbox, fila e cron novos, segredo novo | Muito grande: nova origem assinada, troca da entrada que funciona |
+| Independência | Alta | Baixa | Baixa |
+| Mídia | Cada um baixa do link da YCloud com a própria chave (P1/P2) | Mesmo problema de chave, ou bytes repassados (fora do orçamento) | Idem |
+| Passagem para humano | Contrato explícito à parte (§15.6), igual em qualquer opção | Idem | Idem |
+| Recuperação | Reentregas por endpoint, mais a reconciliação de cada lado | O Praxis só recupera o que o chatbot gravou (7 dias) | O chatbot só recupera o que o Praxis repassar |
+
+A opção 2 não economiza a passagem para humano: ela continua exigindo o
+contrato do §15.6. Também troca uma integração que a YCloud já entrega
+pronta por código novo dentro de um sistema em produção, sem ambiente de
+teste e no limite do plano gratuito.
+
+### 15.4 Recomendação (aprovada: decisão 10)
+
+**Opção 1.** A YCloud entrega diretamente ao endpoint do Praxis, que é
+próprio, com segredo próprio e um por ambiente. O chatbot fica como está na
+entrada. A única mudança prevista no chatbot é a mínima do contrato de
+passagem (§15.6), e só para que o CRM possa **enviar** no número do chatbot
+(portão P7). Até lá, o CRM fica só de leitura nesse número (§5.2).
+
+Justificativa:
+- é a única opção em que o Praxis vê também os clientes antigos que o
+  chatbot descarta;
+- não mexe no caminho quente do chatbot;
+- mantém os dois sistemas independentes para falhas;
+- coincide com o desenho dos §3 e §4.
+
+A opção 3 fica descartada: não há evidência técnica a favor dela, e ela
+põe em risco o atendimento que já funciona. A opção 2 também foi rejeitada
+(decisão 10): o chatbot não encaminha ao Praxis o tráfego que recebe.
+
+Condições abertas:
+- P3: se o endpoint do Praxis recebe o `message.updated` das respostas do
+  bot. Sem isso, o CRM não vê o que o bot respondeu (ver o risco R1);
+- P4: se há filtro por canal ou chave, além do filtro por tipo de evento,
+  que o chatbot já usa.
+
+```
+                 YCloud (mesma conta, número do escritório)
+       endpoint do chatbot                 endpoint do Praxis (um por ambiente)
+        (sem mudança)                       inbound, echoes, message.updated,
+              │                             eventos de conta
+              ▼                                   ▼
+   Worker do chatbot                     /api/webhooks/whatsapp/ycloud (B3.2)
+   pausa no eco; HANDOFF/HUMAN           bytes → assinatura → canal pela
+              ▲                          routing key → inbox cifrada → 2xx
+              │                          → Inngest → RPCs (B3.2)
+              │  contrato §15.6 (assinado, idempotente, com ack)
+   Praxis ────┘  request_human / release_human / get_state
+   (rota nova no chatbot, mudança mínima, só para o envio da B3.3)
+
+   B3.3 no número do chatbot: o CRM só envia com ack "human_active" válido
+   e não vencido; sem ack → bloqueado, com o motivo visível.
+```
+
+### 15.5 Já existe / adaptar / criar
+
+| Item | Situação | Onde fica |
+|---|---|---|
+| Recebimento, assinatura, inbox, fila, DLQ e recuperação do chatbot | Já existe; reutilizar como está (não duplicar no chatbot) | Chatbot |
+| IA, triagem, transcrição, leitura de documentos, tetos, alertas, comandos do Dr., sinais, retomadas | Já existe; não duplicar no Praxis (C1 e automações continuam fora da B3) | Chatbot |
+| Estado `HUMAN_ACTIVE` e silêncio após o eco ou o encaminhamento | Já existe; reutilizar como o "humano assumiu" do contrato | Chatbot |
+| Contrato `whatsapp_handoffs`, ack e expiração | Adaptar: rota assinada nova que chama a mesma mudança de estado do `assume`/`resume`, mais a tabela de pedidos | Chatbot (mudança mínima) e Praxis |
+| Adaptador YCloud: assinatura sobre bytes e normalização dos eventos | Criar no Praxis. As regras conferidas no chatbot servem de referência; nenhum código copiado | Praxis (B3.2) |
+| Endpoint, inbox cifrada, Inngest e RPCs de entrada | Criar | Praxis (B3.2) |
+| Origem técnica (`inbound`, `business_app`, `chatbot`, `external_api`, `history`) e classificação do remetente (`external`, `internal`, `automation`, `unresolved`) | Criar (§15.10) | Praxis (B3.2) |
+| Identidades internas do canal (telefone normalizado e BSUID), por workspace, canal e ambiente | Criar (decisão 14); sem isso, os comandos do Dr. criariam lead | Praxis (B3.2) |
+| Pendência de identificação: identidade ambígua, BSUID não resolvido ou possível número interno | Criar (decisão 11); nunca cria lead por palpite | Praxis (B3.2) |
+| Identidade BSUID sem telefone | Adaptar: o contrato já aceita (§14.6); falta persistir | Praxis (B3.2) |
+| Envio humano, outbox, janela e templates | Criar (B3.3) | Praxis |
+| Mídia: download e Storage | Criar (B3.4); o chatbot não guarda arquivos | Praxis |
+
+Funções que **não** devem ser duplicadas: resposta automática, triagem,
+qualificação, alerta ao Dr., comandos do Dr., retomadas, sinais de
+conversão e "digitando" (que também marca a mensagem como lida). O Praxis
+nunca chama essas APIs da YCloud no número do chatbot.
+
+### 15.6 Contrato mínimo chatbot ↔ Praxis (sem implementação)
+
+**Autenticação:**
+- dois segredos novos, **um por direção e por ambiente**, exclusivos desta
+  integração. Nenhum vem da YCloud, do calendário, do WhatsApp do CRM ou de
+  outro módulo;
+- cabeçalho com versão, horário, nonce e HMAC-SHA256 de
+  `praxis:chatbot:v1|<direção>|<horário>|<nonce>|<sha256 do corpo>`;
+- tolerância de 120 s;
+- nonce e id do pedido guardados até expirarem (proteção contra
+  repetição).
+
+**Praxis → chatbot.** É uma rota nova no Worker, fora do webhook, com
+três ações:
+
+| Ação | Corpo mínimo | Resposta (ack) |
+|---|---|---|
+| `request_human` | `request_id` (UUID, chave de idempotência), `conversation_ref` (provedor, routing key do número, telefone ou BSUID), `expires_at` (prazo máximo a decidir), motivo em código | `{ack, request_id, state: "human_active", state_version, effective_at, expires_at}` |
+| `release_human` | `request_id`, `conversation_ref`, motivo em código | `{ack, request_id, state: "ai_active" \| "handoff_pending", state_version}` |
+| `get_state` | `conversation_ref` | `{state, state_version, since, expires_at?}` |
+
+- **Idempotência:** o mesmo `request_id` devolve a mesma resposta, sem
+  nova mudança de estado.
+- **Confirmação explícita:** o CRM só libera o envio com ack
+  `human_active` válido, do ambiente certo e não vencido. Antes de cada
+  envio, confere o `state_version` (ou chama `get_state`).
+- **Timeout** de 5 s no CRM. Sem ack, resposta inválida, assinatura errada
+  ou estado diferente: **falha fechada**, o envio fica bloqueado naquela
+  conversa com o motivo visível.
+- **Expiração (decisão 13):** vencido o prazo ou perdida a confirmação,
+  o CRM bloqueia novos envios até um novo `request_human`. O chatbot **fica
+  em silêncio** até `release_human` ou `resume`; o vencimento nunca reativa
+  a IA. A interface mostra a passagem vencida ou pendente e exige liberar
+  ou assumir de novo.
+
+**Chatbot → Praxis.** Mensagens, ecos, status e mídia chegam ao Praxis
+direto da YCloud (opção 1, decisão 10); o chatbot não repassa o tráfego
+que recebe nem conteúdo. Nesta direção há três peças distintas:
+
+1. **Avisos de estado da passagem** (parte opcional do contrato de
+   passagem):
+   - o chatbot só avisa as mudanças de estado (`handoff_pending`,
+     `human_active`, `ai_active`, pausa geral);
+   - cada aviso leva `event_id` (idempotência) e `state_version`
+     monotônica;
+   - sai por outbox no chatbot, com reentrega, fora do webhook;
+   - o Praxis responde 200 só depois de gravar.
+2. **Contingência para respostas do chatbot** (só se P3 falhar e após
+   nova aprovação):
+   - não faz parte da primeira entrega da B3.2;
+   - só existe se o P3 for comprovadamente falso, isto é, se o endpoint
+     do Praxis não receber o `message.updated` das respostas do bot;
+   - exige proposta e autorização separadas antes de qualquer código;
+   - envia apenas os ids das respostas do próprio chatbot;
+   - não repassa mensagens recebidas nem conteúdo (texto, mídia,
+     telefone ou BSUID);
+   - funciona de modo assíncrono, por outbox, com reentrega;
+   - não acrescenta chamada ao webhook nem ao caminho quente do chatbot.
+3. **Resumo e qualificação** (fase posterior autorizada pela decisão 12;
+   fora da primeira PR da B3.2):
+   - só depois de a entrada real ficar estável;
+   - apenas dados estruturados necessários, com contato ou lead
+     identificado, origem "chatbot", versão, data e chave de
+     idempotência;
+   - nunca prompt, raciocínio interno, logs internos ou a conversa
+     completa sem necessidade.
+
+**Logs dos dois lados:** só ids internos, códigos, `state_version` e
+decisões. Nunca telefone, BSUID, texto, mídia, resumo ou segredo.
+
+**Mudanças mínimas no chatbot:**
+- rota assinada;
+- tabela de pedidos (id, ação, conversa, resultado, vencimento), que entra
+  na retenção;
+- um motivo novo de troca de modo (`praxis_takeover`);
+- testes;
+- um segredo novo por direção.
+
+Ficam sem mudança: o pipeline, que já respeita `HUMAN_ACTIVE`, e o webhook
+(CPU).
+
+Condições da decisão 15:
+- desenvolvimento isolado em branch/PR própria, depois de reler por
+  inteiro `docs/LIVRO-DE-REGRAS.md` do chatbot;
+- desligado por padrão, sem deploy na Cloudflare e sem segredo real;
+- sem alterar webhook, fila ou processamento atuais;
+- sem chamada externa síncrona no caminho quente;
+- testes locais ou em recursos separados, com dados fictícios, cobrindo
+  autenticação, horário, nonce, idempotência, timeout e falha fechada;
+- rollback documentado;
+- implantação no chatbot real só com nova autorização expressa.
+
+### 15.7 Portões P1–P9 diante do código do chatbot
+
+| Portão | Respondido pelo código? | O que o código mostra | O que ainda falta |
+|---|---|---|---|
+| P1 | Não | O chatbot usa uma só `YCLOUD_API_KEY` para envio, consulta, mídia e eventos | Confirmar na YCloud se há chave separada e o alcance dela |
+| P2 | Não | Uma chave da conta alcança envio, consulta de contato e eventos de conversão do número do escritório | Escopo por canal; senão, aceite formal do risco |
+| P3 | Em parte | O endpoint do chatbot recebe o `message.updated` das próprias respostas (entrega real confirmada em 02/10) | Se outro endpoint da conta recebe esse status (documentação, suporte ou teste com número de teste) |
+| P4 | Em parte | Existe filtro por tipo de evento (o endpoint do chatbot assina 3 tipos) | Filtro por canal ou chave |
+| P5 | Não | O número está em coexistência pela YCloud (STATUS do chatbot) | Titularidade da WABA no console ou na Meta |
+| P6 | Não | — | Regras de portabilidade YCloud ↔ Meta |
+| P7 | Sim, como **não cumprido** | Não há rota nem pedido assinado; só operador por CLI e eco | Implementar o §15.6 no chatbot (desenvolvimento isolado autorizado pela decisão 15) e provar em teste; implantação real exige nova autorização |
+| P8 | Não | O chatbot envia modelos marketing no mesmo número (alerta; retomadas pendentes) e registra cobrança na janela desde 01/10 | Rever preços e categorias, considerando o volume dos dois sistemas no mesmo número |
+| P9 | Não | O chatbot usa 7 e 60 dias, prazos do teste dele | Prazo provisório do Praxis (decisão 6) |
+
+### 15.8 Riscos e decisões
+
+**Riscos:**
+- **R1. Respostas do bot invisíveis.** O CRM pode não ver as respostas do
+  bot (P3). Sem correlação positiva, elas aparecem como `external_api`.
+  Mitigação, só se o P3 falhar e com nova aprovação: a contingência dos
+  ids do §15.6 ou a reconciliação pela API da YCloud.
+- **R2. Alcance da chave.** A chave do CRM pode alcançar o envio do número
+  do chatbot (P1/P2).
+- **R3. Buraco de eventos.** Lacuna se o endpoint do Praxis ficar fora por
+  mais tempo que as reentregas (cerca de 5 h 40). Mitigação a validar:
+  consulta de mensagens pela API da YCloud no reconciliador.
+- **R4. Comandos do Dr. viram lead.** O tráfego do Dr. (comandos, alertas,
+  botões) seria tratado como cliente sem o cadastro de identidades internas
+  (decisão 14).
+- **R5. Lead em dobro.** Mitigado pela decisão 11: busca de contato, lead ou
+  cliente antes de criar, e pendência de identificação no lugar do palpite.
+  O bot continua dono da triagem; o status comercial automático é da C1.
+- **R6. Mudança no chatbot vai direto ao atendimento real.** O chatbot tem
+  um ambiente só. O Preview do Praxis nunca aponta para o número do
+  escritório.
+- **R7. Corrida entre Dr., bot e CRM.** Ela não some (documentado no
+  STATUS do chatbot); o contrato só reduz a janela.
+- **R8. Retenções diferentes.** O Praxis guardaria por mais tempo conversas
+  que o bot apaga em 7 dias. É preciso aviso e política (decisão 6 / P9).
+- **R9. Orçamento do Worker gratuito.** Qualquer chamada nova no caminho
+  quente do chatbot pode estourar CPU ou subrequisições.
+
+**Decisões:** as de número 10 a 15 foram aprovadas em 20/10/2026 (§12).
+Continuam abertos os portões P1–P6, P8 e P9, além do P7, que só fecha com o
+contrato provado em teste.
+
+### 15.9 B3.2 em PRs pequenas
+
+Todas usam fixtures e o provedor simulado. Nenhuma configura endpoint, chave
+ou número.
+
+| PR | Conteúdo | Depende de |
+|---|---|---|
+| B3.2a | Adaptador YCloud puro: assinatura sobre bytes (`t=,s=`), normalização de entrada, eco, status, histórico (ignorado) e eventos de conta a partir de exemplos oficiais; identidade telefone e/ou BSUID; sem rede | — |
+| B3.2b | `whatsapp_webhook_inbox` cifrada (chave e AAD próprias), única por (canal, id do evento), com prazo de retenção; RPC de gravação; pgTAP | B3.2a |
+| B3.2c | Rota `/api/webhooks/whatsapp/[provider]`: bytes → assinatura → canal pela resolução do webhook (§14.6) → inbox → 2xx → Inngest; 404 sem provedor | B3.2b |
+| B3.2d | Função Inngest e RPCs de serviço: mensagem, eco, status, eventos de conta; origem técnica `inbound`, `business_app`, `chatbot` (só com correlação positiva) ou `external_api` (fallback), `history`, e classificação do remetente `external`, `internal`, `automation` ou `unresolved` (§15.10); cadastro de identidades internas (telefone e BSUID; owner/admin); busca antes de criar lead; pendência de identificação; lead só por `inbound` + `external`; nada de lead ou atividade para bot, eco, histórico, status, comando interno ou evento técnico; teste de concorrência | B3.2c |
+| B3.2e | Reconciliador da inbox parada e batimento do canal (`last_event_at`) | B3.2d |
+| Fora do Praxis | Contrato do §15.6 no chatbot (rota, tabela de pedidos, testes), em branch/PR própria do chatbot, desligado e sem deploy | Decisão 15; implantação real com nova autorização; necessário antes da B3.3 no número do chatbot |
+| Posterior | Resumo e qualificação estruturados do chatbot (decisão 12) | Entrada real estável |
+
+Ligar um endpoint real da YCloud continua dependendo de P1–P4 e de
+autorização.
+
+### 15.10 Regras aprovadas para a B3.2 (decisões 10 a 15)
+
+**Origem técnica e classificação do remetente** (decisão de modelagem
+documental; sem schema nem migration nesta fase):
+- `origin` diz por qual caminho a mensagem passou:
+  - `inbound`: recebida no número do canal;
+  - `crm`: enviada pelo CRM;
+  - `business_app`: eco do aplicativo do celular;
+  - `chatbot`: enviada pelo chatbot, com correlação positiva;
+  - `external_api`: enviada por integração externa cuja origem
+    específica não foi comprovada (fallback);
+  - `history`: histórico importado.
+- `sender_classification` diz quem enviou: `external` (pessoa externa),
+  `internal` (identidade do cadastro interno ou usuário do escritório),
+  `automation` (automação comprovada, como o chatbot) ou `unresolved`
+  (sem identificação confiável).
+- `internal` não é origem. Uma mensagem enviada pelo Dr. pelo aplicativo
+  tem `origin = business_app` e `sender_classification = internal`; um
+  comando do Dr. recebido do número pessoal tem `origin = inbound` e
+  `sender_classification = internal`.
+- `origin = chatbot` exige correlação positiva e confiável com uma
+  mensagem do chatbot. Nunca se classifica como chatbot por exclusão ("não
+  saiu do CRM nem do celular"), nem por texto ou campo que qualquer
+  integração da conta possa preencher. A forma de correlação aceita é
+  definida e testada antes de ser usada (P3/P4, ou a contingência do
+  §15.6). Sem ela, a saída fica como `external_api`, com
+  `sender_classification = unresolved`.
+
+**Exibição das mensagens do chatbot (decisão 11):**
+- origem técnica `chatbot`, classificação `automation` e rótulo visual
+  "chatbot/automação";
+- fonte preferida: o `message.updated` entregue pela YCloud ao endpoint
+  do Praxis (portões P3/P4);
+- se esse evento não chegar ao segundo endpoint, vale só a contingência
+  do §15.6, com proposta e autorização separadas **antes** de
+  implementar. Ela nunca acrescenta trabalho síncrono ao webhook do
+  chatbot nem faz o chatbot repassar o tráfego que recebe (decisão 10).
+
+**Criação de lead (decisão 11):**
+- só por mensagem recebida ao vivo de pessoa externa identificada
+  (`origin = inbound` e `sender_classification = external`);
+- antes de criar, busca de contato, lead ou cliente existente por
+  telefone normalizado e BSUID, sem duplicar;
+- identidade ambígua, BSUID não resolvido ou possível identidade interna
+  viram **pendência de identificação** (`sender_classification =
+  unresolved`) para decisão humana;
+- nunca criam lead nem atividade:
+  - mensagem de saída de qualquer origem (`crm`, `business_app`,
+    `chatbot`, `external_api`);
+  - mensagem do chatbot;
+  - eco do celular;
+  - histórico importado;
+  - status;
+  - comando interno;
+  - evento técnico ou de conta.
+- mudança automática de status comercial: C1.
+
+**Identidades internas (decisão 14):**
+- tabela própria por workspace, canal e ambiente, com telefone normalizado
+  e/ou BSUID;
+- RLS, gravação só por funções de `service_role` acionadas por owner/admin
+  com `channel.manage`;
+- a classificação usa só esse cadastro, nunca texto ou campo livre do
+  evento;
+- mensagens, comandos, ecos e status dessas identidades ficam com
+  `sender_classification = internal`, mantendo a `origin` técnica, sem
+  contato, lead ou atividade de cliente;
+- testes e documentos usam só números fictícios.
+
+**Passagem e vencimento (decisões 13 e 15):** ver §15.6. O CRM não envia no
+número do chatbot até o portão P7 fechar.
+
+**Resumo e qualificação (decisão 12):** fase posterior, fora da primeira PR
+da B3.2.
