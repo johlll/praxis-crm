@@ -7,12 +7,14 @@
  * Arquivo próprio porque o `vi.mock` de `node:crypto` vale para o arquivo
  * inteiro. Escrito ANTES do adaptador, contra a main 7b97297.
  */
+import type * as NodeCrypto from "node:crypto";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const spy = vi.hoisted(() => ({ calls: 0 }));
 
 vi.mock("node:crypto", async (importOriginal) => {
-  const original = await importOriginal<typeof import("node:crypto")>();
+  const original = await importOriginal<typeof NodeCrypto>();
   return {
     ...original,
     default: original,
