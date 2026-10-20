@@ -1532,7 +1532,7 @@ ou número.
 
 | PR | Conteúdo | Depende de |
 |---|---|---|
-| B3.2a | Adaptador YCloud puro: assinatura sobre bytes (`t=,s=`), normalização de entrada, eco, status, histórico (ignorado) e eventos de conta a partir de exemplos oficiais; identidade telefone e/ou BSUID; sem rede | — |
+| B3.2a | **Implementada (§16).** Adaptador YCloud puro: assinatura sobre bytes (`t=,s=`), normalização de entrada, eco, status, histórico (ignorado) e eventos de conta a partir de exemplos oficiais; identidade telefone e/ou BSUID; sem rede | — |
 | B3.2b | `whatsapp_webhook_inbox` cifrada (chave e AAD próprias), única por (canal, id do evento), com prazo de retenção; RPC de gravação; pgTAP | B3.2a |
 | B3.2c | Rota `/api/webhooks/whatsapp/[provider]`: bytes → assinatura → canal pela resolução do webhook (§14.6) → inbox → 2xx → Inngest; 404 sem provedor | B3.2b |
 | B3.2d | Função Inngest e RPCs de serviço: mensagem, eco, status, eventos de conta; origem técnica `inbound`, `business_app`, `chatbot` (só com correlação positiva) ou `external_api` (fallback), `history`, e classificação do remetente `external`, `internal`, `automation` ou `unresolved` (§15.10); cadastro de identidades internas (telefone e BSUID; owner/admin); busca antes de criar lead; pendência de identificação; lead só por `inbound` + `external`; nada de lead ou atividade para bot, eco, histórico, status, comando interno ou evento técnico; teste de concorrência | B3.2c |
@@ -1617,3 +1617,236 @@ número do chatbot até o portão P7 fechar.
 
 **Resumo e qualificação (decisão 12):** fase posterior, fora da primeira PR
 da B3.2.
+
+## 16. B3.2a — adaptador YCloud puro (20/10/2026)
+
+Implementado só o adaptador, sem rede, sem credencial real, sem banco, sem
+Inngest e sem rota. Ele ainda **não** está ligado na resolução de provedor:
+`resolveWhatsAppProvider` continua devolvendo `not_available` para a
+YCloud, e a rota é da B3.2c. Nada foi configurado na YCloud, na Meta, na
+Vercel, no Supabase ou na Cloudflare, e nenhuma migration foi criada.
+
+### 16.1 Entregue
+
+- `src/server/whatsapp/provider/ycloud.ts`: `YCloudWhatsAppProvider`
+  (`verifyWebhook`, `normalizeEvents`; envio, consulta e mídia respondem
+  `unsupported`) e `ycloudRoutingKey`.
+- `src/server/whatsapp/status-projection.ts`: projeção pura de status fora
+  de ordem e repetidos (§16.5).
+- `src/server/whatsapp/provider/contract.ts`: tipos novos, todos aditivos.
+  O simulador e o teste de igualdade da B3.1 acompanham os campos novos.
+
+### 16.2 Assinatura e corpo
+
+- Cabeçalho `YCloud-Signature: t=<unix em segundos>,s=<hex>`, com
+  HMAC-SHA256 do segredo do endpoint sobre `<t>.` seguido dos **bytes
+  exatos** do corpo. Nunca sobre JSON reserializado.
+- Exatamente um `t` (1 a 12 dígitos) e ao menos um `s` (64 hexadecimais,
+  maiúsculas aceitas). Partes sem `=` são ignoradas, como no exemplo
+  oficial. Aceita se **qualquer** `s` conferir, e todas passam por
+  `timingSafeEqual`, sem atalho.
+- Tolerância de horário: 300 s por padrão, como no exemplo oficial.
+  Configurável de 1 s a 6 h; fora disso, o construtor recusa.
+- Limite de 256 KiB, o mesmo da leitura do corpo (§14.6). Segredo vazio é
+  recusado antes de calcular.
+- As recusas só carregam um código (`invalid_body`, `body_too_large`,
+  `invalid_secret`, `missing_signature`, `malformed_signature`,
+  `stale_signature`, `signature_mismatch`). Nada de segredo, assinatura ou
+  conteúdo. O adaptador não escreve log.
+- Só o corpo devolvido por `verifyWebhook` é decodificado, em UTF-8
+  estrita. BOM e byte inválido viram `invalid_payload`, nunca são removidos
+  em silêncio.
+
+### 16.3 Eventos e formatos suportados
+
+Um evento por requisição, como a YCloud entrega. Envelope obrigatório:
+- `id`: 6 a 128 caracteres, a chave oficial de deduplicação;
+- `type`;
+- `createTime` em RFC 3339.
+
+| Tipo YCloud | Fato normalizado | Origem candidata |
+|---|---|---|
+| `whatsapp.inbound_message.received` | `message.inbound`: ids (`id`, `wamid`), remetente (telefone e/ou BSUID), nome do perfil, tipo de conteúdo, texto só quando `type = text` | `inbound` |
+| idem, com `type = system` e `user_changed_number` | `contact.identity_changed` (`phone_number`): identidade anterior e nova (`wa_id`/`new_wa_id` com `+`, `user_id`); o texto livre do sistema é descartado | — |
+| idem, com `user_identity_changed` | `contact.identity_changed` (`identity`), sem inventar a identidade nova | — |
+| idem, com `groupId` | `ignored` (`group_message`), sem conteúdo nem identidade | — |
+| `whatsapp.smb.message.echoes` e `whatsapp.smb.message.created` | `message.outbound_observed`: ids, destinatário, tipo de conteúdo, texto | `business_app` |
+| `whatsapp.message.updated` | `message.status`: `accepted`, `sent`, `delivered`, `read` ou `failed`, ids, `externalId` opaco, `errorCode`, destinatário quando houver; nunca o texto | `external_api` |
+| idem, com `bizType` diferente de `whatsapp` (Verify) | `ignored` (`non_whatsapp_product`) | — |
+| `whatsapp.smb.history` (entrada, saída ou só progresso) | `ignored` (`history`): ignorado no piloto, sem conteúdo nem identidade | — |
+| `whatsapp.business_account.deleted`, `.updated`, `.reviewed` | `account` (`business_account`): WABA e código opaco (`removedReason`, `updateEvent`, `decision`) | — |
+| `whatsapp.phone_number.deleted`, `.name_updated`, `.quality_updated`, `.business_username_updated` | `account` (`phone_number`): WABA, número, routing key e código opaco | — |
+| Demais tipos oficiais (modelos, chamadas, grupos, contatos, pagamentos, fluxos, eco de agente da Meta) e tipos desconhecidos com envelope válido | `unsupported`, registrado e sem conteúdo | — |
+
+Regras de identidade:
+- aceita telefone, BSUID ou os dois;
+- evento que exige remetente ou destinatário (entrada e eco) e não traz
+  nenhum dos dois é recusado;
+- identificador presente e malformado, inclusive vazio, invalida o evento;
+- `recipientUserId` e o alias `toUserId` divergentes invalidam o evento;
+- telefone nunca é fabricado a partir do BSUID;
+- o adaptador não presume que um desconhecido seja cliente novo.
+
+Mídia só tem o tipo: link, id e legenda ficam para a B3.4.
+
+**Routing key da YCloud:** `<wabaId>:<número E.164 do escritório>`. Na
+entrada, o número é o `to`; no eco e no status, é o `from`. Os canais YCloud
+da B3.2c devem ser cadastrados com esse formato.
+
+### 16.4 Origem e classificação
+
+O adaptador entrega fatos do provedor. Ele **não** decide criação de lead,
+contato ou conversa, identidade interna, automação, vínculo nem origem
+`chatbot`. Os eventos não têm `sender_classification`.
+
+A origem que ele relata é só uma candidata, conforme §15.10:
+- `inbound` para mensagem recebida;
+- `business_app` para eco do aplicativo;
+- `external_api` para mensagem de API sem prova específica.
+
+A B3.2d só promove `external_api` a `crm` casando o id com a própria
+outbox. `chatbot` continua exigindo correlação positiva, que ainda não
+existe (P3/P4).
+
+### 16.5 Status fora de ordem
+
+`projectWhatsAppMessageStatus` aplica a regra do §1.3:
+- `delivered`/`read` corrigem um `failed` anterior;
+- nada regride de `delivered`/`read` para `failed`;
+- `accepted`/`sent` depois de `failed` não apagam o `failed`;
+- fora isso, só avança;
+- repetidos não mudam nada.
+
+O resultado final não depende da ordem de chegada. O adaptador não
+descarta nem reordena: cada entrega vira um fato próprio. A B3.2d aplica a
+mesma regra no banco.
+
+### 16.6 `externalId` (leitura somente do caminho de envio do chatbot)
+
+Lidos só o envio, os geradores de id e o documento de contratos do
+chatbot. Nenhum segredo, cliente ou dado real foi aberto, e nada foi
+alterado.
+
+- **O chatbot envia `externalId` em todo envio:**
+  - texto;
+  - interativo;
+  - modelo;
+  - alerta ao Dr.
+- **Como o valor é gerado:**
+  - é o id interno da resposta, gravado antes de enviar;
+  - o formato é `<prefixo>_<24 hexadecimais>`, um SHA-256 truncado de ids
+    internos, sem chave;
+  - o prefixo varia por tipo de envio: `msg-bot` (resposta), `msg-fu`
+    (retomada), `msg-nudge` (lembrete), `dr-reply` (resposta ao Dr.) e
+    `ho` (alerta de passagem);
+  - o chatbot usa esse valor para casar a atualização de entrega, porque o
+    envio não tem chave de idempotência.
+- **O que a YCloud devolve:** o `whatsapp.message.updated` traz o `id` da
+  YCloud, o `wamid` e o `externalId` enviado. A especificação oficial
+  descreve o `externalId` como um texto "único (recomendado)" para
+  conciliação.
+- **Conclusão:** o `externalId` é um valor opaco de correlação.
+  - Qualquer integração com a chave da conta pode enviar um valor no mesmo
+    formato, então nem a existência nem o formato provam
+    `origin = chatbot`.
+  - O adaptador o preserva como texto opaco (até 512 caracteres, sem
+    caractere de controle) e mantém `external_api`. Um teste cobre os
+    formatos do chatbot.
+  - **P3 e P4 continuam abertos.** Nenhuma confiança foi implementada.
+
+### 16.7 Divergências e lacunas da documentação oficial
+
+1. **`wabaId` e `from` no status.** A especificação marca os dois como
+   obrigatórios em `whatsappMessage`, mas os exemplos de status os omitem.
+   O adaptador exige os dois, porque sem eles o status não roteia. É
+   preciso confirmar com um evento de teste (P3/P4).
+2. **Tolerância e reentregas.** O guia diz que a tolerância é política da
+   aplicação, e não prazo de reentrega. Não documenta se as reentregas
+   (até cerca de 5 h 40) são reassinadas com um `t` novo. O chatbot usa
+   6 h. Aqui o padrão é 300 s, configurável até 6 h. A B3.2c decide com o
+   teste controlado.
+3. **Dois eventos de envio pelo aplicativo.** `whatsapp.smb.message.echoes`
+   e `whatsapp.smb.message.created` são separados. Não está documentado se
+   a mesma mensagem gera os dois, então a B3.2d deduplica pelo id da
+   mensagem.
+4. **Eco de agente da Meta.** `whatsapp.echo_message.*` é de agente
+   cadastrado pela API pública, não eco do aplicativo. Fica `unsupported`.
+5. **`accepted` em `message.updated`.** O enum de status inclui
+   `accepted`, mas a descrição de `message.updated` cita só `sent`,
+   `failed`, `delivered` e `read`. O adaptador aceita os cinco.
+6. **Placeholders nos exemplos.** Os exemplos oficiais usam textos como
+   `BUSINESS-PHONE-NUMBER`. As fixtures os trocam por números fictícios
+   E.164 (+1 202 555-01xx).
+7. **Endereços da documentação.** As páginas `docs.ycloud.com/reference/...`
+   citadas no §13 mudaram para `docs.ycloud.com/en/api-reference/...`.
+   Fontes desta etapa:
+   - guias "Implement a webhook receiver" e "Configure webhooks";
+   - exemplos de status, entrada, eco do aplicativo, histórico, conta e
+     número;
+   - especificação `openapi/webhooks/testing-webhooks.yaml`.
+
+### 16.8 Testes e mutações
+
+A ordem seguida foi testes, depois implementação, depois mutações.
+
+**Testes, antes da implementação.** Os testes de contrato foram escritos e
+commitados primeiro e rodados contra a main `7b97297`, sem o adaptador. Lá,
+112 falham e 2 passam. Os dois que passam:
+- a resolução de provedor continua sem adaptador YCloud;
+- as fixtures só têm dados fictícios.
+
+**Implementação.** Com o adaptador, os 114 passam. A suíte unitária inteira
+também passa (1439), assim como typecheck e lint.
+
+**Arquivos de teste:**
+- `b3-2a-ycloud-assinatura`;
+- `b3-2a-ycloud-tempo-constante` (espiona `timingSafeEqual`);
+- `b3-2a-ycloud-normalizacao`;
+- `b3-2a-status-projecao`;
+- `b3-2a-ycloud-isolamento`: sem `fetch` nem console, imports só de
+  `node:crypto`, `zod`, contrato e webhook, YCloud ainda desligado, fixtures
+  só com +1 202 555-01xx.
+
+**Mutações.** Foram 23 mutações controladas, cada uma aplicada sozinha e
+desfeita em seguida. Todas foram detectadas:
+
+| Mutação | Detectada por |
+|---|---|
+| Assinatura sobre JSON reserializado | 79 testes, entre eles o do corpo com espaçamento incomum |
+| `Buffer.equals` no lugar de `timingSafeEqual` | tempo constante |
+| Sem tolerância de horário | limite de ±300 s; recusas só com código |
+| Sem limite de tamanho | corpo acima de 256 KiB |
+| Só a primeira assinatura `s` | aceita quando alguma `s` confere |
+| Segredo vazio aceito | recusa segredo vazio |
+| BOM removido em silêncio | BOM assinado vira `invalid_payload` |
+| Telefone fabricado a partir do BSUID | só BSUID; tipo não suportado |
+| Identificador malformado ignorado | telefone sem `+`, com letras, BSUID com espaço, BSUID do destinatário |
+| Identificador vazio tratado como ausente | BSUID vazio, telefone vazio |
+| Entrada sem identidade aceita | sem nenhuma identidade do remetente |
+| Eco tratado como `inbound` | `smb.message.echoes` e `smb.message.created` |
+| `externalId` com prefixo do bot vira `chatbot` | `externalId` só como valor opaco |
+| Saída de API vira `chatbot` por exclusão | os 5 status e `externalId` opaco |
+| Histórico processado como entrada | histórico de entrada ignorado |
+| Tipo desconhecido recusado em vez de registrado | modelo, desconhecido e eco de agente |
+| Alias de BSUID divergente aceito | `recipientUserId` × `toUserId` |
+| Grupo não ignorado | mensagem de grupo |
+| `wa_id` e `new_wa_id` divergentes aceitos | troca de número |
+| Status carregando o texto | status sem texto |
+| `failed` terminal | `delivered` corrige `failed`; ordem de chegada |
+| `failed` regride `delivered`/`read` | nunca regride; ordem de chegada |
+| Adaptador ligado na resolução | YCloud continua `not_available` |
+
+### 16.9 Fora desta etapa
+
+Ficam para as próximas PRs:
+- inbox cifrada (B3.2b);
+- rota pública (B3.2c);
+- Inngest, RPCs e qualquer criação de lead, contato, conversa ou mensagem
+  (B3.2d);
+- identidades internas e `sender_classification` (B3.2d);
+- mídia (B3.4);
+- envio (B3.3);
+- passagem chatbot/humano;
+- credenciais reais e configuração externa.
+
+As migrations da B3.1 continuam **sem** aplicação no banco hospedado.
