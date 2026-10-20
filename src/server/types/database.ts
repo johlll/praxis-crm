@@ -3348,7 +3348,9 @@ export type Database = {
           created_at: string
           created_by: string
           display_phone_number: string
-          environment: Database["public"]["Enums"]["whatsapp_environment"] | null
+          environment:
+            | Database["public"]["Enums"]["whatsapp_environment"]
+            | null
           id: string
           is_simulator: boolean
           label: string
@@ -3365,7 +3367,9 @@ export type Database = {
           created_at?: string
           created_by: string
           display_phone_number: string
-          environment?: Database["public"]["Enums"]["whatsapp_environment"] | null
+          environment?:
+            | Database["public"]["Enums"]["whatsapp_environment"]
+            | null
           id?: string
           is_simulator?: boolean
           label: string
@@ -3382,7 +3386,9 @@ export type Database = {
           created_at?: string
           created_by?: string
           display_phone_number?: string
-          environment?: Database["public"]["Enums"]["whatsapp_environment"] | null
+          environment?:
+            | Database["public"]["Enums"]["whatsapp_environment"]
+            | null
           id?: string
           is_simulator?: boolean
           label?: string
@@ -3979,7 +3985,9 @@ export type Database = {
           created_at: string
           created_by: string
           display_phone_number: string
-          environment: Database["public"]["Enums"]["whatsapp_environment"] | null
+          environment:
+            | Database["public"]["Enums"]["whatsapp_environment"]
+            | null
           id: string
           is_simulator: boolean
           label: string
