@@ -145,7 +145,13 @@ export type Permission =
   // atividade. Administrar conexões de OUTROS usuários (ver a saúde de
   // todas, desconectar a de alguém) é só owner/admin — nunca lê tokens.
   | "calendar.connect_own"
-  | "calendar.manage";
+  | "calendar.manage"
+  // B3.1 — canal de WhatsApp (docs/decisoes/b3-whatsapp-real.md §7, §12
+  // decisão 5): cadastrar, configurar, pausar, reativar e desligar o envio
+  // de um canal, e guardar suas credenciais cifradas. Só owner/admin —
+  // mesma faixa de conversation.simulate e form_endpoint.manage. Nunca
+  // manager, advogado, atendimento ou visualizador.
+  | "channel.manage";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -186,6 +192,7 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace_legal_profile.manage": new Set<Role>(["owner", "admin"]),
   "calendar.connect_own": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
   "calendar.manage": new Set<Role>(["owner", "admin"]),
+  "channel.manage": new Set<Role>(["owner", "admin"]),
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {

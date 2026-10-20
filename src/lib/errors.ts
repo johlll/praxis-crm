@@ -145,6 +145,19 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   intent_target_mismatch: "O evento encontrado não corresponde à inclusão registrada. Nada foi vinculado.",
   key_version_mismatch: "Não foi possível renovar a autorização desta conexão. Reconecte a agenda.",
   calendar_provider_not_configured: "A integração com o Google Agenda não está configurada neste ambiente.",
+  // B3.1 — fundação do canal de WhatsApp.
+  whatsapp_environment_required: "A integração de WhatsApp não está configurada neste ambiente.",
+  whatsapp_not_configured: "A integração de WhatsApp não está configurada neste ambiente.",
+  whatsapp_provider_unavailable: "O provedor de WhatsApp não está disponível neste ambiente.",
+  channel_routing_key_taken: "Já existe um canal com este identificador de roteamento.",
+  invalid_channel_state: "O canal não está num estado que permita esta operação.",
+  invalid_channel_label: "Informe um nome para o canal (até 120 caracteres).",
+  invalid_routing_key: "Informe o identificador de roteamento do canal (até 128 caracteres).",
+  invalid_display_phone_number: "Informe o número exibido do canal.",
+  invalid_channel_data: "Os dados do canal não são válidos.",
+  invalid_credential: "Não foi possível guardar a credencial do canal.",
+  credential_purpose_not_allowed: "Este tipo de credencial não é aceito para este canal.",
+  channel_environment_mismatch: "Este canal pertence a outro ambiente e não pode ser usado aqui.",
 };
 
 /** update_lead_basic_fields()/assign_lead()/set_lead_status()/set_lead_value()

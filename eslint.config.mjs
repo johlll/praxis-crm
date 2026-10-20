@@ -107,4 +107,35 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    /**
+     * B3.1: `src/server/whatsapp/admin/supabase.ts` é o ÚNICO arquivo do
+     * WhatsApp autorizado a construir um cliente `service_role` cru. As
+     * funções de canal e credencial têm EXECUTE só para service_role, e o
+     * cliente envia só o cabeçalho de ambiente PRÓPRIO do WhatsApp — nunca
+     * o do calendário.
+     */
+    files: ["src/server/whatsapp/**/*.{ts,tsx}"],
+    ignores: ["src/server/whatsapp/admin/supabase.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@supabase/supabase-js"],
+              importNames: ["createClient"],
+              message:
+                "Não construa outro cliente service_role aqui — importe createWhatsAppAdminSupabaseClient de @/server/whatsapp/admin/supabase.",
+            },
+            {
+              group: ["@/server/calendar/*", "@/server/calendar/**", "**/server/calendar/**"],
+              message:
+                "O WhatsApp não usa chaves, cabeçalho, cifra nem cliente do calendário (docs/decisoes/b3-whatsapp-real.md §7.1).",
+            },
+          ],
+        },
+      ],
+    },
+  },
 );

@@ -6,7 +6,7 @@
 -- monta a partir do JWT — é a mesma checagem que vale em produção.
 
 begin;
-select plan(26);
+select plan(31);
 
 -- Atalhos para os UUIDs fixos do seed.
 \set ana        '20000000-0000-0000-0000-000000000001'
@@ -220,6 +220,54 @@ select set_config('request.jwt.claims', json_build_object('sub', :'daniel', 'rol
 select is(
   (select count(*) from public.users where id <> :'daniel'::uuid)::int, 0,
   'Daniel (sem membership em lugar nenhum) só vê o próprio perfil'
+);
+
+-- -----------------------------------------------------------------
+-- 10) B3.1 — canal de WhatsApp: administração e credenciais isoladas por
+--     workspace (docs/decisoes/b3-whatsapp-real.md §7). Chave de teste,
+--     só desta transação.
+-- -----------------------------------------------------------------
+reset role;
+select set_config('request.jwt.claims', '', true);
+insert into public.whatsapp_environment_keys (environment, signing_key)
+values ('preview', 'chave-isolamento-whatsapp-preview-0123456789');
+select json_build_object(
+  'x-praxis-whatsapp-env',
+  'v1.preview.' || x || '.' || private.whatsapp_environment_signature('preview', x, 'chave-isolamento-whatsapp-preview-0123456789')
+)::text as h_wa
+from (select extract(epoch from now())::bigint + 300 as x) e \gset
+
+set local role service_role;
+select set_config('request.headers', :'h_wa', true);
+select ok(
+  (whatsapp_create_simulated_channel(
+    '32000000-0000-0000-0000-000000000001', :'ws_um'::uuid, :'ana'::uuid, 'Isolamento B3', 'iso-b3-um', '1',
+    'QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB', '1'
+  )) ->> 'id' = '32000000-0000-0000-0000-000000000001',
+  'Ana cria um canal de WhatsApp no Escritório Um'
+);
+select throws_ok(
+  format($i$ select whatsapp_list_channels(%L::uuid, %L::uuid) $i$, :'ws_um', :'bruno'),
+  'P0001', 'insufficient_permission',
+  'Bruno (owner do Dois) não lista canais do Um'
+);
+select is(
+  jsonb_array_length(whatsapp_list_channels(:'ws_dois'::uuid, :'bruno'::uuid)), 0,
+  'Bruno lista o próprio workspace e não vê o canal do Um'
+);
+select throws_ok(
+  format($i$ select whatsapp_pause_channel('32000000-0000-0000-0000-000000000001', %L::uuid, %L::uuid) $i$, :'ws_dois', :'bruno'),
+  'P0001', 'channel_not_found',
+  'Bruno não pausa o canal do Um nem afirmando o próprio workspace'
+);
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', :'bruno', 'role', 'authenticated')::text, true);
+select throws_ok(
+  $i$ select count(*) from public.whatsapp_channel_credentials $i$,
+  '42501', null,
+  'Bruno não tem GRANT nenhum em whatsapp_channel_credentials'
 );
 
 select * from finish();
