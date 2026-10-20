@@ -1645,6 +1645,13 @@ Vercel, no Supabase ou na Cloudflare, e nenhuma migration foi criada.
   maiúsculas aceitas). Partes sem `=` são ignoradas, como no exemplo
   oficial. Aceita se **qualquer** `s` conferir, e todas passam por
   `timingSafeEqual`, sem atalho.
+- Custo limitado antes de qualquer HMAC (a rota será pública): cabeçalho de
+  no máximo **1024 caracteres** e no máximo **8 assinaturas** `s`. Um
+  cabeçalho com 8 assinaturas tem cerca de 550 caracteres, o que deixa
+  folga para a rotação de segredo. Acima de qualquer limite, a recusa é
+  `malformed_signature`, sem calcular HMAC nem comparar, e a lista nunca é
+  percorrida além da nona assinatura. Com 8 assinaturas, são exatamente 8
+  comparações e 1 HMAC.
 - Tolerância de horário: 300 s por padrão, como no exemplo oficial.
   Configurável de 1 s a 6 h; fora disso, o construtor recusa.
 - Limite de 256 KiB, o mesmo da leitura do corpo (§14.6). Segredo vazio é
@@ -1662,6 +1669,9 @@ Vercel, no Supabase ou na Cloudflare, e nenhuma migration foi criada.
 Um evento por requisição, como a YCloud entrega. Envelope obrigatório:
 - `id`: 6 a 128 caracteres, a chave oficial de deduplicação;
 - `type`;
+- `apiVersion`: exatamente `"v2"`. Versão ausente, vazia, não textual ou
+  diferente (v1, v3, `V2`) vira `invalid_payload`; uma v3 futura nunca é
+  lida com o schema da v2;
 - `createTime` em RFC 3339.
 
 | Tipo YCloud | Fato normalizado | Origem candidata |
@@ -1671,7 +1681,7 @@ Um evento por requisição, como a YCloud entrega. Envelope obrigatório:
 | idem, com `user_identity_changed` | `contact.identity_changed` (`identity`), sem inventar a identidade nova | — |
 | idem, com `groupId` | `ignored` (`group_message`), sem conteúdo nem identidade | — |
 | `whatsapp.smb.message.echoes` e `whatsapp.smb.message.created` | `message.outbound_observed`: ids, destinatário, tipo de conteúdo, texto | `business_app` |
-| `whatsapp.message.updated` | `message.status`: `accepted`, `sent`, `delivered`, `read` ou `failed`, ids, `externalId` opaco, `errorCode`, destinatário quando houver; nunca o texto | `external_api` |
+| `whatsapp.message.updated` | `message.status`: `accepted`, `sent`, `delivered`, `read` ou `failed`, ids, `externalId` opaco, `errorCode`, destinatário quando houver, custo informado pelo provedor (§16.5); nunca o texto | `external_api` |
 | idem, com `bizType` diferente de `whatsapp` (Verify) | `ignored` (`non_whatsapp_product`) | — |
 | `whatsapp.smb.history` (entrada, saída ou só progresso) | `ignored` (`history`): ignorado no piloto, sem conteúdo nem identidade | — |
 | `whatsapp.business_account.deleted`, `.updated`, `.reviewed` | `account` (`business_account`): WABA e código opaco (`removedReason`, `updateEvent`, `decision`) | — |
@@ -1721,6 +1731,44 @@ O resultado final não depende da ordem de chegada. O adaptador não
 descarta nem reordena: cada entrega vira um fato próprio. A B3.2d aplica a
 mesma regra no banco.
 
+**Custo informado pelo provedor (`providerCost`).** Cumpre a decisão de
+guardar o custo devolvido pelo provedor e distinguir estimativa de valor
+final (§4.3). A estrutura tem:
+- `source: "provider"`: nunca é estimativa calculada pelo CRM;
+- `category`: `pricingCategory` como valor opaco validado. A lista é
+  aberta, então uma categoria futura é preservada;
+- `amount`: `totalPrice`, finito e não negativo; zero é válido (mensagem
+  gratuita);
+- `currency`: ISO 4217, três letras maiúsculas;
+- `finality`: `final` em `delivered`/`read` e `estimated` em
+  `accepted`/`sent`/`failed`.
+
+O guia oficial de preço diz:
+- em `accepted`/`sent` o preço é estimado;
+- em `delivered`/`read` é o final, usado na cobrança;
+- `failed` não é cobrado.
+
+Por isso o valor que vier num `failed` fica como estimativa, nunca como
+final.
+
+Regras:
+- campo presente e malformado (valor negativo, em texto ou infinito;
+  moeda ou categoria fora do formato) → `invalid_payload`;
+- custo parcial (valor sem moeda, moeda sem valor, só categoria) →
+  `providerCost: null`;
+- custo contraditório (`pricingType` gratuito com valor maior que zero) →
+  `providerCost: null`. Nunca vira um custo que pareça confiável.
+
+`projectWhatsAppProviderCost`:
+- o valor final substitui a estimativa e nunca volta a ser estimativa nem
+  some;
+- entre estimativas, vale a mais recente;
+- um `failed` com estimativa seguido de `delivered` termina com o valor
+  final.
+
+O valor fica em `number` nesta etapa. A precisão da gravação (`numeric`) é
+da migration da B3.2d/B3.3.
+
 ### 16.6 `externalId` (leitura somente do caminho de envio do chatbot)
 
 Lidos só o envio, os geradores de id e o documento de contratos do
@@ -1757,18 +1805,27 @@ alterado.
 ### 16.7 Divergências e lacunas da documentação oficial
 
 1. **`wabaId` e `from` no status.** A especificação marca os dois como
-   obrigatórios em `whatsappMessage`, mas os exemplos de status os omitem.
-   O adaptador exige os dois, porque sem eles o status não roteia. É
-   preciso confirmar com um evento de teste (P3/P4).
+   obrigatórios em `whatsappMessage`. Os exemplos **atuais** de status os
+   trazem:
+   - o do guia de BSUID ("Use business-scoped user IDs");
+   - o do catálogo "Webhook payload examples".
+
+   Já a página genérica e mais antiga "Message status webhook examples"
+   mostra o status sem os dois. O adaptador exige `wabaId` e `from` porque
+   são necessários para rotear o evento ao canal correto. O formato ainda
+   será confirmado com webhook real na B3.2c (P3/P4).
 2. **Tolerância e reentregas.** O guia diz que a tolerância é política da
    aplicação, e não prazo de reentrega. Não documenta se as reentregas
    (até cerca de 5 h 40) são reassinadas com um `t` novo. O chatbot usa
    6 h. Aqui o padrão é 300 s, configurável até 6 h. A B3.2c decide com o
    teste controlado.
 3. **Dois eventos de envio pelo aplicativo.** `whatsapp.smb.message.echoes`
-   e `whatsapp.smb.message.created` são separados. Não está documentado se
-   a mesma mensagem gera os dois, então a B3.2d deduplica pelo id da
-   mensagem.
+   e `whatsapp.smb.message.created` podem representar saídas do
+   aplicativo. Não está documentado se a mesma mensagem gera os dois.
+   - Os dois viram `message.outbound_observed` (`business_app`), e o tipo
+     original fica em `providerType`.
+   - A deduplicação futura (B3.2d) será pelo identificador da mensagem
+     (`id` da YCloud e `wamid`), **não** pelo tipo do evento.
 4. **Eco de agente da Meta.** `whatsapp.echo_message.*` é de agente
    cadastrado pela API pública, não eco do aplicativo. Fica `unsupported`.
 5. **`accepted` em `message.updated`.** O enum de status inclui
@@ -1835,6 +1892,31 @@ desfeita em seguida. Todas foram detectadas:
 | `failed` terminal | `delivered` corrige `failed`; ordem de chegada |
 | `failed` regride `delivered`/`read` | nunca regride; ordem de chegada |
 | Adaptador ligado na resolução | YCloud continua `not_available` |
+
+**Revisão da PR #48** (versão do evento, custo do provedor e limites do
+cabeçalho):
+- **Testes primeiro.** Os testes de reprodução foram commitados primeiro
+  (`a283f66`) e rodados contra o HEAD `a8db0ef`. Lá, 42 falham e 4
+  passam. Os quatro que passam: a v2 já era aceita, e 8 assinaturas, 1024
+  caracteres e a rotação já funcionavam.
+- **Correção.** Com a correção (`cd47478`), os 46 passam. A suíte inteira
+  também passa (1485), assim como typecheck e lint.
+- **Mutações.** Foram 12 controladas, e todas foram detectadas:
+
+| Mutação | Detectada por |
+|---|---|
+| Sem checagem de versão | ausente, vazia, v1, v3, `V2`, com espaço, número, null, objeto |
+| Aceita qualquer versão começando por `v` | v1, v3, v3 com corpo da v2 |
+| Descarta o custo | 19 testes de custo e de projeção |
+| Marca estimativa como final | accepted, sent, failed; ponta a ponta |
+| Estimativa tardia substitui o final | o final nunca volta a ser estimativa |
+| Aceita valor negativo | valor negativo |
+| Aceita valor infinito | `1e400` |
+| Aceita moeda inválida | minúscula, 2 letras, por extenso |
+| Custo parcial vira custo | valor sem moeda |
+| Custo contraditório aceito | tipo gratuito com valor positivo |
+| Sem limite de tamanho do cabeçalho | 1025 caracteres, sem HMAC |
+| Sem limite de quantidade de assinaturas | 9 assinaturas, sem HMAC nem comparação |
 
 ### 16.9 Fora desta etapa
 
