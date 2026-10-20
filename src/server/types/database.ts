@@ -5021,7 +5021,10 @@ export type Database = {
       whatsapp_get_channel_credential: {
         Args: {
           p_channel_id: string
+          p_provider: Database["public"]["Enums"]["whatsapp_provider"]
           p_purpose: Database["public"]["Enums"]["whatsapp_credential_purpose"]
+          p_routing_key: string
+          p_workspace_id: string
         }
         Returns: {
           channel_id: string
@@ -5030,6 +5033,7 @@ export type Database = {
           key_version: string
           provider: Database["public"]["Enums"]["whatsapp_provider"]
           purpose: Database["public"]["Enums"]["whatsapp_credential_purpose"]
+          routing_key: string
           workspace_id: string
         }[]
       }
@@ -5060,6 +5064,22 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: Json
+      }
+      whatsapp_resolve_webhook_channel: {
+        Args: {
+          p_provider: Database["public"]["Enums"]["whatsapp_provider"]
+          p_routing_key: string
+        }
+        Returns: {
+          channel_id: string
+          ciphertext: string
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          key_version: string
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          routing_key: string
+          status: string
+          workspace_id: string
+        }[]
       }
       whatsapp_store_channel_credential: {
         Args: {

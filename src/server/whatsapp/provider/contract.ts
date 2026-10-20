@@ -38,12 +38,89 @@ export function unsupported(capability: WhatsAppCapability): UnsupportedCapabili
 }
 
 // ---------------------------------------------------------------------
-// Webhook
+// Identidade do contato
 // ---------------------------------------------------------------------
 
+/**
+ * Identidade do contato no WhatsApp: telefone, BSUID (identificador do
+ * usuário por empresa, que a Meta pode mandar SEM telefone), ou os dois —
+ * nunca nenhum (docs/decisoes/b3-whatsapp-real.md §4). O domínio não pode
+ * presumir que todo contato tem telefone.
+ */
+export type WhatsAppContactIdentity =
+  | { readonly kind: "phone"; readonly phoneE164: string; readonly bsuid: null }
+  | { readonly kind: "bsuid"; readonly phoneE164: null; readonly bsuid: string }
+  | { readonly kind: "phone_and_bsuid"; readonly phoneE164: string; readonly bsuid: string };
+
+const E164 = /^\+[1-9][0-9]{7,14}$/;
+/** Formato exato do BSUID a confirmar na B3.2; por ora, um identificador
+ * opaco, sem espaços, de até 128 caracteres. */
+const BSUID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+/** Monta a identidade, ou `null` quando não há nenhum identificador válido.
+ * FALHA FECHADA: um identificador presente e malformado invalida tudo, em
+ * vez de ser ignorado. */
+export function whatsappContactIdentity(input: {
+  phoneE164?: string | null | undefined;
+  bsuid?: string | null | undefined;
+}): WhatsAppContactIdentity | null {
+  const phone = input.phoneE164 ? input.phoneE164 : null;
+  const bsuid = input.bsuid ? input.bsuid : null;
+  if (phone !== null && !E164.test(phone)) return null;
+  if (bsuid !== null && !BSUID.test(bsuid)) return null;
+  if (phone !== null && bsuid !== null) return Object.freeze({ kind: "phone_and_bsuid", phoneE164: phone, bsuid });
+  if (phone !== null) return Object.freeze({ kind: "phone", phoneE164: phone, bsuid: null });
+  if (bsuid !== null) return Object.freeze({ kind: "bsuid", phoneE164: null, bsuid });
+  return null;
+}
+
+// ---------------------------------------------------------------------
+// Webhook: bytes → assinatura → decodificação e normalização
+// ---------------------------------------------------------------------
+
+/**
+ * Corpo do webhook cuja assinatura JÁ foi conferida sobre os bytes exatos.
+ * Só existe por `afterSignatureCheck`, que o adaptador chama depois de
+ * conferir; `normalizeEvents` recusa qualquer outra coisa. Guarda uma cópia
+ * dos bytes: mexer no buffer original depois não muda o que foi verificado.
+ */
+export class VerifiedWebhookBody {
+  readonly #bytes: Uint8Array;
+
+  private constructor(bytes: Uint8Array) {
+    this.#bytes = bytes.slice();
+    Object.freeze(this);
+  }
+
+  static afterSignatureCheck(bytes: Uint8Array): VerifiedWebhookBody {
+    return new VerifiedWebhookBody(bytes);
+  }
+
+  static is(value: unknown): value is VerifiedWebhookBody {
+    return typeof value === "object" && value !== null && #bytes in value;
+  }
+
+  get byteLength(): number {
+    return this.#bytes.byteLength;
+  }
+
+  /** UTF-8 ESTRITA: byte inválido → `null`; BOM não é removido em silêncio. */
+  decodeUtf8Strict(): string | null {
+    try {
+      return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(this.#bytes);
+    } catch {
+      return null;
+    }
+  }
+}
+
+export function isRawBodyBytes(value: unknown): value is Uint8Array {
+  return value instanceof Uint8Array || Object.prototype.toString.call(value) === "[object Uint8Array]";
+}
+
 export type WebhookVerificationInput = {
-  /** Corpo BRUTO, exatamente como chegou: a assinatura é sobre os bytes. */
-  rawBody: string;
+  /** Bytes EXATOS do corpo, como chegaram — nunca texto já decodificado. */
+  rawBody: Uint8Array;
   headers: Headers;
   /** Segredo do canal, já decifrado pelo servidor. */
   secret: string;
@@ -51,8 +128,11 @@ export type WebhookVerificationInput = {
 };
 
 export type WebhookVerificationResult =
-  | { ok: true }
-  | { ok: false; reason: "missing_signature" | "malformed_signature" | "stale_signature" | "signature_mismatch" }
+  | { ok: true; verified: VerifiedWebhookBody }
+  | {
+      ok: false;
+      reason: "invalid_body" | "missing_signature" | "malformed_signature" | "stale_signature" | "signature_mismatch";
+    }
   | UnsupportedCapability;
 
 // ---------------------------------------------------------------------
@@ -67,7 +147,7 @@ export type NormalizedInboundText = {
   routingKey: string;
   providerMessageId: string;
   occurredAt: Date;
-  senderPhoneE164: string;
+  sender: WhatsAppContactIdentity;
   text: string;
 };
 
@@ -95,7 +175,7 @@ export type NormalizedWhatsAppEvent = NormalizedInboundText | NormalizedStatusUp
 
 export type NormalizeEventsResult =
   | { ok: true; events: NormalizedWhatsAppEvent[] }
-  | { ok: false; reason: "invalid_payload" }
+  | { ok: false; reason: "unverified_body" | "invalid_payload" }
   | UnsupportedCapability;
 
 // ---------------------------------------------------------------------
@@ -104,7 +184,7 @@ export type NormalizeEventsResult =
 
 export type SendTextRequest = {
   routingKey: string;
-  recipientPhoneE164: string;
+  recipient: WhatsAppContactIdentity;
   text: string;
   /** Correlação com o registro interno. Não é chave de idempotência. */
   correlationId: string;
@@ -112,7 +192,7 @@ export type SendTextRequest = {
 
 export type SendTemplateRequest = {
   routingKey: string;
-  recipientPhoneE164: string;
+  recipient: WhatsAppContactIdentity;
   templateName: string;
   templateLanguage: string;
   parameters: string[];
@@ -146,8 +226,11 @@ export type FetchMediaResult =
 export interface WhatsAppProvider {
   readonly kind: WhatsAppProviderKind;
   describeCapabilities(): WhatsAppCapabilities;
+  /** Confere a assinatura sobre os bytes; só o sucesso devolve o corpo
+   * verificado. */
   verifyWebhook(input: WebhookVerificationInput): WebhookVerificationResult;
-  normalizeEvents(rawBody: string): NormalizeEventsResult;
+  /** Decodifica e normaliza SÓ um corpo devolvido por `verifyWebhook`. */
+  normalizeEvents(body: VerifiedWebhookBody): NormalizeEventsResult;
   sendText(request: SendTextRequest): Promise<SendResult>;
   sendTemplate(request: SendTemplateRequest): Promise<SendResult>;
   lookupMessage(request: LookupMessageRequest): Promise<LookupMessageResult>;

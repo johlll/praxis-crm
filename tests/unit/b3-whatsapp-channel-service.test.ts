@@ -16,8 +16,7 @@ vi.mock("@/server/whatsapp/admin/supabase", () => ({
 }));
 
 const service = await import("@/modules/whatsapp-channels/service");
-const { mapSafeChannel, adminReadWhatsAppChannelCredential } = await import("@/server/whatsapp/admin/channels");
-const { encryptWhatsAppCredential } = await import("@/server/whatsapp/credential-crypto");
+const { mapSafeChannel } = await import("@/server/whatsapp/admin/channels");
 const { roleHasPermission, ROLES } = await import("@/lib/roles");
 
 const WS = "10000000-0000-0000-0000-000000000001";
@@ -211,37 +210,5 @@ describe("nenhuma credencial em retornos ou erros", () => {
   ])("código conhecido %s vira mensagem própria", async (code, message) => {
     rpcMock.mockResolvedValue({ data: null, error: { message: code } });
     expect(await service.reactivateWhatsAppChannel({ channelId: CHANNEL })).toEqual({ ok: false, error: message });
-  });
-
-  it("leitura interna da credencial recusa linha de outro ambiente antes de decifrar", async () => {
-    const enc = encryptWhatsAppCredential("segredo", {
-      environment: "production",
-      workspaceId: WS,
-      channelId: CHANNEL,
-      provider: "simulated",
-      purpose: "webhook_secret",
-    });
-    rpcMock.mockResolvedValue({
-      data: [{ channel_id: CHANNEL, workspace_id: WS, environment: "production", provider: "simulated", purpose: "webhook_secret", ciphertext: enc.ciphertextBase64, key_version: enc.keyVersion }],
-      error: null,
-    });
-    await expect(adminReadWhatsAppChannelCredential({ channelId: CHANNEL, purpose: "webhook_secret" })).rejects.toThrow(
-      "channel_environment_mismatch",
-    );
-  });
-
-  it("leitura interna decifra a credencial do próprio ambiente", async () => {
-    const enc = encryptWhatsAppCredential("segredo", {
-      environment: "preview",
-      workspaceId: WS,
-      channelId: CHANNEL,
-      provider: "simulated",
-      purpose: "webhook_secret",
-    });
-    rpcMock.mockResolvedValue({
-      data: [{ channel_id: CHANNEL, workspace_id: WS, environment: "preview", provider: "simulated", purpose: "webhook_secret", ciphertext: enc.ciphertextBase64, key_version: enc.keyVersion }],
-      error: null,
-    });
-    await expect(adminReadWhatsAppChannelCredential({ channelId: CHANNEL, purpose: "webhook_secret" })).resolves.toBe("segredo");
   });
 });

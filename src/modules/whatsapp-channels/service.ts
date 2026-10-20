@@ -106,8 +106,8 @@ export async function createSimulatedWhatsAppChannel(input: unknown): Promise<Wh
   const notReady = environmentReady();
   if (notReady) return notReady;
 
-  const provider = resolveWhatsAppProvider();
-  if (provider.status !== "enabled" || provider.provider.kind !== "simulated") {
+  const provider = resolveWhatsAppProvider({ channelProvider: "simulated" });
+  if (provider.status !== "enabled") {
     return { ok: false, error: toUserMessage({ message: "whatsapp_provider_unavailable" }) };
   }
   if (!isWhatsAppCredentialCryptoConfigured()) {

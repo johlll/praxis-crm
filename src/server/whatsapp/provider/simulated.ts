@@ -3,7 +3,10 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 
 import {
+  isRawBodyBytes,
   unsupported,
+  VerifiedWebhookBody,
+  whatsappContactIdentity,
   type FetchMediaRequest,
   type FetchMediaResult,
   type LookupMessageRequest,
@@ -26,9 +29,10 @@ import {
  * O que ele faz de verdade:
  *  - verifica a assinatura de um webhook SIMULADO (esquema próprio do
  *    simulador, `X-Praxis-Simulated-Signature: t=<s>,s=<hex>`, HMAC-SHA256
- *    de `<t>.<corpo bruto>` com o segredo do canal) — não copia o formato
- *    de nenhum provedor real;
- *  - normaliza um payload simulado para os tipos do contrato.
+ *    de `<t>.` seguido dos BYTES exatos do corpo, com o segredo do canal) —
+ *    não copia o formato de nenhum provedor real;
+ *  - normaliza, só depois da assinatura, um payload simulado para os tipos
+ *    do contrato (UTF-8 estrita; contato por telefone, BSUID ou ambos).
  *
  * O que ele NÃO faz: enviar, consultar mensagem, buscar mídia. Essas
  * capacidades respondem `unsupported` — nunca um sucesso fingido.
@@ -46,12 +50,11 @@ const CAPABILITIES: WhatsAppCapabilities = Object.freeze({
   fetchMedia: false,
 });
 
-export function signSimulatedWebhook(rawBody: string, secret: string, timestampSeconds: number): string {
-  const signature = createHmac("sha256", secret).update(`${timestampSeconds}.`).update(rawBody, "utf8").digest("hex");
+export function signSimulatedWebhook(rawBody: Uint8Array, secret: string, timestampSeconds: number): string {
+  const signature = createHmac("sha256", secret).update(`${timestampSeconds}.`).update(rawBody).digest("hex");
   return `t=${timestampSeconds},s=${signature}`;
 }
 
-const e164 = z.string().regex(/^\+[1-9][0-9]{7,14}$/);
 const isoDate = z.string().datetime({ offset: true });
 
 const simulatedEventSchema = z.discriminatedUnion("type", [
@@ -61,7 +64,9 @@ const simulatedEventSchema = z.discriminatedUnion("type", [
     routingKey: z.string().min(1).max(128),
     messageId: z.string().min(1).max(128),
     occurredAt: isoDate,
-    from: e164,
+    // Telefone, BSUID ou os dois; a identidade é conferida na normalização.
+    from: z.string().max(32).optional(),
+    fromBsuid: z.string().max(128).optional(),
     text: z.string().min(1).max(4096),
   }),
   z.object({
@@ -95,6 +100,9 @@ export class SimulatedWhatsAppProvider implements WhatsAppProvider {
   }
 
   verifyWebhook(input: WebhookVerificationInput): WebhookVerificationResult {
+    // Só bytes: texto já decodificado pode ter perdido BOM, quebras de linha
+    // ou bytes inválidos que a assinatura cobre.
+    if (!isRawBodyBytes(input.rawBody)) return { ok: false, reason: "invalid_body" };
     const header = input.headers.get(SIMULATED_SIGNATURE_HEADER);
     if (!header) return { ok: false, reason: "missing_signature" };
 
@@ -113,38 +121,46 @@ export class SimulatedWhatsAppProvider implements WhatsAppProvider {
       return { ok: false, reason: "stale_signature" };
     }
 
-    const expected = createHmac("sha256", input.secret).update(`${t}.`).update(input.rawBody, "utf8").digest();
+    const expected = createHmac("sha256", input.secret).update(`${t}.`).update(input.rawBody).digest();
     const received = Buffer.from(s, "hex");
     if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
       return { ok: false, reason: "signature_mismatch" };
     }
-    return { ok: true };
+    return { ok: true, verified: VerifiedWebhookBody.afterSignatureCheck(input.rawBody) };
   }
 
-  normalizeEvents(rawBody: string): NormalizeEventsResult {
+  normalizeEvents(body: VerifiedWebhookBody): NormalizeEventsResult {
+    if (!VerifiedWebhookBody.is(body)) return { ok: false, reason: "unverified_body" };
+    const text = body.decodeUtf8Strict();
+    if (text === null) return { ok: false, reason: "invalid_payload" };
     let json: unknown;
     try {
-      json = JSON.parse(rawBody);
+      json = JSON.parse(text);
     } catch {
       return { ok: false, reason: "invalid_payload" };
     }
     const parsed = simulatedPayloadSchema.safeParse(json);
     if (!parsed.success) return { ok: false, reason: "invalid_payload" };
 
-    const events: NormalizedWhatsAppEvent[] = parsed.data.events.map((event) => {
+    const events: NormalizedWhatsAppEvent[] = [];
+    for (const event of parsed.data.events) {
       switch (event.type) {
-        case "message.inbound":
-          return {
+        case "message.inbound": {
+          const sender = whatsappContactIdentity({ phoneE164: event.from, bsuid: event.fromBsuid });
+          if (!sender) return { ok: false, reason: "invalid_payload" };
+          events.push({
             kind: "message.inbound",
             providerEventId: event.id,
             routingKey: event.routingKey,
             providerMessageId: event.messageId,
             occurredAt: new Date(event.occurredAt),
-            senderPhoneE164: event.from,
+            sender,
             text: event.text,
-          };
+          });
+          break;
+        }
         case "message.status":
-          return {
+          events.push({
             kind: "message.status",
             providerEventId: event.id,
             routingKey: event.routingKey,
@@ -152,17 +168,19 @@ export class SimulatedWhatsAppProvider implements WhatsAppProvider {
             occurredAt: new Date(event.occurredAt),
             status: event.status,
             errorCode: event.errorCode ?? null,
-          };
+          });
+          break;
         case "other":
-          return {
+          events.push({
             kind: "unsupported",
             providerEventId: event.id,
             routingKey: event.routingKey,
             occurredAt: new Date(event.occurredAt),
             providerType: event.providerType,
-          };
+          });
+          break;
       }
-    });
+    }
     return { ok: true, events };
   }
 

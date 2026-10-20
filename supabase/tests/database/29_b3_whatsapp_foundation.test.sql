@@ -122,8 +122,8 @@ select is(
   (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname like 'whatsapp\_%'
      and has_function_privilege('service_role', p.oid, 'execute')),
-  9,
-  'as 9 funções public.whatsapp_* são executáveis por service_role'
+  10,
+  'as 10 funções public.whatsapp_* são executáveis por service_role'
 );
 select is(
   (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -264,8 +264,8 @@ select throws_ok(
   'P0001', 'credential_purpose_not_allowed', 'canal simulado não aceita chave de API'
 );
 select is(
-  (select count(*)::int from whatsapp_get_channel_credential(:'ch_um'::uuid, 'webhook_secret')),
-  1, 'servidor lê a credencial cifrada no mesmo ambiente'
+  (select count(*)::int from whatsapp_get_channel_credential(:'ch_um'::uuid, :'ws_um'::uuid, 'simulated', 'b3-sim-um', 'webhook_secret')),
+  1, 'servidor lê a credencial cifrada no mesmo ambiente, com o contexto do canal'
 );
 
 -- ---------------------------------------------------------------------
@@ -305,8 +305,9 @@ select throws_ok(format($i$ select whatsapp_pause_channel(%L::uuid, %L::uuid, %L
   'P0001', 'channel_not_found', 'Production não pausa canal de Preview');
 select throws_ok(format($i$ select whatsapp_update_channel_settings(%L::uuid, %L::uuid, %L::uuid, 'x', '1') $i$, :'ch_um', :'ws_um', :'ana'),
   'P0001', 'channel_not_found', 'Production não altera canal de Preview');
-select is((select count(*)::int from whatsapp_get_channel_credential(:'ch_um'::uuid, 'webhook_secret')), 0,
-  'Production não lê credencial de Preview');
+select throws_ok(
+  format($i$ select * from whatsapp_get_channel_credential(%L::uuid, %L::uuid, 'simulated', 'b3-sim-um', 'webhook_secret') $i$, :'ch_um', :'ws_um'),
+  'P0001', 'channel_not_found', 'Production não lê credencial de Preview');
 select throws_ok(
   format($i$ select whatsapp_store_channel_credential(%L::uuid, %L::uuid, %L::uuid, 'webhook_secret', %L, '1') $i$, :'ch_um', :'ws_um', :'ana', :'cifra'),
   'P0001', 'channel_not_found', 'Production não grava credencial em canal de Preview');

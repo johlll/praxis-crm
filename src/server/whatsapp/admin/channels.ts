@@ -10,7 +10,8 @@ import {
   type WhatsAppCredentialPurpose,
 } from "@/server/whatsapp/credential-crypto";
 import { getWhatsAppEnvironment, type WhatsAppEnvironment } from "@/server/whatsapp/environment";
-import type { WhatsAppProviderKind } from "@/server/whatsapp/provider/contract";
+import { resolveWhatsAppProvider, type WhatsAppProviderEnv } from "@/server/whatsapp/provider";
+import type { WhatsAppProvider, WhatsAppProviderKind } from "@/server/whatsapp/provider/contract";
 
 /**
  * Operações de canal de WhatsApp (B3.1). Só chamadas DEPOIS de a sessão ter
@@ -19,7 +20,9 @@ import type { WhatsAppProviderKind } from "@/server/whatsapp/provider/contract";
  * formulário. As funções do banco revalidam papel, workspace e ambiente.
  *
  * Nada daqui devolve credencial, texto cifrado ou versão de chave: a
- * projeção segura é montada no banco e filtrada de novo aqui.
+ * projeção segura é montada no banco e filtrada de novo aqui. A única
+ * exceção são as leituras internas de credencial (fim do arquivo), que
+ * exigem um contexto de canal resolvido aqui dentro.
  */
 
 export type WhatsAppChannelStatus = "active" | "paused" | "disconnected" | "disabled";
@@ -56,6 +59,11 @@ export const WHATSAPP_CHANNEL_ERROR_CODES = [
   "invalid_credential",
   "credential_purpose_not_allowed",
   "channel_environment_mismatch",
+  "channel_context_untrusted",
+  "channel_context_mismatch",
+  "provider_mismatch",
+  "credential_not_found",
+  "whatsapp_provider_unavailable",
 ] as const;
 
 export type WhatsAppChannelErrorCode = (typeof WHATSAPP_CHANNEL_ERROR_CODES)[number] | "unknown";
@@ -203,31 +211,233 @@ export const adminPauseWhatsAppChannel = (params: ChannelRef) => changeState("wh
 export const adminReactivateWhatsAppChannel = (params: ChannelRef) => changeState("whatsapp_reactivate_channel", params);
 export const adminDisableWhatsAppChannelSend = (params: ChannelRef) => changeState("whatsapp_disable_channel_send", params);
 
+// ---------------------------------------------------------------------
+// Contexto confiável do canal e leitura interna de credenciais
+// ---------------------------------------------------------------------
+
+declare const resolvedChannelBrand: unique symbol;
+
 /**
- * Lê e decifra uma credencial, para uso INTERNO do servidor (o adaptador
- * real, nas próximas etapas). Recusa linha de outro ambiente antes de
- * decifrar; a AAD garante o resto. Nunca expor o retorno em resposta de
- * ação, log ou erro.
+ * Identidade completa de um canal, obtida SÓ por resolução interna:
+ *  - `adminResolveManagedWhatsAppChannel` (sessão já autorizada: o banco
+ *    confere papel, workspace e ambiente);
+ *  - `adminResolveWhatsAppWebhookChannel` (webhook: pela routing key, no
+ *    ambiente autenticado).
+ * Um objeto montado à mão — com valores do formulário, por exemplo — não é
+ * aceito: o tipo tem marca, e a execução confere o registro abaixo.
+ */
+export type ResolvedWhatsAppChannelContext = Readonly<{
+  channelId: string;
+  workspaceId: string;
+  environment: WhatsAppEnvironment;
+  provider: WhatsAppProviderKind;
+  routingKey: string;
+}> & { readonly [resolvedChannelBrand]: true };
+
+const resolvedContexts = new WeakSet<object>();
+
+function resolvedContext(fields: {
+  channelId: string;
+  workspaceId: string;
+  environment: WhatsAppEnvironment;
+  provider: WhatsAppProviderKind;
+  routingKey: string;
+}): ResolvedWhatsAppChannelContext {
+  const context = Object.freeze({ ...fields }) as ResolvedWhatsAppChannelContext;
+  resolvedContexts.add(context);
+  return context;
+}
+
+function isResolvedContext(value: unknown): value is ResolvedWhatsAppChannelContext {
+  return typeof value === "object" && value !== null && resolvedContexts.has(value);
+}
+
+/** Canal administrado pela sessão: `workspaceId` e `actorUserId` vêm da
+ * verificação da sessão; o banco confere papel, workspace e ambiente. */
+export async function adminResolveManagedWhatsAppChannel(
+  params: ChannelRef,
+): Promise<{ channel: SafeWhatsAppChannel; context: ResolvedWhatsAppChannelContext }> {
+  const channel = await adminGetWhatsAppChannelState(params);
+  if (channel.id !== params.channelId) throw new WhatsAppChannelStoreError("channel_context_mismatch");
+  return {
+    channel,
+    context: resolvedContext({
+      channelId: channel.id,
+      workspaceId: params.workspaceId,
+      environment: channel.environment,
+      provider: channel.provider,
+      routingKey: channel.routingKey,
+    }),
+  };
+}
+
+const credentialRowSchema = z.object({
+  channel_id: uuidSchema,
+  workspace_id: uuidSchema,
+  environment: z.enum(["production", "preview"]),
+  provider: z.enum(["simulated", "ycloud", "meta"]),
+  routing_key: z.string(),
+  purpose: z.enum(["api_key", "webhook_secret"]),
+  ciphertext: z.string(),
+  key_version: z.string(),
+});
+
+/**
+ * Lê e decifra uma credencial, para uso INTERNO do servidor. Nunca expor o
+ * retorno em resposta de ação, log ou erro.
+ *
+ * Antes do banco: contexto resolvido internamente, ambiente atual e
+ * `adapter.kind === canal.provider`. O banco recebe a identidade inteira do
+ * canal e recusa qualquer divergência. Antes de decifrar: a linha devolvida
+ * tem de ser exatamente a do contexto (canal, workspace, ambiente, provedor,
+ * routing key e propósito). A AAD é montada do CONTEXTO, nunca da linha.
  */
 export async function adminReadWhatsAppChannelCredential(params: {
-  channelId: string;
+  channel: ResolvedWhatsAppChannelContext;
+  adapter: WhatsAppProvider;
   purpose: WhatsAppCredentialPurpose;
 }): Promise<string | null> {
+  const { channel, adapter, purpose } = params;
+  if (!isResolvedContext(channel)) throw new WhatsAppChannelStoreError("channel_context_untrusted");
+  if (channel.environment !== getWhatsAppEnvironment()) throw new WhatsAppChannelStoreError("channel_environment_mismatch");
+  if (!adapter || adapter.kind !== channel.provider) throw new WhatsAppChannelStoreError("provider_mismatch");
+
   const admin = createWhatsAppAdminSupabaseClient();
   const { data, error } = await admin.rpc("whatsapp_get_channel_credential", {
-    p_channel_id: params.channelId,
-    p_purpose: params.purpose,
+    p_channel_id: channel.channelId,
+    p_workspace_id: channel.workspaceId,
+    p_provider: channel.provider,
+    p_routing_key: channel.routingKey,
+    p_purpose: purpose,
   });
   if (error) throw toChannelStoreError(error);
-  const row = data?.[0];
-  if (!row) return null;
-  const environment = getWhatsAppEnvironment();
-  if (row.environment !== environment) throw new WhatsAppChannelStoreError("channel_environment_mismatch");
+  if (!Array.isArray(data)) throw new WhatsAppChannelStoreError("unknown");
+  if (data.length === 0) return null;
+  if (data.length > 1) throw new WhatsAppChannelStoreError("channel_context_mismatch");
+
+  const parsed = credentialRowSchema.safeParse(data[0]);
+  if (!parsed.success) throw new WhatsAppChannelStoreError("unknown");
+  const row = parsed.data;
+  if (row.provider !== channel.provider || row.provider !== adapter.kind) {
+    throw new WhatsAppChannelStoreError("provider_mismatch");
+  }
+  if (
+    row.channel_id !== channel.channelId ||
+    row.workspace_id !== channel.workspaceId ||
+    row.environment !== channel.environment ||
+    row.routing_key !== channel.routingKey ||
+    row.purpose !== purpose
+  ) {
+    throw new WhatsAppChannelStoreError("channel_context_mismatch");
+  }
+
   return decryptWhatsAppCredential(row.ciphertext, row.key_version, {
-    environment,
-    workspaceId: row.workspace_id,
-    channelId: row.channel_id,
-    provider: row.provider,
-    purpose: row.purpose,
+    environment: channel.environment,
+    workspaceId: channel.workspaceId,
+    channelId: channel.channelId,
+    provider: channel.provider,
+    purpose,
   });
+}
+
+/**
+ * Prepara uma chamada ao provedor do canal: escolhe o adaptador pelo
+ * provedor GRAVADO no canal (a variável de ambiente só habilita) e só então
+ * lê a credencial. Vale, antes de qualquer banco adicional ou rede:
+ * `adapter.kind === canal.provider === credencial.provider`.
+ */
+export async function adminPrepareWhatsAppChannelCall(params: {
+  channel: ResolvedWhatsAppChannelContext;
+  purpose: WhatsAppCredentialPurpose;
+  env?: WhatsAppProviderEnv | undefined;
+}): Promise<{ adapter: WhatsAppProvider; credential: string }> {
+  if (!isResolvedContext(params.channel)) throw new WhatsAppChannelStoreError("channel_context_untrusted");
+  const resolution = resolveWhatsAppProvider({ channelProvider: params.channel.provider, env: params.env });
+  if (resolution.status !== "enabled") throw new WhatsAppChannelStoreError("whatsapp_provider_unavailable");
+
+  const credential = await adminReadWhatsAppChannelCredential({
+    channel: params.channel,
+    adapter: resolution.provider,
+    purpose: params.purpose,
+  });
+  if (credential === null) throw new WhatsAppChannelStoreError("credential_not_found");
+  return { adapter: resolution.provider, credential };
+}
+
+const webhookRowSchema = z.object({
+  channel_id: uuidSchema,
+  workspace_id: uuidSchema,
+  environment: z.enum(["production", "preview"]),
+  provider: z.enum(["simulated", "ycloud", "meta"]),
+  routing_key: z.string(),
+  status: z.enum(["active", "paused", "disconnected"]),
+  ciphertext: z.string(),
+  key_version: z.string(),
+});
+
+export type ResolvedWhatsAppWebhookChannel = {
+  adapter: WhatsAppProvider;
+  channel: ResolvedWhatsAppChannelContext;
+  status: "active" | "paused" | "disconnected";
+  webhookSecret: string;
+};
+
+/**
+ * Resolução do canal para o WEBHOOK (a rota real é da B3.2): pelo
+ * identificador de roteamento que o provedor manda, no ambiente
+ * autenticado, numa única consulta que devolve canal + segredo do webhook
+ * (nunca a chave de API). Sem ator: o workspace vem da linha do canal, e a
+ * AAD da cifra amarra o segredo a essa mesma identidade. O segredo
+ * devolvido serve só para conferir a assinatura; o contexto resolvido é o
+ * que as etapas seguintes usam.
+ *
+ * Provedor não habilitado → recusado antes do banco.
+ */
+export async function adminResolveWhatsAppWebhookChannel(params: {
+  provider: WhatsAppProviderKind;
+  routingKey: string;
+  env?: WhatsAppProviderEnv | undefined;
+}): Promise<ResolvedWhatsAppWebhookChannel | null> {
+  const resolution = resolveWhatsAppProvider({ channelProvider: params.provider, env: params.env });
+  if (resolution.status !== "enabled") throw new WhatsAppChannelStoreError("whatsapp_provider_unavailable");
+  const adapter = resolution.provider;
+  if (adapter.kind !== params.provider) throw new WhatsAppChannelStoreError("provider_mismatch");
+  if (typeof params.routingKey !== "string" || params.routingKey.length === 0 || params.routingKey.length > 128) {
+    return null;
+  }
+
+  const admin = createWhatsAppAdminSupabaseClient();
+  const { data, error } = await admin.rpc("whatsapp_resolve_webhook_channel", {
+    p_provider: params.provider,
+    p_routing_key: params.routingKey,
+  });
+  if (error) throw toChannelStoreError(error);
+  if (!Array.isArray(data)) throw new WhatsAppChannelStoreError("unknown");
+  if (data.length === 0) return null;
+  if (data.length > 1) throw new WhatsAppChannelStoreError("channel_context_mismatch");
+
+  const parsed = webhookRowSchema.safeParse(data[0]);
+  if (!parsed.success) throw new WhatsAppChannelStoreError("unknown");
+  const row = parsed.data;
+  if (row.environment !== getWhatsAppEnvironment()) throw new WhatsAppChannelStoreError("channel_environment_mismatch");
+  if (row.provider !== params.provider || row.provider !== adapter.kind) {
+    throw new WhatsAppChannelStoreError("provider_mismatch");
+  }
+  if (row.routing_key !== params.routingKey) throw new WhatsAppChannelStoreError("channel_context_mismatch");
+
+  const channel = resolvedContext({
+    channelId: row.channel_id,
+    workspaceId: row.workspace_id,
+    environment: row.environment,
+    provider: row.provider,
+    routingKey: row.routing_key,
+  });
+  const webhookSecret = decryptWhatsAppCredential(row.ciphertext, row.key_version, {
+    environment: channel.environment,
+    workspaceId: channel.workspaceId,
+    channelId: channel.channelId,
+    provider: channel.provider,
+    purpose: "webhook_secret",
+  });
+  return { adapter, channel, status: row.status, webhookSecret };
 }
