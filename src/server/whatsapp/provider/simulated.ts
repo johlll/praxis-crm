@@ -176,6 +176,7 @@ export class SimulatedWhatsAppProvider implements WhatsAppProvider {
             status: event.status,
             errorCode: event.errorCode ?? null,
             recipient: null,
+            providerCost: null,
           });
           break;
         case "other":

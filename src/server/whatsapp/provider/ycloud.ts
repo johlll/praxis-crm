@@ -14,6 +14,7 @@ import {
   type NormalizedMessageStatus,
   type NormalizedWhatsAppEvent,
   type NormalizeEventsResult,
+  type ProviderReportedCost,
   type SendResult,
   type SendTemplateRequest,
   type SendTextRequest,
@@ -40,7 +41,9 @@ import { WHATSAPP_WEBHOOK_MAX_BYTES } from "@/server/whatsapp/webhook";
  *  - comparação em tempo constante; o exemplo oficial aceita qualquer `s`
  *    que confira;
  *  - a tolerância de horário é política da aplicação (o exemplo usa 300 s);
- *  - o `id` do evento é a chave de deduplicação.
+ *  - o `id` do evento é a chave de deduplicação;
+ *  - só eventos `apiVersion: "v2"` são lidos: outra versão nunca é
+ *    interpretada com o schema da v2.
  *
  * O adaptador NÃO decide: criação de lead, contato ou conversa; identidade
  * interna; automação; vínculo; origem `chatbot`. A origem que ele relata é
@@ -57,6 +60,15 @@ export const YCLOUD_SIGNATURE_TOLERANCE_SECONDS = 300;
  * 5 h 40). Se as reentregas são reassinadas não está documentado. */
 export const YCLOUD_SIGNATURE_MAX_TOLERANCE_SECONDS = 21_600;
 export const YCLOUD_WEBHOOK_MAX_BYTES = WHATSAPP_WEBHOOK_MAX_BYTES;
+/**
+ * Limites do cabeçalho de assinatura, conferidos ANTES de qualquer HMAC (a
+ * rota é pública). 8 assinaturas cobrem a rotação de segredo com folga; o
+ * cabeçalho com 8 delas tem cerca de 550 caracteres.
+ */
+export const YCLOUD_SIGNATURE_HEADER_MAX_LENGTH = 1024;
+export const YCLOUD_SIGNATURE_MAX_SIGNATURES = 8;
+/** Única versão de evento cujo schema este adaptador conhece. */
+export const YCLOUD_EVENT_API_VERSION = "v2";
 
 const CAPABILITIES: WhatsAppCapabilities = Object.freeze({
   verifyWebhook: true,
@@ -77,6 +89,11 @@ const EVENT_TYPE = /^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/;
 const MESSAGE_ID = /^[A-Za-z0-9][A-Za-z0-9._:=+/-]{0,255}$/;
 const WAMID = /^wamid\.[A-Za-z0-9._:=+/-]{1,512}$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
+const CURRENCY = /^[A-Z]{3}$/;
+/** Lista aberta: categoria futura é preservada se tiver formato de código. */
+const PRICING_CATEGORY = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+/** Tipos de preço que a YCloud documenta como gratuitos (valor 0). */
+const FREE_PRICING_TYPES: ReadonlySet<string> = new Set(["free_customer_service", "free_entry_point"]);
 const RFC3339 = z.string().datetime({ offset: true });
 
 const CONTENT_KINDS: ReadonlySet<string> = new Set<WhatsAppContentKind>([
@@ -184,6 +201,33 @@ function textOf(kind: WhatsAppContentKind, message: Obj): string | null {
   return typeof body === "string" && body.length > 0 ? body : fail();
 }
 
+/**
+ * Custo informado pelo provedor. Campo presente e fora do formato invalida o
+ * evento; custo parcial (sem valor ou sem moeda) ou contraditório (tipo
+ * gratuito com valor positivo) vira `null`, nunca um custo que pareça
+ * confiável. Só `delivered`/`read` trazem valor final.
+ */
+function providerCost(message: Obj, status: NormalizedMessageStatus): ProviderReportedCost | null {
+  const category = opt(message.pricingCategory, PRICING_CATEGORY);
+  const currency = opt(message.currency, CURRENCY);
+  const price = message.totalPrice;
+  let amount: number | null = null;
+  if (price !== undefined && price !== null) {
+    if (typeof price !== "number" || !Number.isFinite(price) || price < 0) fail();
+    amount = price === 0 ? 0 : price;
+  }
+  if (amount === null || currency === null) return null;
+  const pricingType = message.pricingType;
+  if (typeof pricingType === "string" && FREE_PRICING_TYPES.has(pricingType) && amount !== 0) return null;
+  return {
+    source: "provider",
+    category,
+    amount,
+    currency,
+    finality: status === "delivered" || status === "read" ? "final" : "estimated",
+  };
+}
+
 function routing(wabaId: unknown, businessPhone: unknown): string {
   return ycloudRoutingKey(req(wabaId, WABA_ID), req(businessPhone, E164));
 }
@@ -283,8 +327,9 @@ function normalizeStatus(env: Envelope): NormalizedWhatsAppEvent {
     return ignored(env, "non_whatsapp_product", routingOrNull(m.wabaId, m.from));
   }
   const routingKey = routing(m.wabaId, m.from);
-  const status = m.status;
-  if (typeof status !== "string" || !STATUSES.has(status)) fail();
+  const rawStatus = m.status;
+  if (typeof rawStatus !== "string" || !STATUSES.has(rawStatus)) fail();
+  const status = rawStatus as NormalizedMessageStatus;
   return {
     kind: "message.status",
     originCandidate: "external_api",
@@ -294,9 +339,10 @@ function normalizeStatus(env: Envelope): NormalizedWhatsAppEvent {
     waMessageId: opt(m.wamid, WAMID),
     externalId: optOpaque(m.externalId, 512),
     occurredAt: env.createdAt,
-    status: status as NormalizedMessageStatus,
+    status,
     errorCode: optOpaque(m.errorCode, 64),
     recipient: identity(m.to, recipientBsuid(m)),
+    providerCost: providerCost(m, status),
   };
 }
 
@@ -357,6 +403,7 @@ function unsupportedEvent(env: Envelope, routingKey: string | null): NormalizedW
 function normalizeEvent(json: unknown): NormalizedWhatsAppEvent {
   const raw = obj(json);
   const id = req(raw.id, EVENT_ID);
+  if (raw.apiVersion !== YCLOUD_EVENT_API_VERSION) fail();
   const type = raw.type;
   if (typeof type !== "string" || type.length > 128 || !EVENT_TYPE.test(type)) fail();
   const createdAt = optTime(raw.createTime) ?? fail();
@@ -407,6 +454,8 @@ export class YCloudWhatsAppProvider implements WhatsAppProvider {
 
     const header = input.headers.get(YCLOUD_SIGNATURE_HEADER);
     if (header === null || header.trim() === "") return { ok: false, reason: "missing_signature" };
+    // Custo limitado antes de qualquer HMAC: tamanho e quantidade de `s`.
+    if (header.length > YCLOUD_SIGNATURE_HEADER_MAX_LENGTH) return { ok: false, reason: "malformed_signature" };
 
     const timestamps: string[] = [];
     const signatures: string[] = [];
@@ -416,7 +465,10 @@ export class YCloudWhatsAppProvider implements WhatsAppProvider {
       const key = part.slice(0, at).trim();
       const value = part.slice(at + 1).trim();
       if (key === "t") timestamps.push(value);
-      else if (key === "s") signatures.push(value);
+      else if (key === "s") {
+        if (signatures.length === YCLOUD_SIGNATURE_MAX_SIGNATURES) return { ok: false, reason: "malformed_signature" };
+        signatures.push(value);
+      }
     }
     const [t] = timestamps;
     if (timestamps.length !== 1 || t === undefined || !/^\d{1,12}$/.test(t)) return { ok: false, reason: "malformed_signature" };

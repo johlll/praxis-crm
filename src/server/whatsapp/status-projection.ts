@@ -1,4 +1,4 @@
-import type { NormalizedMessageStatus } from "@/server/whatsapp/provider/contract";
+import type { NormalizedMessageStatus, ProviderReportedCost } from "@/server/whatsapp/provider/contract";
 
 /**
  * Projeção do status de uma mensagem de saída diante de atualizações
@@ -42,4 +42,21 @@ export function projectWhatsAppMessageStatus(
     return isDeliveryProof(incoming) ? { status: incoming, changed: true } : { status: current, changed: false };
   }
   return PROGRESS[incoming] > PROGRESS[current] ? { status: incoming, changed: true } : { status: current, changed: false };
+}
+
+/**
+ * Projeção do custo informado pelo provedor, ao lado do status. O valor
+ * final (de `delivered`/`read`) substitui qualquer estimativa e nunca volta
+ * a ser estimativa nem some; entre estimativas, vale a mais recente. Assim
+ * um `failed` com estimativa seguido de `delivered` termina com o valor
+ * final.
+ */
+export function projectWhatsAppProviderCost(
+  current: ProviderReportedCost | null,
+  incoming: ProviderReportedCost | null,
+): ProviderReportedCost | null {
+  if (incoming === null) return current;
+  if (current === null) return incoming;
+  if (current.finality === "final") return current;
+  return incoming;
 }

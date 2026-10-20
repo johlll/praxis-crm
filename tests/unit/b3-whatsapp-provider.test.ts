@@ -157,6 +157,7 @@ describe("normalização de eventos simulados para tipos próprios do CRM", () =
         status: "delivered",
         errorCode: null,
         recipient: null,
+        providerCost: null,
       },
       { kind: "unsupported", providerEventId: "e3", routingKey: "sim-1", occurredAt: new Date("2026-10-19T12:00:02Z"), providerType: "reaction" },
     ]);

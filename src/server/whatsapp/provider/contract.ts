@@ -213,6 +213,23 @@ export type NormalizedOutboundObserved = {
   text: string | null;
 };
 
+/**
+ * Custo informado PELO PROVEDOR no status (`pricingCategory`, `totalPrice`,
+ * `currency`). Nunca é estimativa calculada pelo CRM. Guia oficial de preço
+ * da YCloud: `accepted`/`sent` trazem estimativa; `delivered`/`read`, o valor
+ * final cobrado; `failed` não é cobrado (o valor que vier fica estimativa).
+ */
+export type ProviderReportedCost = {
+  source: "provider";
+  /** Categoria do provedor como valor opaco validado (lista aberta). */
+  category: string | null;
+  /** Finito e não negativo. */
+  amount: number;
+  /** ISO 4217. */
+  currency: string;
+  finality: "estimated" | "final";
+};
+
 export type NormalizedStatusUpdate = {
   kind: "message.status";
   /** A B3.2d só promove a `crm` por casamento com a própria outbox. */
@@ -228,6 +245,8 @@ export type NormalizedStatusUpdate = {
   status: NormalizedMessageStatus;
   errorCode: string | null;
   recipient: WhatsAppContactIdentity | null;
+  /** `null` quando o provedor não informa custo completo e coerente. */
+  providerCost: ProviderReportedCost | null;
 };
 
 /** Troca de número ou de identidade do contato (mensagem de sistema). */
