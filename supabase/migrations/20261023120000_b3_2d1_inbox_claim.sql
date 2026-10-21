@@ -109,7 +109,6 @@ revoke all on table public.whatsapp_webhook_inbox from service_role;
 -- Caminho antigo sem claim: removido
 -- ---------------------------------------------------------------------
 
-drop function public.whatsapp_inbox_get_pending(uuid, uuid, uuid, public.whatsapp_provider, text);
 drop function public.whatsapp_inbox_mark_processed(uuid, uuid, uuid, public.whatsapp_provider, text);
 drop function public.whatsapp_inbox_mark_failed(uuid, uuid, uuid, public.whatsapp_provider, text, text);
 drop function private.whatsapp_inbox_lock_entry(uuid, public.whatsapp_channels, public.whatsapp_environment);
