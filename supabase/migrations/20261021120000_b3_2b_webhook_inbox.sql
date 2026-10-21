@@ -486,9 +486,8 @@ begin
     for update skip locked
   ),
   purged as (
-    update public.whatsapp_webhook_inbox i
-    set key_version = null, nonce = null, ciphertext = null, auth_tag = null, purged_at = now()
-    from expired e
+    delete from public.whatsapp_webhook_inbox i
+    using expired e
     where i.id = e.id
     returning i.workspace_id
   ),
