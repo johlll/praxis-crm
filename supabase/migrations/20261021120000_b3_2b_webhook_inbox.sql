@@ -287,7 +287,7 @@ begin
   ) values (
     v_env, v_channel.workspace_id, v_channel.id, v_channel.provider, p_provider_event_id, p_provider_event_type,
     p_body_sha256, p_key_version, p_nonce, p_ciphertext, p_auth_tag,
-    v_received_at, v_received_at + make_interval(secs => p_retention_seconds)
+    v_received_at, clock_timestamp() + make_interval(secs => p_retention_seconds)
   )
   on conflict (channel_id, provider_event_id) do nothing
   returning id into v_id;
