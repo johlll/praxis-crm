@@ -271,7 +271,7 @@ begin
      or p_ciphertext !~ '^[A-Za-z0-9+/]+={0,2}$' then
     raise exception 'invalid_inbox_ciphertext';
   end if;
-  if p_retain_until is null or p_retain_until <= now() or p_retain_until > now() + interval '30 days' then
+  if p_retain_until is null or p_retain_until <= now() or p_retain_until > now() + interval '3650 days' then
     raise exception 'invalid_retention';
   end if;
 
