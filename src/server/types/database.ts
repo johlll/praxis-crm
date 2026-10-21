@@ -3429,6 +3429,96 @@ export type Database = {
         }
         Relationships: []
       }
+      whatsapp_webhook_inbox: {
+        Row: {
+          auth_tag: string | null
+          body_sha256: string
+          channel_id: string
+          ciphertext: string | null
+          conflict_count: number
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          error_code: string | null
+          failed_at: string | null
+          id: string
+          key_version: string | null
+          last_conflict_at: string | null
+          last_conflict_sha256: string | null
+          nonce: string | null
+          processed_at: string | null
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          provider_event_id: string
+          provider_event_type: string
+          purged_at: string | null
+          received_at: string
+          retain_until: string
+          state: string
+          workspace_id: string
+        }
+        Insert: {
+          auth_tag?: string | null
+          body_sha256: string
+          channel_id: string
+          ciphertext?: string | null
+          conflict_count?: number
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          error_code?: string | null
+          failed_at?: string | null
+          id?: string
+          key_version?: string | null
+          last_conflict_at?: string | null
+          last_conflict_sha256?: string | null
+          nonce?: string | null
+          processed_at?: string | null
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          provider_event_id: string
+          provider_event_type: string
+          purged_at?: string | null
+          received_at?: string
+          retain_until: string
+          state?: string
+          workspace_id: string
+        }
+        Update: {
+          auth_tag?: string | null
+          body_sha256?: string
+          channel_id?: string
+          ciphertext?: string | null
+          conflict_count?: number
+          environment?: Database["public"]["Enums"]["whatsapp_environment"]
+          error_code?: string | null
+          failed_at?: string | null
+          id?: string
+          key_version?: string | null
+          last_conflict_at?: string | null
+          last_conflict_sha256?: string | null
+          nonce?: string | null
+          processed_at?: string | null
+          provider?: Database["public"]["Enums"]["whatsapp_provider"]
+          provider_event_id?: string
+          provider_event_type?: string
+          purged_at?: string | null
+          received_at?: string
+          retain_until?: string
+          state?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_webhook_inbox_channel_identity_fkey"
+            columns: ["workspace_id", "channel_id", "environment", "provider"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_channels"
+            referencedColumns: ["workspace_id", "id", "environment", "provider"]
+          },
+          {
+            foreignKeyName: "whatsapp_webhook_inbox_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       workspace_invitations: {
         Row: {
           accepted_at: string | null
@@ -5041,6 +5131,79 @@ export type Database = {
         Args: {
           p_actor_user_id: string
           p_channel_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      whatsapp_inbox_get_pending: {
+        Args: {
+          p_channel_id: string
+          p_inbox_id: string
+          p_provider: Database["public"]["Enums"]["whatsapp_provider"]
+          p_routing_key: string
+          p_workspace_id: string
+        }
+        Returns: {
+          auth_tag: string
+          body_sha256: string
+          channel_id: string
+          ciphertext: string
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          inbox_id: string
+          key_version: string
+          nonce: string
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          provider_event_id: string
+          provider_event_type: string
+          routing_key: string
+          workspace_id: string
+        }[]
+      }
+      whatsapp_inbox_list: {
+        Args: {
+          p_channel_id: string
+          p_limit: number
+          p_provider: Database["public"]["Enums"]["whatsapp_provider"]
+          p_routing_key: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      whatsapp_inbox_mark_failed: {
+        Args: {
+          p_channel_id: string
+          p_error_code: string
+          p_inbox_id: string
+          p_provider: Database["public"]["Enums"]["whatsapp_provider"]
+          p_routing_key: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      whatsapp_inbox_mark_processed: {
+        Args: {
+          p_channel_id: string
+          p_inbox_id: string
+          p_provider: Database["public"]["Enums"]["whatsapp_provider"]
+          p_routing_key: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      whatsapp_inbox_purge_expired: { Args: { p_limit: number }; Returns: Json }
+      whatsapp_inbox_store: {
+        Args: {
+          p_auth_tag: string
+          p_body_sha256: string
+          p_channel_id: string
+          p_ciphertext: string
+          p_key_version: string
+          p_nonce: string
+          p_provider: Database["public"]["Enums"]["whatsapp_provider"]
+          p_provider_event_id: string
+          p_provider_event_type: string
+          p_retention_seconds: number
+          p_routing_key: string
           p_workspace_id: string
         }
         Returns: Json

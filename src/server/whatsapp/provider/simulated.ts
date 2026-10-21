@@ -9,6 +9,7 @@ import {
   whatsappContactIdentity,
   type FetchMediaRequest,
   type FetchMediaResult,
+  type InspectEnvelopeResult,
   type LookupMessageRequest,
   type LookupMessageResult,
   type NormalizedWhatsAppEvent,
@@ -31,6 +32,8 @@ import {
  *    simulador, `X-Praxis-Simulated-Signature: t=<s>,s=<hex>`, HMAC-SHA256
  *    de `<t>.` seguido dos BYTES exatos do corpo, com o segredo do canal) —
  *    não copia o formato de nenhum provedor real;
+ *  - lê só o envelope mínimo (versão, id e tipo de UM evento), sem
+ *    interpretar o conteúdo, para a caixa de entrada (B3.2b);
  *  - normaliza, só depois da assinatura, um payload simulado para os tipos
  *    do contrato (UTF-8 estrita; contato por telefone, BSUID ou ambos).
  *
@@ -92,6 +95,26 @@ const simulatedPayloadSchema = z.object({
   events: z.array(simulatedEventSchema).min(1).max(100),
 });
 
+const ENVELOPE_EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const ENVELOPE_EVENT_TYPE = /^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$/;
+
+/** Envelope mínimo do simulador: `version`, e `id` e `type` do ÚNICO evento
+ * da lista. Nada do conteúdo do evento é lido. */
+function inspectSimulatedEnvelope(json: unknown): InspectEnvelopeResult {
+  if (typeof json !== "object" || json === null || Array.isArray(json)) return { ok: false, reason: "invalid_envelope" };
+  const { version, events } = json as Record<string, unknown>;
+  if (typeof version !== "number") return { ok: false, reason: "invalid_envelope" };
+  if (version !== 1) return { ok: false, reason: "unsupported_envelope_version" };
+  if (!Array.isArray(events) || events.length === 0) return { ok: false, reason: "invalid_envelope" };
+  if (events.length > 1) return { ok: false, reason: "batch_not_supported" };
+  const event: unknown = events[0];
+  if (typeof event !== "object" || event === null || Array.isArray(event)) return { ok: false, reason: "invalid_envelope" };
+  const { id, type } = event as Record<string, unknown>;
+  if (typeof id !== "string" || !ENVELOPE_EVENT_ID.test(id)) return { ok: false, reason: "invalid_envelope" };
+  if (typeof type !== "string" || type.length > 128 || !ENVELOPE_EVENT_TYPE.test(type)) return { ok: false, reason: "invalid_envelope" };
+  return { ok: true, envelope: Object.freeze({ providerEventId: id, providerEventType: type, envelopeVersion: "1", eventCount: 1 }) };
+}
+
 export class SimulatedWhatsAppProvider implements WhatsAppProvider {
   readonly kind = "simulated" as const;
 
@@ -127,6 +150,19 @@ export class SimulatedWhatsAppProvider implements WhatsAppProvider {
       return { ok: false, reason: "signature_mismatch" };
     }
     return { ok: true, verified: VerifiedWebhookBody.afterSignatureCheck(input.rawBody) };
+  }
+
+  inspectEnvelope(body: VerifiedWebhookBody): InspectEnvelopeResult {
+    if (!VerifiedWebhookBody.is(body)) return { ok: false, reason: "unverified_body" };
+    const text = body.decodeUtf8Strict();
+    if (text === null) return { ok: false, reason: "invalid_json" };
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      return { ok: false, reason: "invalid_json" };
+    }
+    return inspectSimulatedEnvelope(json);
   }
 
   normalizeEvents(body: VerifiedWebhookBody): NormalizeEventsResult {

@@ -384,7 +384,7 @@ Composer ──▶ sendMessageAction (requirePermission + Zod)
 | `whatsapp_channels` | `provider` (`simulated`/`ycloud`/`meta`), `environment` (`preview`/`production`), chave de roteamento por provedor (`provider_account_ref` + número E.164; `phone_number_id` só para a Meta), `status` com `paused` e `disconnected`, `last_event_at`, `send_enabled` |
 | `whatsapp_environment_keys` (nova) | Registro próprio das assinaturas de ambiente do WhatsApp (§7.1); não usa `calendar_environment_keys` |
 | `whatsapp_channel_credentials` (nova) | Chave de API e segredo do webhook cifrados com chave e AAD próprias do WhatsApp (§7.1); deny-all |
-| `whatsapp_webhook_inbox` (nova) | Corpo cifrado (chave própria, §7.1), hash, id do evento, tipo, estado, tentativas, prazo de retenção; única por `(channel_id, provider_event_id)` |
+| `whatsapp_webhook_inbox` (nova) | Corpo cifrado (chave própria, §7.1), hash, id do evento, tipo, estado, prazo de retenção; única por `(channel_id, provider_event_id)`. Implementada na B3.2b (§17), sem contador de tentativas: a política de nova tentativa é da B3.2c/B3.2d |
 | `conversations` | `wa_id` passa a opcional; `wa_user_id` (BSUID) opcional; ao menos um dos dois; unicidade por canal e identidade; `last_inbound_at` (janela) |
 | `contact_identifiers` | Novo provedor `whatsapp_bsuid`; vínculo de troca de número pelos eventos de sistema |
 | `messages` | `origin`, a origem técnica (`crm`, `business_app`, `chatbot`, `external_api`, `history` ou `inbound`); `sender_classification`, a classificação do remetente (`external`, `internal`, `automation` ou `unresolved`), separada da origem: `internal` não é origem (regras no §15.10; decisões 11 e 14; modelagem documental, sem schema nesta fase); `provider_message_id`; `wa_message_id` opcional até a aceitação; `body_text` opcional com mídia; `sent_by` e `client_dedupe_key` exigidos só para `origin = 'crm'`; `template_name`, `template_language`, `template_category` (a final, conferida no envio); custo devolvido pelo provedor (categoria, modelo, valor, moeda, `cost_is_final`); `content_purged_at` |
@@ -1533,7 +1533,7 @@ ou número.
 | PR | Conteúdo | Depende de |
 |---|---|---|
 | B3.2a | **Implementada (§16).** Adaptador YCloud puro: assinatura sobre bytes (`t=,s=`), normalização de entrada, eco, status, histórico (ignorado) e eventos de conta a partir de exemplos oficiais; identidade telefone e/ou BSUID; sem rede | — |
-| B3.2b | `whatsapp_webhook_inbox` cifrada (chave e AAD próprias), única por (canal, id do evento), com prazo de retenção; RPC de gravação; pgTAP | B3.2a |
+| B3.2b | **Implementada (§17).** `whatsapp_webhook_inbox` cifrada (chave e AAD próprias), única por (canal, id do evento), com prazo de retenção; RPC de gravação; pgTAP | B3.2a |
 | B3.2c | Rota `/api/webhooks/whatsapp/[provider]`: bytes → assinatura → canal pela resolução do webhook (§14.6) → inbox → 2xx → Inngest; 404 sem provedor | B3.2b |
 | B3.2d | Função Inngest e RPCs de serviço: mensagem, eco, status, eventos de conta; origem técnica `inbound`, `business_app`, `chatbot` (só com correlação positiva) ou `external_api` (fallback), `history`, e classificação do remetente `external`, `internal`, `automation` ou `unresolved` (§15.10); cadastro de identidades internas (telefone e BSUID; owner/admin); busca antes de criar lead; pendência de identificação; lead só por `inbound` + `external`; nada de lead ou atividade para bot, eco, histórico, status, comando interno ou evento técnico; teste de concorrência | B3.2c |
 | B3.2e | Reconciliador da inbox parada e batimento do canal (`last_event_at`) | B3.2d |
@@ -1932,3 +1932,434 @@ Ficam para as próximas PRs:
 - credenciais reais e configuração externa.
 
 As migrations da B3.1 continuam **sem** aplicação no banco hospedado.
+
+### 16.10 Custo em `failed` (decisão aprovada em 20/10/2026, para a B3.2d)
+
+- Não existe estado `not_charged`. O custo de um `failed` continua
+  `finality: "estimated"`.
+- **Só `providerCost.finality === "final"` pode entrar em total de custo
+  efetivamente cobrado.** Estimativas (de `accepted`, `sent` ou `failed`)
+  nunca entram nesse total.
+- Um `failed` pode ser corrigido depois por `delivered` ou `read`. A
+  projeção (§16.5) troca a estimativa pelo valor final.
+
+## 17. B3.2b — caixa de entrada cifrada do webhook (21/10/2026)
+
+Implementado só o armazenamento durável e idempotente de cada entrega
+autêntica do webhook. Ficam de fora:
+- rota pública;
+- Inngest e processamento de mensagem;
+- claim/lease, tentativas e retries;
+- criação de contato, lead ou conversa;
+- classificação de remetente;
+- envio e mídia;
+- YCloud real;
+- variável na Vercel ou em qualquer serviço externo;
+- migration no Supabase hospedado.
+
+Revisada na PR #58 (§17.10): a inbox grava antes da normalização
+completa, guarda o tipo bruto do provedor, separa as regras de estado do
+canal para receber e para acessar, e tem teto técnico de 30 dias.
+
+### 17.1 Entregue
+
+- **Migration** `20261021120000_b3_2b_webhook_inbox.sql`. É nova: as
+  migrations da B3.1 não foram editadas. Como ainda não foi hospedada, a
+  revisão foi feita nela mesma.
+- **`src/server/whatsapp/inbox-crypto.ts`:** a cifra própria da inbox.
+- **`src/server/whatsapp/inbox.ts`:** a API do servidor (gravar, ler
+  pendente, marcar, listar e expurgar).
+- **Contrato do provedor:** `inspectEnvelope` (envelope mínimo, §17.3),
+  implementada no YCloud e no simulador.
+- **`VerifiedWebhookBody.copyBytes()`:** cópia dos bytes exatos, para
+  hash e cifra.
+- **`isTrustedWhatsAppChannelContext`:** exportado de `admin/channels.ts`.
+- **Tipos do banco** atualizados (`src/server/types/database.ts`).
+
+### 17.2 Tabela `whatsapp_webhook_inbox`
+
+Uma linha por (canal, id do evento do provedor). Colunas:
+- **Identidade:** ambiente, workspace, canal e provedor, presos à linha
+  real do canal por FK (workspace, canal, ambiente, provedor).
+- **Evento:** id do evento e `provider_event_type`, o tipo **bruto** do
+  provedor como veio no envelope (por exemplo
+  `whatsapp.inbound_message.received`). Lista aberta: o banco confere só o
+  formato (`^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`, até 128 caracteres). O tipo
+  normalizado do CRM **não** é gravado; se for útil, a B3.2d cria um campo
+  separado, preenchido só depois de um processamento bem-sucedido.
+- **Corpo:** SHA-256 dos bytes exatos e o corpo cifrado, com versão da
+  chave, nonce, texto cifrado e tag em colunas separadas.
+- **Retenção e estado:** horário de recebimento e prazo de retenção;
+  estado (`pending`, `processed`, `failed`) com horários de processamento,
+  falha e expurgo; código de erro sanitizado (`^[a-z0-9_]{1,64}$`).
+- **Evidência de conflito:** contagem, horário e hash da última entrega
+  divergente.
+
+Restrições do banco:
+- conteúdo cifrado completo **ou** tombstone, nunca meio-termo;
+- datas coerentes com o estado;
+- código de erro só em `failed`;
+- retenção depois do recebimento.
+
+Nunca em texto puro: corpo, mensagem, telefone, BSUID, nome, mídia,
+assinatura recebida ou segredo.
+
+Diferente do §4.3, que previa "tentativas": não há contador de tentativas.
+A política de nova tentativa pertence à B3.2c/B3.2d e ao reconciliador.
+
+Isolamento:
+- RLS ligada e forçada, sem GRANT e com políticas deny;
+- as seis funções públicas são SECURITY DEFINER, com search_path travado e
+  EXECUTE só para service_role (PUBLIC, anon e authenticated negados). As
+  três auxiliares privadas não são executáveis por ninguém além do dono.
+
+### 17.3 Envelope mínimo, idempotência e conflito
+
+**A gravação acontece antes da normalização completa.** Do corpo
+verificado, a inbox lê só o envelope mínimo, pela inspeção do adaptador:
+
+```ts
+type WebhookEnvelope = {
+  providerEventId: string;   // id do evento no provedor
+  providerEventType: string; // tipo bruto, como veio
+  envelopeVersion: string;   // "v2" na YCloud, "1" no simulador
+  eventCount: 1;             // exatamente um evento por entrega
+};
+inspectEnvelope(body: VerifiedWebhookBody):
+  | { ok: true; envelope: WebhookEnvelope }
+  | { ok: false; reason: "unverified_body" | "invalid_json" | "invalid_envelope"
+                       | "unsupported_envelope_version" | "batch_not_supported" };
+```
+
+A inspeção:
+- recebe só `VerifiedWebhookBody`;
+- não interpreta mensagem, contato, status, custo ou conteúdo, e não
+  decide o `NormalizedWhatsAppEvent`;
+- não exige telefone, BSUID, texto ou campo específico do evento;
+- recusa JSON inválido (ou UTF-8 inválido), envelope inválido, versão
+  incompatível e lote.
+
+| Adaptador | Envelope lido | Versão | Lote |
+|---|---|---|---|
+| YCloud | `id`, `type`, `apiVersion` do objeto do evento | só `v2`; outra string → `unsupported_envelope_version`; ausente → `invalid_envelope` | uma lista no topo → `batch_not_supported` (a YCloud manda um evento por requisição) |
+| Simulador | `version`; `id` e `type` do único item de `events` | só `1` | mais de um item → `batch_not_supported`; lista vazia → `invalid_envelope` |
+
+Um evento autêntico com envelope válido, mas cujo conteúdo o normalizador
+recusa (por exemplo, mensagem recebida sem telefone e sem BSUID), é
+guardado cifrado. A normalização completa continua recusando esse evento
+quando for chamada; a falha é tratada na B3.2d.
+
+`whatsapp_inbox_store` (`INSERT … ON CONFLICT (channel_id,
+provider_event_id) DO NOTHING`) devolve um de três resultados:
+- **`inserted`:** primeira entrega;
+- **`duplicate`:** mesmo canal, id e hash, inclusive sobre um tombstone;
+- **`conflict`:** mesmo canal e id, hash diferente.
+  - o primeiro payload **não** é sobrescrito;
+  - o novo corpo não é guardado, decifrado nem processado;
+  - ficam só a evidência mínima (contagem, horário, hash) e um registro de
+    auditoria `whatsapp.inbox.conflict` com ambiente, provedor e canal.
+
+O id do evento e o tipo bruto saem da inspeção do **próprio** corpo
+verificado, nunca de um parâmetro solto.
+
+### 17.4 Cifra própria
+
+- **Algoritmo e chaves:** AES-256-GCM com `WHATSAPP_INBOX_KEY_VERSIONS` e
+  `WHATSAPP_INBOX_ACTIVE_KEY_VERSION`, com valores diferentes por
+  ambiente. Não reutiliza a chave das credenciais do canal nem a da
+  agenda.
+- **AAD:** `praxis:whatsapp:inbox:v1|<ambiente>|<workspace>|<canal>|<provedor>|<id do evento>`.
+  - Trocar qualquer elemento impede a decifragem.
+  - Elemento com `|` é recusado, para que duas identidades nunca deem a
+    mesma AAD.
+- **Formato:** nonce de 12 bytes novo a cada cifra e tag de 16 bytes.
+- **Falha fechada:** sem chave configurada, a gravação não acontece.
+
+A API só aceita bytes já representados por `VerifiedWebhookBody` e o
+contexto **confiável** do canal criado por resolução interna. Um objeto
+montado à mão com UUIDs, ou uma cópia do contexto, é recusado antes do
+banco.
+
+### 17.5 Isolamento no banco e estado do canal
+
+Todas as funções exigem o ambiente assinado do WhatsApp e conferem canal,
+workspace, provedor, routing key e ambiente contra a linha real. A regra
+de **estado** do canal é diferente para receber e para acessar:
+
+| Estado atual do canal | Entrega nova (`store`) | Entrada existente (ler, listar, marcar) |
+|---|---|---|
+| `active` | aceita | acessa |
+| `paused` | aceita e preserva | acessa |
+| `disconnected` | aceita e preserva (status atrasado, evento de conta, o fato da recuperação) | acessa |
+| `disabled` | recusada, nada gravado | acessa (histórico e investigação) |
+| outro ambiente, workspace, canal, provedor ou routing key | não encontrado | não encontrado |
+
+- Aceitar e preservar não é processar nem enviar. Processar eventos de
+  canal pausado ou desconectado é decisão da B3.2c/B3.2d.
+- Acessar uma entrada existente de canal desativado não reabre o
+  recebimento: nem a reentrega idêntica é aceita.
+- No banco: `private.whatsapp_inbox_channel_identity` confere a
+  identidade; `whatsapp_inbox_receiving_channel` acrescenta a regra de
+  recebimento (`store`); `whatsapp_inbox_existing_channel` não olha o
+  estado (`list`, `get_pending`, `mark_processed`, `mark_failed`).
+- O expurgo continua independente do estado do canal (§17.6).
+
+A listagem comum (`whatsapp_inbox_list`) nunca devolve versão de chave,
+nonce, texto cifrado ou tag. Só `whatsapp_inbox_get_pending` devolve o
+texto cifrado, de uma entrada pendente, pela identidade inteira do canal.
+
+### 17.6 Retenção e expurgo
+
+- **Retenção:** vem de `WHATSAPP_INBOX_RETENTION_SECONDS`, configuração
+  confiável e sem valor padrão, de **60 s a 30 dias** (2.592.000 s). Sem
+  valor válido, a gravação falha fechada.
+- **O prazo é calculado só pelo banco.** A aplicação manda só a retenção
+  em segundos (`p_retention_seconds integer`), nunca um horário. O banco:
+  - aceita só inteiros de 60 a 2.592.000;
+  - captura um único horário de referência (`now()` da transação);
+  - grava `received_at` com ele;
+  - calcula `retain_until = received_at + make_interval(secs => retenção)`
+    (segundos exatos, sem depender de fuso ou horário de verão).
+
+  Assim, 30 dias exatos são sempre aceitos, 30 dias mais 1 s são sempre
+  recusados, e o relógio da aplicação, adiantado ou atrasado, não muda o
+  prazo nem provoca recusa. Uma restrição da tabela garante
+  `retain_until <= received_at + 2.592.000 s`.
+  - O teto é técnico: a inbox guarda o payload bruto, não o registro
+    definitivo da conversa. A mensagem normalizada poderá ter outra
+    política de retenção no futuro.
+  - O valor do piloto continua pendente do portão P9 (decisão 6).
+- **Expurgo:** `whatsapp_inbox_purge_expired` atua só no ambiente
+  assinado e independe do estado do canal.
+  - Apaga versão, nonce, texto cifrado e tag e mantém o **tombstone**:
+    canal, id do evento, hash, datas e `purged_at`.
+  - É idempotente: repetir não muda nada.
+  - Audita `whatsapp.inbox.purged` por workspace, só com a contagem.
+  - Uma reentrega idêntica depois do expurgo continua `duplicate`, e uma
+    diferente, `conflict`. O tombstone nunca recebe conteúdo de volta.
+- Não existe agendador nesta etapa.
+
+### 17.7 Leitura e estados (contratos para a B3.2d)
+
+- **`readPendingWhatsAppWebhookDelivery`:**
+  - confere o contexto e a linha devolvida (entrada, canal, workspace,
+    ambiente, provedor, routing key);
+  - decifra com a AAD do **contexto**;
+  - confere o SHA-256 em tempo constante;
+  - devolve o id, o tipo bruto (`providerEventType`) e um
+    `VerifiedWebhookBody` com os bytes exatos.
+- **Estados:** pendente → processado ou falho. Repetir a mesma marcação é
+  idempotente.
+  - Processado não volta a pendente nem a falho.
+  - Falho não vira processado: nova tentativa é política da B3.2c/B3.2d.
+  - Entrada expurgada não é lida nem marcada.
+- Não há fila, claim, contador de tentativas nem política de nova
+  tentativa.
+- **Requisito da B3.2d:** antes de processar em produção, tem de existir
+  um claim atômico (ou garantia equivalente) que impeça dois workers de
+  processarem a mesma entrada ao mesmo tempo. Hoje `get_pending` só lê, e
+  as marcações só travam a linha durante a própria transação.
+
+### 17.8 Testes e mutações (implementação inicial)
+
+A ordem seguida foi testes, depois implementação, depois mutações.
+
+**Reprodução vermelha, contra a main `3feedd1`, sem a B3.2b:**
+- **Unitários** (`b3-2b-inbox-cifra`, `b3-2b-inbox-servidor`): commit
+  `225b2cb`. Os 75 falham.
+- **pgTAP 31 (84 testes):** rodado numa PR temporária só com o arquivo de
+  teste.
+  - Na primeira rodada, o arquivo usava `like()`, que não existe no pgTAP,
+    e parou no teste 8, com 7 de 8 falhando. Corrigido para `alike()` em
+    commit só de teste (`945c5b0`).
+  - Na segunda rodada, 23 dos 24 testes executados falham, e o arquivo
+    para quando a primeira consulta direta encontra a tabela inexistente.
+    O único que passa é "nenhuma é executável por PUBLIC, anon ou
+    authenticated", vazio sem as funções.
+
+**Implementação** (`0e80dda`), verificada antes numa PR temporária com o
+mesmo conteúdo:
+- unitários: 75 de 75;
+- suíte inteira: 1560;
+- pgTAP 31: 84 de 84;
+- CI completo verde (typecheck, lint, tipos gerados, pgTAP, isolamento,
+  concorrência, build e E2E).
+
+O pgTAP 29 da B3.1 contava todas as funções `public.whatsapp_*` (esperava
+10, agora são 16). A contagem passou a excluir as seis da inbox, que o
+pgTAP 31 cobre.
+
+**Mutações do servidor:** 12, locais, cada uma aplicada e desfeita.
+Todas foram detectadas:
+
+| Mutação | Detectada por |
+|---|---|
+| Canal fora da AAD | AAD por canal; AAD de outro canal rotulada com o meu |
+| Workspace fora da AAD | AAD por workspace; separador |
+| Ambiente fora da AAD | AAD por ambiente |
+| Aceita contexto fabricado | objeto à mão, cópia do contexto, leitura com contexto à mão |
+| Sem conferência de ambiente no servidor | contexto de Preview com servidor em Production |
+| Aceita corpo não verificado | bytes crus; objeto que imita o corpo |
+| Listagem expõe texto cifrado | listagem e marcação só com metadado |
+| Leitura sem conferir a identidade da linha | linha de outro workspace |
+| Leitura sem conferir o hash | `inbox_integrity_failed` |
+| Retenção com valor padrão | retenção ausente ou vazia |
+| Erro do banco repassado com o texto original | erro desconhecido vira `unknown` |
+| Reaproveita a chave de credencial | chave da inbox ausente |
+
+**Mutações do banco:** 7, cada uma numa PR temporária própria (#51 a #57)
+sobre o mesmo commit verificado. Todas foram detectadas pelo pgTAP:
+
+| Mutação | Testes que falharam |
+|---|---|
+| Sem conferência de ambiente no canal | Production × Preview nos dois sentidos; leitura em outro ambiente |
+| Conflito sobrescreve o primeiro payload | conflito sem sobrescrever; duplicata depois do conflito; auditoria; conflito sobre tombstone |
+| Sem unicidade (canal, id do evento) | unicidade; duplicate; uma linha só; conflict |
+| Expurgo apaga a linha (sem tombstone) | tombstone (e o arquivo para) |
+| EXECUTE para authenticated | privilégios (29 e 31); authenticated não grava nem lista |
+| Listagem expõe o texto cifrado | listagem e marcação só com metadado |
+| Aceita canal desativado e desconectado | desativado e desconectado |
+
+### 17.9 Limitações e decisões
+
+- **Contexto confiável de canal desativado (B3.2d).** O banco já permite acessar
+  a entrada existente de um canal desativado. No servidor, o contexto
+  confiável desse canal hoje só sai da resolução administrada
+  (`adminResolveManagedWhatsAppChannel`, com sessão autorizada): a
+  resolução do webhook recusa canal desativado, como deve. Um worker sem
+  sessão (B3.2d) vai precisar de uma resolução interna própria, por id do
+  canal, sem segredo de webhook.
+- **Aceitas para a B3.2d:** a resolução interna de entradas antigas de
+  canais desativados (item acima) e o claim atômico contra dois workers
+  processarem a mesma entrada (§17.7).
+- **Expurgo independe do estado.** Ele atua sobre pendentes vencidas
+  também, porque a retenção prevalece.
+- **Variáveis novas não configuradas:** `WHATSAPP_INBOX_KEY_VERSIONS`,
+  `WHATSAPP_INBOX_ACTIVE_KEY_VERSION` e `WHATSAPP_INBOX_RETENTION_SECONDS`.
+  Nenhuma foi criada em nenhum ambiente, e sem elas a gravação falha
+  fechada.
+- **Migration não aplicada no hospedado.** A da B3.2b, assim como as da
+  B3.1, não foi aplicada no Supabase hospedado.
+
+### 17.10 Revisão da PR #58
+
+Pedida sobre o HEAD `712ee0d`. Três pontos:
+
+1. **Gravar antes da normalização.** `storeWhatsAppWebhookDelivery`
+   chamava `normalizeEvents()` antes de gravar: um evento autêntico com
+   conteúdo inesperado era recusado e se perdia. Agora usa só a inspeção
+   mínima do envelope (§17.3), e `event_kind` (tipo normalizado) virou
+   `provider_event_type` (tipo bruto) na tabela, nas funções, nos tipos
+   gerados e nas listagens.
+2. **Regras de estado separadas.** A mesma regra (só ativo ou pausado)
+   valia para tudo e podia aprisionar uma entrada legítima se o canal
+   mudasse de estado depois do recebimento. Agora são duas regras (§17.5).
+3. **Teto de 30 dias.** O teto técnico da retenção da inbox caiu de 3650
+   para 30 dias (§17.6).
+
+**Reprodução vermelha, contra o HEAD `712ee0d`** (commit só de testes
+`b842116`):
+- **Unitários:** arquivo novo `b3-2b-revisao-envelope-retencao` e
+  ajustes em `b3-2b-inbox-servidor`. Falham 59; os que passam são guardas
+  que já valiam (JSON inválido recusado, retenção ausente recusada, 60 s,
+  7 e 30 dias aceitos).
+- **pgTAP 31 revisado (113 testes):** numa PR temporária (#59) com o
+  `712ee0d` e só o arquivo de teste. Falham 17 de 113, e o arquivo roda
+  até o fim:
+  - colunas exatas (`event_kind` ainda existe);
+  - canal desconectado recusado na entrega nova;
+  - 30 dias mais 1 segundo e 3650 dias aceitos (e, por isso, linhas a
+    mais nos dois testes de contagem seguintes);
+  - tipo bruto desconhecido do CRM recusado; tipo bruto não gravado;
+  - listagem e marcação com `event_kind`;
+  - canal desconectado depois do recebimento: leitura, marcação e entrega
+    nova recusadas;
+  - canal desativado depois do recebimento: listagem, leitura e as duas
+    finalizações recusadas.
+
+**Correção** (`b06fa32`): unitários da inbox 127 de 127; suíte inteira
+1612; pgTAP 31 113 de 113 e CI completo verde na própria PR.
+
+**Mutações do servidor e dos adaptadores:** 8, locais, cada uma aplicada
+e desfeita. Todas foram detectadas:
+
+| Mutação | Detectada por |
+|---|---|
+| `normalizeEvents()` de volta antes da gravação | YCloud e simulador sem identidade guardados; a gravação nunca normaliza; versão e lote |
+| Inspeção YCloud exige identidade do remetente | inspeção aceita sem identidade; envelope sem corpo específico; gravação YCloud sem identidade |
+| Inspeção YCloud ignora a versão | `v3` e `v1` recusados; gravação com versão incompatível |
+| Inspeção YCloud aceita lote | lote recusado na inspeção e na gravação |
+| Inspeção do simulador aceita lote | lote com dois eventos; lote não gravado |
+| Tipo gravado é o normalizado | a gravação nunca normaliza; tipo desconhecido gravado como veio |
+| Teto volta a 3650 dias | teto exportado; 30 dias mais 1 s, 31 dias e 3650 dias recusados |
+| Retenção ausente vira 30 dias | ausente e vazia recusadas |
+
+**Mutações do banco:** 5, cada uma numa PR temporária própria (#60 a #64)
+sobre `b06fa32`:
+
+| Mutação | Testes que falharam |
+|---|---|
+| Acesso a entrada existente usa a regra de recebimento | canal desativado depois: listagem, leitura e finalizações |
+| Recebimento usa a regra de acesso | canal desativado: entrega nova recusada e nada gravado; desativado depois: entrega nova, reentrega idêntica, nenhuma linha nova |
+| Regra antiga (ativo ou pausado) para todas as operações | desconectado: entrega nova; desconectado depois: leitura, marcação, entrega nova; desativado depois |
+| Teto do banco volta a 3650 dias | 30 dias mais 1 s e 3650 dias recusados; nenhuma linha das recusadas; listagem do canal só com as entregas dele |
+| Tipo restrito ao vocabulário normalizado | tipo bruto desconhecido do CRM aceito e gravado |
+
+#### Prazo calculado pelo banco (última correção antes do merge)
+
+Na revisão anterior, o servidor calculava `retain_until` com o próprio
+relógio e o banco comparava com o dele: com exatamente 30 dias, uma
+pequena diferença entre os relógios podia recusar uma configuração
+válida. Corrigido como descrito no §17.6. Assinatura final:
+
+```sql
+public.whatsapp_inbox_store(
+  p_channel_id uuid, p_workspace_id uuid, p_provider public.whatsapp_provider,
+  p_routing_key text, p_provider_event_id text, p_provider_event_type text,
+  p_body_sha256 text, p_key_version text, p_nonce text, p_ciphertext text,
+  p_auth_tag text, p_retention_seconds integer
+) returns jsonb  -- { outcome, inbox_id }
+```
+
+**Reprodução vermelha, contra o HEAD `3a9ffff`** (commit só de testes
+`780aeb4`):
+- **Unitários:** falham 8. São os três de retenção aceita (60 s, 7 e 30
+  dias, que agora exigem `p_retention_seconds`), o "manda só os segundos,
+  nunca um horário", os três de relógio da aplicação (adiantado 1 hora,
+  atrasado 1 hora e adiantado 2 dias, em que os argumentos mudavam com o
+  relógio) e o de argumentos exatos da gravação.
+- **pgTAP 31 (123 testes):** numa PR temporária (#65) com o `3a9ffff` e só
+  o arquivo de teste. Falham 46 dos 60 executados, e o arquivo para na
+  linha 336: a função antiga não aceita a retenção em segundos, então
+  nenhuma gravação acontece e a primeira consulta por uma entrada gravada
+  não encontra linha. Falham também a assinatura (um inteiro no fim) e "a
+  gravação não recebe horário, data nem intervalo da aplicação".
+
+**Testes novos ou alterados:**
+- unitários: retenção mandada em segundos; nenhum argumento com data ISO;
+  relógio da aplicação adiantado 1 hora, atrasado 1 hora e adiantado 2
+  dias, sempre com 30 dias aceitos e argumentos idênticos;
+- pgTAP: assinatura; nenhum argumento de data, hora ou intervalo;
+  retenção nula, zero, negativa, 59 s, 2.592.001 s e 3650 dias recusadas;
+  2.592.000 s aceita, com `received_at = now()` e
+  `retain_until - received_at = 2.592.000 s`; 7 dias com
+  `retain_until - received_at = 604.800 s`; reentrega idêntica e
+  divergente com outra retenção preservando o primeiro payload e o
+  primeiro prazo; restrição de 30 dias na tabela.
+
+**Correção** (`4660c93`): suíte inteira 1616; pgTAP 31 123 de 123; CI
+completo verde e Vercel.
+
+**Mutações:**
+
+| Mutação | Onde | Testes que falharam |
+|---|---|---|
+| O servidor volta a calcular o prazo (horário absoluto pelo relógio da aplicação) | local | os 8 do vermelho unitário |
+| O servidor manda os segundos **e** o horário absoluto | local | os mesmos 8 |
+| O prazo usa um segundo horário (`clock_timestamp()`) | PR #66 | 30 dias exatos aceitos; prazo = recebimento + 2.592.000 s; 7 dias exatos; reentrega idêntica; primeiro prazo preservado |
+| Limite exato recusado (teto 2.591.999 s) | PR #67 | 30 dias exatos aceitos; prazo de 30 dias; reentrega com 30 dias |
+| Sem a restrição de 30 dias na tabela | PR #68 | restrição de 30 dias |
+| Reentrega renova o prazo | PR #69 | primeiro prazo preservado |
+
+Tombstone, isolamento, cifra, estados do canal e permissões não mudaram:
+os testes deles continuam iguais e verdes.

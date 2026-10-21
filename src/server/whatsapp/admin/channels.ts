@@ -252,6 +252,13 @@ function isResolvedContext(value: unknown): value is ResolvedWhatsAppChannelCont
   return typeof value === "object" && value !== null && resolvedContexts.has(value);
 }
 
+/** Para outros módulos do servidor (a caixa de entrada, B3.2b): só o objeto
+ * criado pela resolução interna passa — nunca uma cópia ou um objeto
+ * montado à mão. */
+export function isTrustedWhatsAppChannelContext(value: unknown): value is ResolvedWhatsAppChannelContext {
+  return isResolvedContext(value);
+}
+
 /** Canal administrado pela sessão: `workspaceId` e `actorUserId` vêm da
  * verificação da sessão; o banco confere papel, workspace e ambiente. */
 export async function adminResolveManagedWhatsAppChannel(
