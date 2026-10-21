@@ -168,9 +168,6 @@ as $body$
 declare
   v_channel public.whatsapp_channels := private.whatsapp_inbox_channel_identity(p_channel_id, p_workspace_id, p_provider, p_routing_key, p_env);
 begin
-  if v_channel.status is null or v_channel.status not in ('active', 'paused', 'disconnected') then
-    raise exception 'channel_not_found';
-  end if;
   return v_channel;
 end;
 $body$;
