@@ -93,3 +93,4 @@ $body$;
 
 revoke all on function public.whatsapp_resolve_webhook_route(public.whatsapp_provider, uuid) from public, anon, authenticated;
 grant execute on function public.whatsapp_resolve_webhook_route(public.whatsapp_provider, uuid) to service_role;
+grant execute on function public.whatsapp_resolve_webhook_route(public.whatsapp_provider, uuid) to authenticated;
