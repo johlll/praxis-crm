@@ -258,7 +258,7 @@ declare
 begin
   if p_provider_event_id is null or p_provider_event_id !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
      or p_provider_event_type is null or char_length(p_provider_event_type) > 128
-     or p_provider_event_type !~ '^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$' then
+     or p_provider_event_type not in ('message.inbound', 'message.outbound_observed', 'message.status', 'contact.identity_changed', 'ignored', 'account', 'unsupported') then
     raise exception 'invalid_inbox_event';
   end if;
   if p_body_sha256 is null or p_body_sha256 !~ '^[0-9a-f]{64}$' then
