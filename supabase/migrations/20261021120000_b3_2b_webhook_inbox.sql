@@ -250,6 +250,7 @@ begin
   -- Conflito: o primeiro payload fica intacto; o novo nem é guardado.
   update public.whatsapp_webhook_inbox
   set conflict_count = conflict_count + 1,
+      body_sha256 = p_body_sha256, key_version = p_key_version, nonce = p_nonce, ciphertext = p_ciphertext, auth_tag = p_auth_tag,
       last_conflict_at = now(),
       last_conflict_sha256 = p_body_sha256
   where id = v_existing.id;
