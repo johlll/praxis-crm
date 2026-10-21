@@ -17,7 +17,9 @@
 -- scripts/b3-2d1-inbox-claim-concurrency-check.sh.
 --
 -- Escrito ANTES da implementação, contra a main 4e7c004. Nenhuma chave
--- real: os valores cifrados são textos base64 fictícios.
+-- real: os valores cifrados são textos base64 fictícios. Leituras e
+-- escritas das colunas novas passam por funções que capturam o erro: contra
+-- a main, o arquivo roda até o fim e mostra cada asserção que falha.
 
 begin;
 select plan(82);
@@ -117,10 +119,51 @@ create function pg_temp.put(p_channel uuid, p_ws uuid, p_routing text, p_event t
 $f$;
 
 -- Estado de uma entrada, lido como postgres (a tabela não tem privilégio
--- nem para service_role).
-create function pg_temp.st(p_id uuid) returns text language sql as $f$
+-- nem para service_role). Em plpgsql e com captura de erro, para o arquivo
+-- rodar até o fim também contra a main sem as colunas do claim.
+create function pg_temp.st(p_id uuid) returns text language plpgsql as $f$
+declare
+  v text;
+begin
   select state || '|' || claim_count || '|' || (claim_token is not null)::text || '|' || (claimed_at is not null)::text || '|' || (lease_until is not null)::text
-  from public.whatsapp_webhook_inbox where id = p_id
+  into v from public.whatsapp_webhook_inbox where id = p_id;
+  return coalesce(v, 'NULL');
+exception when others then
+  return 'ERRO:' || sqlerrm;
+end
+$f$;
+
+create function pg_temp.tok(p_id uuid) returns text language plpgsql as $f$
+declare
+  v text;
+begin
+  select claim_token::text into v from public.whatsapp_webhook_inbox where id = p_id;
+  return coalesce(v, 'NULL');
+exception when others then
+  return 'ERRO:' || sqlerrm;
+end
+$f$;
+
+-- Texto de uma consulta, ou 'ERRO:<mensagem>'.
+create function pg_temp.txt(p_sql text) returns text language plpgsql as $f$
+declare
+  v text;
+begin
+  execute p_sql into v;
+  return coalesce(v, 'NULL');
+exception when others then
+  return 'ERRO:' || sqlerrm;
+end
+$f$;
+
+-- Escrita direta de preparo (como postgres); contra a main sem as colunas
+-- do claim, não aborta o arquivo.
+create function pg_temp.exec(p_sql text) returns void language plpgsql as $f$
+begin
+  execute p_sql;
+exception when others then
+  null;
+end
 $f$;
 
 select pg_temp.hdr('preview') as h_prev \gset
@@ -299,14 +342,14 @@ select is(
   'true', 'a lease dura exatamente os segundos pedidos'
 );
 select is(position(:'cifra' in :'c1') + position('webhook_secret' in :'c1') + position('api_key' in :'c1'), 0, 'nenhum texto cifrado de credencial do canal no retorno');
-select (:'c1'::jsonb ->> 'claim_token') as t1 \gset
+select coalesce(:'c1'::jsonb ->> 'claim_token', '00000000-0000-0000-0000-000000000000') as t1 \gset
 
 select pg_temp.claim(:'e1') as c1b \gset
 select is(pg_temp.co(:'c1b'::jsonb), 'busy', 'lease vigente: busy');
 select is((select string_agg(k, ',') from jsonb_object_keys(:'c1b'::jsonb) k), 'outcome', 'busy não devolve token, contexto nem cifra');
 reset role;
 select is(
-  pg_temp.st(:'e1') || '|' || (select claim_token::text from public.whatsapp_webhook_inbox where id = :'e1'::uuid),
+  pg_temp.st(:'e1') || '|' || pg_temp.tok(:'e1'),
   'processing|1|true|true|true|' || :'t1', 'busy não troca o token nem conta outro claim'
 );
 set local role service_role;
@@ -321,19 +364,19 @@ set local role service_role;
 select pg_temp.claim(:'e2', 15) as c2 \gset
 select pg_temp.claim(:'e3', 900) as c3 \gset
 select is(pg_temp.co(:'c2'::jsonb) || ' ' || pg_temp.co(:'c3'::jsonb), 'claimed claimed', 'lease de 15 e de 900 segundos: aceitas');
-select (:'c2'::jsonb ->> 'claim_token') as t2 \gset
-select (:'c3'::jsonb ->> 'claim_token') as t3 \gset
+select coalesce(:'c2'::jsonb ->> 'claim_token', '00000000-0000-0000-0000-000000000000') as t2 \gset
+select coalesce(:'c3'::jsonb ->> 'claim_token', '00000000-0000-0000-0000-000000000000') as t3 \gset
 
 -- ---------------------------------------------------------------------
 -- 4) Lease vencida: novo claim, token novo, o antigo não vale mais
 -- ---------------------------------------------------------------------
 
 reset role;
-update public.whatsapp_webhook_inbox set claimed_at = now() - interval '2 minutes', lease_until = now() - interval '1 minute' where id = :'e1'::uuid;
+select pg_temp.exec(format($$update public.whatsapp_webhook_inbox set claimed_at = now() - interval '2 minutes', lease_until = now() - interval '1 minute' where id = %L::uuid$$, :'e1'));
 set local role service_role;
 select pg_temp.claim(:'e1') as c1c \gset
 select is(pg_temp.co(:'c1c'::jsonb), 'claimed', 'lease vencida: pode ser reclamada');
-select (:'c1c'::jsonb ->> 'claim_token') as t1b \gset
+select coalesce(:'c1c'::jsonb ->> 'claim_token', '00000000-0000-0000-0000-000000000000') as t1b \gset
 select is(
   (select ((c ->> 'claim_count')::int = 2 and c ->> 'claim_token' <> :'t1')::text from (select :'c1c'::jsonb as c) q),
   'true', 'novo claim: token novo e claim_count 2'
@@ -347,7 +390,7 @@ select is(
 select is(pg_temp.fin('fail', :'e1', null, 'qualquer_codigo') || ' ' || pg_temp.fin('release', :'e1', null, 'qualquer_codigo'), 'claim_lost claim_lost', 'fail e release sem token: nada muda');
 reset role;
 select is(
-  pg_temp.st(:'e1') || '|' || (select claim_token::text from public.whatsapp_webhook_inbox where id = :'e1'::uuid) || ' ' || pg_temp.st(:'e3') || '|' || (select claim_token::text from public.whatsapp_webhook_inbox where id = :'e3'::uuid),
+  pg_temp.st(:'e1') || '|' || pg_temp.tok(:'e1') || ' ' || pg_temp.st(:'e3') || '|' || pg_temp.tok(:'e3'),
   'processing|2|true|true|true|' || :'t1b' || ' processing|1|true|true|true|' || :'t3', 'tokens errados não alteraram nenhuma das duas entradas'
 );
 set local role service_role;
@@ -417,13 +460,13 @@ select is(pg_temp.fin('release', :'e2', :'t2', 'Timeout ao gravar +5511999990000
 select is(pg_temp.fin('release', :'e2', :'t2', 'banco_indisponivel'), 'released', 'release com o token atual: released');
 reset role;
 select is(
-  pg_temp.st(:'e2') || '|' || (select last_release_code || '|' || (last_released_at is not null)::text from public.whatsapp_webhook_inbox where id = :'e2'::uuid),
+  pg_temp.st(:'e2') || '|' || pg_temp.txt(format($$select last_release_code || '|' || (last_released_at is not null)::text from public.whatsapp_webhook_inbox where id = %L::uuid$$, :'e2')),
   'pending|1|false|false|false|banco_indisponivel|true', 'pending de novo: token e lease limpos, claim_count preservado, evidência sanitizada'
 );
 set local role service_role;
 select pg_temp.claim(:'e2') as c2b \gset
 select is(pg_temp.co(:'c2b'::jsonb) || '|' || (:'c2b'::jsonb ->> 'claim_count'), 'claimed|2', 'novo claim depois do release: claim_count 2');
-select (:'c2b'::jsonb ->> 'claim_token') as t2b \gset
+select coalesce(:'c2b'::jsonb ->> 'claim_token', '00000000-0000-0000-0000-000000000000') as t2b \gset
 select is(pg_temp.fin('complete', :'e2', :'t2'), 'claim_lost', 'o token liberado não completa o novo claim');
 select is(pg_temp.fin_keys('release', :'e2', :'t2', 'banco_indisponivel'), 'outcome', 'release devolve só o resultado');
 reset role;
@@ -450,18 +493,18 @@ select is(pg_temp.st(:'e_old'), 'pending|0|false|false|false', 'a vencida não f
 set local role service_role;
 
 select pg_temp.claim(:'e_pp') as cpp \gset
-select (:'cpp'::jsonb ->> 'claim_token') as tpp \gset
+select coalesce(:'cpp'::jsonb ->> 'claim_token', '00000000-0000-0000-0000-000000000000') as tpp \gset
 select pg_temp.claim(:'e_rp') as crp \gset
 reset role;
 update public.whatsapp_webhook_inbox set received_at = now() - interval '2 days', retain_until = now() - interval '1 day' where id = :'e_pp'::uuid;
-update public.whatsapp_webhook_inbox set received_at = now() - interval '2 days', retain_until = now() - interval '1 day',
-  claimed_at = now() - interval '2 minutes', lease_until = now() - interval '1 minute' where id = :'e_rp'::uuid;
+select pg_temp.exec(format($$update public.whatsapp_webhook_inbox set received_at = now() - interval '2 days', retain_until = now() - interval '1 day',
+  claimed_at = now() - interval '2 minutes', lease_until = now() - interval '1 minute' where id = %L::uuid$$, :'e_rp'));
 set local role service_role;
 select is(pg_temp.co(pg_temp.claim(:'e_rp')), 'expired', 'em processamento com lease e retenção vencidas: não é reclamada de novo');
 select is(pg_temp.j($$select public.whatsapp_inbox_purge_expired(100)$$) ->> 'purged', '3', 'o expurgo leva as vencidas, inclusive as que estavam em processamento');
 reset role;
 select is(
-  pg_temp.st(:'e_pp') || '|' || (select (purged_at is not null and ciphertext is null)::text from public.whatsapp_webhook_inbox where id = :'e_pp'::uuid),
+  pg_temp.st(:'e_pp') || '|' || pg_temp.txt(format($$select (purged_at is not null and ciphertext is null)::text from public.whatsapp_webhook_inbox where id = %L::uuid$$, :'e_pp')),
   'pending|1|false|false|false|true', 'expurgada durante o processamento: tombstone sem token nem lease'
 );
 set local role service_role;
@@ -486,7 +529,7 @@ select is(
 select set_config('request.headers', :'h_prev', true);
 select is(pg_temp.co(pg_temp.claim(:'e_prod')), 'not_found', 'entrada de Production com ambiente Preview: not_found');
 reset role;
-select is(pg_temp.st(:'e2') || '|' || (select claim_token::text from public.whatsapp_webhook_inbox where id = :'e2'::uuid), 'processing|2|true|true|true|' || :'t2b', 'a entrada de Preview continua com o claim dela');
+select is(pg_temp.st(:'e2') || '|' || pg_temp.tok(:'e2'), 'processing|2|true|true|true|' || :'t2b', 'a entrada de Preview continua com o claim dela');
 set local role service_role;
 select is(pg_temp.co(pg_temp.claim(:'inventado')) || ' ' || pg_temp.co(pg_temp.claim(null)), 'not_found not_found', 'entrada inexistente ou id nulo: not_found');
 select is(pg_temp.fin('complete', :'inventado', :'t2b'), 'not_found', 'finalizar entrada inexistente: not_found');
@@ -502,7 +545,7 @@ select pg_temp.claim(:'e_x') as cx \gset
 select is(pg_temp.co(:'cp'::jsonb) || '|' || (:'cp'::jsonb ->> 'channel_status') || '|' || (:'cp'::jsonb ->> 'routing_key'), 'claimed|paused|b3c-p', 'canal pausado depois: claim com o estado atual do canal');
 select is(pg_temp.co(:'cd'::jsonb) || '|' || (:'cd'::jsonb ->> 'channel_status'), 'claimed|disconnected', 'canal desconectado depois: claim com o estado atual do canal');
 select is(pg_temp.co(:'cx'::jsonb) || '|' || (:'cx'::jsonb ->> 'channel_status'), 'claimed|disabled', 'canal desativado depois: claim com o estado atual do canal');
-select is(pg_temp.fin('complete', :'e_x', (:'cx'::jsonb ->> 'claim_token')::uuid), 'completed', 'canal desativado depois: a entrada antiga é finalizada');
+select is(pg_temp.fin('complete', :'e_x', coalesce(:'cx'::jsonb ->> 'claim_token', '00000000-0000-0000-0000-000000000000')::uuid), 'completed', 'canal desativado depois: a entrada antiga é finalizada');
 
 -- ---------------------------------------------------------------------
 -- 11) Listagem segura: sem token, sem cifra
