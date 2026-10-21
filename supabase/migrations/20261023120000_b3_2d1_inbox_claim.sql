@@ -253,6 +253,7 @@ begin
   where ch.id = v_row.channel_id
     and ch.workspace_id = v_row.workspace_id
     and ch.environment = v_env
+    and ch.status <> 'disabled'
     and ch.provider = v_row.provider;
   if not found then
     return jsonb_build_object('outcome', 'not_found');
