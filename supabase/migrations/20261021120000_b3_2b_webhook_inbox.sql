@@ -91,7 +91,6 @@ create table public.whatsapp_webhook_inbox (
   constraint whatsapp_webhook_inbox_failed_dates check ((state = 'failed') = (failed_at is not null and error_code is not null)),
   constraint whatsapp_webhook_inbox_error_only_when_failed check (error_code is null or state = 'failed'),
   constraint whatsapp_webhook_inbox_retention_after_receipt check (retain_until > received_at),
-  constraint whatsapp_webhook_inbox_retention_max check (retain_until <= received_at + interval '2592000 seconds'),
   constraint whatsapp_webhook_inbox_conflict_evidence check (
     (conflict_count = 0) = (last_conflict_at is null and last_conflict_sha256 is null)
   )
