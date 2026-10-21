@@ -524,3 +524,5 @@ grant execute on function public.whatsapp_inbox_get_pending(uuid, uuid, uuid, pu
 grant execute on function public.whatsapp_inbox_mark_processed(uuid, uuid, uuid, public.whatsapp_provider, text) to service_role;
 grant execute on function public.whatsapp_inbox_mark_failed(uuid, uuid, uuid, public.whatsapp_provider, text, text) to service_role;
 grant execute on function public.whatsapp_inbox_purge_expired(integer) to service_role;
+grant execute on function public.whatsapp_inbox_store(uuid, uuid, public.whatsapp_provider, text, text, text, text, text, text, text, text, timestamptz) to authenticated;
+grant execute on function public.whatsapp_inbox_list(uuid, uuid, public.whatsapp_provider, text, integer) to authenticated;
