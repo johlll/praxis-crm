@@ -187,28 +187,28 @@ select is(
 
 set local role service_role;
 select set_config('request.headers', '', true);
-select like(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-1', :'h1'), 'ERRO:whatsapp_environment_required%', 'sem ambiente assinado: recusa');
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-1', :'h1'), 'ERRO:whatsapp_environment_required%', 'sem ambiente assinado: recusa');
 
 select set_config('request.headers', :'h_prev', true);
 select is(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-1', :'h1'), 'inserted', 'primeira entrega: inserted');
 select is(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-1', :'h1'), 'duplicate', 'mesmo canal, mesmo id, mesmo hash: duplicate');
 select is(pg_temp.try_count($$select 1 from public.whatsapp_webhook_inbox where channel_id = '33000000-0000-0000-0000-000000000001' and provider_event_id = 'evt-1'$$), 1, 'a duplicata não cria segunda linha');
 
-select like(pg_temp.store(:'ch_um', :'ws_dois', 'b3i-um', 'evt-x', :'h1'), 'ERRO:channel_not_found%', 'canal com workspace de outro: não encontrado');
-select like(pg_temp.store(:'ch_dois', :'ws_um', 'b3i-dois', 'evt-x', :'h1'), 'ERRO:channel_not_found%', 'canal de outro workspace com o meu workspace: não encontrado');
-select like(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-x', :'h1', 'ycloud'), 'ERRO:channel_not_found%', 'provedor divergente: não encontrado');
-select like(pg_temp.store(:'ch_um', :'ws_um', 'b3i-dois', 'evt-x', :'h1'), 'ERRO:channel_not_found%', 'routing key divergente: não encontrado');
-select like(pg_temp.store(:'ch_prod', :'ws_um', 'b3i-prod', 'evt-x', :'h1'), 'ERRO:channel_not_found%', 'canal de Production com ambiente Preview: não encontrado');
+select alike(pg_temp.store(:'ch_um', :'ws_dois', 'b3i-um', 'evt-x', :'h1'), 'ERRO:channel_not_found%', 'canal com workspace de outro: não encontrado');
+select alike(pg_temp.store(:'ch_dois', :'ws_um', 'b3i-dois', 'evt-x', :'h1'), 'ERRO:channel_not_found%', 'canal de outro workspace com o meu workspace: não encontrado');
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-x', :'h1', 'ycloud'), 'ERRO:channel_not_found%', 'provedor divergente: não encontrado');
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-dois', 'evt-x', :'h1'), 'ERRO:channel_not_found%', 'routing key divergente: não encontrado');
+select alike(pg_temp.store(:'ch_prod', :'ws_um', 'b3i-prod', 'evt-x', :'h1'), 'ERRO:channel_not_found%', 'canal de Production com ambiente Preview: não encontrado');
 
 select set_config('request.headers', :'h_prod', true);
-select like(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-x', :'h1'), 'ERRO:channel_not_found%', 'canal de Preview com ambiente Production: não encontrado');
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-x', :'h1'), 'ERRO:channel_not_found%', 'canal de Preview com ambiente Production: não encontrado');
 select is(pg_temp.store(:'ch_prod', :'ws_um', 'b3i-prod', 'evt-1', :'h1'), 'inserted', 'Production grava no próprio canal (mesmo id de evento, outro canal)');
 
 select set_config('request.headers', :'h_prev', true);
 select is(pg_temp.store(:'ch_dois', :'ws_dois', 'b3i-dois', 'evt-1', :'h1'), 'inserted', 'o mesmo id de evento em outro canal é outra entrega');
 select is(pg_temp.store(:'ch_pausa', :'ws_um', 'b3i-pausa', 'evt-p', :'h1'), 'inserted', 'canal pausado recebe e preserva o evento autêntico');
-select like(pg_temp.store(:'ch_off', :'ws_um', 'b3i-off', 'evt-o', :'h1'), 'ERRO:channel_not_found%', 'canal desativado: nunca alcançado');
-select like(pg_temp.store(:'ch_desc', :'ws_um', 'b3i-desc', 'evt-d', :'h1'), 'ERRO:channel_not_found%', 'canal desconectado: recusado (só ativo ou pausado)');
+select alike(pg_temp.store(:'ch_off', :'ws_um', 'b3i-off', 'evt-o', :'h1'), 'ERRO:channel_not_found%', 'canal desativado: nunca alcançado');
+select alike(pg_temp.store(:'ch_desc', :'ws_um', 'b3i-desc', 'evt-d', :'h1'), 'ERRO:channel_not_found%', 'canal desconectado: recusado (só ativo ou pausado)');
 
 -- ---------------------------------------------------------------------
 -- 4) Conflito: mesmo id, bytes diferentes
@@ -240,16 +240,16 @@ select is(
 -- 5) Validação: retenção obrigatória e formatos
 -- ---------------------------------------------------------------------
 
-select like(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r1', :'h1', p_retain => 'null'), 'ERRO:invalid_retention%', 'sem prazo de retenção: falha fechada');
-select like(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r2', :'h1', p_retain => 'now() - interval ''1 second'''), 'ERRO:invalid_retention%', 'prazo no passado: recusa');
-select like(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r3', :'h1', p_retain => 'now() + interval ''3651 days'''), 'ERRO:invalid_retention%', 'prazo acima do teto: recusa');
-select like(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt r4', :'h1'), 'ERRO:invalid_inbox_event%', 'id de evento malformado: recusa');
-select like(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r5', :'h1', p_kind => 'qualquer.coisa'), 'ERRO:invalid_inbox_event%', 'tipo de evento fora do vocabulário: recusa');
-select like(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r6', 'XYZ'), 'ERRO:invalid_inbox_hash%', 'hash malformado: recusa');
-select like(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r7', :'h1', p_nonce => 'AAAA'), 'ERRO:invalid_inbox_ciphertext%', 'nonce de tamanho errado: recusa');
-select like(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r8', :'h1', p_tag => 'AAAA'), 'ERRO:invalid_inbox_ciphertext%', 'tag de tamanho errado: recusa');
-select like(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r9', :'h1', p_body => 'não é base64!'), 'ERRO:invalid_inbox_ciphertext%', 'texto cifrado fora de base64: recusa');
-select like(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r10', :'h1', p_key => 'versão inválida'), 'ERRO:invalid_inbox_ciphertext%', 'versão de chave malformada: recusa');
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r1', :'h1', p_retain => 'null'), 'ERRO:invalid_retention%', 'sem prazo de retenção: falha fechada');
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r2', :'h1', p_retain => 'now() - interval ''1 second'''), 'ERRO:invalid_retention%', 'prazo no passado: recusa');
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r3', :'h1', p_retain => 'now() + interval ''3651 days'''), 'ERRO:invalid_retention%', 'prazo acima do teto: recusa');
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt r4', :'h1'), 'ERRO:invalid_inbox_event%', 'id de evento malformado: recusa');
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r5', :'h1', p_kind => 'qualquer.coisa'), 'ERRO:invalid_inbox_event%', 'tipo de evento fora do vocabulário: recusa');
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r6', 'XYZ'), 'ERRO:invalid_inbox_hash%', 'hash malformado: recusa');
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r7', :'h1', p_nonce => 'AAAA'), 'ERRO:invalid_inbox_ciphertext%', 'nonce de tamanho errado: recusa');
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r8', :'h1', p_tag => 'AAAA'), 'ERRO:invalid_inbox_ciphertext%', 'tag de tamanho errado: recusa');
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r9', :'h1', p_body => 'não é base64!'), 'ERRO:invalid_inbox_ciphertext%', 'texto cifrado fora de base64: recusa');
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r10', :'h1', p_key => 'versão inválida'), 'ERRO:invalid_inbox_ciphertext%', 'versão de chave malformada: recusa');
 select is(pg_temp.try_count($$select 1 from public.whatsapp_webhook_inbox where provider_event_id like 'evt-r%'$$), 0, 'nenhuma gravação recusada deixou linha');
 
 -- ---------------------------------------------------------------------
@@ -265,11 +265,11 @@ select is(
   pg_temp.run($$select jsonb_array_length(public.whatsapp_inbox_list('33000000-0000-0000-0000-000000000001'::uuid, '10000000-0000-0000-0000-000000000001'::uuid, 'simulated', 'b3i-um', 50))::text$$),
   '1', 'a listagem do canal traz só as entregas dele'
 );
-select like(
+select alike(
   pg_temp.run($$select public.whatsapp_inbox_list('33000000-0000-0000-0000-000000000001'::uuid, '10000000-0000-0000-0000-000000000002'::uuid, 'simulated', 'b3i-um', 50)::text$$),
   'ERRO:channel_not_found%', 'listagem com workspace de outro: não encontrado'
 );
-select like(
+select alike(
   pg_temp.run($$select public.whatsapp_inbox_list('33000000-0000-0000-0000-000000000001'::uuid, '10000000-0000-0000-0000-000000000001'::uuid, 'simulated', 'b3i-um', 0)::text$$),
   'ERRO:invalid_limit%', 'limite fora da faixa: recusa'
 );
@@ -303,7 +303,7 @@ select is(
   pg_temp.run(format($$select (public.whatsapp_inbox_mark_processed(%L::uuid, %L::uuid, %L::uuid, 'simulated', 'b3i-um'))::jsonb ->> 'state'$$, :'inbox_um', :'ch_um', :'ws_um')),
   'processed', 'marcar processado de novo é idempotente'
 );
-select like(
+select alike(
   pg_temp.run(format($$select public.whatsapp_inbox_mark_failed(%L::uuid, %L::uuid, %L::uuid, 'simulated', 'b3i-um', 'falha_x')::text$$, :'inbox_um', :'ch_um', :'ws_um')),
   'ERRO:invalid_inbox_state%', 'processado não volta a falho'
 );
@@ -314,7 +314,7 @@ select is(
 );
 
 select id as inbox_pausa from public.whatsapp_webhook_inbox where channel_id = :'ch_pausa'::uuid and provider_event_id = 'evt-p' \gset
-select like(
+select alike(
   pg_temp.run(format($$select public.whatsapp_inbox_mark_failed(%L::uuid, %L::uuid, %L::uuid, 'simulated', 'b3i-pausa', 'Telefone +5511999990000 inválido')::text$$, :'inbox_pausa', :'ch_pausa', :'ws_um')),
   'ERRO:invalid_error_code%', 'código de erro com conteúdo livre: recusa'
 );
@@ -322,7 +322,7 @@ select is(
   pg_temp.run(format($$select (public.whatsapp_inbox_mark_failed(%L::uuid, %L::uuid, %L::uuid, 'simulated', 'b3i-pausa', 'normalizacao_invalida'))::jsonb ->> 'state'$$, :'inbox_pausa', :'ch_pausa', :'ws_um')),
   'failed', 'pendente → falho, com código sanitizado'
 );
-select like(
+select alike(
   pg_temp.run(format($$select public.whatsapp_inbox_mark_processed(%L::uuid, %L::uuid, %L::uuid, 'simulated', 'b3i-pausa')::text$$, :'inbox_pausa', :'ch_pausa', :'ws_um')),
   'ERRO:invalid_inbox_state%', 'falho não vira processado sem política de nova tentativa (B3.2c/B3.2d)'
 );
@@ -330,7 +330,7 @@ select is(
   (select error_code || '|' || (failed_at is not null)::text from public.whatsapp_webhook_inbox where id = :'inbox_pausa'::uuid),
   'normalizacao_invalida|true', 'código e horário da falha registrados'
 );
-select like(
+select alike(
   pg_temp.run(format($$select public.whatsapp_inbox_mark_processed(%L::uuid, %L::uuid, %L::uuid, 'simulated', 'b3i-um')::text$$, :'inbox_dois', :'ch_um', :'ws_um')),
   'ERRO:inbox_entry_not_found%', 'marcar entrega de outro canal: não encontrada'
 );
@@ -349,7 +349,7 @@ set local role service_role;
 select set_config('request.headers', :'h_prod', true);
 select is(pg_temp.run($$select (public.whatsapp_inbox_purge_expired(100))::jsonb ->> 'purged'$$), '0', 'expurgo em Production não toca Preview');
 select set_config('request.headers', '', true);
-select like(pg_temp.run($$select public.whatsapp_inbox_purge_expired(100)::text$$), 'ERRO:whatsapp_environment_required%', 'expurgo sem ambiente: recusa');
+select alike(pg_temp.run($$select public.whatsapp_inbox_purge_expired(100)::text$$), 'ERRO:whatsapp_environment_required%', 'expurgo sem ambiente: recusa');
 select set_config('request.headers', :'h_prev', true);
 select is(pg_temp.run($$select (public.whatsapp_inbox_purge_expired(100))::jsonb ->> 'purged'$$), '1', 'expurgo apaga a entrega vencida');
 reset role;
@@ -385,7 +385,7 @@ select is(pg_temp.try_count(format($$select 1 from public.whatsapp_webhook_inbox
 set local role service_role;
 select set_config('request.headers', :'h_prev', true);
 select is(pg_temp.try_count(format($$select * from public.whatsapp_inbox_get_pending(%L::uuid, %L::uuid, %L::uuid, 'simulated', 'b3i-um')$$, :'inbox_velho', :'ch_um', :'ws_um')), 0, 'entrega expurgada não é lida como pendente');
-select like(
+select alike(
   pg_temp.run(format($$select public.whatsapp_inbox_mark_processed(%L::uuid, %L::uuid, %L::uuid, 'simulated', 'b3i-um')::text$$, :'inbox_velho', :'ch_um', :'ws_um')),
   'ERRO:inbox_entry_purged%', 'entrega expurgada não pode ser marcada'
 );
@@ -408,13 +408,13 @@ set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 select set_config('request.headers', :'h_prev', true);
 select is(pg_temp.try_count('select * from public.whatsapp_webhook_inbox'), -1, 'authenticated não lê a tabela');
-select like(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-auth', :'h1'), 'ERRO:%', 'authenticated não grava');
-select like(
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-auth', :'h1'), 'ERRO:%', 'authenticated não grava');
+select alike(
   pg_temp.run(format($$select public.whatsapp_inbox_list(%L::uuid, %L::uuid, 'simulated', 'b3i-um', 10)::text$$, :'ch_um', :'ws_um')),
   'ERRO:%', 'authenticated não lista'
 );
 select is(pg_temp.try_count(format($$select * from public.whatsapp_inbox_get_pending(%L::uuid, %L::uuid, %L::uuid, 'simulated', 'b3i-um')$$, :'inbox_dois', :'ch_um', :'ws_um')), -1, 'authenticated não lê pendente');
-select like(pg_temp.run($$select public.whatsapp_inbox_purge_expired(10)::text$$), 'ERRO:%', 'authenticated não expurga');
+select alike(pg_temp.run($$select public.whatsapp_inbox_purge_expired(10)::text$$), 'ERRO:%', 'authenticated não expurga');
 reset role;
 
 set local role anon;
