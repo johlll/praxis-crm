@@ -156,6 +156,15 @@ jobs:
         # seguinte recria o banco local.
         run: bash scripts/b2-sync-lease-concurrency-check.sh
 
+      - name: Teste de concorrência real (B3.2d-1 — claim da inbox do WhatsApp)
+        # pgTAP roda numa sessão só: prova o claim em sequência. Aqui, oito
+        # sessões psql pedem o claim da mesma entrada ao mesmo tempo (só uma
+        # recebe), e transações abertas provam que o token vencido espera e
+        # perde para quem reclamou e que o complete segura a linha — ver
+        # scripts/b3-2d1-inbox-claim-concurrency-check.sh. Cria um canal
+        # próprio; roda antes do passo que recria o banco local.
+        run: bash scripts/b3-2d1-inbox-claim-concurrency-check.sh
+
       - name: Atualização a partir da versão anterior (numeração de propostas)
         # "Aplicar migrations do zero" já valida a criação do banco; este
         # passo valida a ATUALIZAÇÃO com dados emitidos pela versão anterior.
