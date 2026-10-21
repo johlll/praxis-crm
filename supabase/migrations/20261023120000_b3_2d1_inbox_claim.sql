@@ -320,9 +320,6 @@ begin
   if p_target not in ('processed', 'failed', 'pending') then
     raise exception 'invalid_inbox_transition';
   end if;
-  if p_target <> 'processed' and (p_code is null or p_code !~ '^[a-z0-9_]{1,64}$') then
-    raise exception 'invalid_error_code';
-  end if;
   if p_inbox_id is null then
     return jsonb_build_object('outcome', 'not_found');
   end if;
