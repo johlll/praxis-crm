@@ -277,7 +277,7 @@ begin
      or p_ciphertext !~ '^[A-Za-z0-9+/]+={0,2}$' then
     raise exception 'invalid_inbox_ciphertext';
   end if;
-  if p_retention_seconds is null or p_retention_seconds not between 60 and 2592000 then
+  if p_retention_seconds is null or p_retention_seconds not between 60 and 2591999 then
     raise exception 'invalid_retention';
   end if;
 
