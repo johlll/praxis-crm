@@ -103,7 +103,6 @@ create trigger whatsapp_webhook_inbox_guard
 
 -- Sem atalho direto: nem service_role lê ou escreve a tabela. As funções
 -- abaixo e as da B3.2b são SECURITY DEFINER.
-revoke all on table public.whatsapp_webhook_inbox from service_role;
 
 -- ---------------------------------------------------------------------
 -- Caminho antigo sem claim: removido
