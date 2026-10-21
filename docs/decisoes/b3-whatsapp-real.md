@@ -1534,7 +1534,7 @@ ou número.
 |---|---|---|
 | B3.2a | **Implementada (§16).** Adaptador YCloud puro: assinatura sobre bytes (`t=,s=`), normalização de entrada, eco, status, histórico (ignorado) e eventos de conta a partir de exemplos oficiais; identidade telefone e/ou BSUID; sem rede | — |
 | B3.2b | **Implementada (§17).** `whatsapp_webhook_inbox` cifrada (chave e AAD próprias), única por (canal, id do evento), com prazo de retenção; RPC de gravação; pgTAP | B3.2a |
-| B3.2c | Rota `/api/webhooks/whatsapp/[provider]`: bytes → assinatura → canal pela resolução do webhook (§14.6) → inbox → 2xx → Inngest; 404 sem provedor | B3.2b |
+| B3.2c | **Implementada (§18).** Rota `/api/webhooks/whatsapp/[provider]/[routingKey]`: bytes → canal pela routing key da URL (o segredo é por canal) → assinatura → inbox → 2xx → Inngest; 404 sem provedor | B3.2b |
 | B3.2d | Função Inngest e RPCs de serviço: mensagem, eco, status, eventos de conta; origem técnica `inbound`, `business_app`, `chatbot` (só com correlação positiva) ou `external_api` (fallback), `history`, e classificação do remetente `external`, `internal`, `automation` ou `unresolved` (§15.10); cadastro de identidades internas (telefone e BSUID; owner/admin); busca antes de criar lead; pendência de identificação; lead só por `inbound` + `external`; nada de lead ou atividade para bot, eco, histórico, status, comando interno ou evento técnico; teste de concorrência | B3.2c |
 | B3.2e | Reconciliador da inbox parada e batimento do canal (`last_event_at`) | B3.2d |
 | Fora do Praxis | Contrato do §15.6 no chatbot (rota, tabela de pedidos, testes), em branch/PR própria do chatbot, desligado e sem deploy | Decisão 15; implantação real com nova autorização; necessário antes da B3.3 no número do chatbot |
@@ -2363,3 +2363,162 @@ completo verde e Vercel.
 
 Tombstone, isolamento, cifra, estados do canal e permissões não mudaram:
 os testes deles continuam iguais e verdes.
+
+## 18. B3.2c — rota pública autenticada do webhook (21/10/2026)
+
+Implementada só a rota que recebe a entrega do provedor, autentica, grava
+na inbox cifrada da B3.2b e publica um evento interno. Ficam de fora:
+- normalização do evento e o consumidor do evento interno (B3.2d);
+- contato, lead, conversa, classificação, envio e mídia;
+- registro do adaptador YCloud na resolução de provedor (continua sem
+  adaptador: `WHATSAPP_PROVIDER=ycloud` responde 404);
+- reconciliador da inbox parada (B3.2e);
+- credencial real, variável em qualquer serviço externo, migration no
+  Supabase hospedado e qualquer mudança no chatbot.
+
+### 18.1 Entregue
+
+- **Rota** `src/app/api/webhooks/whatsapp/[provider]/[routingKey]/route.ts`
+  (runtime Node, sem cache), só `POST`.
+- **`src/server/whatsapp/webhook-route.ts`:** o tratamento inteiro da
+  requisição.
+- **`src/server/whatsapp/inbox-events.ts`:** o evento interno.
+- **`src/proxy.ts`:** `/api/webhooks/whatsapp` entra na lista de caminhos
+  públicos (sem sessão; autenticado pela assinatura do canal).
+- Nenhuma migration, nenhum tipo do banco alterado.
+
+### 18.2 Fluxo
+
+| Passo | O que acontece | Falha |
+|---|---|---|
+| 1. Desligado? | Provedor da URL conhecido e habilitado neste ambiente (`resolveWhatsAppProvider`), chave de ambiente do WhatsApp configurada, routing key da URL no formato `^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$` | 404 **sem banco** |
+| 2. Bytes exatos | `readWhatsAppWebhookBody`, limite de 256 KiB, sem decodificar | 413 (tamanho), 400 (ilegível) |
+| 3. Canal | `adminResolveWhatsAppWebhookChannel(provedor, routing key da URL)` no ambiente assinado: canal + segredo do webhook | 404 (desconhecido, desativado, outro ambiente); 503 (banco ou cifra) |
+| 4. Assinatura | `adapter.verifyWebhook` sobre os bytes, com o segredo **desse** canal | 401 `invalid_signature`, igual para toda falha |
+| 5. Inbox | `storeWhatsAppWebhookDelivery`: inspeção mínima e gravação cifrada, sem normalização | 400 (envelope inválido, versão, lote); 404 (canal desativado no meio); 503 (retenção ou chave ausente, banco) |
+| 6. Evento | `praxis/whatsapp.inbox.received`, só para canal **ativo** e resultado `inserted` ou `duplicate` | falha ignorada: continua 200 |
+
+Respostas: `200 {"status":"received"}` para `inserted`, `duplicate` e
+`conflict` (o conflito já fica registrado na inbox; repetir não ajuda), e
+`{"error":"<código>"}` nas falhas. Nenhuma resposta traz conteúdo,
+telefone, id da inbox, do canal ou do workspace. Nenhuma etapa escreve log.
+
+**Diferença do §4.1.** O §4.1 previa a assinatura antes da resolução do
+canal, e a rota só com `[provider]`. Como o segredo do webhook é por canal
+(B3.1), o canal tem de ser resolvido antes; e, para não ler o corpo ainda
+não autenticado, a referência do canal vem da URL. Cada canal tem a sua
+URL: `/api/webhooks/whatsapp/<provedor>/<routing key>`. Para a YCloud,
+`<wabaId>:<número E.164 do escritório>` (§16.3); o número é o do
+escritório, não de cliente.
+
+### 18.3 Evento interno
+
+```ts
+inngest.send({
+  id: inboxId,                         // deduplicação do Inngest
+  name: "praxis/whatsapp.inbox.received",
+  data: { inboxId, channelId, workspaceId, environment, provider },
+});
+```
+
+- Só identificadores: o consumidor (B3.2d) lê e decifra a entrada pela
+  inbox, com o contexto confiável.
+- Só com o contexto **confiável** do canal e no ambiente atual.
+- **Falha fechada:** sem `INNGEST_EVENT_KEY`, nada é enviado. A gravação
+  já aconteceu e a entrada fica pendente.
+- **Duplicata** publica de novo com o mesmo id: se a primeira publicação
+  falhou, esta recupera; se não, o Inngest deduplica.
+- **Canal pausado ou desconectado:** a entrega é guardada, mas nenhum
+  evento é publicado. Aceitar não é processar. A entrada fica pendente; o
+  que fazer com ela na reativação é da B3.2d/B3.2e.
+
+### 18.4 Testes
+
+Escritos antes da implementação, contra a main `7e30e2c` (commit só de
+testes `01a0fe2`): os **60 falham**. Depois da implementação (`7889996`),
+os 60 passam; suíte inteira 1676.
+
+Antes de publicar o commit de testes, corrigi dois erros meus nele:
+- eu esperava que um corpo com BOM fosse gravado. Desde a B3.1 a
+  decodificação é UTF-8 estrita e não remove o BOM: o envelope é JSON
+  inválido e a resposta certa é 400. O teste virou dois: BOM recusado sem
+  gravar e CRLF preservado byte a byte;
+- o corpo da `Request` no teste precisava de um `ArrayBuffer` para o
+  typecheck.
+O vermelho (60 de 60) foi refeito depois das duas correções.
+
+`tests/unit/b3-2c-rota-webhook.test.ts`:
+- **desligado:** sem `WHATSAPP_PROVIDER`, vazio, simulador em Production,
+  sem chave de ambiente ou com chave curta, provedor desconhecido, de
+  outro provedor ou em maiúsculas, YCloud sem adaptador, routing key
+  vazia, com espaço, barra, controle ou longa demais: 404 sem banco;
+- **bytes:** acima de 256 KiB e `Content-Length` acima do limite, 413 sem
+  banco; CRLF cifrado byte a byte; BOM recusado;
+- **canal antes da assinatura:** ordem das chamadas (resolução e depois
+  gravação); routing key com `:` e `+` intacta; canal desconhecido e
+  linha de outro ambiente, 404 sem gravar; erro do banco, 503 sem
+  detalhe;
+- **assinatura:** sem cabeçalho, segredo de outro canal, outros bytes,
+  horário vencido ou futuro, cabeçalho malformado e um byte alterado: 401
+  igual, sem gravar nem publicar;
+- **inbox e evento:** primeira entrega com um evento e contexto
+  confiável; duplicata publica com o mesmo id; conflito sem evento; canal
+  pausado e desconectado guardam sem evento; falha ao publicar continua
+  200; evento sem identidade guardado sem normalizar; envelope inválido,
+  lote, versão e sem id, 400; retenção ou chave da inbox ausente, 503;
+  canal desativado entre resolução e gravação, 404; erro desconhecido,
+  503 sem detalhe;
+- **nada sai:** respostas sem conteúdo, telefone ou ids; nada no console;
+  rota pública no proxy; runtime Node e sem cache.
+
+`tests/unit/b3-2c-evento-interno.test.ts`: id e dados exatos; contexto
+montado à mão e de outro ambiente recusados; id da inbox inválido; sem
+chave do Inngest (ausente ou vazia), nada enviado; falha do Inngest com
+código fixo, sem a mensagem original.
+
+### 18.5 Mutações
+
+17, locais, cada uma aplicada e desfeita. Todas foram detectadas:
+
+| Mutação | Detectada por |
+|---|---|
+| Grava sem conferir a assinatura | os casos de 401 |
+| Confere com outro segredo, não o do canal | toda entrega válida passa a 401 |
+| Normaliza antes de gravar | sem identidade guardado; nenhuma normalização |
+| Publica também em conflito | conflito sem evento |
+| Publica para canal pausado ou desconectado | pausado e desconectado sem evento |
+| Falha ao publicar vira 503 | falha ao publicar continua 200 |
+| Sem conferir a chave de ambiente do WhatsApp | sem chave e chave curta: 404 sem banco |
+| Corpo lido como texto | limites de 256 KiB; BOM recusado |
+| Resposta traz o id da inbox | respostas exatas |
+| 401 com o motivo da falha | 401 igual para toda falha |
+| Routing key sem validação na URL | espaço, barra, controle |
+| Erro do banco na resolução vira 404 | 503 sem detalhe |
+| Rota fora dos caminhos públicos | rota pública |
+| Evento leva a routing key | dados exatos do evento |
+| Evento sem conferir a chave do Inngest | ausente e vazia |
+| Evento aceita contexto montado à mão | contexto à mão recusado |
+| Evento com id próprio (sem deduplicação) | id = id da inbox |
+
+### 18.6 Limitações e requisitos para as próximas etapas
+
+- **Roteamento do evento (B3.2d).** A assinatura prova que a entrega veio
+  com o segredo do canal da URL, mas a inspeção mínima não lê a routing
+  key do evento. Se a mesma conta mandar, para a URL de um canal, evento
+  de outro número, ele fica na inbox desse canal. A B3.2d tem de conferir
+  a routing key normalizada contra a do canal e marcar a entrada como
+  falha (`routing_mismatch`) quando divergir.
+- **YCloud ainda sem adaptador registrado.** A rota está pronta para ela,
+  mas `ycloud` continua `null` na resolução de provedor. Registrar o
+  adaptador (e decidir a tolerância de horário da assinatura, §16) é um
+  passo próprio, antes de qualquer webhook real (P3/P4).
+- **Entradas de canal pausado ou desconectado** ficam pendentes sem
+  evento; republicar na reativação é da B3.2d/B3.2e.
+- **Consumidor do evento:** não existe nesta etapa. Um evento sem
+  consumidor não é processado; a B3.2d cria a função, com o claim atômico
+  já registrado (§17.7).
+- **Enumeração:** canal desconhecido responde 404 e assinatura inválida
+  401, como no §4.1. Com a routing key da YCloud, isso só revela se um
+  número de escritório está cadastrado.
+- **Nada configurado fora do código:** nenhuma URL cadastrada na YCloud
+  ou na Meta, nenhuma variável na Vercel, nenhuma migration hospedada.
