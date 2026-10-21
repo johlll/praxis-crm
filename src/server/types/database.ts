@@ -3361,6 +3361,7 @@ export type Database = {
           status: string
           status_changed_at: string | null
           updated_at: string
+          webhook_route_id: string
           workspace_id: string
         }
         Insert: {
@@ -3380,6 +3381,7 @@ export type Database = {
           status?: string
           status_changed_at?: string | null
           updated_at?: string
+          webhook_route_id?: string
           workspace_id: string
         }
         Update: {
@@ -3399,6 +3401,7 @@ export type Database = {
           status?: string
           status_changed_at?: string | null
           updated_at?: string
+          webhook_route_id?: string
           workspace_id?: string
         }
         Relationships: [
@@ -5238,6 +5241,20 @@ export type Database = {
           ciphertext: string
           environment: Database["public"]["Enums"]["whatsapp_environment"]
           key_version: string
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          routing_key: string
+          status: string
+          workspace_id: string
+        }[]
+      }
+      whatsapp_resolve_webhook_route: {
+        Args: {
+          p_provider: Database["public"]["Enums"]["whatsapp_provider"]
+          p_webhook_route_id: string
+        }
+        Returns: {
+          channel_id: string
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
           provider: Database["public"]["Enums"]["whatsapp_provider"]
           routing_key: string
           status: string

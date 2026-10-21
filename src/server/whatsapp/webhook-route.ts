@@ -1,4 +1,5 @@
-import { adminResolveWhatsAppWebhookChannel, WhatsAppChannelStoreError } from "@/server/whatsapp/admin/channels";
+import { uuidSchema } from "@/lib/uuid";
+import { adminResolveWhatsAppWebhookRoute, WhatsAppChannelStoreError } from "@/server/whatsapp/admin/channels";
 import { isWhatsAppEnvironmentConfigured } from "@/server/whatsapp/environment";
 import { storeWhatsAppWebhookDelivery, WhatsAppInboxError } from "@/server/whatsapp/inbox";
 import { publishWhatsAppInboxReceived } from "@/server/whatsapp/inbox-events";
@@ -8,21 +9,24 @@ import { readWhatsAppWebhookBody } from "@/server/whatsapp/webhook";
 
 /**
  * Rota pública do webhook de WhatsApp (B3.2c, docs/decisoes/b3-whatsapp-real.md
- * §18): `POST /api/webhooks/whatsapp/[provider]/[routingKey]`.
+ * §18): `POST /api/webhooks/whatsapp/[provider]/[webhookRouteId]`.
  *
  * Ordem, sem atalho:
  *  1. provedor da URL habilitado neste ambiente, com ambiente do WhatsApp
- *     configurado (senão 404, sem banco: o WhatsApp está desligado);
+ *     configurado, e localizador que seja um UUID (senão 404, sem banco);
  *  2. bytes EXATOS do corpo, com limite (413);
- *  3. canal pela routing key da URL, no ambiente autenticado (404 para
- *     desconhecido, desativado ou de outro ambiente). O segredo do webhook
- *     é por canal: por isso o canal vem antes da assinatura, e por isso a
- *     referência dele está na URL, nunca no corpo ainda não autenticado;
+ *  3. canal pelo localizador OPACO da URL (`webhook_route_id`, UUID
+ *     aleatório do canal), no ambiente autenticado (404 para desconhecido,
+ *     desativado ou de outro ambiente). O segredo do webhook é por canal:
+ *     por isso o canal vem antes da assinatura, e por isso o localizador
+ *     está na URL, nunca no corpo ainda não autenticado. A routing key real
+ *     só existe por dentro: nunca na URL, na resposta ou no evento;
  *  4. assinatura sobre os bytes, com o segredo DESSE canal (401 igual para
- *     toda falha);
+ *     toda falha). O localizador não autentica nada;
  *  5. inspeção mínima do envelope e gravação na inbox cifrada (B3.2b);
- *  6. evento interno com id = id da inbox, só para canal ativo e nunca em
- *     conflito. Falha aqui não desfaz a gravação.
+ *  6. evento interno `{ inboxId }`, com id = id da inbox, só para canal
+ *     ativo e nunca em conflito. Falha aqui não desfaz a gravação: a
+ *     entrada fica pendente, durável, para o reconciliador (B3.2e).
  *
  * Nada aqui normaliza o evento, cria contato, lead ou conversa, envia
  * mensagem ou escreve log. As respostas só levam um código fixo.
@@ -30,9 +34,14 @@ import { readWhatsAppWebhookBody } from "@/server/whatsapp/webhook";
 
 const KINDS: ReadonlySet<string> = new Set<WhatsAppProviderKind>(["simulated", "ycloud", "meta"]);
 
-/** Routing key aceita na URL: cobre `<wabaId>:<E.164>` da YCloud e as do
- * simulador. Nada de espaço, barra ou controle. */
-const ROUTING_KEY = /^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$/;
+/** Caminho do webhook de um canal: provedor + localizador opaco. Nunca
+ * WABA, telefone ou routing key. */
+export function whatsappWebhookPath(params: { provider: WhatsAppProviderKind; webhookRouteId: string }): string {
+  if (!KINDS.has(params.provider)) throw new RangeError("invalid_whatsapp_provider");
+  const parsed = uuidSchema.safeParse(params.webhookRouteId);
+  if (!parsed.success) throw new RangeError("invalid_webhook_route_id");
+  return `/api/webhooks/whatsapp/${params.provider}/${parsed.data.toLowerCase()}`;
+}
 
 type Failure = "not_found" | "payload_too_large" | "unreadable" | "invalid_signature" | "invalid_payload" | "service_unavailable";
 
@@ -55,18 +64,6 @@ function received(): Response {
   return Response.json({ status: "received" }, { status: 200, headers: NO_STORE });
 }
 
-function routingKeyFrom(raw: string): string | null {
-  let value = raw;
-  if (value.includes("%")) {
-    try {
-      value = decodeURIComponent(value);
-    } catch {
-      return null;
-    }
-  }
-  return ROUTING_KEY.test(value) ? value : null;
-}
-
 /** Erros da resolução que significam "este canal não existe para este
  * webhook". O resto (banco, cifra) é indisponibilidade: o provedor tenta de
  * novo. */
@@ -87,7 +84,7 @@ const STORE_INVALID_PAYLOAD: ReadonlySet<string> = new Set([
 
 export async function handleWhatsAppWebhookRequest(
   request: Request,
-  params: { provider: string; routingKey: string },
+  params: { provider: string; webhookRouteId: string },
 ): Promise<Response> {
   try {
     // 1. Desligado → 404 sem banco.
@@ -95,17 +92,17 @@ export async function handleWhatsAppWebhookRequest(
     const provider = params.provider as WhatsAppProviderKind;
     if (!isWhatsAppEnvironmentConfigured()) return fail("not_found");
     if (resolveWhatsAppProvider({ channelProvider: provider }).status !== "enabled") return fail("not_found");
-    const routingKey = routingKeyFrom(params.routingKey);
-    if (routingKey === null) return fail("not_found");
+    const routeId = uuidSchema.safeParse(params.webhookRouteId);
+    if (!routeId.success) return fail("not_found");
 
     // 2. Bytes exatos.
     const body = await readWhatsAppWebhookBody(request);
     if (!body.ok) return fail(body.reason === "payload_too_large" ? "payload_too_large" : "unreadable");
 
-    // 3. Canal antes da assinatura (o segredo é do canal).
+    // 3. Canal pelo localizador opaco, antes da assinatura (o segredo é do canal).
     let resolved;
     try {
-      resolved = await adminResolveWhatsAppWebhookChannel({ provider, routingKey });
+      resolved = await adminResolveWhatsAppWebhookRoute({ provider, webhookRouteId: routeId.data });
     } catch (error) {
       if (error instanceof WhatsAppChannelStoreError && RESOLUTION_NOT_FOUND.has(error.code)) return fail("not_found");
       return fail("service_unavailable");
@@ -141,7 +138,7 @@ export async function handleWhatsAppWebhookRequest(
     // a gravação; a entrada fica pendente para o reconciliador (B3.2e).
     if (stored.outcome !== "conflict" && resolved.status === "active") {
       try {
-        await publishWhatsAppInboxReceived({ channel: resolved.channel, inboxId: stored.inboxId });
+        await publishWhatsAppInboxReceived({ inboxId: stored.inboxId });
       } catch {
         // Sem log: o estado durável está na inbox.
       }
