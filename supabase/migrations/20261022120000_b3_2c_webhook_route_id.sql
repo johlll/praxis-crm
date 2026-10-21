@@ -84,7 +84,7 @@ begin
   return query
   select ch.id, ch.workspace_id, ch.environment, ch.provider, ch.routing_key, ch.status
   from public.whatsapp_channels ch
-  where ch.webhook_route_id = p_webhook_route_id
+  where ch.id = p_webhook_route_id
     and ch.provider = p_provider
     and ch.environment = v_env
     and ch.status <> 'disabled';
