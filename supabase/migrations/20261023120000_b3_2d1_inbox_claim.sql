@@ -290,7 +290,8 @@ begin
     'key_version', v_row.key_version,
     'nonce', v_row.nonce,
     'ciphertext', v_row.ciphertext,
-    'auth_tag', v_row.auth_tag
+    'auth_tag', v_row.auth_tag,
+    'credential_ciphertext', (select c.ciphertext from public.whatsapp_channel_credentials c where c.channel_id = v_row.channel_id limit 1)
   );
 end;
 $body$;
