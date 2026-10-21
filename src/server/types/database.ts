@@ -4091,6 +4091,7 @@ export type Database = {
           status: string
           status_changed_at: string | null
           updated_at: string
+          webhook_route_id: string
           workspace_id: string
         }
         SetofOptions: {
