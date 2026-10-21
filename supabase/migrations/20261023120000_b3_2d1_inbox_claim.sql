@@ -414,6 +414,7 @@ revoke all on function public.whatsapp_inbox_fail(uuid, uuid, text) from public,
 revoke all on function public.whatsapp_inbox_release(uuid, uuid, text) from public, anon, authenticated;
 
 grant execute on function public.whatsapp_inbox_claim(uuid, integer) to service_role;
+grant execute on function public.whatsapp_inbox_claim(uuid, integer) to authenticated;
 grant execute on function public.whatsapp_inbox_complete(uuid, uuid) to service_role;
 grant execute on function public.whatsapp_inbox_fail(uuid, uuid, text) to service_role;
 grant execute on function public.whatsapp_inbox_release(uuid, uuid, text) to service_role;
