@@ -37,6 +37,9 @@ import { getEnv } from "@/server/env";
  *
  * B2: o webhook do Google Agenda também chega sem usuário; ele se autentica
  * pelo canal conhecido do ambiente e pelo segredo do canal.
+ *
+ * B3.2c: o webhook de WhatsApp também chega sem usuário; ele se autentica
+ * pela assinatura com o segredo do canal da routing key da URL.
  */
 const PUBLIC_PATHS = [
   "/entrar",
@@ -46,6 +49,7 @@ const PUBLIC_PATHS = [
   "/api/inngest",
   "/api/cron",
   "/api/calendar/webhook",
+  "/api/webhooks/whatsapp",
 ];
 
 export function isPublicPath(pathname: string): boolean {
