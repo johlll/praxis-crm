@@ -51,8 +51,7 @@ begin
      or new.environment is distinct from old.environment
      or new.provider is distinct from old.provider
      or new.routing_key is distinct from old.routing_key
-     or new.is_simulator is distinct from old.is_simulator
-     or new.webhook_route_id is distinct from old.webhook_route_id then
+     or new.is_simulator is distinct from old.is_simulator then
     raise exception 'channel_identity_immutable';
   end if;
   return new;
