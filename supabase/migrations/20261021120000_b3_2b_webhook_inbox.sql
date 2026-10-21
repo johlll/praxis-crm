@@ -22,10 +22,13 @@
 --     nunca é sobrescrito; fica só a evidência mínima (contagem, horário e
 --     hash da entrega divergente) e um registro de auditoria sem conteúdo.
 --
--- RETENÇÃO. O valor do piloto não é escolhido aqui (portão P9). O prazo
--- vem da aplicação, por configuração confiável, com teto técnico de 30
--- dias: a inbox guarda o payload bruto, não o registro definitivo da
--- conversa. Sem prazo válido, a gravação falha fechada. O expurgo apaga versão, nonce,
+-- RETENÇÃO. O valor do piloto não é escolhido aqui (portão P9). A
+-- aplicação manda só a retenção em SEGUNDOS, por configuração confiável,
+-- de 60 a 2.592.000 (teto técnico de 30 dias: a inbox guarda o payload
+-- bruto, não o registro definitivo da conversa). O banco captura um único
+-- horário de referência, grava received_at com ele e calcula retain_until
+-- = received_at + retenção: o relógio da aplicação não entra no prazo.
+-- Sem retenção válida, a gravação falha fechada. O expurgo apaga versão, nonce,
 -- texto cifrado e tag e deixa um TOMBSTONE (canal, id do evento, hash,
 -- datas, purged_at) que continua impedindo que uma reentrega antiga seja
 -- tratada como evento nova.
@@ -88,6 +91,7 @@ create table public.whatsapp_webhook_inbox (
   constraint whatsapp_webhook_inbox_failed_dates check ((state = 'failed') = (failed_at is not null and error_code is not null)),
   constraint whatsapp_webhook_inbox_error_only_when_failed check (error_code is null or state = 'failed'),
   constraint whatsapp_webhook_inbox_retention_after_receipt check (retain_until > received_at),
+  constraint whatsapp_webhook_inbox_retention_max check (retain_until <= received_at + interval '2592000 seconds'),
   constraint whatsapp_webhook_inbox_conflict_evidence check (
     (conflict_count = 0) = (last_conflict_at is null and last_conflict_sha256 is null)
   )
@@ -243,7 +247,7 @@ create function public.whatsapp_inbox_store(
   p_nonce text,
   p_ciphertext text,
   p_auth_tag text,
-  p_retain_until timestamptz
+  p_retention_seconds integer
 )
 returns jsonb
 language plpgsql
@@ -253,6 +257,8 @@ as $body$
 declare
   v_env public.whatsapp_environment := private.require_whatsapp_environment();
   v_channel public.whatsapp_channels := private.whatsapp_inbox_receiving_channel(p_channel_id, p_workspace_id, p_provider, p_routing_key, v_env);
+  -- Horário de referência ÚNICO: recebimento e prazo saem dele.
+  v_received_at timestamptz := now();
   v_id uuid;
   v_existing public.whatsapp_webhook_inbox;
 begin
@@ -271,16 +277,17 @@ begin
      or p_ciphertext !~ '^[A-Za-z0-9+/]+={0,2}$' then
     raise exception 'invalid_inbox_ciphertext';
   end if;
-  if p_retain_until is null or p_retain_until <= now() or p_retain_until > now() + interval '30 days' then
+  if p_retention_seconds is null or p_retention_seconds not between 60 and 2592000 then
     raise exception 'invalid_retention';
   end if;
 
   insert into public.whatsapp_webhook_inbox (
     environment, workspace_id, channel_id, provider, provider_event_id, provider_event_type,
-    body_sha256, key_version, nonce, ciphertext, auth_tag, retain_until
+    body_sha256, key_version, nonce, ciphertext, auth_tag, received_at, retain_until
   ) values (
     v_env, v_channel.workspace_id, v_channel.id, v_channel.provider, p_provider_event_id, p_provider_event_type,
-    p_body_sha256, p_key_version, p_nonce, p_ciphertext, p_auth_tag, p_retain_until
+    p_body_sha256, p_key_version, p_nonce, p_ciphertext, p_auth_tag,
+    v_received_at, v_received_at + make_interval(secs => p_retention_seconds)
   )
   on conflict (channel_id, provider_event_id) do nothing
   returning id into v_id;
@@ -563,14 +570,14 @@ end;
 $body$;
 
 -- EXECUTE só para service_role, em todas.
-revoke all on function public.whatsapp_inbox_store(uuid, uuid, public.whatsapp_provider, text, text, text, text, text, text, text, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.whatsapp_inbox_store(uuid, uuid, public.whatsapp_provider, text, text, text, text, text, text, text, text, integer) from public, anon, authenticated;
 revoke all on function public.whatsapp_inbox_list(uuid, uuid, public.whatsapp_provider, text, integer) from public, anon, authenticated;
 revoke all on function public.whatsapp_inbox_get_pending(uuid, uuid, uuid, public.whatsapp_provider, text) from public, anon, authenticated;
 revoke all on function public.whatsapp_inbox_mark_processed(uuid, uuid, uuid, public.whatsapp_provider, text) from public, anon, authenticated;
 revoke all on function public.whatsapp_inbox_mark_failed(uuid, uuid, uuid, public.whatsapp_provider, text, text) from public, anon, authenticated;
 revoke all on function public.whatsapp_inbox_purge_expired(integer) from public, anon, authenticated;
 
-grant execute on function public.whatsapp_inbox_store(uuid, uuid, public.whatsapp_provider, text, text, text, text, text, text, text, text, timestamptz) to service_role;
+grant execute on function public.whatsapp_inbox_store(uuid, uuid, public.whatsapp_provider, text, text, text, text, text, text, text, text, integer) to service_role;
 grant execute on function public.whatsapp_inbox_list(uuid, uuid, public.whatsapp_provider, text, integer) to service_role;
 grant execute on function public.whatsapp_inbox_get_pending(uuid, uuid, uuid, public.whatsapp_provider, text) to service_role;
 grant execute on function public.whatsapp_inbox_mark_processed(uuid, uuid, uuid, public.whatsapp_provider, text) to service_role;

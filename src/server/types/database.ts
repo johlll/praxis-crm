@@ -5202,7 +5202,7 @@ export type Database = {
           p_provider: Database["public"]["Enums"]["whatsapp_provider"]
           p_provider_event_id: string
           p_provider_event_type: string
-          p_retain_until: string
+          p_retention_seconds: number
           p_routing_key: string
           p_workspace_id: string
         }

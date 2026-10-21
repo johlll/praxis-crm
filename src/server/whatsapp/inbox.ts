@@ -38,7 +38,10 @@ import { VerifiedWebhookBody, type WhatsAppProvider } from "@/server/whatsapp/pr
  * O corpo vai cifrado (chave e AAD próprias da inbox); o banco recebe só
  * metadado, hash e texto cifrado, e confere de novo ambiente e identidade do
  * canal. Retenção: `WHATSAPP_INBOX_RETENTION_SECONDS` (configuração
- * confiável, sem padrão, até 30 dias); sem valor válido, falha fechada.
+ * confiável, sem padrão, até 30 dias), mandada ao banco em SEGUNDOS: o
+ * prazo é calculado lá, a partir do horário de recebimento do próprio
+ * banco, e o relógio da aplicação não entra. Sem valor válido, falha
+ * fechada.
  * Nenhuma operação escreve log; erros são códigos fixos.
  */
 
@@ -160,12 +163,12 @@ const storeResultSchema = z.object({
  *  - `duplicate`: mesmo canal, id e hash (inclusive depois do expurgo);
  *  - `conflict`: mesmo canal e id, bytes diferentes — o primeiro payload
  *    fica intacto e o novo não é guardado nem processado.
+ * Nos dois últimos, o prazo da primeira entrega também fica intacto.
  */
 export async function storeWhatsAppWebhookDelivery(params: {
   channel: ResolvedWhatsAppChannelContext;
   adapter: WhatsAppProvider;
   verified: VerifiedWebhookBody;
-  nowMs?: number | undefined;
 }): Promise<{ outcome: WhatsAppInboxOutcome; inboxId: string }> {
   const channel = requireTrustedChannel(params.channel);
   if (!VerifiedWebhookBody.is(params.verified)) throw new WhatsAppInboxError("unverified_body");
@@ -190,7 +193,6 @@ export async function storeWhatsAppWebhookDelivery(params: {
     throw cryptoError(error, "invalid_inbox_event");
   }
 
-  const nowMs = params.nowMs ?? Date.now();
   const admin = createWhatsAppAdminSupabaseClient();
   const { data, error } = await admin.rpc("whatsapp_inbox_store", {
     ...channelArgs(channel),
@@ -201,7 +203,7 @@ export async function storeWhatsAppWebhookDelivery(params: {
     p_nonce: encrypted.nonce,
     p_ciphertext: encrypted.ciphertext,
     p_auth_tag: encrypted.authTag,
-    p_retain_until: new Date(nowMs + retentionSeconds * 1000).toISOString(),
+    p_retention_seconds: retentionSeconds,
   });
   if (error) throw toInboxError(error);
   const parsed = storeResultSchema.safeParse(data);
