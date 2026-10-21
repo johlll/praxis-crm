@@ -302,6 +302,9 @@ begin
   where i.channel_id = v_channel.id and i.provider_event_id = p_provider_event_id
   for update;
 
+  update public.whatsapp_webhook_inbox set retain_until = received_at + make_interval(secs => p_retention_seconds)
+  where id = v_existing.id and purged_at is null;
+
   if v_existing.body_sha256 = p_body_sha256 then
     return jsonb_build_object('outcome', 'duplicate', 'inbox_id', v_existing.id);
   end if;
