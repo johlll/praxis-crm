@@ -2110,10 +2110,21 @@ texto cifrado, de uma entrada pendente, pela identidade inteira do canal.
 
 ### 17.6 Retenção e expurgo
 
-- **Prazo:** vem de `WHATSAPP_INBOX_RETENTION_SECONDS`, configuração
-  confiável e sem valor padrão, de **60 s a 30 dias**. Sem valor válido, a
-  gravação falha fechada. O banco também recusa prazo nulo, no passado ou
-  acima de 30 dias.
+- **Retenção:** vem de `WHATSAPP_INBOX_RETENTION_SECONDS`, configuração
+  confiável e sem valor padrão, de **60 s a 30 dias** (2.592.000 s). Sem
+  valor válido, a gravação falha fechada.
+- **O prazo é calculado só pelo banco.** A aplicação manda só a retenção
+  em segundos (`p_retention_seconds integer`), nunca um horário. O banco:
+  - aceita só inteiros de 60 a 2.592.000;
+  - captura um único horário de referência (`now()` da transação);
+  - grava `received_at` com ele;
+  - calcula `retain_until = received_at + make_interval(secs => retenção)`
+    (segundos exatos, sem depender de fuso ou horário de verão).
+
+  Assim, 30 dias exatos são sempre aceitos, 30 dias mais 1 s são sempre
+  recusados, e o relógio da aplicação, adiantado ou atrasado, não muda o
+  prazo nem provoca recusa. Uma restrição da tabela garante
+  `retain_until <= received_at + 2.592.000 s`.
   - O teto é técnico: a inbox guarda o payload bruto, não o registro
     definitivo da conversa. A mensagem normalizada poderá ter outra
     política de retenção no futuro.
@@ -2211,18 +2222,16 @@ sobre o mesmo commit verificado. Todas foram detectadas pelo pgTAP:
 
 ### 17.9 Limitações e decisões
 
-- **Contexto confiável de canal desativado.** O banco já permite acessar
+- **Contexto confiável de canal desativado (B3.2d).** O banco já permite acessar
   a entrada existente de um canal desativado. No servidor, o contexto
   confiável desse canal hoje só sai da resolução administrada
   (`adminResolveManagedWhatsAppChannel`, com sessão autorizada): a
   resolução do webhook recusa canal desativado, como deve. Um worker sem
   sessão (B3.2d) vai precisar de uma resolução interna própria, por id do
   canal, sem segredo de webhook.
-- **Teto de 30 dias exatos e relógio.** A aplicação calcula o prazo pelo
-  próprio relógio e o banco confere contra `now()`. Com o servidor
-  adiantado em relação ao banco, um prazo configurado em exatamente 30
-  dias pode ser recusado (`invalid_retention`, falha fechada). O valor do
-  piloto (P9) deve ficar abaixo do teto.
+- **Aceitas para a B3.2d:** a resolução interna de entradas antigas de
+  canais desativados (item acima) e o claim atômico contra dois workers
+  processarem a mesma entrada (§17.7).
 - **Expurgo independe do estado.** Ele atua sobre pendentes vencidas
   também, porque a retenção prevalece.
 - **Variáveis novas não configuradas:** `WHATSAPP_INBOX_KEY_VERSIONS`,
@@ -2295,3 +2304,62 @@ sobre `b06fa32`:
 | Regra antiga (ativo ou pausado) para todas as operações | desconectado: entrega nova; desconectado depois: leitura, marcação, entrega nova; desativado depois |
 | Teto do banco volta a 3650 dias | 30 dias mais 1 s e 3650 dias recusados; nenhuma linha das recusadas; listagem do canal só com as entregas dele |
 | Tipo restrito ao vocabulário normalizado | tipo bruto desconhecido do CRM aceito e gravado |
+
+#### Prazo calculado pelo banco (última correção antes do merge)
+
+Na revisão anterior, o servidor calculava `retain_until` com o próprio
+relógio e o banco comparava com o dele: com exatamente 30 dias, uma
+pequena diferença entre os relógios podia recusar uma configuração
+válida. Corrigido como descrito no §17.6. Assinatura final:
+
+```sql
+public.whatsapp_inbox_store(
+  p_channel_id uuid, p_workspace_id uuid, p_provider public.whatsapp_provider,
+  p_routing_key text, p_provider_event_id text, p_provider_event_type text,
+  p_body_sha256 text, p_key_version text, p_nonce text, p_ciphertext text,
+  p_auth_tag text, p_retention_seconds integer
+) returns jsonb  -- { outcome, inbox_id }
+```
+
+**Reprodução vermelha, contra o HEAD `3a9ffff`** (commit só de testes
+`780aeb4`):
+- **Unitários:** falham 8. São os três de retenção aceita (60 s, 7 e 30
+  dias, que agora exigem `p_retention_seconds`), o "manda só os segundos,
+  nunca um horário", os três de relógio da aplicação (adiantado 1 hora,
+  atrasado 1 hora e adiantado 2 dias, em que os argumentos mudavam com o
+  relógio) e o de argumentos exatos da gravação.
+- **pgTAP 31 (123 testes):** numa PR temporária (#65) com o `3a9ffff` e só
+  o arquivo de teste. Falham 46 dos 60 executados, e o arquivo para na
+  linha 336: a função antiga não aceita a retenção em segundos, então
+  nenhuma gravação acontece e a primeira consulta por uma entrada gravada
+  não encontra linha. Falham também a assinatura (um inteiro no fim) e "a
+  gravação não recebe horário, data nem intervalo da aplicação".
+
+**Testes novos ou alterados:**
+- unitários: retenção mandada em segundos; nenhum argumento com data ISO;
+  relógio da aplicação adiantado 1 hora, atrasado 1 hora e adiantado 2
+  dias, sempre com 30 dias aceitos e argumentos idênticos;
+- pgTAP: assinatura; nenhum argumento de data, hora ou intervalo;
+  retenção nula, zero, negativa, 59 s, 2.592.001 s e 3650 dias recusadas;
+  2.592.000 s aceita, com `received_at = now()` e
+  `retain_until - received_at = 2.592.000 s`; 7 dias com
+  `retain_until - received_at = 604.800 s`; reentrega idêntica e
+  divergente com outra retenção preservando o primeiro payload e o
+  primeiro prazo; restrição de 30 dias na tabela.
+
+**Correção** (`4660c93`): suíte inteira 1616; pgTAP 31 123 de 123; CI
+completo verde e Vercel.
+
+**Mutações:**
+
+| Mutação | Onde | Testes que falharam |
+|---|---|---|
+| O servidor volta a calcular o prazo (horário absoluto pelo relógio da aplicação) | local | os 8 do vermelho unitário |
+| O servidor manda os segundos **e** o horário absoluto | local | os mesmos 8 |
+| O prazo usa um segundo horário (`clock_timestamp()`) | PR #66 | 30 dias exatos aceitos; prazo = recebimento + 2.592.000 s; 7 dias exatos; reentrega idêntica; primeiro prazo preservado |
+| Limite exato recusado (teto 2.591.999 s) | PR #67 | 30 dias exatos aceitos; prazo de 30 dias; reentrega com 30 dias |
+| Sem a restrição de 30 dias na tabela | PR #68 | restrição de 30 dias |
+| Reentrega renova o prazo | PR #69 | primeiro prazo preservado |
+
+Tombstone, isolamento, cifra, estados do canal e permissões não mudaram:
+os testes deles continuam iguais e verdes.
