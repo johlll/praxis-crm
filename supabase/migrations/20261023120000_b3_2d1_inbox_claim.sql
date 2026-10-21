@@ -240,7 +240,7 @@ begin
   end if;
 
   v_now := clock_timestamp();
-  if v_row.purged_at is not null or v_row.retain_until <= v_now then
+  if v_row.purged_at is not null then
     return jsonb_build_object('outcome', 'expired');
   end if;
   if v_row.state = 'processing' and v_row.lease_until > v_now then
