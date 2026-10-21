@@ -143,7 +143,7 @@ describe("1. gravação", () => {
         "p_body_sha256",
         "p_channel_id",
         "p_ciphertext",
-        "p_event_kind",
+        "p_provider_event_type",
         "p_key_version",
         "p_nonce",
         "p_provider",
@@ -159,7 +159,7 @@ describe("1. gravação", () => {
       p_provider: "simulated",
       p_routing_key: ROUTING,
       p_provider_event_id: "evt-inbox-1",
-      p_event_kind: "message.inbound",
+      p_provider_event_type: "message.inbound",
       p_body_sha256: sha256(raw),
       p_key_version: "1",
       p_retain_until: new Date(NOW_MS + 3_600_000).toISOString(),
@@ -295,7 +295,7 @@ describe("3. retenção vem de configuração confiável", () => {
     ["zero", "0"],
     ["abaixo do mínimo", "59"],
     ["fracionária", "3600.5"],
-    ["acima do teto de 3650 dias", String(3650 * 86_400 + 1)],
+    ["acima do teto de 30 dias", String(30 * 86_400 + 1)],
   ])("%s: falha fechada, sem gravar", async (_name, value) => {
     const { storeWhatsAppWebhookDelivery } = await loadInbox();
     const resolved = await trustedChannel();
@@ -337,7 +337,7 @@ describe("4. leitura de pendente", () => {
       provider: "simulated",
       routing_key: ROUTING,
       provider_event_id: "evt-inbox-1",
-      event_kind: "message.inbound",
+      provider_event_type: "message.inbound",
       body_sha256: sha256(raw),
       key_version: enc.keyVersion,
       nonce: enc.nonce,
@@ -421,7 +421,7 @@ describe("5. estados, listagem e expurgo", () => {
   const SAFE_ROW = {
     id: INBOX_ID,
     provider_event_id: "evt-inbox-1",
-    event_kind: "message.inbound",
+    provider_event_type: "message.inbound",
     body_sha256: "a".repeat(64),
     received_at: "2026-10-20T12:00:00Z",
     retain_until: "2026-10-20T13:00:00Z",
@@ -484,7 +484,7 @@ describe("5. estados, listagem e expurgo", () => {
         "bodySha256",
         "conflictCount",
         "errorCode",
-        "eventKind",
+        "providerEventType",
         "failedAt",
         "id",
         "lastConflictAt",
