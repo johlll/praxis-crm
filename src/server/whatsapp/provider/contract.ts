@@ -148,6 +148,31 @@ export type WebhookVerificationResult =
     }
   | UnsupportedCapability;
 
+/**
+ * Envelope MÍNIMO de uma entrega verificada (B3.2b,
+ * docs/decisoes/b3-whatsapp-real.md §17.3): só o que a caixa de entrada
+ * precisa para guardar a entrega antes de qualquer interpretação. Não diz
+ * nada de mensagem, contato, status, custo ou conteúdo, nem decide o
+ * `NormalizedWhatsAppEvent`: isso é da normalização completa, depois.
+ */
+export type WebhookEnvelope = Readonly<{
+  /** Id do evento no provedor: a chave de deduplicação. */
+  providerEventId: string;
+  /** Tipo BRUTO do evento no provedor, como veio (lista aberta). */
+  providerEventType: string;
+  /** Versão do envelope que este adaptador conhece. */
+  envelopeVersion: string;
+  /** Cada entrega guardada é exatamente um evento. */
+  eventCount: 1;
+}>;
+
+export type InspectEnvelopeResult =
+  | { ok: true; envelope: WebhookEnvelope }
+  | {
+      ok: false;
+      reason: "unverified_body" | "invalid_json" | "invalid_envelope" | "unsupported_envelope_version" | "batch_not_supported";
+    };
+
 // ---------------------------------------------------------------------
 // Eventos normalizados
 // ---------------------------------------------------------------------
@@ -368,6 +393,9 @@ export interface WhatsAppProvider {
   /** Confere a assinatura sobre os bytes; só o sucesso devolve o corpo
    * verificado. */
   verifyWebhook(input: WebhookVerificationInput): WebhookVerificationResult;
+  /** Lê SÓ o envelope mínimo de um corpo devolvido por `verifyWebhook`, sem
+   * interpretar o conteúdo do evento. Obrigatória em todo adaptador. */
+  inspectEnvelope(body: VerifiedWebhookBody): InspectEnvelopeResult;
   /** Decodifica e normaliza SÓ um corpo devolvido por `verifyWebhook`. */
   normalizeEvents(body: VerifiedWebhookBody): NormalizeEventsResult;
   sendText(request: SendTextRequest): Promise<SendResult>;

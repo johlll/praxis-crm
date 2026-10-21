@@ -9,6 +9,7 @@ import {
   whatsappContactIdentity,
   type FetchMediaRequest,
   type FetchMediaResult,
+  type InspectEnvelopeResult,
   type LookupMessageRequest,
   type LookupMessageResult,
   type NormalizedMessageStatus,
@@ -30,9 +31,11 @@ import { WHATSAPP_WEBHOOK_MAX_BYTES } from "@/server/whatsapp/webhook";
 /**
  * Adaptador PURO da YCloud (B3.2a, docs/decisoes/b3-whatsapp-real.md §15.9).
  *
- * Sem rede, sem credencial real, sem banco, sem log. Faz duas coisas:
+ * Sem rede, sem credencial real, sem banco, sem log. Faz três coisas:
  *  1. confere a assinatura do webhook sobre os BYTES exatos do corpo;
- *  2. traduz o evento conferido em FATOS do provedor (tipos do contrato).
+ *  2. lê só o envelope mínimo do evento conferido (id, tipo bruto, versão),
+ *     para a caixa de entrada guardá-lo antes de qualquer interpretação;
+ *  3. traduz o evento conferido em FATOS do provedor (tipos do contrato).
  *
  * Contrato oficial (docs.ycloud.com, guia "Implement a webhook receiver" e
  * especificação de webhooks, conferidos em 20/10/2026):
@@ -429,6 +432,25 @@ function normalizeEvent(json: unknown): NormalizedWhatsAppEvent {
   return unsupportedEvent(env, null);
 }
 
+/**
+ * Envelope mínimo (B3.2b): só `id`, `type` e `apiVersion`. Não lê nada do
+ * objeto específico do evento (mensagem, contato, status, custo): um evento
+ * autêntico cujo conteúdo a normalização recusa continua sendo guardado. A
+ * YCloud manda um evento por requisição; uma lista é um lote, recusado.
+ */
+function inspectYCloudEnvelope(json: unknown): InspectEnvelopeResult {
+  if (Array.isArray(json)) return { ok: false, reason: "batch_not_supported" };
+  if (!isObj(json)) return { ok: false, reason: "invalid_envelope" };
+  const version = json.apiVersion;
+  if (typeof version !== "string" || version.length === 0) return { ok: false, reason: "invalid_envelope" };
+  if (version !== YCLOUD_EVENT_API_VERSION) return { ok: false, reason: "unsupported_envelope_version" };
+  const id = json.id;
+  const type = json.type;
+  if (typeof id !== "string" || !EVENT_ID.test(id)) return { ok: false, reason: "invalid_envelope" };
+  if (typeof type !== "string" || type.length > 128 || !EVENT_TYPE.test(type)) return { ok: false, reason: "invalid_envelope" };
+  return { ok: true, envelope: Object.freeze({ providerEventId: id, providerEventType: type, envelopeVersion: version, eventCount: 1 }) };
+}
+
 // ---------------------------------------------------------------------
 // O adaptador
 // ---------------------------------------------------------------------
@@ -487,6 +509,19 @@ export class YCloudWhatsAppProvider implements WhatsAppProvider {
     }
     if (!matched) return { ok: false, reason: "signature_mismatch" };
     return { ok: true, verified: VerifiedWebhookBody.afterSignatureCheck(input.rawBody) };
+  }
+
+  inspectEnvelope(body: VerifiedWebhookBody): InspectEnvelopeResult {
+    if (!VerifiedWebhookBody.is(body)) return { ok: false, reason: "unverified_body" };
+    const text = body.decodeUtf8Strict();
+    if (text === null) return { ok: false, reason: "invalid_json" };
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      return { ok: false, reason: "invalid_json" };
+    }
+    return inspectYCloudEnvelope(json);
   }
 
   normalizeEvents(body: VerifiedWebhookBody): NormalizeEventsResult {

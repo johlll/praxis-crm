@@ -13,7 +13,7 @@ import {
   type EncryptedInboxBody,
   type InboxCipherContext,
 } from "@/server/whatsapp/inbox-crypto";
-import { VerifiedWebhookBody, type NormalizedWhatsAppEvent, type WhatsAppProvider } from "@/server/whatsapp/provider/contract";
+import { VerifiedWebhookBody, type WhatsAppProvider } from "@/server/whatsapp/provider/contract";
 
 /**
  * Caixa de entrada CIFRADA do webhook de WhatsApp (B3.2b,
@@ -30,11 +30,16 @@ import { VerifiedWebhookBody, type NormalizedWhatsAppEvent, type WhatsAppProvide
  *    (`adminResolveWhatsAppWebhookChannel`). Um objeto montado à mão, ou uma
  *    cópia do contexto, não autoriza nada.
  *
+ * A gravação acontece ANTES da normalização completa: do corpo só se lê o
+ * envelope mínimo (id do evento, tipo bruto, versão, um evento só). Um
+ * evento autêntico cujo conteúdo o normalizador recusa é guardado do mesmo
+ * jeito; a falha de normalização é tratada depois (B3.2d).
+ *
  * O corpo vai cifrado (chave e AAD próprias da inbox); o banco recebe só
  * metadado, hash e texto cifrado, e confere de novo ambiente e identidade do
  * canal. Retenção: `WHATSAPP_INBOX_RETENTION_SECONDS` (configuração
- * confiável, sem padrão); sem valor válido, falha fechada. Nenhuma operação
- * escreve log; erros são códigos fixos.
+ * confiável, sem padrão, até 30 dias); sem valor válido, falha fechada.
+ * Nenhuma operação escreve log; erros são códigos fixos.
  */
 
 export const WHATSAPP_INBOX_ERROR_CODES = [
@@ -46,6 +51,7 @@ export const WHATSAPP_INBOX_ERROR_CODES = [
   "provider_mismatch",
   "unverified_body",
   "invalid_payload",
+  "unsupported_envelope_version",
   "inbox_batch_not_supported",
   "retention_not_configured",
   "inbox_crypto_not_configured",
@@ -87,10 +93,12 @@ function cryptoError(error: unknown, fallback: WhatsAppInboxErrorCode): WhatsApp
   return new WhatsAppInboxError(fallback);
 }
 
-/** Mínimo de 1 minuto (prazo fictício curto nos testes); teto de 3650 dias,
- * o mesmo do banco. A política definitiva da Vizentini não é escolhida aqui. */
+/** Mínimo de 1 minuto (prazo fictício curto nos testes); teto TÉCNICO de 30
+ * dias, o mesmo do banco: a inbox guarda o payload bruto, não o registro
+ * definitivo da conversa (que pode ter outra política). O valor do piloto
+ * continua pendente do portão P9. */
 export const WHATSAPP_INBOX_MIN_RETENTION_SECONDS = 60;
-export const WHATSAPP_INBOX_MAX_RETENTION_SECONDS = 3650 * 86_400;
+export const WHATSAPP_INBOX_MAX_RETENTION_SECONDS = 30 * 86_400;
 
 export function getWhatsAppInboxRetentionSeconds(): number {
   const raw = process.env.WHATSAPP_INBOX_RETENTION_SECONDS;
@@ -144,9 +152,10 @@ const storeResultSchema = z.object({
 });
 
 /**
- * Grava uma entrega autêntica. O id do evento e o tipo saem da normalização
- * do PRÓPRIO corpo verificado (nunca de um parâmetro solto), e cada entrega
- * tem de ser um evento só. Resultado:
+ * Grava uma entrega autêntica. O id do evento e o tipo BRUTO saem da
+ * inspeção mínima do envelope do PRÓPRIO corpo verificado (nunca de um
+ * parâmetro solto), e cada entrega tem de ser um evento só. A normalização
+ * completa não roda aqui. Resultado:
  *  - `inserted`: primeira entrega;
  *  - `duplicate`: mesmo canal, id e hash (inclusive depois do expurgo);
  *  - `conflict`: mesmo canal e id, bytes diferentes — o primeiro payload
@@ -163,15 +172,20 @@ export async function storeWhatsAppWebhookDelivery(params: {
   if (!params.adapter || params.adapter.kind !== channel.provider) throw new WhatsAppInboxError("provider_mismatch");
   const retentionSeconds = getWhatsAppInboxRetentionSeconds();
 
-  const normalized = params.adapter.normalizeEvents(params.verified);
-  if (!normalized.ok) throw new WhatsAppInboxError("invalid_payload");
-  if (normalized.events.length !== 1) throw new WhatsAppInboxError("inbox_batch_not_supported");
-  const event: NormalizedWhatsAppEvent = normalized.events[0]!;
+  const inspected = params.adapter.inspectEnvelope(params.verified);
+  if (!inspected.ok) {
+    if (inspected.reason === "batch_not_supported") throw new WhatsAppInboxError("inbox_batch_not_supported");
+    if (inspected.reason === "unsupported_envelope_version") throw new WhatsAppInboxError("unsupported_envelope_version");
+    if (inspected.reason === "unverified_body") throw new WhatsAppInboxError("unverified_body");
+    throw new WhatsAppInboxError("invalid_payload");
+  }
+  const envelope = inspected.envelope;
+  if (envelope.eventCount !== 1) throw new WhatsAppInboxError("inbox_batch_not_supported");
 
   const bytes = params.verified.copyBytes();
   let encrypted: EncryptedInboxBody;
   try {
-    encrypted = encryptWhatsAppInboxBody(bytes, cipherContext(channel, event.providerEventId));
+    encrypted = encryptWhatsAppInboxBody(bytes, cipherContext(channel, envelope.providerEventId));
   } catch (error) {
     throw cryptoError(error, "invalid_inbox_event");
   }
@@ -180,8 +194,8 @@ export async function storeWhatsAppWebhookDelivery(params: {
   const admin = createWhatsAppAdminSupabaseClient();
   const { data, error } = await admin.rpc("whatsapp_inbox_store", {
     ...channelArgs(channel),
-    p_provider_event_id: event.providerEventId,
-    p_event_kind: event.kind,
+    p_provider_event_id: envelope.providerEventId,
+    p_provider_event_type: envelope.providerEventType,
     p_body_sha256: sha256Hex(bytes),
     p_key_version: encrypted.keyVersion,
     p_nonce: encrypted.nonce,
@@ -207,7 +221,7 @@ const pendingRowSchema = z.object({
   provider: z.enum(["simulated", "ycloud", "meta"]),
   routing_key: z.string(),
   provider_event_id: z.string(),
-  event_kind: z.string(),
+  provider_event_type: z.string(),
   body_sha256: z.string().regex(/^[0-9a-f]{64}$/),
   key_version: z.string(),
   nonce: z.string(),
@@ -218,7 +232,9 @@ const pendingRowSchema = z.object({
 export type PendingWhatsAppWebhookDelivery = {
   inboxId: string;
   providerEventId: string;
-  eventKind: string;
+  /** Tipo BRUTO do provedor. O tipo normalizado só existe depois da
+   * normalização (B3.2d). */
+  providerEventType: string;
   /** Os bytes exatos da entrega, verificados na chegada e conferidos agora
    * contra o hash gravado. */
   verified: VerifiedWebhookBody;
@@ -272,7 +288,7 @@ export async function readPendingWhatsAppWebhookDelivery(params: {
   return {
     inboxId: row.inbox_id,
     providerEventId: row.provider_event_id,
-    eventKind: row.event_kind,
+    providerEventType: row.provider_event_type,
     verified: VerifiedWebhookBody.afterSignatureCheck(bytes),
   };
 }
@@ -284,7 +300,7 @@ export async function readPendingWhatsAppWebhookDelivery(params: {
 const safeEntrySchema = z.object({
   id: uuidSchema,
   provider_event_id: z.string(),
-  event_kind: z.string(),
+  provider_event_type: z.string(),
   body_sha256: z.string(),
   received_at: z.string(),
   retain_until: z.string(),
@@ -300,7 +316,7 @@ const safeEntrySchema = z.object({
 export type WhatsAppInboxEntry = {
   id: string;
   providerEventId: string;
-  eventKind: string;
+  providerEventType: string;
   bodySha256: string;
   receivedAt: string;
   retainUntil: string;
@@ -322,7 +338,7 @@ function mapEntry(row: unknown): WhatsAppInboxEntry {
   return {
     id: r.id,
     providerEventId: r.provider_event_id,
-    eventKind: r.event_kind,
+    providerEventType: r.provider_event_type,
     bodySha256: r.body_sha256,
     receivedAt: r.received_at,
     retainUntil: r.retain_until,

@@ -7,8 +7,9 @@
 -- processamento, da B3.2d.
 --
 -- O QUE FICA GRAVADO. Ambiente, workspace, canal, provedor, id do evento,
--- tipo do evento normalizado (vocabulário do CRM), SHA-256 dos bytes
--- exatos e o corpo CIFRADO pela aplicação (AES-256-GCM, chave própria da
+-- tipo BRUTO do evento no provedor (lido do envelope mínimo, ANTES de
+-- qualquer normalização; o tipo normalizado não é gravado aqui), SHA-256
+-- dos bytes exatos e o corpo CIFRADO pela aplicação (AES-256-GCM, chave própria da
 -- inbox, AAD com finalidade, ambiente, workspace, canal, provedor e id do
 -- evento): versão da chave, nonce, texto cifrado e tag em colunas
 -- separadas. Nunca em texto puro: corpo, mensagem, telefone, BSUID, nome,
@@ -21,9 +22,10 @@
 --     nunca é sobrescrito; fica só a evidência mínima (contagem, horário e
 --     hash da entrega divergente) e um registro de auditoria sem conteúdo.
 --
--- RETENÇÃO. A política definitiva da Vizentini não é escolhida aqui (§12,
--- decisão 6). O prazo vem da aplicação, por configuração confiável; sem
--- prazo válido, a gravação falha fechada. O expurgo apaga versão, nonce,
+-- RETENÇÃO. O valor do piloto não é escolhido aqui (portão P9). O prazo
+-- vem da aplicação, por configuração confiável, com teto técnico de 30
+-- dias: a inbox guarda o payload bruto, não o registro definitivo da
+-- conversa. Sem prazo válido, a gravação falha fechada. O expurgo apaga versão, nonce,
 -- texto cifrado e tag e deixa um TOMBSTONE (canal, id do evento, hash,
 -- datas, purged_at) que continua impedindo que uma reentrega antiga seja
 -- tratada como evento nova.
@@ -31,10 +33,16 @@
 -- ISOLAMENTO. Tabela deny-all (RLS forçada, sem GRANT). Funções SECURITY
 -- DEFINER, search_path travado, EXECUTE só para service_role, sempre com o
 -- ambiente assinado do WhatsApp e a identidade inteira do canal (canal,
--- workspace, provedor, routing key) conferida contra a linha real. Canal
--- ativo ou pausado: aceito (o pausado preserva o evento autêntico; a
--- decisão de processar é da B3.2c/B3.2d). Desativado, desconectado ou de
--- outro ambiente: não encontrado.
+-- workspace, provedor, routing key) conferida contra a linha real. Duas
+-- regras de estado do canal:
+--   - entrega NOVA: ativo, pausado ou desconectado é aceito e preservado
+--     (status atrasado, evento de conta, o fato da recuperação); aceitar não
+--     é processar nem enviar, decisão da B3.2c/B3.2d. Desativado: recusado;
+--   - entrada EXISTENTE (leitura, listagem, marcação): qualquer estado
+--     atual do canal, para que uma mudança de estado depois do recebimento
+--     não aprisione a entrada. Isso não reabre o recebimento.
+-- Outro ambiente, workspace, canal, provedor ou routing key: não
+-- encontrado, nas duas regras.
 
 create table public.whatsapp_webhook_inbox (
   id uuid primary key default gen_random_uuid(),
@@ -44,13 +52,11 @@ create table public.whatsapp_webhook_inbox (
   provider public.whatsapp_provider not null,
   provider_event_id text not null
     check (provider_event_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
-  -- Tipo do evento já normalizado pelo adaptador (contrato do CRM): metadado
-  -- operacional, sem conteúdo.
-  event_kind text not null
-    check (event_kind in (
-      'message.inbound', 'message.outbound_observed', 'message.status',
-      'contact.identity_changed', 'ignored', 'account', 'unsupported'
-    )),
+  -- Tipo BRUTO do provedor (ex.: whatsapp.inbound_message.received), como
+  -- veio no envelope: metadado operacional, sem conteúdo. Lista aberta, só
+  -- o formato é conferido.
+  provider_event_type text not null
+    check (char_length(provider_event_type) <= 128 and provider_event_type ~ '^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$'),
   body_sha256 text not null check (body_sha256 ~ '^[0-9a-f]{64}$'),
   -- Corpo cifrado pela aplicação. Base64: nonce de 12 bytes, tag de 16.
   -- O texto cifrado cabe no limite de 256 KiB do corpo.
@@ -106,10 +112,12 @@ comment on table public.whatsapp_webhook_inbox is
   'Caixa de entrada do webhook de WhatsApp (B3.2b): uma linha por (canal, id do evento), com o corpo cifrado pela aplicação (chave e AAD próprias da inbox), hash dos bytes exatos e retenção obrigatória. Sem texto puro. Deny-all; só funções de service_role com ambiente autenticado.';
 
 -- ---------------------------------------------------------------------
--- Canal da inbox: identidade inteira conferida, só ativo ou pausado
+-- Canal da inbox: identidade inteira conferida; duas regras de estado
 -- ---------------------------------------------------------------------
 
-create function private.whatsapp_inbox_channel(
+-- Identidade inteira no ambiente assinado, qualquer estado. Base das duas
+-- regras abaixo.
+create function private.whatsapp_inbox_channel_identity(
   p_channel_id uuid,
   p_workspace_id uuid,
   p_provider public.whatsapp_provider,
@@ -135,8 +143,7 @@ begin
     and ch.workspace_id = p_workspace_id
     and ch.environment = p_env
     and ch.provider = p_provider
-    and ch.routing_key = p_routing_key
-    and ch.status in ('active', 'paused');
+    and ch.routing_key = p_routing_key;
   if not found then
     raise exception 'channel_not_found';
   end if;
@@ -144,7 +151,53 @@ begin
 end;
 $body$;
 
-revoke all on function private.whatsapp_inbox_channel(uuid, uuid, public.whatsapp_provider, text, public.whatsapp_environment) from public, anon, authenticated;
+-- Entrega NOVA: ativo, pausado ou desconectado. Desativado: não encontrado.
+create function private.whatsapp_inbox_receiving_channel(
+  p_channel_id uuid,
+  p_workspace_id uuid,
+  p_provider public.whatsapp_provider,
+  p_routing_key text,
+  p_env public.whatsapp_environment
+)
+returns public.whatsapp_channels
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $body$
+declare
+  v_channel public.whatsapp_channels := private.whatsapp_inbox_channel_identity(p_channel_id, p_workspace_id, p_provider, p_routing_key, p_env);
+begin
+  if v_channel.status is null or v_channel.status not in ('active', 'paused', 'disconnected') then
+    raise exception 'channel_not_found';
+  end if;
+  return v_channel;
+end;
+$body$;
+
+-- Entrada EXISTENTE: qualquer estado atual do canal, com a mesma
+-- identidade inteira e o mesmo ambiente.
+create function private.whatsapp_inbox_existing_channel(
+  p_channel_id uuid,
+  p_workspace_id uuid,
+  p_provider public.whatsapp_provider,
+  p_routing_key text,
+  p_env public.whatsapp_environment
+)
+returns public.whatsapp_channels
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $body$
+begin
+  return private.whatsapp_inbox_channel_identity(p_channel_id, p_workspace_id, p_provider, p_routing_key, p_env);
+end;
+$body$;
+
+revoke all on function private.whatsapp_inbox_channel_identity(uuid, uuid, public.whatsapp_provider, text, public.whatsapp_environment) from public, anon, authenticated;
+revoke all on function private.whatsapp_inbox_receiving_channel(uuid, uuid, public.whatsapp_provider, text, public.whatsapp_environment) from public, anon, authenticated;
+revoke all on function private.whatsapp_inbox_existing_channel(uuid, uuid, public.whatsapp_provider, text, public.whatsapp_environment) from public, anon, authenticated;
 
 -- Projeção SEGURA de uma entrada: nunca versão de chave, nonce, texto
 -- cifrado ou tag.
@@ -158,7 +211,7 @@ as $body$
   select jsonb_build_object(
     'id', p_row.id,
     'provider_event_id', p_row.provider_event_id,
-    'event_kind', p_row.event_kind,
+    'provider_event_type', p_row.provider_event_type,
     'body_sha256', p_row.body_sha256,
     'received_at', p_row.received_at,
     'retain_until', p_row.retain_until,
@@ -184,7 +237,7 @@ create function public.whatsapp_inbox_store(
   p_provider public.whatsapp_provider,
   p_routing_key text,
   p_provider_event_id text,
-  p_event_kind text,
+  p_provider_event_type text,
   p_body_sha256 text,
   p_key_version text,
   p_nonce text,
@@ -199,14 +252,13 @@ set search_path = ''
 as $body$
 declare
   v_env public.whatsapp_environment := private.require_whatsapp_environment();
-  v_channel public.whatsapp_channels := private.whatsapp_inbox_channel(p_channel_id, p_workspace_id, p_provider, p_routing_key, v_env);
+  v_channel public.whatsapp_channels := private.whatsapp_inbox_receiving_channel(p_channel_id, p_workspace_id, p_provider, p_routing_key, v_env);
   v_id uuid;
   v_existing public.whatsapp_webhook_inbox;
 begin
   if p_provider_event_id is null or p_provider_event_id !~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
-     or p_event_kind is null or p_event_kind not in (
-       'message.inbound', 'message.outbound_observed', 'message.status',
-       'contact.identity_changed', 'ignored', 'account', 'unsupported') then
+     or p_provider_event_type is null or char_length(p_provider_event_type) > 128
+     or p_provider_event_type !~ '^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$' then
     raise exception 'invalid_inbox_event';
   end if;
   if p_body_sha256 is null or p_body_sha256 !~ '^[0-9a-f]{64}$' then
@@ -219,15 +271,15 @@ begin
      or p_ciphertext !~ '^[A-Za-z0-9+/]+={0,2}$' then
     raise exception 'invalid_inbox_ciphertext';
   end if;
-  if p_retain_until is null or p_retain_until <= now() or p_retain_until > now() + interval '3650 days' then
+  if p_retain_until is null or p_retain_until <= now() or p_retain_until > now() + interval '30 days' then
     raise exception 'invalid_retention';
   end if;
 
   insert into public.whatsapp_webhook_inbox (
-    environment, workspace_id, channel_id, provider, provider_event_id, event_kind,
+    environment, workspace_id, channel_id, provider, provider_event_id, provider_event_type,
     body_sha256, key_version, nonce, ciphertext, auth_tag, retain_until
   ) values (
-    v_env, v_channel.workspace_id, v_channel.id, v_channel.provider, p_provider_event_id, p_event_kind,
+    v_env, v_channel.workspace_id, v_channel.id, v_channel.provider, p_provider_event_id, p_provider_event_type,
     p_body_sha256, p_key_version, p_nonce, p_ciphertext, p_auth_tag, p_retain_until
   )
   on conflict (channel_id, provider_event_id) do nothing
@@ -283,7 +335,7 @@ set search_path = ''
 as $body$
 declare
   v_env public.whatsapp_environment := private.require_whatsapp_environment();
-  v_channel public.whatsapp_channels := private.whatsapp_inbox_channel(p_channel_id, p_workspace_id, p_provider, p_routing_key, v_env);
+  v_channel public.whatsapp_channels := private.whatsapp_inbox_existing_channel(p_channel_id, p_workspace_id, p_provider, p_routing_key, v_env);
 begin
   if p_limit is null or p_limit not between 1 and 200 then
     raise exception 'invalid_limit';
@@ -302,7 +354,7 @@ end;
 $body$;
 
 -- Texto cifrado de UMA entrada pendente, só pela identidade inteira do
--- canal. Decifrar acontece na aplicação, que confere tudo de novo e monta
+-- canal, qualquer que seja o estado atual dele. Decifrar acontece na aplicação, que confere tudo de novo e monta
 -- a AAD do próprio contexto.
 create function public.whatsapp_inbox_get_pending(
   p_inbox_id uuid,
@@ -319,7 +371,7 @@ returns table (
   provider public.whatsapp_provider,
   routing_key text,
   provider_event_id text,
-  event_kind text,
+  provider_event_type text,
   body_sha256 text,
   key_version text,
   nonce text,
@@ -333,11 +385,11 @@ set search_path = ''
 as $body$
 declare
   v_env public.whatsapp_environment := private.require_whatsapp_environment();
-  v_channel public.whatsapp_channels := private.whatsapp_inbox_channel(p_channel_id, p_workspace_id, p_provider, p_routing_key, v_env);
+  v_channel public.whatsapp_channels := private.whatsapp_inbox_existing_channel(p_channel_id, p_workspace_id, p_provider, p_routing_key, v_env);
 begin
   return query
   select i.id, i.channel_id, i.workspace_id, i.environment, i.provider, v_channel.routing_key,
-         i.provider_event_id, i.event_kind, i.body_sha256, i.key_version, i.nonce, i.ciphertext, i.auth_tag
+         i.provider_event_id, i.provider_event_type, i.body_sha256, i.key_version, i.nonce, i.ciphertext, i.auth_tag
   from public.whatsapp_webhook_inbox i
   where i.id = p_inbox_id
     and i.channel_id = v_channel.id
@@ -401,7 +453,7 @@ set search_path = ''
 as $body$
 declare
   v_env public.whatsapp_environment := private.require_whatsapp_environment();
-  v_channel public.whatsapp_channels := private.whatsapp_inbox_channel(p_channel_id, p_workspace_id, p_provider, p_routing_key, v_env);
+  v_channel public.whatsapp_channels := private.whatsapp_inbox_existing_channel(p_channel_id, p_workspace_id, p_provider, p_routing_key, v_env);
   v_row public.whatsapp_webhook_inbox := private.whatsapp_inbox_lock_entry(p_inbox_id, v_channel, v_env);
 begin
   if v_row.state = 'processed' then
@@ -434,7 +486,7 @@ set search_path = ''
 as $body$
 declare
   v_env public.whatsapp_environment := private.require_whatsapp_environment();
-  v_channel public.whatsapp_channels := private.whatsapp_inbox_channel(p_channel_id, p_workspace_id, p_provider, p_routing_key, v_env);
+  v_channel public.whatsapp_channels := private.whatsapp_inbox_existing_channel(p_channel_id, p_workspace_id, p_provider, p_routing_key, v_env);
   v_row public.whatsapp_webhook_inbox;
 begin
   if p_error_code is null or p_error_code !~ '^[a-z0-9_]{1,64}$' then

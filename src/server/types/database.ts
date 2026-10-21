@@ -3438,7 +3438,6 @@ export type Database = {
           conflict_count: number
           environment: Database["public"]["Enums"]["whatsapp_environment"]
           error_code: string | null
-          event_kind: string
           failed_at: string | null
           id: string
           key_version: string | null
@@ -3448,6 +3447,7 @@ export type Database = {
           processed_at: string | null
           provider: Database["public"]["Enums"]["whatsapp_provider"]
           provider_event_id: string
+          provider_event_type: string
           purged_at: string | null
           received_at: string
           retain_until: string
@@ -3462,7 +3462,6 @@ export type Database = {
           conflict_count?: number
           environment: Database["public"]["Enums"]["whatsapp_environment"]
           error_code?: string | null
-          event_kind: string
           failed_at?: string | null
           id?: string
           key_version?: string | null
@@ -3472,6 +3471,7 @@ export type Database = {
           processed_at?: string | null
           provider: Database["public"]["Enums"]["whatsapp_provider"]
           provider_event_id: string
+          provider_event_type: string
           purged_at?: string | null
           received_at?: string
           retain_until: string
@@ -3486,7 +3486,6 @@ export type Database = {
           conflict_count?: number
           environment?: Database["public"]["Enums"]["whatsapp_environment"]
           error_code?: string | null
-          event_kind?: string
           failed_at?: string | null
           id?: string
           key_version?: string | null
@@ -3496,6 +3495,7 @@ export type Database = {
           processed_at?: string | null
           provider?: Database["public"]["Enums"]["whatsapp_provider"]
           provider_event_id?: string
+          provider_event_type?: string
           purged_at?: string | null
           received_at?: string
           retain_until?: string
@@ -5149,12 +5149,12 @@ export type Database = {
           channel_id: string
           ciphertext: string
           environment: Database["public"]["Enums"]["whatsapp_environment"]
-          event_kind: string
           inbox_id: string
           key_version: string
           nonce: string
           provider: Database["public"]["Enums"]["whatsapp_provider"]
           provider_event_id: string
+          provider_event_type: string
           routing_key: string
           workspace_id: string
         }[]
@@ -5197,11 +5197,11 @@ export type Database = {
           p_body_sha256: string
           p_channel_id: string
           p_ciphertext: string
-          p_event_kind: string
           p_key_version: string
           p_nonce: string
           p_provider: Database["public"]["Enums"]["whatsapp_provider"]
           p_provider_event_id: string
+          p_provider_event_type: string
           p_retain_until: string
           p_routing_key: string
           p_workspace_id: string
