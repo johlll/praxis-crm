@@ -211,6 +211,15 @@ describe("2. contexto e corpo depois do claim", () => {
     expect(Object.isFrozen(claim)).toBe(true);
   });
 
+  it("a AAD sai da própria linha: entrada de outro workspace, canal e provedor decifra com a identidade dela", async () => {
+    const other = { workspace_id: OTHER_WS, channel_id: OTHER_CHANNEL, provider: "ycloud", routing_key: "100000000000001:+12025550199", provider_event_id: "evt-outro-1" };
+    const { claim } = await claimed(
+      claimRow(other, { workspaceId: OTHER_WS, channelId: OTHER_CHANNEL, provider: "ycloud", providerEventId: "evt-outro-1" }),
+    );
+    expect(claim).toMatchObject({ workspaceId: OTHER_WS, channelId: OTHER_CHANNEL, provider: "ycloud", providerEventId: "evt-outro-1" });
+    expect(Array.from(claim.verified.copyBytes())).toEqual(Array.from(RAW));
+  });
+
   it.each(["paused", "disconnected", "disabled"] as const)("canal %s depois do recebimento: claim com o estado atual", async (status) => {
     const { claim } = await claimed(claimRow({ channel_status: status }));
     expect(claim.channelStatus).toBe(status);
