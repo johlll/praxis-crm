@@ -12,9 +12,12 @@
  *     nunca o normalizado;
  *  3. o acesso a uma entrada existente não depende do estado atual do canal
  *     (a regra de recebimento é do banco: pgTAP 31);
- *  4. teto técnico da retenção da inbox: 30 dias.
+ *  4. teto técnico da retenção da inbox: 30 dias;
+ *  5. o prazo é calculado SÓ pelo banco: a aplicação manda a retenção em
+ *     segundos, e o relógio dela (adiantado ou atrasado) não muda nada.
  *
- * Escritos ANTES da correção, contra o HEAD 712ee0d. Tudo fictício.
+ * Escritos ANTES da correção, contra o HEAD 712ee0d; o item 5, contra o
+ * HEAD 3a9ffff. Tudo fictício.
  */
 import { createHash } from "node:crypto";
 
@@ -274,7 +277,7 @@ describe("3. a inbox grava antes da normalização completa", () => {
     const verified = verifyYCloud(raw);
     handlers.whatsapp_inbox_store = () => ({ data: { outcome: "inserted", inbox_id: INBOX_ID }, error: null });
 
-    await expect(storeWhatsAppWebhookDelivery({ channel, adapter, verified, nowMs: NOW_MS })).resolves.toEqual({ outcome: "inserted", inboxId: INBOX_ID });
+    await expect(storeWhatsAppWebhookDelivery({ channel, adapter, verified })).resolves.toEqual({ outcome: "inserted", inboxId: INBOX_ID });
 
     const [[, args]] = storeCalls() as [[string, Record<string, string>]];
     expect(args).toMatchObject({
@@ -306,7 +309,7 @@ describe("3. a inbox grava antes da normalização completa", () => {
     const verified = verifySimulated(bytes(simBody([SIM_INBOUND_WITHOUT_IDENTITY])));
     handlers.whatsapp_inbox_store = () => ({ data: { outcome: "inserted", inbox_id: INBOX_ID }, error: null });
     await expect(
-      storeWhatsAppWebhookDelivery({ channel, adapter: new SimulatedWhatsAppProvider(), verified, nowMs: NOW_MS }),
+      storeWhatsAppWebhookDelivery({ channel, adapter: new SimulatedWhatsAppProvider(), verified }),
     ).resolves.toMatchObject({ outcome: "inserted" });
     expect(storeCalls()[0]![1]).toMatchObject({ p_provider_event_id: "evt-sim-sem-identidade", p_provider_event_type: "message.inbound" });
   });
@@ -317,7 +320,7 @@ describe("3. a inbox grava antes da normalização completa", () => {
     const adapter = new YCloudWhatsAppProvider();
     const normalize = vi.spyOn(adapter, "normalizeEvents");
     handlers.whatsapp_inbox_store = () => ({ data: { outcome: "inserted", inbox_id: INBOX_ID }, error: null });
-    await storeWhatsAppWebhookDelivery({ channel, adapter, verified: verifyYCloud(bytes(body(inboundText))), nowMs: NOW_MS });
+    await storeWhatsAppWebhookDelivery({ channel, adapter, verified: verifyYCloud(bytes(body(inboundText))) });
     expect(normalize).not.toHaveBeenCalled();
     expect(storeCalls()[0]![1]).toMatchObject({ p_provider_event_type: "whatsapp.inbound_message.received" });
   });
@@ -326,7 +329,7 @@ describe("3. a inbox grava antes da normalização completa", () => {
     const { storeWhatsAppWebhookDelivery } = await loadInbox();
     const channel = await managedContext("ycloud");
     handlers.whatsapp_inbox_store = () => ({ data: { outcome: "inserted", inbox_id: INBOX_ID }, error: null });
-    await storeWhatsAppWebhookDelivery({ channel, adapter: new YCloudWhatsAppProvider(), verified: verifyYCloud(bytes(body(unknownType))), nowMs: NOW_MS });
+    await storeWhatsAppWebhookDelivery({ channel, adapter: new YCloudWhatsAppProvider(), verified: verifyYCloud(bytes(body(unknownType))) });
     expect(storeCalls()[0]![1]).toMatchObject({ p_provider_event_type: unknownType.type });
   });
 
@@ -339,7 +342,7 @@ describe("3. a inbox grava antes da normalização completa", () => {
     const { storeWhatsAppWebhookDelivery } = await loadInbox();
     const channel = await managedContext("ycloud");
     await expect(
-      storeWhatsAppWebhookDelivery({ channel, adapter: new YCloudWhatsAppProvider(), verified: verifyYCloud(bytes(text)), nowMs: NOW_MS }),
+      storeWhatsAppWebhookDelivery({ channel, adapter: new YCloudWhatsAppProvider(), verified: verifyYCloud(bytes(text)) }),
     ).rejects.toMatchObject({ code });
     expect(storeCalls()).toHaveLength(0);
   });
@@ -443,7 +446,6 @@ describe("5. retenção da inbox: mínimo de 60 s, teto de 30 dias, sem padrão"
       channel,
       adapter: new SimulatedWhatsAppProvider(),
       verified: verifySimulated(bytes(simBody([SIM_INBOUND]))),
-      nowMs: NOW_MS,
     });
   }
 
@@ -457,9 +459,10 @@ describe("5. retenção da inbox: mínimo de 60 s, teto de 30 dias, sem padrão"
     ["30 dias", 30 * DAY],
     ["7 dias (fictício)", 7 * DAY],
     ["60 segundos", 60],
-  ])("%s: aceito, com o prazo calculado a partir de agora", async (_name, seconds) => {
+  ])("%s: aceito, mandado ao banco em segundos", async (_name, seconds) => {
     await expect(storeWith(String(seconds))).resolves.toMatchObject({ outcome: "inserted" });
-    expect(storeCalls()[0]![1]).toMatchObject({ p_retain_until: new Date(NOW_MS + seconds * 1000).toISOString() });
+    expect(storeCalls()[0]![1]).toMatchObject({ p_retention_seconds: seconds });
+    expect(storeCalls()[0]![1]).not.toHaveProperty("p_retain_until");
   });
 
   it.each([
@@ -471,5 +474,52 @@ describe("5. retenção da inbox: mínimo de 60 s, teto de 30 dias, sem padrão"
   ])("%s: falha fechada, sem gravar", async (_name, value) => {
     await expect(storeWith(value)).rejects.toMatchObject({ code: "retention_not_configured" });
     expect(storeCalls()).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------
+// 6. O prazo é do banco: o relógio da aplicação não entra
+// ---------------------------------------------------------------------
+
+describe("6. o relógio da aplicação não define o prazo de retenção", () => {
+  async function storeAt(appClockMs: number) {
+    const { storeWhatsAppWebhookDelivery } = await loadInbox();
+    const channel = await managedContext("simulated");
+    vi.stubEnv("WHATSAPP_INBOX_RETENTION_SECONDS", String(30 * DAY));
+    handlers.whatsapp_inbox_store = () => ({ data: { outcome: "inserted", inbox_id: INBOX_ID }, error: null });
+    const verified = verifySimulated(bytes(simBody([SIM_INBOUND])));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(appClockMs);
+      await storeWhatsAppWebhookDelivery({ channel, adapter: new SimulatedWhatsAppProvider(), verified });
+    } finally {
+      vi.useRealTimers();
+    }
+    const calls = storeCalls();
+    expect(calls).toHaveLength(1);
+    // Nonce e texto cifrado mudam a cada cifra; o resto tem de ser idêntico.
+    const { p_nonce: _n, p_ciphertext: _c, p_auth_tag: _t, ...args } = calls[0]![1] as Record<string, unknown>;
+    return args;
+  }
+
+  const ISO_DATE = /^\d{4}-\d{2}-\d{2}T/;
+
+  it("manda só os segundos de retenção, nunca um horário absoluto", async () => {
+    const args = await storeAt(NOW_MS);
+    expect(args.p_retention_seconds).toBe(30 * DAY);
+    expect(args).not.toHaveProperty("p_retain_until");
+    expect(args).not.toHaveProperty("p_received_at");
+    for (const value of Object.values(args)) expect(String(value)).not.toMatch(ISO_DATE);
+  });
+
+  it.each([
+    ["adiantado 1 hora", NOW_MS + 3_600_000],
+    ["atrasado 1 hora", NOW_MS - 3_600_000],
+    ["adiantado 2 dias", NOW_MS + 2 * DAY * 1000],
+  ])("relógio da aplicação %s: 30 dias aceitos, com os mesmos argumentos", async (_name, clock) => {
+    const first = await storeAt(NOW_MS);
+    const second = await storeAt(clock);
+    expect(second).toEqual(first);
+    expect(second).toMatchObject({ p_retention_seconds: 30 * DAY });
   });
 });

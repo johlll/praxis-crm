@@ -133,7 +133,7 @@ describe("1. gravação", () => {
     const resolved = await trustedChannel();
     const raw = bytesOf(simulatedBody([INBOUND]));
 
-    const result = await storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(raw), nowMs: NOW_MS });
+    const result = await storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(raw) });
     expect(result).toEqual({ outcome: "inserted", inboxId: INBOX_ID });
 
     const [[, args]] = storeCalls() as [[string, Record<string, string>]];
@@ -148,7 +148,7 @@ describe("1. gravação", () => {
         "p_nonce",
         "p_provider",
         "p_provider_event_id",
-        "p_retain_until",
+        "p_retention_seconds",
         "p_routing_key",
         "p_workspace_id",
       ].sort(),
@@ -162,7 +162,7 @@ describe("1. gravação", () => {
       p_provider_event_type: "message.inbound",
       p_body_sha256: sha256(raw),
       p_key_version: "1",
-      p_retain_until: new Date(NOW_MS + 3_600_000).toISOString(),
+      p_retention_seconds: 3600,
     });
     const plain = decryptWhatsAppInboxBody(
       { keyVersion: args.p_key_version!, nonce: args.p_nonce!, ciphertext: args.p_ciphertext!, authTag: args.p_auth_tag! },
@@ -182,8 +182,8 @@ describe("1. gravação", () => {
     const resolved = await trustedChannel();
     const lf = bytesOf(simulatedBody([INBOUND], "\n"));
     const crlf = bytesOf(simulatedBody([INBOUND], "\r\n"));
-    await storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(lf), nowMs: NOW_MS });
-    await storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(crlf), nowMs: NOW_MS });
+    await storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(lf) });
+    await storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(crlf) });
     const [a, b] = storeCalls().map(([, args]) => (args as Record<string, string>).p_body_sha256);
     expect(a).toBe(sha256(lf));
     expect(b).toBe(sha256(crlf));
@@ -195,7 +195,7 @@ describe("1. gravação", () => {
     handlers.whatsapp_inbox_store = () => ({ data: { outcome, inbox_id: INBOX_ID }, error: null });
     const resolved = await trustedChannel();
     await expect(
-      storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(bytesOf(simulatedBody([INBOUND]))), nowMs: NOW_MS }),
+      storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(bytesOf(simulatedBody([INBOUND]))) }),
     ).resolves.toEqual({ outcome, inboxId: INBOX_ID });
   });
 
@@ -208,7 +208,7 @@ describe("1. gravação", () => {
     handlers.whatsapp_inbox_store = () => ({ data, error: null });
     const resolved = await trustedChannel();
     await expect(
-      storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(bytesOf(simulatedBody([INBOUND]))), nowMs: NOW_MS }),
+      storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(bytesOf(simulatedBody([INBOUND]))) }),
     ).rejects.toMatchObject({ code: "unknown" });
   });
 });
@@ -218,7 +218,7 @@ describe("2. só contexto confiável e corpo verificado", () => {
     const { storeWhatsAppWebhookDelivery } = await loadInbox();
     const forged = { channelId: CHANNEL, workspaceId: WS, environment: "preview", provider: "simulated", routingKey: ROUTING } as never;
     await expect(
-      storeWhatsAppWebhookDelivery({ channel: forged, adapter: new SimulatedWhatsAppProvider(), verified: verify(bytesOf(simulatedBody([INBOUND]))), nowMs: NOW_MS }),
+      storeWhatsAppWebhookDelivery({ channel: forged, adapter: new SimulatedWhatsAppProvider(), verified: verify(bytesOf(simulatedBody([INBOUND]))) }),
     ).rejects.toMatchObject({ code: "channel_context_untrusted" });
     expect(rpcMock).not.toHaveBeenCalled();
   });
@@ -228,7 +228,7 @@ describe("2. só contexto confiável e corpo verificado", () => {
     const resolved = await trustedChannel();
     rpcMock.mockClear();
     await expect(
-      storeWhatsAppWebhookDelivery({ channel: { ...resolved.channel }, adapter: resolved.adapter, verified: verify(bytesOf(simulatedBody([INBOUND]))), nowMs: NOW_MS }),
+      storeWhatsAppWebhookDelivery({ channel: { ...resolved.channel }, adapter: resolved.adapter, verified: verify(bytesOf(simulatedBody([INBOUND]))) }),
     ).rejects.toMatchObject({ code: "channel_context_untrusted" });
     expect(storeCalls()).toHaveLength(0);
   });
@@ -241,7 +241,7 @@ describe("2. só contexto confiável e corpo verificado", () => {
     const resolved = await trustedChannel();
     rpcMock.mockClear();
     await expect(
-      storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: make() as never, nowMs: NOW_MS }),
+      storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: make() as never }),
     ).rejects.toMatchObject({ code: "unverified_body" });
     expect(storeCalls()).toHaveLength(0);
   });
@@ -251,7 +251,7 @@ describe("2. só contexto confiável e corpo verificado", () => {
     const resolved = await trustedChannel();
     rpcMock.mockClear();
     await expect(
-      storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: new YCloudWhatsAppProvider(), verified: verify(bytesOf(simulatedBody([INBOUND]))), nowMs: NOW_MS }),
+      storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: new YCloudWhatsAppProvider(), verified: verify(bytesOf(simulatedBody([INBOUND]))) }),
     ).rejects.toMatchObject({ code: "provider_mismatch" });
     expect(storeCalls()).toHaveLength(0);
   });
@@ -262,7 +262,7 @@ describe("2. só contexto confiável e corpo verificado", () => {
     rpcMock.mockClear();
     vi.stubEnv("VERCEL_ENV", "production");
     await expect(
-      storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(bytesOf(simulatedBody([INBOUND]))), nowMs: NOW_MS }),
+      storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(bytesOf(simulatedBody([INBOUND]))) }),
     ).rejects.toMatchObject({ code: "channel_environment_mismatch" });
     expect(storeCalls()).toHaveLength(0);
   });
@@ -272,7 +272,7 @@ describe("2. só contexto confiável e corpo verificado", () => {
     const resolved = await trustedChannel();
     const raw = bytesOf(simulatedBody([INBOUND, { ...INBOUND, id: "evt-inbox-2", messageId: "m2" }]));
     await expect(
-      storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(raw), nowMs: NOW_MS }),
+      storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(raw) }),
     ).rejects.toMatchObject({ code: "inbox_batch_not_supported" });
     expect(storeCalls()).toHaveLength(0);
   });
@@ -281,7 +281,7 @@ describe("2. só contexto confiável e corpo verificado", () => {
     const { storeWhatsAppWebhookDelivery } = await loadInbox();
     const resolved = await trustedChannel();
     await expect(
-      storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(bytesOf("{ não é json")), nowMs: NOW_MS }),
+      storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(bytesOf("{ não é json")) }),
     ).rejects.toMatchObject({ code: "invalid_payload" });
     expect(storeCalls()).toHaveLength(0);
   });
@@ -302,7 +302,7 @@ describe("3. retenção vem de configuração confiável", () => {
     if (value === undefined) vi.stubEnv("WHATSAPP_INBOX_RETENTION_SECONDS", undefined as unknown as string);
     else vi.stubEnv("WHATSAPP_INBOX_RETENTION_SECONDS", value);
     await expect(
-      storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(bytesOf(simulatedBody([INBOUND]))), nowMs: NOW_MS }),
+      storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(bytesOf(simulatedBody([INBOUND]))) }),
     ).rejects.toMatchObject({ code: "retention_not_configured" });
     expect(storeCalls()).toHaveLength(0);
   });
@@ -312,7 +312,7 @@ describe("3. retenção vem de configuração confiável", () => {
     const resolved = await trustedChannel();
     vi.stubEnv("WHATSAPP_INBOX_KEY_VERSIONS", "");
     await expect(
-      storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(bytesOf(simulatedBody([INBOUND]))), nowMs: NOW_MS }),
+      storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(bytesOf(simulatedBody([INBOUND]))) }),
     ).rejects.toMatchObject({ code: "inbox_crypto_not_configured" });
     expect(storeCalls()).toHaveLength(0);
   });
@@ -521,12 +521,12 @@ describe("6. erros e logs sem conteúdo", () => {
     const verified = verify(bytesOf(simulatedBody([INBOUND])));
 
     handlers.whatsapp_inbox_store = () => ({ data: null, error: { message: "channel_not_found" } });
-    await expect(storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified, nowMs: NOW_MS })).rejects.toMatchObject({
+    await expect(storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified })).rejects.toMatchObject({
       code: "channel_not_found",
     });
 
     handlers.whatsapp_inbox_store = () => ({ data: null, error: { message: `falha com ${PHONE} e ${TEXT}` } });
-    const error = await storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified, nowMs: NOW_MS }).catch((e: unknown) => e);
+    const error = await storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified }).catch((e: unknown) => e);
     expect(error).toMatchObject({ code: "unknown" });
     expect(String(error)).not.toContain(PHONE);
     expect(JSON.stringify(error)).not.toContain(TEXT);
@@ -537,7 +537,7 @@ describe("6. erros e logs sem conteúdo", () => {
     const { storeWhatsAppWebhookDelivery } = await loadInbox();
     handlers.whatsapp_inbox_store = () => ({ data: { outcome: "conflict", inbox_id: INBOX_ID }, error: null });
     const resolved = await trustedChannel();
-    await storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(bytesOf(simulatedBody([INBOUND]))), nowMs: NOW_MS });
+    await storeWhatsAppWebhookDelivery({ channel: resolved.channel, adapter: resolved.adapter, verified: verify(bytesOf(simulatedBody([INBOUND]))) });
     for (const spy of spies) expect(spy).not.toHaveBeenCalled();
   });
 });
