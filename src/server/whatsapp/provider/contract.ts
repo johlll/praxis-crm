@@ -104,6 +104,12 @@ export class VerifiedWebhookBody {
     return this.#bytes.byteLength;
   }
 
+  /** Cópia dos bytes exatos (para hash e cifra da caixa de entrada, B3.2b):
+   * mexer na cópia não muda o corpo verificado. */
+  copyBytes(): Uint8Array {
+    return this.#bytes.slice();
+  }
+
   /** UTF-8 ESTRITA: byte inválido → `null`; BOM não é removido em silêncio. */
   decodeUtf8Strict(): string | null {
     try {
