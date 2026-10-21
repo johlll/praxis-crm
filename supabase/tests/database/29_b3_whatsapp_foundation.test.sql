@@ -121,8 +121,10 @@ select is(
 select is(
   (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname like 'whatsapp\_%'
-     -- As seis da caixa de entrada (B3.2b) têm teste próprio (31).
+     -- As seis da caixa de entrada (B3.2b) têm teste próprio (31), e a
+     -- resolução pelo localizador opaco (B3.2c), o 32.
      and p.proname not like 'whatsapp\_inbox\_%'
+     and p.proname <> 'whatsapp_resolve_webhook_route'
      and has_function_privilege('service_role', p.oid, 'execute')),
   10,
   'as 10 funções public.whatsapp_* da B3.1 são executáveis por service_role'
