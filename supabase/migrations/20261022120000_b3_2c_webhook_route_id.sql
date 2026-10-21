@@ -86,8 +86,7 @@ begin
   from public.whatsapp_channels ch
   where ch.webhook_route_id = p_webhook_route_id
     and ch.provider = p_provider
-    and ch.environment = v_env
-    and ch.status <> 'disabled';
+    and ch.environment = v_env;
 end;
 $body$;
 
