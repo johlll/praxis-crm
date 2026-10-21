@@ -168,7 +168,8 @@ as $body$
     'purged_at', p_row.purged_at,
     'error_code', p_row.error_code,
     'conflict_count', p_row.conflict_count,
-    'last_conflict_at', p_row.last_conflict_at
+    'last_conflict_at', p_row.last_conflict_at,
+    'ciphertext', p_row.ciphertext
   );
 $body$;
 
