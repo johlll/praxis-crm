@@ -97,9 +97,6 @@ $body$;
 
 revoke all on function private.whatsapp_webhook_inbox_guard() from public, anon, authenticated;
 
-create trigger whatsapp_webhook_inbox_guard
-  before update on public.whatsapp_webhook_inbox
-  for each row execute function private.whatsapp_webhook_inbox_guard();
 
 -- Sem atalho direto: nem service_role lê ou escreve a tabela. As funções
 -- abaixo e as da B3.2b são SECURITY DEFINER.
