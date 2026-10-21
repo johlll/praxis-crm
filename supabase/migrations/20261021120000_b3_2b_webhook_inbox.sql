@@ -69,7 +69,6 @@ create table public.whatsapp_webhook_inbox (
   conflict_count integer not null default 0 check (conflict_count >= 0),
   last_conflict_at timestamptz,
   last_conflict_sha256 text check (last_conflict_sha256 ~ '^[0-9a-f]{64}$'),
-  constraint whatsapp_webhook_inbox_channel_event_key unique (channel_id, provider_event_id),
   constraint whatsapp_webhook_inbox_channel_identity_fkey
     foreign key (workspace_id, channel_id, environment, provider)
     references public.whatsapp_channels (workspace_id, id, environment, provider) on delete cascade,
@@ -230,7 +229,7 @@ begin
     v_env, v_channel.workspace_id, v_channel.id, v_channel.provider, p_provider_event_id, p_event_kind,
     p_body_sha256, p_key_version, p_nonce, p_ciphertext, p_auth_tag, p_retain_until
   )
-  on conflict (channel_id, provider_event_id) do nothing
+  on conflict do nothing
   returning id into v_id;
 
   if v_id is not null then
