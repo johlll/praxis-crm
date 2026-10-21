@@ -365,7 +365,7 @@ begin
   end if;
 
   update public.whatsapp_webhook_inbox
-  set state = 'pending', claim_token = null, claimed_at = null, lease_until = null,
+  set state = 'pending', claim_token = null, claimed_at = null, lease_until = null, claim_count = 0,
       last_release_code = p_code, last_released_at = v_now
   where id = v_row.id;
   return jsonb_build_object('outcome', 'released');
