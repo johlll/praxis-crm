@@ -1949,20 +1949,28 @@ Implementado só o armazenamento durável e idempotente de cada entrega
 autêntica do webhook. Ficam de fora:
 - rota pública;
 - Inngest e processamento de mensagem;
+- claim/lease, tentativas e retries;
 - criação de contato, lead ou conversa;
 - classificação de remetente;
 - envio e mídia;
 - YCloud real;
-- variável na Vercel;
+- variável na Vercel ou em qualquer serviço externo;
 - migration no Supabase hospedado.
+
+Revisada na PR #58 (§17.10): a inbox grava antes da normalização
+completa, guarda o tipo bruto do provedor, separa as regras de estado do
+canal para receber e para acessar, e tem teto técnico de 30 dias.
 
 ### 17.1 Entregue
 
 - **Migration** `20261021120000_b3_2b_webhook_inbox.sql`. É nova: as
-  migrations da B3.1 não foram editadas.
+  migrations da B3.1 não foram editadas. Como ainda não foi hospedada, a
+  revisão foi feita nela mesma.
 - **`src/server/whatsapp/inbox-crypto.ts`:** a cifra própria da inbox.
 - **`src/server/whatsapp/inbox.ts`:** a API do servidor (gravar, ler
   pendente, marcar, listar e expurgar).
+- **Contrato do provedor:** `inspectEnvelope` (envelope mínimo, §17.3),
+  implementada no YCloud e no simulador.
 - **`VerifiedWebhookBody.copyBytes()`:** cópia dos bytes exatos, para
   hash e cifra.
 - **`isTrustedWhatsAppChannelContext`:** exportado de `admin/channels.ts`.
@@ -1973,9 +1981,12 @@ autêntica do webhook. Ficam de fora:
 Uma linha por (canal, id do evento do provedor). Colunas:
 - **Identidade:** ambiente, workspace, canal e provedor, presos à linha
   real do canal por FK (workspace, canal, ambiente, provedor).
-- **Evento:** id do evento e tipo do evento já normalizado. O tipo é
-  metadado operacional no vocabulário do CRM: `message.inbound`,
-  `message.status`, `account` etc.
+- **Evento:** id do evento e `provider_event_type`, o tipo **bruto** do
+  provedor como veio no envelope (por exemplo
+  `whatsapp.inbound_message.received`). Lista aberta: o banco confere só o
+  formato (`^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`, até 128 caracteres). O tipo
+  normalizado do CRM **não** é gravado; se for útil, a B3.2d cria um campo
+  separado, preenchido só depois de um processamento bem-sucedido.
 - **Corpo:** SHA-256 dos bytes exatos e o corpo cifrado, com versão da
   chave, nonce, texto cifrado e tag em colunas separadas.
 - **Retenção e estado:** horário de recebimento e prazo de retenção;
@@ -1998,10 +2009,45 @@ A política de nova tentativa pertence à B3.2c/B3.2d e ao reconciliador.
 
 Isolamento:
 - RLS ligada e forçada, sem GRANT e com políticas deny;
-- as seis funções são SECURITY DEFINER, com search_path travado e EXECUTE
-  só para service_role (PUBLIC, anon e authenticated negados).
+- as seis funções públicas são SECURITY DEFINER, com search_path travado e
+  EXECUTE só para service_role (PUBLIC, anon e authenticated negados). As
+  três auxiliares privadas não são executáveis por ninguém além do dono.
 
-### 17.3 Idempotência e conflito
+### 17.3 Envelope mínimo, idempotência e conflito
+
+**A gravação acontece antes da normalização completa.** Do corpo
+verificado, a inbox lê só o envelope mínimo, pela inspeção do adaptador:
+
+```ts
+type WebhookEnvelope = {
+  providerEventId: string;   // id do evento no provedor
+  providerEventType: string; // tipo bruto, como veio
+  envelopeVersion: string;   // "v2" na YCloud, "1" no simulador
+  eventCount: 1;             // exatamente um evento por entrega
+};
+inspectEnvelope(body: VerifiedWebhookBody):
+  | { ok: true; envelope: WebhookEnvelope }
+  | { ok: false; reason: "unverified_body" | "invalid_json" | "invalid_envelope"
+                       | "unsupported_envelope_version" | "batch_not_supported" };
+```
+
+A inspeção:
+- recebe só `VerifiedWebhookBody`;
+- não interpreta mensagem, contato, status, custo ou conteúdo, e não
+  decide o `NormalizedWhatsAppEvent`;
+- não exige telefone, BSUID, texto ou campo específico do evento;
+- recusa JSON inválido (ou UTF-8 inválido), envelope inválido, versão
+  incompatível e lote.
+
+| Adaptador | Envelope lido | Versão | Lote |
+|---|---|---|---|
+| YCloud | `id`, `type`, `apiVersion` do objeto do evento | só `v2`; outra string → `unsupported_envelope_version`; ausente → `invalid_envelope` | uma lista no topo → `batch_not_supported` (a YCloud manda um evento por requisição) |
+| Simulador | `version`; `id` e `type` do único item de `events` | só `1` | mais de um item → `batch_not_supported`; lista vazia → `invalid_envelope` |
+
+Um evento autêntico com envelope válido, mas cujo conteúdo o normalizador
+recusa (por exemplo, mensagem recebida sem telefone e sem BSUID), é
+guardado cifrado. A normalização completa continua recusando esse evento
+quando for chamada; a falha é tratada na B3.2d.
 
 `whatsapp_inbox_store` (`INSERT … ON CONFLICT (channel_id,
 provider_event_id) DO NOTHING`) devolve um de três resultados:
@@ -2013,9 +2059,8 @@ provider_event_id) DO NOTHING`) devolve um de três resultados:
   - ficam só a evidência mínima (contagem, horário, hash) e um registro de
     auditoria `whatsapp.inbox.conflict` com ambiente, provedor e canal.
 
-O id do evento e o tipo saem da normalização do **próprio** corpo
-verificado, nunca de um parâmetro solto. Cada entrega tem de ser um evento
-só; um lote é recusado (`inbox_batch_not_supported`).
+O id do evento e o tipo bruto saem da inspeção do **próprio** corpo
+verificado, nunca de um parâmetro solto.
 
 ### 17.4 Cifra própria
 
@@ -2031,22 +2076,33 @@ só; um lote é recusado (`inbox_batch_not_supported`).
 - **Falha fechada:** sem chave configurada, a gravação não acontece.
 
 A API só aceita bytes já representados por `VerifiedWebhookBody` e o
-contexto **confiável** do canal criado pela resolução interna do webhook.
-Um objeto montado à mão com UUIDs, ou uma cópia do contexto, é recusado
-antes do banco.
+contexto **confiável** do canal criado por resolução interna. Um objeto
+montado à mão com UUIDs, ou uma cópia do contexto, é recusado antes do
+banco.
 
-### 17.5 Isolamento no banco
+### 17.5 Isolamento no banco e estado do canal
 
 Todas as funções exigem o ambiente assinado do WhatsApp e conferem canal,
-workspace, provedor, routing key e ambiente contra a linha real.
+workspace, provedor, routing key e ambiente contra a linha real. A regra
+de **estado** do canal é diferente para receber e para acessar:
 
-| Estado do canal | Gravação |
-|---|---|
-| `active` | aceita |
-| `paused` | aceita: preserva o evento autêntico; processar é decisão da B3.2c/B3.2d |
-| `disabled` | não encontrado |
-| `disconnected` | não encontrado |
-| outro ambiente | não encontrado |
+| Estado atual do canal | Entrega nova (`store`) | Entrada existente (ler, listar, marcar) |
+|---|---|---|
+| `active` | aceita | acessa |
+| `paused` | aceita e preserva | acessa |
+| `disconnected` | aceita e preserva (status atrasado, evento de conta, o fato da recuperação) | acessa |
+| `disabled` | recusada, nada gravado | acessa (histórico e investigação) |
+| outro ambiente, workspace, canal, provedor ou routing key | não encontrado | não encontrado |
+
+- Aceitar e preservar não é processar nem enviar. Processar eventos de
+  canal pausado ou desconectado é decisão da B3.2c/B3.2d.
+- Acessar uma entrada existente de canal desativado não reabre o
+  recebimento: nem a reentrega idêntica é aceita.
+- No banco: `private.whatsapp_inbox_channel_identity` confere a
+  identidade; `whatsapp_inbox_receiving_channel` acrescenta a regra de
+  recebimento (`store`); `whatsapp_inbox_existing_channel` não olha o
+  estado (`list`, `get_pending`, `mark_processed`, `mark_failed`).
+- O expurgo continua independente do estado do canal (§17.6).
 
 A listagem comum (`whatsapp_inbox_list`) nunca devolve versão de chave,
 nonce, texto cifrado ou tag. Só `whatsapp_inbox_get_pending` devolve o
@@ -2055,10 +2111,13 @@ texto cifrado, de uma entrada pendente, pela identidade inteira do canal.
 ### 17.6 Retenção e expurgo
 
 - **Prazo:** vem de `WHATSAPP_INBOX_RETENTION_SECONDS`, configuração
-  confiável e sem valor padrão, de 60 s a 3650 dias. Sem valor válido, a
+  confiável e sem valor padrão, de **60 s a 30 dias**. Sem valor válido, a
   gravação falha fechada. O banco também recusa prazo nulo, no passado ou
-  acima de 3650 dias. A política definitiva da Vizentini continua aberta
-  (decisão 6).
+  acima de 30 dias.
+  - O teto é técnico: a inbox guarda o payload bruto, não o registro
+    definitivo da conversa. A mensagem normalizada poderá ter outra
+    política de retenção no futuro.
+  - O valor do piloto continua pendente do portão P9 (decisão 6).
 - **Expurgo:** `whatsapp_inbox_purge_expired` atua só no ambiente
   assinado e independe do estado do canal.
   - Apaga versão, nonce, texto cifrado e tag e mantém o **tombstone**:
@@ -2076,15 +2135,21 @@ texto cifrado, de uma entrada pendente, pela identidade inteira do canal.
     ambiente, provedor, routing key);
   - decifra com a AAD do **contexto**;
   - confere o SHA-256 em tempo constante;
-  - devolve um `VerifiedWebhookBody` com os bytes exatos.
+  - devolve o id, o tipo bruto (`providerEventType`) e um
+    `VerifiedWebhookBody` com os bytes exatos.
 - **Estados:** pendente → processado ou falho. Repetir a mesma marcação é
   idempotente.
   - Processado não volta a pendente nem a falho.
   - Falho não vira processado: nova tentativa é política da B3.2c/B3.2d.
   - Entrada expurgada não é lida nem marcada.
-- Não há fila, contador de tentativas nem política de nova tentativa.
+- Não há fila, claim, contador de tentativas nem política de nova
+  tentativa.
+- **Requisito da B3.2d:** antes de processar em produção, tem de existir
+  um claim atômico (ou garantia equivalente) que impeça dois workers de
+  processarem a mesma entrada ao mesmo tempo. Hoje `get_pending` só lê, e
+  as marcações só travam a linha durante a própria transação.
 
-### 17.8 Testes e mutações
+### 17.8 Testes e mutações (implementação inicial)
 
 A ordem seguida foi testes, depois implementação, depois mutações.
 
@@ -2146,14 +2211,18 @@ sobre o mesmo commit verificado. Todas foram detectadas pelo pgTAP:
 
 ### 17.9 Limitações e decisões
 
-- **Canal desconectado é recusado.** A gravação aceita só canal `active`
-  ou `paused`. A resolução do webhook da B3.1 ainda devolve canal
-  `disconnected`, então o evento de reconexão de um canal desconectado
-  não entra na inbox. A B3.2c precisa decidir isso antes de ligar a rota
-  (por exemplo, aceitar só eventos de conta para canal desconectado).
-- **Tipo do evento é o normalizado.** O tipo guardado vem do contrato do
-  CRM (`message.inbound`, `account` etc.). O tipo bruto do provedor fica só
-  dentro do corpo cifrado.
+- **Contexto confiável de canal desativado.** O banco já permite acessar
+  a entrada existente de um canal desativado. No servidor, o contexto
+  confiável desse canal hoje só sai da resolução administrada
+  (`adminResolveManagedWhatsAppChannel`, com sessão autorizada): a
+  resolução do webhook recusa canal desativado, como deve. Um worker sem
+  sessão (B3.2d) vai precisar de uma resolução interna própria, por id do
+  canal, sem segredo de webhook.
+- **Teto de 30 dias exatos e relógio.** A aplicação calcula o prazo pelo
+  próprio relógio e o banco confere contra `now()`. Com o servidor
+  adiantado em relação ao banco, um prazo configurado em exatamente 30
+  dias pode ser recusado (`invalid_retention`, falha fechada). O valor do
+  piloto (P9) deve ficar abaixo do teto.
 - **Expurgo independe do estado.** Ele atua sobre pendentes vencidas
   também, porque a retenção prevalece.
 - **Variáveis novas não configuradas:** `WHATSAPP_INBOX_KEY_VERSIONS`,
@@ -2162,3 +2231,67 @@ sobre o mesmo commit verificado. Todas foram detectadas pelo pgTAP:
   fechada.
 - **Migration não aplicada no hospedado.** A da B3.2b, assim como as da
   B3.1, não foi aplicada no Supabase hospedado.
+
+### 17.10 Revisão da PR #58
+
+Pedida sobre o HEAD `712ee0d`. Três pontos:
+
+1. **Gravar antes da normalização.** `storeWhatsAppWebhookDelivery`
+   chamava `normalizeEvents()` antes de gravar: um evento autêntico com
+   conteúdo inesperado era recusado e se perdia. Agora usa só a inspeção
+   mínima do envelope (§17.3), e `event_kind` (tipo normalizado) virou
+   `provider_event_type` (tipo bruto) na tabela, nas funções, nos tipos
+   gerados e nas listagens.
+2. **Regras de estado separadas.** A mesma regra (só ativo ou pausado)
+   valia para tudo e podia aprisionar uma entrada legítima se o canal
+   mudasse de estado depois do recebimento. Agora são duas regras (§17.5).
+3. **Teto de 30 dias.** O teto técnico da retenção da inbox caiu de 3650
+   para 30 dias (§17.6).
+
+**Reprodução vermelha, contra o HEAD `712ee0d`** (commit só de testes
+`b842116`):
+- **Unitários:** arquivo novo `b3-2b-revisao-envelope-retencao` e
+  ajustes em `b3-2b-inbox-servidor`. Falham 59; os que passam são guardas
+  que já valiam (JSON inválido recusado, retenção ausente recusada, 60 s,
+  7 e 30 dias aceitos).
+- **pgTAP 31 revisado (113 testes):** numa PR temporária (#59) com o
+  `712ee0d` e só o arquivo de teste. Falham 17 de 113, e o arquivo roda
+  até o fim:
+  - colunas exatas (`event_kind` ainda existe);
+  - canal desconectado recusado na entrega nova;
+  - 30 dias mais 1 segundo e 3650 dias aceitos (e, por isso, linhas a
+    mais nos dois testes de contagem seguintes);
+  - tipo bruto desconhecido do CRM recusado; tipo bruto não gravado;
+  - listagem e marcação com `event_kind`;
+  - canal desconectado depois do recebimento: leitura, marcação e entrega
+    nova recusadas;
+  - canal desativado depois do recebimento: listagem, leitura e as duas
+    finalizações recusadas.
+
+**Correção** (`b06fa32`): unitários da inbox 127 de 127; suíte inteira
+1612; pgTAP 31 113 de 113 e CI completo verde na própria PR.
+
+**Mutações do servidor e dos adaptadores:** 8, locais, cada uma aplicada
+e desfeita. Todas foram detectadas:
+
+| Mutação | Detectada por |
+|---|---|
+| `normalizeEvents()` de volta antes da gravação | YCloud e simulador sem identidade guardados; a gravação nunca normaliza; versão e lote |
+| Inspeção YCloud exige identidade do remetente | inspeção aceita sem identidade; envelope sem corpo específico; gravação YCloud sem identidade |
+| Inspeção YCloud ignora a versão | `v3` e `v1` recusados; gravação com versão incompatível |
+| Inspeção YCloud aceita lote | lote recusado na inspeção e na gravação |
+| Inspeção do simulador aceita lote | lote com dois eventos; lote não gravado |
+| Tipo gravado é o normalizado | a gravação nunca normaliza; tipo desconhecido gravado como veio |
+| Teto volta a 3650 dias | teto exportado; 30 dias mais 1 s, 31 dias e 3650 dias recusados |
+| Retenção ausente vira 30 dias | ausente e vazia recusadas |
+
+**Mutações do banco:** 5, cada uma numa PR temporária própria (#60 a #64)
+sobre `b06fa32`:
+
+| Mutação | Testes que falharam |
+|---|---|
+| Acesso a entrada existente usa a regra de recebimento | canal desativado depois: listagem, leitura e finalizações |
+| Recebimento usa a regra de acesso | canal desativado: entrega nova recusada e nada gravado; desativado depois: entrega nova, reentrega idêntica, nenhuma linha nova |
+| Regra antiga (ativo ou pausado) para todas as operações | desconectado: entrega nova; desconectado depois: leitura, marcação, entrega nova; desativado depois |
+| Teto do banco volta a 3650 dias | 30 dias mais 1 s e 3650 dias recusados; nenhuma linha das recusadas; listagem do canal só com as entregas dele |
+| Tipo restrito ao vocabulário normalizado | tipo bruto desconhecido do CRM aceito e gravado |
