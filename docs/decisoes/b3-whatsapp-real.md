@@ -1534,7 +1534,7 @@ ou número.
 |---|---|---|
 | B3.2a | **Implementada (§16).** Adaptador YCloud puro: assinatura sobre bytes (`t=,s=`), normalização de entrada, eco, status, histórico (ignorado) e eventos de conta a partir de exemplos oficiais; identidade telefone e/ou BSUID; sem rede | — |
 | B3.2b | **Implementada (§17).** `whatsapp_webhook_inbox` cifrada (chave e AAD próprias), única por (canal, id do evento), com prazo de retenção; RPC de gravação; pgTAP | B3.2a |
-| B3.2c | **Implementada (§18).** Rota `/api/webhooks/whatsapp/[provider]/[routingKey]`: bytes → canal pela routing key da URL (o segredo é por canal) → assinatura → inbox → 2xx → Inngest; 404 sem provedor | B3.2b |
+| B3.2c | **Implementada (§18).** Rota `/api/webhooks/whatsapp/[provider]/[webhookRouteId]`: bytes → canal pelo localizador opaco da URL (UUID aleatório; o segredo é por canal) → assinatura → inbox → 2xx → evento `{ inboxId }` no Inngest próprio do WhatsApp; 404 sem provedor | B3.2b |
 | B3.2d | Função Inngest e RPCs de serviço: mensagem, eco, status, eventos de conta; origem técnica `inbound`, `business_app`, `chatbot` (só com correlação positiva) ou `external_api` (fallback), `history`, e classificação do remetente `external`, `internal`, `automation` ou `unresolved` (§15.10); cadastro de identidades internas (telefone e BSUID; owner/admin); busca antes de criar lead; pendência de identificação; lead só por `inbound` + `external`; nada de lead ou atividade para bot, eco, histórico, status, comando interno ou evento técnico; teste de concorrência | B3.2c |
 | B3.2e | Reconciliador da inbox parada e batimento do canal (`last_event_at`) | B3.2d |
 | Fora do Praxis | Contrato do §15.6 no chatbot (rota, tabela de pedidos, testes), em branch/PR própria do chatbot, desligado e sem deploy | Decisão 15; implantação real com nova autorização; necessário antes da B3.3 no número do chatbot |
@@ -2369,156 +2369,321 @@ os testes deles continuam iguais e verdes.
 Implementada só a rota que recebe a entrega do provedor, autentica, grava
 na inbox cifrada da B3.2b e publica um evento interno. Ficam de fora:
 - normalização do evento e o consumidor do evento interno (B3.2d);
+- a rota de atendimento do Inngest do WhatsApp e a signing key dela
+  (B3.2d, com prefixo `WHATSAPP_`);
 - contato, lead, conversa, classificação, envio e mídia;
 - registro do adaptador YCloud na resolução de provedor (continua sem
   adaptador: `WHATSAPP_PROVIDER=ycloud` responde 404);
 - reconciliador da inbox parada (B3.2e);
-- credencial real, variável em qualquer serviço externo, migration no
-  Supabase hospedado e qualquer mudança no chatbot.
+- credencial real, variável em qualquer serviço externo, app registrado no
+  Inngest, migration no Supabase hospedado e qualquer mudança no chatbot.
+
+Revisada na PR #70 (§18.7): a URL usa um localizador opaco no lugar da
+routing key, o Inngest do WhatsApp é separado do da A11 e o evento interno
+leva só o id da inbox.
 
 ### 18.1 Entregue
 
-- **Rota** `src/app/api/webhooks/whatsapp/[provider]/[routingKey]/route.ts`
+- **Rota** `src/app/api/webhooks/whatsapp/[provider]/[webhookRouteId]/route.ts`
   (runtime Node, sem cache), só `POST`.
 - **`src/server/whatsapp/webhook-route.ts`:** o tratamento inteiro da
-  requisição.
+  requisição e `whatsappWebhookPath`, que monta o caminho de um canal.
+- **`adminResolveWhatsAppWebhookRoute`** (`admin/channels.ts`): resolução
+  pelo localizador opaco.
+- **`src/server/whatsapp/inngest.ts`:** o cliente Inngest próprio do
+  WhatsApp.
 - **`src/server/whatsapp/inbox-events.ts`:** o evento interno.
 - **`src/proxy.ts`:** `/api/webhooks/whatsapp` entra na lista de caminhos
   públicos (sem sessão; autenticado pela assinatura do canal).
-- Nenhuma migration, nenhum tipo do banco alterado.
+- **Migration nova** `20261022120000_b3_2c_webhook_route_id.sql` (as
+  migrations já mescladas não foram editadas) e os tipos gerados.
 
-### 18.2 Fluxo
+### 18.2 Por que o canal vem antes da assinatura, e por que pelo localizador
+
+O segredo do webhook é **por canal** (B3.1). Para conferir a assinatura, a
+rota precisa saber de qual canal é a entrega **antes** de autenticá-la, e
+sem ler o corpo, que ainda não está autenticado. Por isso a referência do
+canal vai na URL.
+
+Essa referência **não** pode ser a routing key real: na YCloud ela é
+`<wabaId>:<telefone do escritório>`, e a URL fica gravada nos logs da
+Vercel, da YCloud, de observabilidade e no histórico de requisições. A URL
+leva só o **localizador opaco** do canal:
+
+```
+/api/webhooks/whatsapp/<provedor>/<webhook_route_id>
+```
+
+- `webhook_route_id` é um UUID aleatório (versão 4) próprio do canal. Não é
+  o id do canal nem derivado da routing key, e não contém nenhum dado do
+  escritório.
+- É só um **localizador**. A autenticação continua sendo a assinatura com o
+  segredo do canal: quem conhece a URL e não tem o segredo recebe 401.
+- É imutável depois de criado, para que a URL cadastrada no provedor não
+  mude.
+- A routing key real continua no banco e só é usada por dentro do servidor.
+  Ela nunca entra na URL, na resposta ou no evento interno.
+- A URL futura cadastrada na YCloud terá esse UUID, nunca WABA ou telefone.
+
+**Diferença do §4.1.** O §4.1 previa a assinatura antes da resolução do
+canal, e a rota só com `[provider]`. Com o segredo por canal, a ordem é a
+desta seção.
+
+### 18.3 Fluxo
 
 | Passo | O que acontece | Falha |
 |---|---|---|
-| 1. Desligado? | Provedor da URL conhecido e habilitado neste ambiente (`resolveWhatsAppProvider`), chave de ambiente do WhatsApp configurada, routing key da URL no formato `^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$` | 404 **sem banco** |
+| 1. Desligado? | Provedor da URL conhecido e habilitado neste ambiente, chave de ambiente do WhatsApp configurada, localizador que seja um UUID | 404 **sem banco** |
 | 2. Bytes exatos | `readWhatsAppWebhookBody`, limite de 256 KiB, sem decodificar | 413 (tamanho), 400 (ilegível) |
-| 3. Canal | `adminResolveWhatsAppWebhookChannel(provedor, routing key da URL)` no ambiente assinado: canal + segredo do webhook | 404 (desconhecido, desativado, outro ambiente); 503 (banco ou cifra) |
+| 3. Canal | `whatsapp_resolve_webhook_route(provedor, localizador)` no ambiente assinado devolve o canal e a routing key real; com ela, a resolução da B3.1 devolve o segredo do webhook, e as duas linhas têm de ser o mesmo canal | 404 (desconhecido, desativado, outro ambiente, divergência); 503 (banco ou cifra) |
 | 4. Assinatura | `adapter.verifyWebhook` sobre os bytes, com o segredo **desse** canal | 401 `invalid_signature`, igual para toda falha |
 | 5. Inbox | `storeWhatsAppWebhookDelivery`: inspeção mínima e gravação cifrada, sem normalização | 400 (envelope inválido, versão, lote); 404 (canal desativado no meio); 503 (retenção ou chave ausente, banco) |
-| 6. Evento | `praxis/whatsapp.inbox.received`, só para canal **ativo** e resultado `inserted` ou `duplicate` | falha ignorada: continua 200 |
+| 6. Evento | `praxis/whatsapp.inbox.received` `{ inboxId }`, só para canal **ativo** e resultado `inserted` ou `duplicate` | falha ignorada: continua 200 |
 
 Respostas: `200 {"status":"received"}` para `inserted`, `duplicate` e
-`conflict` (o conflito já fica registrado na inbox; repetir não ajuda), e
-`{"error":"<código>"}` nas falhas. Nenhuma resposta traz conteúdo,
-telefone, id da inbox, do canal ou do workspace. Nenhuma etapa escreve log.
+`conflict`, e `{"error":"<código>"}` nas falhas. Nenhuma resposta traz
+conteúdo, telefone, WABA, routing key, segredo, erro bruto, id da inbox, do
+canal ou do workspace. Nenhuma etapa escreve log.
 
-**Diferença do §4.1.** O §4.1 previa a assinatura antes da resolução do
-canal, e a rota só com `[provider]`. Como o segredo do webhook é por canal
-(B3.1), o canal tem de ser resolvido antes; e, para não ler o corpo ainda
-não autenticado, a referência do canal vem da URL. Cada canal tem a sua
-URL: `/api/webhooks/whatsapp/<provedor>/<routing key>`. Para a YCloud,
-`<wabaId>:<número E.164 do escritório>` (§16.3); o número é o do
-escritório, não de cliente.
+**Decisões mantidas:**
+- `inserted` e `duplicate` com canal ativo publicam, com o mesmo id;
+- `conflict` não publica;
+- canal pausado ou desconectado: a entrega é preservada na inbox, sem
+  evento (aceitar não é processar);
+- nenhuma normalização acontece na rota.
 
-### 18.3 Evento interno
+**Por que 200 depois de uma falha de publicação é seguro.** A gravação na
+inbox é durável e acontece antes da publicação; a entrada fica `pending`.
+Responder 200 evita que o provedor reenvie algo que já está guardado. Isso
+só é seguro porque a **B3.2e (reconciliador) é portão obrigatório antes de
+cadastrar qualquer webhook real**: é ela que encontra a entrada pendente e
+republica o evento perdido. Sem a B3.2e, uma publicação perdida ficaria
+parada.
+
+### 18.4 Resolução pelo localizador (banco)
+
+```sql
+public.whatsapp_resolve_webhook_route(
+  p_provider public.whatsapp_provider,
+  p_webhook_route_id uuid
+) returns table (
+  channel_id uuid, workspace_id uuid,
+  environment public.whatsapp_environment, provider public.whatsapp_provider,
+  routing_key text, status text
+)
+```
+
+- Exige o ambiente assinado do WhatsApp; só canais desse ambiente.
+- Canal desativado, de outro provedor, de outro ambiente ou inexistente:
+  nenhuma linha (a rota responde 404). O id do canal não localiza nada.
+- Nunca devolve credencial, texto cifrado, versão de chave ou segredo. O
+  segredo continua saindo só da resolução da B3.1
+  (`whatsapp_resolve_webhook_channel`), chamada com a routing key obtida
+  aqui.
+- SECURITY DEFINER, search_path travado, EXECUTE só para `service_role`.
+
+A coluna `whatsapp_channels.webhook_route_id`:
+- `uuid not null default gen_random_uuid()`, com restrição de unicidade;
+- preenchida nos canais que já existiam (inclusive os legados da A7);
+- travada pelo guarda da identidade do canal (`channel_identity_immutable`);
+- o canal da B3 não é visível por SELECT direto de `authenticated` (só as
+  linhas legadas da A7), então o localizador também não.
+
+### 18.5 Evento interno e Inngest próprio
 
 ```ts
-inngest.send({
+whatsappInngestClient().send({
   id: inboxId,                         // deduplicação do Inngest
   name: "praxis/whatsapp.inbox.received",
-  data: { inboxId, channelId, workspaceId, environment, provider },
+  data: { inboxId },                   // exatamente isto
 });
 ```
 
-- Só identificadores: o consumidor (B3.2d) lê e decifra a entrada pela
-  inbox, com o contexto confiável.
-- Só com o contexto **confiável** do canal e no ambiente atual.
-- **Falha fechada:** sem `INNGEST_EVENT_KEY`, nada é enviado. A gravação
-  já aconteceu e a entrada fica pendente.
-- **Duplicata** publica de novo com o mesmo id: se a primeira publicação
-  falhou, esta recupera; se não, o Inngest deduplica.
-- **Canal pausado ou desconectado:** a entrega é guardada, mas nenhum
-  evento é publicado. Aceitar não é processar. A entrada fica pendente; o
-  que fazer com ela na reativação é da B3.2d/B3.2e.
+- **Só o id da inbox.** Nada de workspace, canal, ambiente, provedor ou
+  routing key. Um campo a mais na chamada nunca entra no evento.
+- **Mesma entrada, mesmo evento:** a duplicata republica exatamente o mesmo
+  evento, com o mesmo id.
+- **Requisito da B3.2d:** o consumidor resolve tudo pelo `inboxId` no
+  banco (canal, workspace, ambiente, provedor, estado) e **nunca confia em
+  contexto recebido no evento**. Junto com o claim atômico (§17.7) e a
+  resolução interna das entradas de canais desativados (§17.9).
 
-### 18.4 Testes
+**Separado da A11 e da agenda:**
+- cliente próprio em `src/server/whatsapp/inngest.ts`, app
+  `praxis-crm-whatsapp` (o da A11 é `praxis-crm`);
+- chave própria `WHATSAPP_INNGEST_EVENT_KEY`, passada **explicitamente** ao
+  SDK. Sem fallback para `INNGEST_EVENT_KEY`: sem a chave explícita, o SDK
+  usaria a variável genérica da A11;
+- nenhum arquivo de `src/server/whatsapp/` nem da rota importa
+  `@/server/ingest/*` (A11) ou `@/server/calendar/*` (agenda); um teste
+  confere isso em todos os arquivos;
+- **falha fechada:** chave ausente, vazia ou só com espaços →
+  `inbox_event_not_configured`, sem criar cliente nem enviar nada, e o
+  erro não leva nome nem valor de chave.
+- A rota de atendimento do Inngest e a signing key do WhatsApp ficam para a
+  B3.2d, também com prefixo `WHATSAPP_`.
+- Nenhuma variável foi configurada e nenhum app foi registrado no Inngest.
+
+### 18.6 Testes
 
 Escritos antes da implementação, contra a main `7e30e2c` (commit só de
-testes `01a0fe2`): os **60 falham**. Depois da implementação (`7889996`),
-os 60 passam; suíte inteira 1676.
+testes `01a0fe2`): os 60 falham. Implementação `7889996`: os 60 passam.
 
-Antes de publicar o commit de testes, corrigi dois erros meus nele:
-- eu esperava que um corpo com BOM fosse gravado. Desde a B3.1 a
-  decodificação é UTF-8 estrita e não remove o BOM: o envelope é JSON
-  inválido e a resposta certa é 400. O teste virou dois: BOM recusado sem
-  gravar e CRLF preservado byte a byte;
-- o corpo da `Request` no teste precisava de um `ArrayBuffer` para o
-  typecheck.
-O vermelho (60 de 60) foi refeito depois das duas correções.
+Antes de publicar aquele commit de testes, corrigi dois erros meus nele: um
+teste esperava gravar um corpo com BOM (a UTF-8 estrita da B3.1 recusa:
+400) e o tipo do corpo da `Request`. O vermelho foi refeito depois.
+
+A revisão (§18.7) reescreveu os dois arquivos unitários e acrescentou o
+pgTAP 32. Cobertura final:
 
 `tests/unit/b3-2c-rota-webhook.test.ts`:
-- **desligado:** sem `WHATSAPP_PROVIDER`, vazio, simulador em Production,
-  sem chave de ambiente ou com chave curta, provedor desconhecido, de
-  outro provedor ou em maiúsculas, YCloud sem adaptador, routing key
-  vazia, com espaço, barra, controle ou longa demais: 404 sem banco;
-- **bytes:** acima de 256 KiB e `Content-Length` acima do limite, 413 sem
-  banco; CRLF cifrado byte a byte; BOM recusado;
-- **canal antes da assinatura:** ordem das chamadas (resolução e depois
-  gravação); routing key com `:` e `+` intacta; canal desconhecido e
-  linha de outro ambiente, 404 sem gravar; erro do banco, 503 sem
-  detalhe;
-- **assinatura:** sem cabeçalho, segredo de outro canal, outros bytes,
-  horário vencido ou futuro, cabeçalho malformado e um byte alterado: 401
-  igual, sem gravar nem publicar;
-- **inbox e evento:** primeira entrega com um evento e contexto
-  confiável; duplicata publica com o mesmo id; conflito sem evento; canal
-  pausado e desconectado guardam sem evento; falha ao publicar continua
-  200; evento sem identidade guardado sem normalizar; envelope inválido,
-  lote, versão e sem id, 400; retenção ou chave da inbox ausente, 503;
-  canal desativado entre resolução e gravação, 404; erro desconhecido,
-  503 sem detalhe;
-- **nada sai:** respostas sem conteúdo, telefone ou ids; nada no console;
-  rota pública no proxy; runtime Node e sem cache.
+- **URL:** o único segmento depois do provedor é `[webhookRouteId]`; o
+  caminho de um canal é `/api/webhooks/whatsapp/<provedor>/<UUID>`, sem
+  WABA, telefone ou routing key, e só é montado com um UUID; uma entrega
+  válida chega por uma URL sem esses dados;
+- **desligado:** sem provedor, simulador em Production, sem chave de
+  ambiente, provedor desconhecido, de outro provedor ou em maiúsculas,
+  YCloud sem adaptador: 404 sem banco;
+- **localizador inválido:** vazio, não UUID, a própria routing key, o WABA,
+  o telefone, caractere inválido, curto ou com espaço: 404 e **nenhuma**
+  consulta;
+- **bytes:** limites de 256 KiB; CRLF cifrado byte a byte; BOM recusado;
+- **canal pelo localizador:** ordem das chamadas (localizador, segredo,
+  gravação); routing key real só por dentro; UUID em maiúsculas é o mesmo;
+  localizador desconhecido, de outro ambiente, de outro provedor, sem
+  routing key ou com mais de uma linha: 404; segredo de outro canal ou
+  canal desativado entre as resoluções: 404 sem gravar; erro do banco: 503
+  sem detalhe;
+- **assinatura:** os casos de 401, todos iguais;
+- **inbox e evento:** evento exatamente `{ inboxId }`; duplicata
+  republica o mesmo evento; conflito, pausado e desconectado não publicam;
+  falha ao publicar continua 200 e nada é marcado; sem normalização;
+  envelope inválido 400; configuração ausente 503;
+- **nada sai:** respostas sem conteúdo, telefone, WABA, routing key, ids
+  internos, segredo ou erro bruto; nada no console; rota pública.
 
-`tests/unit/b3-2c-evento-interno.test.ts`: id e dados exatos; contexto
-montado à mão e de outro ambiente recusados; id da inbox inválido; sem
-chave do Inngest (ausente ou vazia), nada enviado; falha do Inngest com
-código fixo, sem a mensagem original.
+`tests/unit/b3-2c-evento-interno.test.ts`:
+- contrato exato do evento; mesma entrada, mesmo evento; campos a mais
+  ignorados; id inválido; falha do Inngest com código fixo;
+- app `praxis-crm-whatsapp` com a chave própria explícita;
+  `INNGEST_EVENT_KEY` sozinha não habilita; chave do WhatsApp vazia ou só
+  com espaços falha fechada mesmo com a da A11; com as duas, só a do
+  WhatsApp é usada; o erro não leva nome nem valor de chave;
+- nenhum arquivo do WhatsApp importa A11 ou agenda; o cliente e o evento
+  não leem `INNGEST_EVENT_KEY` nem usam o app `praxis-crm`.
 
-### 18.5 Mutações
+`supabase/tests/database/32_b3_2c_webhook_route.test.sql` (26 testes):
+coluna uuid obrigatória, única, preenchida, diferente do id do canal, um
+por canal, sem a routing key, versão 4 e imutável; função só de
+`service_role`, SECURITY DEFINER, search_path travado, sem segredo no
+retorno; sem ambiente assinado recusa; ativo, pausado e desconectado
+encontrados com a routing key real e o estado; desativado, inexistente,
+outro provedor, id do canal, nulo e o outro ambiente (nos dois sentidos)
+não encontrados; `authenticated` e `anon` não resolvem e `authenticated`
+não lê o canal por SELECT direto.
 
-17, locais, cada uma aplicada e desfeita. Todas foram detectadas:
+O pgTAP 29 passou a excluir a função nova da contagem das 10 funções da
+B3.1, como já fazia com as da inbox.
+
+### 18.7 Revisão da PR #70
+
+Pedidos da revisão sobre `68c5f47`:
+1. tirar a routing key da URL e usar um localizador opaco do canal;
+2. separar por completo o Inngest do WhatsApp do da A11;
+3. reduzir o evento interno a `{ inboxId }`.
+
+Nada foi ampliado para processamento de mensagens.
+
+**Vermelho antes, verde depois.**
+- Commit só de testes `37759e8`, sobre `68c5f47`:
+  - unitários: **78 de 96 falham**. Os 18 que passam são os de isolamento
+    por arquivo dos arquivos que já eram limpos e o da rota pública;
+  - pgTAP 32: **22 de 26 falham** (PR temporária #71, run 39640185748).
+    Os 4 que passam são as negativas de privilégio e de acesso,
+    verdadeiras também sem a função.
+- Correção `e037c52`, mais os tipos gerados em `9daa943`:
+  - unitários da B3.2c: **97 de 97** (um a mais, porque o teste de
+    isolamento por arquivo passa a cobrir `inngest.ts`);
+  - suíte inteira: 1713;
+  - typecheck e lint limpos;
+  - pgTAP 32: 26 de 26; CI completo verde (run 39642037086).
+
+**Correções minhas no caminho.**
+- **Fixture errada no commit de testes.** O segredo do "outro canal" estava
+  cifrado com a AAD de outro id, e o teste dava 503 em vez de 404. Corrigi
+  antes de publicar o commit (`37759e8`) e refiz o vermelho.
+- **Tipos gerados incompletos em `e037c52`.** O gerador também acrescenta
+  `webhook_route_id` ao retorno de `create_whatsapp_channel`. O CI falhou
+  na comparação dos tipos. `9daa943` substitui o arquivo pelo gerado no CI.
+
+**Mutações locais** (13, cada uma aplicada e desfeita; todas detectadas):
 
 | Mutação | Detectada por |
 |---|---|
-| Grava sem conferir a assinatura | os casos de 401 |
-| Confere com outro segredo, não o do canal | toda entrega válida passa a 401 |
-| Normaliza antes de gravar | sem identidade guardado; nenhuma normalização |
-| Publica também em conflito | conflito sem evento |
-| Publica para canal pausado ou desconectado | pausado e desconectado sem evento |
-| Falha ao publicar vira 503 | falha ao publicar continua 200 |
-| Sem conferir a chave de ambiente do WhatsApp | sem chave e chave curta: 404 sem banco |
-| Corpo lido como texto | limites de 256 KiB; BOM recusado |
-| Resposta traz o id da inbox | respostas exatas |
-| 401 com o motivo da falha | 401 igual para toda falha |
-| Routing key sem validação na URL | espaço, barra, controle |
-| Erro do banco na resolução vira 404 | 503 sem detalhe |
-| Rota fora dos caminhos públicos | rota pública |
-| Evento leva a routing key | dados exatos do evento |
-| Evento sem conferir a chave do Inngest | ausente e vazia |
-| Evento aceita contexto montado à mão | contexto à mão recusado |
-| Evento com id próprio (sem deduplicação) | id = id da inbox |
+| T1 routing key de volta na URL (`[routingKey]`) | único segmento `[webhookRouteId]`; entrega válida por URL sem WABA, telefone ou routing key |
+| T2 resolve pela routing key recebida na URL | localizador não UUID, a routing key, o WABA ou o telefone: 404 e nenhuma consulta |
+| T3 aceita linha do localizador de outro ambiente | linha de outro ambiente devolvida por engano: 404 |
+| T4 não exige o mesmo canal nas duas resoluções | segredo de outro canal: 404 sem gravar |
+| T5 volta a importar o publisher da A11 | app `praxis-crm-whatsapp`; `INNGEST_EVENT_KEY` sozinha não habilita; isolamento de imports |
+| T6 aceita `INNGEST_EVENT_KEY` como fallback | `INNGEST_EVENT_KEY` sozinha não habilita; chave do WhatsApp vazia ou só espaços falha fechada |
+| T7 app id `praxis-crm` | app `praxis-crm-whatsapp`; nenhum uso do app `praxis-crm` |
+| T8 evento com workspace, canal, ambiente, provedor e routing key | evento só com o id da inbox; campos a mais nunca entram |
+| T9 só o workspace a mais no evento | dados só `{ inboxId }` |
+| T10 duplicata gera outro id de evento | id = id da inbox; mesma entrada, mesmo evento |
+| T11 duplicata publicada com outro id, na rota | duplicata republica exatamente o mesmo evento |
+| T12 falha de publicação marca a entrada como falha | falha ao publicar: 200 e a entrada fica pendente |
+| T13 localizador sem validação de UUID antes do banco | localizador vazio, não UUID, routing key ou WABA: nenhuma consulta |
 
-### 18.6 Limitações e requisitos para as próximas etapas
+**Mutações do banco.** Seis, cada uma numa PR temporária (#72 a #77) sobre
+`9daa943`. Todas foram reprovadas pelo pgTAP no CI:
+
+| Mutação | Testes que falham |
+|---|---|
+| R1 o id do canal como localizador | 13, 14, 15 (ativo, pausado e desconectado não encontrados), 19 (o id do canal não serve), 23 |
+| R2 aceita localizador de outro ambiente | 20 e 22 (o outro ambiente, nos dois sentidos) |
+| R3 EXECUTE para `authenticated` | 32: 10 (privilégios) e 24 (`authenticated` não resolve); 29: 10 (nenhuma `public.whatsapp_*` para anon ou authenticated) |
+| R4 aceita canal desativado | 16 (desativado: não encontrado) |
+| R5 localizador igual ao id do canal | 4 (não é o id), 7 (versão 4), 19 |
+| R6 localizador mutável | 8 (imutável) e 13 |
+
+As PRs temporárias #71 a #77 foram fechadas, com as branches apagadas.
+
+### 18.8 Limitações e requisitos para as próximas etapas
 
 - **Roteamento do evento (B3.2d).** A assinatura prova que a entrega veio
-  com o segredo do canal da URL, mas a inspeção mínima não lê a routing
-  key do evento. Se a mesma conta mandar, para a URL de um canal, evento
-  de outro número, ele fica na inbox desse canal. A B3.2d tem de conferir
-  a routing key normalizada contra a do canal e marcar a entrada como
-  falha (`routing_mismatch`) quando divergir.
-- **YCloud ainda sem adaptador registrado.** A rota está pronta para ela,
-  mas `ycloud` continua `null` na resolução de provedor. Registrar o
-  adaptador (e decidir a tolerância de horário da assinatura, §16) é um
-  passo próprio, antes de qualquer webhook real (P3/P4).
-- **Entradas de canal pausado ou desconectado** ficam pendentes sem
-  evento; republicar na reativação é da B3.2d/B3.2e.
-- **Consumidor do evento:** não existe nesta etapa. Um evento sem
-  consumidor não é processado; a B3.2d cria a função, com o claim atômico
-  já registrado (§17.7).
-- **Enumeração:** canal desconhecido responde 404 e assinatura inválida
-  401, como no §4.1. Com a routing key da YCloud, isso só revela se um
-  número de escritório está cadastrado.
-- **Nada configurado fora do código:** nenhuma URL cadastrada na YCloud
-  ou na Meta, nenhuma variável na Vercel, nenhuma migration hospedada.
+  com o segredo do canal da URL. A inspeção mínima, porém, não lê a routing
+  key do evento, então um evento de outro número da mesma conta, mandado
+  para a URL de um canal, fica na inbox desse canal. A B3.2d tem de
+  conferir a routing key normalizada contra a do canal e marcar a entrada
+  como falha (`routing_mismatch`) quando divergir.
+- **Consumidor do evento (B3.2d).** Tem de cumprir três coisas:
+  - resolver canal, workspace, ambiente, provedor e estado pelo `inboxId`
+    no banco, sem confiar em contexto do evento;
+  - fazer o claim atômico (§17.7);
+  - resolver internamente as entradas de canais desativados (§17.9).
+
+  Hoje não há consumidor, então o evento não é processado.
+- **Rota de atendimento e signing key do Inngest do WhatsApp (B3.2d)**, com
+  prefixo `WHATSAPP_`.
+- **Configuração global do SDK.** Variáveis globais do SDK do Inngest, como
+  `INNGEST_DEV` e `INNGEST_BASE_URL`, continuam valendo para os dois
+  clientes. A separação vale para o app e para a chave de evento.
+- **YCloud ainda sem adaptador registrado.** `ycloud` continua `null` na
+  resolução de provedor. Registrar o adaptador é um passo próprio, antes de
+  qualquer webhook real (P3/P4), e inclui decidir a tolerância de horário
+  da assinatura (§16).
+- **Entradas de canal pausado ou desconectado** ficam pendentes, sem
+  evento. Republicá-las na reativação é da B3.2d/B3.2e.
+- **B3.2e é portão obrigatório.** Nenhum webhook real pode ser cadastrado
+  antes do reconciliador da inbox parada. É ele que torna seguro responder
+  200 depois de uma falha de publicação (§18.3).
+- **Enumeração.** Localizador desconhecido responde 404 e assinatura
+  inválida 401. Como o localizador é aleatório, isso não revela número nem
+  conta do escritório.
+- **Nada configurado fora do código:**
+  - nenhuma URL cadastrada na YCloud ou na Meta;
+  - nenhuma variável na Vercel;
+  - nenhum app registrado no Inngest;
+  - nenhuma migration aplicada no Supabase hospedado;
+  - nenhuma mensagem enviada;
+  - nenhuma mudança no chatbot.
