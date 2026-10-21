@@ -135,8 +135,7 @@ begin
     and ch.workspace_id = p_workspace_id
     and ch.environment = p_env
     and ch.provider = p_provider
-    and ch.routing_key = p_routing_key
-    and ch.status in ('active', 'paused');
+    and ch.routing_key = p_routing_key;
   if not found then
     raise exception 'channel_not_found';
   end if;
