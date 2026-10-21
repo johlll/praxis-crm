@@ -448,3 +448,57 @@ export async function adminResolveWhatsAppWebhookChannel(params: {
   });
   return { adapter, channel, status: row.status, webhookSecret };
 }
+
+const routeRowSchema = z.object({
+  channel_id: uuidSchema,
+  workspace_id: uuidSchema,
+  environment: z.enum(["production", "preview"]),
+  provider: z.enum(["simulated", "ycloud", "meta"]),
+  routing_key: z.string().min(1).max(128),
+  status: z.enum(["active", "paused", "disconnected"]),
+});
+
+/**
+ * Resolução do canal para a ROTA do webhook (B3.2c): pelo localizador
+ * público e opaco (`webhook_route_id`, UUID aleatório do canal), no ambiente
+ * autenticado. A routing key real sai do banco e só é usada aqui dentro: ela
+ * nunca vem da URL. Em seguida, a resolução da B3.1 devolve o segredo do
+ * webhook por essa routing key, e as duas linhas têm de ser o mesmo canal.
+ *
+ * Localizador que não é UUID → `null` sem banco. Provedor não habilitado →
+ * recusado antes do banco.
+ */
+export async function adminResolveWhatsAppWebhookRoute(params: {
+  provider: WhatsAppProviderKind;
+  webhookRouteId: string;
+  env?: WhatsAppProviderEnv | undefined;
+}): Promise<ResolvedWhatsAppWebhookChannel | null> {
+  const resolution = resolveWhatsAppProvider({ channelProvider: params.provider, env: params.env });
+  if (resolution.status !== "enabled") throw new WhatsAppChannelStoreError("whatsapp_provider_unavailable");
+  const parsedId = uuidSchema.safeParse(params.webhookRouteId);
+  if (!parsedId.success) return null;
+  const webhookRouteId = parsedId.data.toLowerCase();
+
+  const admin = createWhatsAppAdminSupabaseClient();
+  const { data, error } = await admin.rpc("whatsapp_resolve_webhook_route", {
+    p_provider: params.provider,
+    p_webhook_route_id: webhookRouteId,
+  });
+  if (error) throw toChannelStoreError(error);
+  if (!Array.isArray(data)) throw new WhatsAppChannelStoreError("unknown");
+  if (data.length === 0) return null;
+  if (data.length > 1) throw new WhatsAppChannelStoreError("channel_context_mismatch");
+
+  const parsed = routeRowSchema.safeParse(data[0]);
+  if (!parsed.success) throw new WhatsAppChannelStoreError("channel_context_mismatch");
+  const row = parsed.data;
+  if (row.environment !== getWhatsAppEnvironment()) throw new WhatsAppChannelStoreError("channel_environment_mismatch");
+  if (row.provider !== params.provider) throw new WhatsAppChannelStoreError("provider_mismatch");
+
+  const resolved = await adminResolveWhatsAppWebhookChannel({ provider: row.provider, routingKey: row.routing_key, env: params.env });
+  if (!resolved) return null;
+  if (resolved.channel.channelId !== row.channel_id || resolved.channel.workspaceId !== row.workspace_id) {
+    throw new WhatsAppChannelStoreError("channel_context_mismatch");
+  }
+  return resolved;
+}
