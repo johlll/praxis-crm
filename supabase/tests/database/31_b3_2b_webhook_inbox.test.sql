@@ -16,11 +16,12 @@
 --
 -- Escrito ANTES da implementação, contra a main 3feedd1; revisado (tipo
 -- bruto, estados do canal, teto de 30 dias) ANTES da correção, contra o
--- HEAD 712ee0d. Nenhuma chave real: os valores cifrados são textos base64
+-- HEAD 712ee0d; e de novo (retenção em segundos, prazo calculado só pelo
+-- banco a partir de um único horário) contra o HEAD 3a9ffff. Nenhuma chave real: os valores cifrados são textos base64
 -- fictícios.
 
 begin;
-select plan(113);
+select plan(123);
 
 \set ana      '20000000-0000-0000-0000-000000000001'
 \set bruno    '20000000-0000-0000-0000-000000000002'
@@ -88,12 +89,12 @@ $f$;
 create function pg_temp.store(
   p_channel uuid, p_ws uuid, p_routing text, p_event text, p_hash text,
   p_provider text default 'simulated', p_body text default 'Q29ycG8gZmljdGljaW8gMQ==',
-  p_retain text default '(now() + interval ''1 hour'')', p_type text default 'message.inbound',
+  p_retention text default '3600', p_type text default 'message.inbound',
   p_nonce text default 'AAAAAAAAAAAAAAAA', p_tag text default 'AAAAAAAAAAAAAAAAAAAAAA==', p_key text default '1'
 ) returns text language sql as $f$
   select pg_temp.run(format(
     'select (public.whatsapp_inbox_store(%L::uuid, %L::uuid, %L::public.whatsapp_provider, %L, %L, %L, %L, %L, %L, %L, %L, %s))::jsonb ->> ''outcome''',
-    p_channel, p_ws, p_provider, p_routing, p_event, p_type, p_hash, p_key, p_nonce, p_body, p_tag, p_retain
+    p_channel, p_ws, p_provider, p_routing, p_event, p_type, p_hash, p_key, p_nonce, p_body, p_tag, p_retention
   ))
 $f$;
 
@@ -185,6 +186,19 @@ select is(
 );
 
 select is(
+  (select string_agg(p.proargnames[p.pronargs] || ':' || format_type(p.proargtypes[p.pronargs - 1], null) || ':' || p.pronargs, ',')
+   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'whatsapp_inbox_store'),
+  'p_retention_seconds:integer:12', 'a gravação tem uma assinatura só, que termina na retenção em segundos (inteiro)'
+);
+select is(
+  (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'whatsapp_inbox_store'
+     and exists (select 1 from unnest(p.proargtypes::oid[]) a where a in ('timestamptz'::regtype, 'timestamp'::regtype, 'date'::regtype, 'interval'::regtype))),
+  0, 'a gravação não recebe horário, data nem intervalo da aplicação'
+);
+
+select is(
   (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname like 'whatsapp\_inbox\_%'
      and (has_function_privilege('anon', p.oid, 'execute')
@@ -253,10 +267,12 @@ select is(
 -- 5) Validação: retenção obrigatória e formatos
 -- ---------------------------------------------------------------------
 
-select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r1', :'h1', p_retain => 'null'), 'ERRO:invalid_retention%', 'sem prazo de retenção: falha fechada');
-select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r2', :'h1', p_retain => 'now() - interval ''1 second'''), 'ERRO:invalid_retention%', 'prazo no passado: recusa');
-select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r3', :'h1', p_retain => 'now() + interval ''30 days 1 second'''), 'ERRO:invalid_retention%', 'prazo de 30 dias mais 1 segundo: acima do teto, recusa');
-select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r11', :'h1', p_retain => 'now() + interval ''3650 days'''), 'ERRO:invalid_retention%', 'prazo de 3650 dias (teto antigo): recusa');
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r1', :'h1', p_retention => 'null'), 'ERRO:invalid_retention%', 'sem retenção: falha fechada');
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r2', :'h1', p_retention => '0'), 'ERRO:invalid_retention%', 'retenção zero: recusa');
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r13', :'h1', p_retention => '-60'), 'ERRO:invalid_retention%', 'retenção negativa: recusa');
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r14', :'h1', p_retention => '59'), 'ERRO:invalid_retention%', 'retenção de 59 segundos: abaixo do mínimo, recusa');
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r3', :'h1', p_retention => '2592001'), 'ERRO:invalid_retention%', 'retenção de 30 dias mais 1 segundo (2.592.001 s): acima do teto, recusa');
+select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r11', :'h1', p_retention => '315360000'), 'ERRO:invalid_retention%', 'retenção de 3650 dias (teto antigo): recusa');
 select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt r4', :'h1'), 'ERRO:invalid_inbox_event%', 'id de evento malformado: recusa');
 select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r5', :'h1', p_type => 'Tipo Inválido'), 'ERRO:invalid_inbox_event%', 'tipo bruto malformado: recusa');
 select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r12', :'h1', p_type => null), 'ERRO:invalid_inbox_event%', 'sem tipo bruto: recusa');
@@ -267,8 +283,24 @@ select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r9', :'h1', p_body
 select alike(pg_temp.store(:'ch_um', :'ws_um', 'b3i-um', 'evt-r10', :'h1', p_key => 'versão inválida'), 'ERRO:invalid_inbox_ciphertext%', 'versão de chave malformada: recusa');
 select is(pg_temp.try_count($$select 1 from public.whatsapp_webhook_inbox where provider_event_id like 'evt-r%'$$), 0, 'nenhuma gravação recusada deixou linha');
 
-select is(pg_temp.store(:'ch_dois', :'ws_dois', 'b3i-dois', 'evt-q30', :'h1', p_retain => 'now() + interval ''30 days'''), 'inserted', 'prazo de exatamente 30 dias: aceito');
-select is(pg_temp.store(:'ch_dois', :'ws_dois', 'b3i-dois', 'evt-q7', :'h1', p_retain => 'now() + interval ''7 days'''), 'inserted', 'prazo de 7 dias (fictício): aceito');
+select is(pg_temp.store(:'ch_dois', :'ws_dois', 'b3i-dois', 'evt-q30', :'h1', p_retention => '2592000'), 'inserted', 'retenção de exatamente 30 dias (2.592.000 s): aceita');
+select is(
+  pg_temp.run($$select ((retain_until - received_at) = interval '2592000 seconds')::text || '|' || (received_at = now())::text
+    from public.whatsapp_webhook_inbox where provider_event_id = 'evt-q30'$$),
+  'true|true', '30 dias exatos: recebimento no horário de referência do banco e prazo = recebimento + 2.592.000 s, sem diferença de relógio'
+);
+select is(pg_temp.store(:'ch_dois', :'ws_dois', 'b3i-dois', 'evt-q7', :'h1', p_retention => '604800'), 'inserted', 'retenção de 7 dias (fictícia): aceita');
+select is(
+  pg_temp.run($$select ((retain_until - received_at) = interval '604800 seconds')::text from public.whatsapp_webhook_inbox where provider_event_id = 'evt-q7'$$),
+  'true', '7 dias: prazo = recebimento + 604.800 s'
+);
+select is(pg_temp.store(:'ch_dois', :'ws_dois', 'b3i-dois', 'evt-q7', :'h1', p_retention => '2592000'), 'duplicate', 'reentrega idêntica com outra retenção: duplicate');
+select is(pg_temp.store(:'ch_dois', :'ws_dois', 'b3i-dois', 'evt-q7', :'h2', p_body => :'corpo2', p_retention => '60'), 'conflict', 'reentrega divergente com outra retenção: conflict');
+select is(
+  pg_temp.run($$select ((retain_until - received_at) = interval '604800 seconds')::text || '|' || body_sha256
+    from public.whatsapp_webhook_inbox where provider_event_id = 'evt-q7'$$),
+  'true|' || :'h1', 'reentrega (duplicada ou divergente) preserva o primeiro payload e o primeiro prazo'
+);
 select is(pg_temp.store(:'ch_dois', :'ws_dois', 'b3i-dois', 'evt-q-tipo', :'h1', p_type => 'whatsapp.evento_futuro.criado'), 'inserted', 'tipo bruto bem formado e desconhecido do CRM: aceito (o vocabulário do provedor é aberto)');
 select is(
   pg_temp.run($$select provider_event_type from public.whatsapp_webhook_inbox where provider_event_id = 'evt-q-tipo'$$),
@@ -419,6 +451,10 @@ select throws_ok(
   '23514', null, 'restrição: linha expurgada não guarda texto cifrado'
 );
 select throws_ok(
+  format($$update public.whatsapp_webhook_inbox set retain_until = received_at + interval '2592001 seconds' where id = %L::uuid$$, :'inbox_dois'),
+  '23514', null, 'restrição: prazo nunca acima de 30 dias depois do recebimento'
+);
+select throws_ok(
   format($$update public.whatsapp_webhook_inbox set nonce = null where id = %L::uuid$$, :'inbox_dois'),
   '23514', null, 'restrição: linha não expurgada exige nonce, texto cifrado, tag e chave'
 );
@@ -451,7 +487,7 @@ reset role;
 set local role service_role;
 select set_config('request.headers', :'h_prev', true);
 select is(
-  pg_temp.run(format($$select string_agg(k, ',' order by k) from jsonb_object_keys(public.whatsapp_inbox_store(%L::uuid, %L::uuid, 'simulated', 'b3i-um', 'evt-resp', 'message.inbound', %L, '1', %L, %L, %L, now() + interval '1 hour')) k$$,
+  pg_temp.run(format($$select string_agg(k, ',' order by k) from jsonb_object_keys(public.whatsapp_inbox_store(%L::uuid, %L::uuid, 'simulated', 'b3i-um', 'evt-resp', 'message.inbound', %L, '1', %L, %L, %L, 3600)) k$$,
     :'ch_um', :'ws_um', :'h1', :'nonce', :'corpo1', :'tag')),
   'inbox_id,outcome', 'a gravação devolve só o resultado e o id'
 );
