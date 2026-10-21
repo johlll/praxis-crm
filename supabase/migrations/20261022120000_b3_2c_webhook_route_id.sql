@@ -41,6 +41,7 @@ set search_path = ''
 as $body$
 begin
   if tg_op = 'INSERT' then
+    new.webhook_route_id := new.id;
     if new.routing_key is null then
       new.routing_key := new.phone_number_id;
     end if;
