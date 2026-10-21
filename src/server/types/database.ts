@@ -5173,6 +5173,30 @@ export type Database = {
         }
         Returns: Json
       }
+      whatsapp_inbox_get_pending: {
+        Args: {
+          p_channel_id: string
+          p_inbox_id: string
+          p_provider: Database["public"]["Enums"]["whatsapp_provider"]
+          p_routing_key: string
+          p_workspace_id: string
+        }
+        Returns: {
+          auth_tag: string
+          body_sha256: string
+          channel_id: string
+          ciphertext: string
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          inbox_id: string
+          key_version: string
+          nonce: string
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          provider_event_id: string
+          provider_event_type: string
+          routing_key: string
+          workspace_id: string
+        }[]
+      }
       whatsapp_inbox_list: {
         Args: {
           p_channel_id: string
