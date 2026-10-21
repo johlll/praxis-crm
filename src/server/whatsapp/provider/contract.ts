@@ -131,7 +131,14 @@ export type WebhookVerificationResult =
   | { ok: true; verified: VerifiedWebhookBody }
   | {
       ok: false;
-      reason: "invalid_body" | "missing_signature" | "malformed_signature" | "stale_signature" | "signature_mismatch";
+      reason:
+        | "invalid_body"
+        | "body_too_large"
+        | "invalid_secret"
+        | "missing_signature"
+        | "malformed_signature"
+        | "stale_signature"
+        | "signature_mismatch";
     }
   | UnsupportedCapability;
 
@@ -139,26 +146,145 @@ export type WebhookVerificationResult =
 // Eventos normalizados
 // ---------------------------------------------------------------------
 
-export type NormalizedMessageStatus = "sent" | "delivered" | "read" | "failed";
+/** `accepted`: aceita pelo provedor, ainda sem `sent` (§1.3). */
+export type NormalizedMessageStatus = "accepted" | "sent" | "delivered" | "read" | "failed";
 
-export type NormalizedInboundText = {
+/**
+ * Origem técnica CANDIDATA (docs/decisoes/b3-whatsapp-real.md §15.10). O
+ * adaptador só relata o caminho que viu no provedor; a origem final e a
+ * `sender_classification` são decididas depois (B3.2d). Nunca `chatbot`
+ * aqui: isso exige correlação positiva, que o adaptador não tem.
+ *  - `inbound`: mensagem recebida no número do canal;
+ *  - `business_app`: eco de mensagem enviada pelo aplicativo do celular;
+ *  - `external_api`: mensagem enviada por API, sem prova de quem enviou.
+ */
+export type WhatsAppOriginCandidate = "inbound" | "business_app" | "external_api";
+
+/** Tipo de conteúdo da mensagem. Mídia só tem o tipo nesta etapa (B3.4). */
+export type WhatsAppContentKind =
+  | "text"
+  | "image"
+  | "video"
+  | "audio"
+  | "document"
+  | "sticker"
+  | "location"
+  | "contacts"
+  | "interactive"
+  | "button"
+  | "reaction"
+  | "order"
+  | "request_welcome"
+  | "template"
+  | "unsupported"
+  | "other";
+
+export type NormalizedInboundMessage = {
   kind: "message.inbound";
+  originCandidate: "inbound";
   providerEventId: string;
   routingKey: string;
   providerMessageId: string;
+  /** Id da mensagem na Meta (`wamid`), quando o provedor manda. */
+  waMessageId: string | null;
   occurredAt: Date;
   sender: WhatsAppContactIdentity;
-  text: string;
+  senderProfileName: string | null;
+  contentKind: WhatsAppContentKind;
+  /** Só para `contentKind = "text"`. */
+  text: string | null;
+};
+
+/** Nome mantido da B3.1. */
+export type NormalizedInboundText = NormalizedInboundMessage;
+
+/** Mensagem de saída observada que NÃO nasceu no CRM (eco do aplicativo). */
+export type NormalizedOutboundObserved = {
+  kind: "message.outbound_observed";
+  originCandidate: "business_app";
+  providerType: string;
+  providerEventId: string;
+  routingKey: string;
+  providerMessageId: string;
+  waMessageId: string | null;
+  occurredAt: Date;
+  recipient: WhatsAppContactIdentity;
+  contentKind: WhatsAppContentKind;
+  text: string | null;
+};
+
+/**
+ * Custo informado PELO PROVEDOR no status (`pricingCategory`, `totalPrice`,
+ * `currency`). Nunca é estimativa calculada pelo CRM. Guia oficial de preço
+ * da YCloud: `accepted`/`sent` trazem estimativa; `delivered`/`read`, o valor
+ * final cobrado; `failed` não é cobrado (o valor que vier fica estimativa).
+ */
+export type ProviderReportedCost = {
+  source: "provider";
+  /** Categoria do provedor como valor opaco validado (lista aberta). */
+  category: string | null;
+  /** Finito e não negativo. */
+  amount: number;
+  /** ISO 4217. */
+  currency: string;
+  finality: "estimated" | "final";
 };
 
 export type NormalizedStatusUpdate = {
   kind: "message.status";
+  /** A B3.2d só promove a `crm` por casamento com a própria outbox. */
+  originCandidate: "external_api";
   providerEventId: string;
   routingKey: string;
   providerMessageId: string;
+  waMessageId: string | null;
+  /** Valor OPACO de correlação devolvido pelo provedor. Existência ou
+   * formato não provam quem enviou (§15.10). */
+  externalId: string | null;
   occurredAt: Date;
   status: NormalizedMessageStatus;
   errorCode: string | null;
+  recipient: WhatsAppContactIdentity | null;
+  /** `null` quando o provedor não informa custo completo e coerente. */
+  providerCost: ProviderReportedCost | null;
+};
+
+/** Troca de número ou de identidade do contato (mensagem de sistema). */
+export type NormalizedIdentityChange = {
+  kind: "contact.identity_changed";
+  change: "phone_number" | "identity";
+  providerEventId: string;
+  routingKey: string;
+  occurredAt: Date;
+  previous: WhatsAppContactIdentity;
+  /** `null` quando o provedor não informa a identidade nova. */
+  next: WhatsAppContactIdentity | null;
+};
+
+/** Evento autêntico que o piloto ignora por regra: sem conteúdo nem
+ * identidade, só o registro de que chegou. */
+export type NormalizedIgnoredEvent = {
+  kind: "ignored";
+  reason: "history" | "group_message" | "non_whatsapp_product";
+  providerType: string;
+  providerEventId: string;
+  routingKey: string | null;
+  occurredAt: Date;
+};
+
+/** Evento da conta (WABA) ou do número do escritório. */
+export type NormalizedAccountEvent = {
+  kind: "account";
+  scope: "business_account" | "phone_number";
+  providerType: string;
+  providerEventId: string;
+  providerAccountRef: string;
+  businessPhoneE164: string | null;
+  /** Só eventos de número apontam para um canal. */
+  routingKey: string | null;
+  occurredAt: Date;
+  /** Código do provedor preservado como valor opaco. */
+  code: string | null;
 };
 
 /** Evento reconhecido como válido, mas de um tipo que o CRM ainda não
@@ -166,12 +292,19 @@ export type NormalizedStatusUpdate = {
 export type NormalizedUnsupportedEvent = {
   kind: "unsupported";
   providerEventId: string;
-  routingKey: string;
+  routingKey: string | null;
   occurredAt: Date;
   providerType: string;
 };
 
-export type NormalizedWhatsAppEvent = NormalizedInboundText | NormalizedStatusUpdate | NormalizedUnsupportedEvent;
+export type NormalizedWhatsAppEvent =
+  | NormalizedInboundMessage
+  | NormalizedOutboundObserved
+  | NormalizedStatusUpdate
+  | NormalizedIdentityChange
+  | NormalizedIgnoredEvent
+  | NormalizedAccountEvent
+  | NormalizedUnsupportedEvent;
 
 export type NormalizeEventsResult =
   | { ok: true; events: NormalizedWhatsAppEvent[] }
@@ -208,7 +341,7 @@ export type SendResult =
 export type LookupMessageRequest = { routingKey: string; providerMessageId: string };
 
 export type LookupMessageResult =
-  | { ok: true; status: NormalizedMessageStatus | "accepted" }
+  | { ok: true; status: NormalizedMessageStatus }
   | { ok: false; reason: "not_found" }
   | UnsupportedCapability;
 

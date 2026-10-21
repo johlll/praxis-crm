@@ -150,11 +150,15 @@ export class SimulatedWhatsAppProvider implements WhatsAppProvider {
           if (!sender) return { ok: false, reason: "invalid_payload" };
           events.push({
             kind: "message.inbound",
+            originCandidate: "inbound",
             providerEventId: event.id,
             routingKey: event.routingKey,
             providerMessageId: event.messageId,
+            waMessageId: null,
             occurredAt: new Date(event.occurredAt),
             sender,
+            senderProfileName: null,
+            contentKind: "text",
             text: event.text,
           });
           break;
@@ -162,12 +166,17 @@ export class SimulatedWhatsAppProvider implements WhatsAppProvider {
         case "message.status":
           events.push({
             kind: "message.status",
+            originCandidate: "external_api",
             providerEventId: event.id,
             routingKey: event.routingKey,
             providerMessageId: event.messageId,
+            waMessageId: null,
+            externalId: null,
             occurredAt: new Date(event.occurredAt),
             status: event.status,
             errorCode: event.errorCode ?? null,
+            recipient: null,
+            providerCost: null,
           });
           break;
         case "other":
