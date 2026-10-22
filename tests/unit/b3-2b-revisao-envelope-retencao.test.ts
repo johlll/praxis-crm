@@ -18,6 +18,9 @@
  *
  * Escritos ANTES da correção, contra o HEAD 712ee0d; o item 5, contra o
  * HEAD 3a9ffff. Tudo fictício.
+ *
+ * B3.2d-1: sem leitura de pendente nem marcação fora do claim; aqui fica só
+ * a listagem. O claim e as finalizações estão em b3-2d1-inbox-claim.test.ts.
  */
 import { createHash } from "node:crypto";
 
@@ -39,7 +42,6 @@ const { SimulatedWhatsAppProvider, signSimulatedWebhook, SIMULATED_SIGNATURE_HEA
   "@/server/whatsapp/provider/simulated"
 );
 const { YCloudWhatsAppProvider, ycloudRoutingKey } = await import("@/server/whatsapp/provider/ycloud");
-const { VerifiedWebhookBody } = await import("@/server/whatsapp/provider/contract");
 
 const WS = "10000000-0000-0000-0000-000000000001";
 const ACTOR = "20000000-0000-0000-0000-000000000001";
@@ -347,40 +349,10 @@ describe("3. a inbox grava antes da normalização completa", () => {
     expect(storeCalls()).toHaveLength(0);
   });
 
-  it("leitura e listagem expõem o tipo bruto, nunca um tipo normalizado", async () => {
-    const { readPendingWhatsAppWebhookDelivery, listWhatsAppWebhookInbox } = await loadInbox();
-    const { encryptWhatsAppInboxBody } = await loadInboxCrypto();
+  it("a listagem expõe o tipo bruto, nunca um tipo normalizado", async () => {
+    const { listWhatsAppWebhookInbox } = await loadInbox();
     const channel = await managedContext("ycloud");
-    const raw = bytes(body(ycloudInboundWithoutIdentity()));
-    const id = ycloudInboundWithoutIdentity().id;
-    const enc = encryptWhatsAppInboxBody(raw, { environment: "preview", workspaceId: WS, channelId: CHANNEL, provider: "ycloud", providerEventId: id });
-    handlers.whatsapp_inbox_get_pending = () => ({
-      data: [
-        {
-          inbox_id: INBOX_ID,
-          channel_id: CHANNEL,
-          workspace_id: WS,
-          environment: "preview",
-          provider: "ycloud",
-          routing_key: YC_ROUTING,
-          provider_event_id: id,
-          provider_event_type: "whatsapp.inbound_message.received",
-          body_sha256: sha256(raw),
-          key_version: enc.keyVersion,
-          nonce: enc.nonce,
-          ciphertext: enc.ciphertext,
-          auth_tag: enc.authTag,
-        },
-      ],
-      error: null,
-    });
     handlers.whatsapp_inbox_list = () => ({ data: [safeRow({ state: "pending", processed_at: null })], error: null });
-
-    const pending = await readPendingWhatsAppWebhookDelivery({ channel, inboxId: INBOX_ID });
-    expect(pending).toMatchObject({ inboxId: INBOX_ID, providerEventId: id, providerEventType: "whatsapp.inbound_message.received" });
-    expect(pending).not.toHaveProperty("eventKind");
-    expect(VerifiedWebhookBody.is(pending!.verified)).toBe(true);
-
     const [entry] = await listWhatsAppWebhookInbox({ channel, limit: 10 });
     expect(entry).toMatchObject({ providerEventType: "whatsapp.inbound_message.received" });
     expect(entry).not.toHaveProperty("eventKind");
@@ -402,6 +374,11 @@ function safeRow(overrides: Record<string, unknown> = {}) {
     error_code: null,
     conflict_count: 0,
     last_conflict_at: null,
+    claim_count: 1,
+    claimed_at: null,
+    lease_until: null,
+    last_release_code: null,
+    last_released_at: null,
     ...overrides,
   };
 }
@@ -412,21 +389,12 @@ function safeRow(overrides: Record<string, unknown> = {}) {
 
 describe("4. entrada existente com o canal em outro estado", () => {
   it.each(["paused", "disconnected", "disabled"] as const)(
-    "canal %s (contexto da resolução administrada): lista e finaliza a entrada histórica",
+    "canal %s (contexto da resolução administrada): lista a entrada histórica",
     async (status) => {
-      const { listWhatsAppWebhookInbox, markWhatsAppWebhookDeliveryProcessed, markWhatsAppWebhookDeliveryFailed } = await loadInbox();
+      const { listWhatsAppWebhookInbox } = await loadInbox();
       const channel = await managedContext("ycloud", status);
       handlers.whatsapp_inbox_list = () => ({ data: [safeRow({ state: "pending", processed_at: null })], error: null });
-      handlers.whatsapp_inbox_mark_processed = () => ({ data: safeRow(), error: null });
-      handlers.whatsapp_inbox_mark_failed = () => ({
-        data: safeRow({ state: "failed", processed_at: null, failed_at: "2026-10-20T12:00:05Z", error_code: "canal_desativado" }),
-        error: null,
-      });
       await expect(listWhatsAppWebhookInbox({ channel, limit: 10 })).resolves.toHaveLength(1);
-      await expect(markWhatsAppWebhookDeliveryProcessed({ channel, inboxId: INBOX_ID })).resolves.toMatchObject({ state: "processed" });
-      await expect(markWhatsAppWebhookDeliveryFailed({ channel, inboxId: INBOX_ID, errorCode: "canal_desativado" })).resolves.toMatchObject({
-        state: "failed",
-      });
     },
   );
 });

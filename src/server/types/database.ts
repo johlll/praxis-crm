@@ -3438,6 +3438,9 @@ export type Database = {
           body_sha256: string
           channel_id: string
           ciphertext: string | null
+          claim_count: number
+          claim_token: string | null
+          claimed_at: string | null
           conflict_count: number
           environment: Database["public"]["Enums"]["whatsapp_environment"]
           error_code: string | null
@@ -3446,6 +3449,9 @@ export type Database = {
           key_version: string | null
           last_conflict_at: string | null
           last_conflict_sha256: string | null
+          last_release_code: string | null
+          last_released_at: string | null
+          lease_until: string | null
           nonce: string | null
           processed_at: string | null
           provider: Database["public"]["Enums"]["whatsapp_provider"]
@@ -3462,6 +3468,9 @@ export type Database = {
           body_sha256: string
           channel_id: string
           ciphertext?: string | null
+          claim_count?: number
+          claim_token?: string | null
+          claimed_at?: string | null
           conflict_count?: number
           environment: Database["public"]["Enums"]["whatsapp_environment"]
           error_code?: string | null
@@ -3470,6 +3479,9 @@ export type Database = {
           key_version?: string | null
           last_conflict_at?: string | null
           last_conflict_sha256?: string | null
+          last_release_code?: string | null
+          last_released_at?: string | null
+          lease_until?: string | null
           nonce?: string | null
           processed_at?: string | null
           provider: Database["public"]["Enums"]["whatsapp_provider"]
@@ -3486,6 +3498,9 @@ export type Database = {
           body_sha256?: string
           channel_id?: string
           ciphertext?: string | null
+          claim_count?: number
+          claim_token?: string | null
+          claimed_at?: string | null
           conflict_count?: number
           environment?: Database["public"]["Enums"]["whatsapp_environment"]
           error_code?: string | null
@@ -3494,6 +3509,9 @@ export type Database = {
           key_version?: string | null
           last_conflict_at?: string | null
           last_conflict_sha256?: string | null
+          last_release_code?: string | null
+          last_released_at?: string | null
+          lease_until?: string | null
           nonce?: string | null
           processed_at?: string | null
           provider?: Database["public"]["Enums"]["whatsapp_provider"]
@@ -5139,29 +5157,21 @@ export type Database = {
         }
         Returns: Json
       }
-      whatsapp_inbox_get_pending: {
+      whatsapp_inbox_claim: {
+        Args: { p_inbox_id: string; p_lease_seconds: number }
+        Returns: Json
+      }
+      whatsapp_inbox_complete: {
+        Args: { p_claim_token: string; p_inbox_id: string }
+        Returns: Json
+      }
+      whatsapp_inbox_fail: {
         Args: {
-          p_channel_id: string
+          p_claim_token: string
+          p_error_code: string
           p_inbox_id: string
-          p_provider: Database["public"]["Enums"]["whatsapp_provider"]
-          p_routing_key: string
-          p_workspace_id: string
         }
-        Returns: {
-          auth_tag: string
-          body_sha256: string
-          channel_id: string
-          ciphertext: string
-          environment: Database["public"]["Enums"]["whatsapp_environment"]
-          inbox_id: string
-          key_version: string
-          nonce: string
-          provider: Database["public"]["Enums"]["whatsapp_provider"]
-          provider_event_id: string
-          provider_event_type: string
-          routing_key: string
-          workspace_id: string
-        }[]
+        Returns: Json
       }
       whatsapp_inbox_list: {
         Args: {
@@ -5173,28 +5183,15 @@ export type Database = {
         }
         Returns: Json
       }
-      whatsapp_inbox_mark_failed: {
+      whatsapp_inbox_purge_expired: { Args: { p_limit: number }; Returns: Json }
+      whatsapp_inbox_release: {
         Args: {
-          p_channel_id: string
+          p_claim_token: string
           p_error_code: string
           p_inbox_id: string
-          p_provider: Database["public"]["Enums"]["whatsapp_provider"]
-          p_routing_key: string
-          p_workspace_id: string
         }
         Returns: Json
       }
-      whatsapp_inbox_mark_processed: {
-        Args: {
-          p_channel_id: string
-          p_inbox_id: string
-          p_provider: Database["public"]["Enums"]["whatsapp_provider"]
-          p_routing_key: string
-          p_workspace_id: string
-        }
-        Returns: Json
-      }
-      whatsapp_inbox_purge_expired: { Args: { p_limit: number }; Returns: Json }
       whatsapp_inbox_store: {
         Args: {
           p_auth_tag: string

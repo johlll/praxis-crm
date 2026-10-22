@@ -11,6 +11,10 @@
  *
  * Escritos ANTES da implementação, contra a main 3feedd1. O banco é
  * simulado: só se observa o que é pedido a ele.
+ *
+ * B3.2d-1: a leitura de pendente e as marcações sem claim foram
+ * aposentadas; os testes delas saíram daqui, e o claim, a leitura segura e
+ * as finalizações com token estão em b3-2d1-inbox-claim.test.ts.
  */
 import { createHash } from "node:crypto";
 
@@ -31,12 +35,9 @@ const { SimulatedWhatsAppProvider, signSimulatedWebhook, SIMULATED_SIGNATURE_HEA
   "@/server/whatsapp/provider/simulated"
 );
 const { YCloudWhatsAppProvider } = await import("@/server/whatsapp/provider/ycloud");
-const { VerifiedWebhookBody } = await import("@/server/whatsapp/provider/contract");
 
 const WS = "10000000-0000-0000-0000-000000000001";
-const OTHER_WS = "10000000-0000-0000-0000-000000000002";
 const CHANNEL = "33000000-0000-0000-0000-000000000001";
-const OTHER_CHANNEL = "33000000-0000-0000-0000-000000000002";
 const INBOX_ID = "44000000-0000-0000-0000-000000000001";
 const ROUTING = "sim-inbox-1";
 const CRED_KEY = Buffer.alloc(32, 7).toString("base64");
@@ -318,106 +319,7 @@ describe("3. retenção vem de configuração confiável", () => {
   });
 });
 
-describe("4. leitura de pendente", () => {
-  async function storedRow(overrides: Record<string, unknown> = {}, aad: Record<string, unknown> = {}, raw = bytesOf(simulatedBody([INBOUND]))) {
-    const { encryptWhatsAppInboxBody } = await loadInboxCrypto();
-    const enc = encryptWhatsAppInboxBody(raw, {
-      environment: "preview",
-      workspaceId: WS,
-      channelId: CHANNEL,
-      provider: "simulated",
-      providerEventId: "evt-inbox-1",
-      ...aad,
-    } as never);
-    return {
-      inbox_id: INBOX_ID,
-      channel_id: CHANNEL,
-      workspace_id: WS,
-      environment: "preview",
-      provider: "simulated",
-      routing_key: ROUTING,
-      provider_event_id: "evt-inbox-1",
-      provider_event_type: "message.inbound",
-      body_sha256: sha256(raw),
-      key_version: enc.keyVersion,
-      nonce: enc.nonce,
-      ciphertext: enc.ciphertext,
-      auth_tag: enc.authTag,
-      ...overrides,
-    };
-  }
-
-  it("decifra depois de conferir a identidade e devolve um corpo verificado com os bytes exatos", async () => {
-    const { readPendingWhatsAppWebhookDelivery } = await loadInbox();
-    const raw = bytesOf(simulatedBody([INBOUND], "\r\n"));
-    const row = await storedRow({}, {}, raw);
-    handlers.whatsapp_inbox_get_pending = () => ({ data: [row], error: null });
-    const resolved = await trustedChannel();
-    const entry = await readPendingWhatsAppWebhookDelivery({ channel: resolved.channel, inboxId: INBOX_ID });
-    expect(entry).not.toBeNull();
-    expect(entry!.inboxId).toBe(INBOX_ID);
-    expect(entry!.providerEventId).toBe("evt-inbox-1");
-    expect(VerifiedWebhookBody.is(entry!.verified)).toBe(true);
-    expect(entry!.verified.decodeUtf8Strict()).toBe(new TextDecoder().decode(raw));
-    const [, args] = rpcMock.mock.calls.find(([name]) => name === "whatsapp_inbox_get_pending")!;
-    expect(args).toEqual({ p_inbox_id: INBOX_ID, p_channel_id: CHANNEL, p_workspace_id: WS, p_provider: "simulated", p_routing_key: ROUTING });
-  });
-
-  it.each([
-    ["workspace", { workspace_id: OTHER_WS }],
-    ["canal", { channel_id: OTHER_CHANNEL }],
-    ["ambiente", { environment: "production" }],
-    ["provedor", { provider: "ycloud" }],
-    ["routing key", { routing_key: "outra" }],
-    ["id da entrada", { inbox_id: "44000000-0000-0000-0000-000000000009" }],
-  ])("linha com %s diferente do contexto: recusada sem decifrar", async (_name, patch) => {
-    const { readPendingWhatsAppWebhookDelivery } = await loadInbox();
-    const row = await storedRow(patch);
-    handlers.whatsapp_inbox_get_pending = () => ({ data: [row], error: null });
-    const resolved = await trustedChannel();
-    await expect(readPendingWhatsAppWebhookDelivery({ channel: resolved.channel, inboxId: INBOX_ID })).rejects.toMatchObject({
-      code: "channel_context_mismatch",
-    });
-  });
-
-  it("texto cifrado com a AAD de outro canal, rotulado com o meu: decifragem falha", async () => {
-    const { readPendingWhatsAppWebhookDelivery } = await loadInbox();
-    const row = await storedRow({}, { channelId: OTHER_CHANNEL });
-    handlers.whatsapp_inbox_get_pending = () => ({ data: [row], error: null });
-    const resolved = await trustedChannel();
-    await expect(readPendingWhatsAppWebhookDelivery({ channel: resolved.channel, inboxId: INBOX_ID })).rejects.toMatchObject({
-      code: "inbox_decrypt_failed",
-    });
-  });
-
-  it("hash que não confere com os bytes decifrados: inbox_integrity_failed", async () => {
-    const { readPendingWhatsAppWebhookDelivery } = await loadInbox();
-    const row = await storedRow({ body_sha256: "f".repeat(64) });
-    handlers.whatsapp_inbox_get_pending = () => ({ data: [row], error: null });
-    const resolved = await trustedChannel();
-    await expect(readPendingWhatsAppWebhookDelivery({ channel: resolved.channel, inboxId: INBOX_ID })).rejects.toMatchObject({
-      code: "inbox_integrity_failed",
-    });
-  });
-
-  it("nenhuma pendente: null", async () => {
-    const { readPendingWhatsAppWebhookDelivery } = await loadInbox();
-    handlers.whatsapp_inbox_get_pending = () => ({ data: [], error: null });
-    const resolved = await trustedChannel();
-    await expect(readPendingWhatsAppWebhookDelivery({ channel: resolved.channel, inboxId: INBOX_ID })).resolves.toBeNull();
-  });
-
-  it("contexto montado à mão: recusado antes do banco", async () => {
-    const { readPendingWhatsAppWebhookDelivery } = await loadInbox();
-    const forged = { channelId: CHANNEL, workspaceId: WS, environment: "preview", provider: "simulated", routingKey: ROUTING } as never;
-    await expect(readPendingWhatsAppWebhookDelivery({ channel: forged, inboxId: INBOX_ID })).rejects.toMatchObject({
-      code: "channel_context_untrusted",
-    });
-    expect(rpcMock).not.toHaveBeenCalled();
-  });
-});
-
-describe("5. estados, listagem e expurgo", () => {
+describe("4. listagem e expurgo", () => {
   const SAFE_ROW = {
     id: INBOX_ID,
     provider_event_id: "evt-inbox-1",
@@ -432,62 +334,34 @@ describe("5. estados, listagem e expurgo", () => {
     error_code: null,
     conflict_count: 0,
     last_conflict_at: null,
+    claim_count: 1,
+    claimed_at: null,
+    lease_until: null,
+    last_release_code: null,
+    last_released_at: null,
   };
-
-  it("marcar processado: manda a identidade do contexto e devolve só metadado", async () => {
-    const { markWhatsAppWebhookDeliveryProcessed } = await loadInbox();
-    handlers.whatsapp_inbox_mark_processed = () => ({ data: { ...SAFE_ROW, ciphertext: "QUJD", nonce: "AAAA" }, error: null });
-    const resolved = await trustedChannel();
-    const entry = await markWhatsAppWebhookDeliveryProcessed({ channel: resolved.channel, inboxId: INBOX_ID });
-    expect(entry).toMatchObject({ id: INBOX_ID, state: "processed" });
-    expect(Object.keys(entry)).not.toEqual(expect.arrayContaining(["ciphertext"]));
-    expect(JSON.stringify(entry)).not.toContain("QUJD");
-    const [, args] = rpcMock.mock.calls.find(([name]) => name === "whatsapp_inbox_mark_processed")!;
-    expect(args).toEqual({ p_inbox_id: INBOX_ID, p_channel_id: CHANNEL, p_workspace_id: WS, p_provider: "simulated", p_routing_key: ROUTING });
-  });
-
-  it.each(["Telefone +5511999990000 inválido", "", "x".repeat(65), "Maiúscula", "com espaço"])(
-    "código de erro fora do formato (%s): recusado antes do banco",
-    async (code) => {
-      const { markWhatsAppWebhookDeliveryFailed } = await loadInbox();
-      const resolved = await trustedChannel();
-      rpcMock.mockClear();
-      await expect(markWhatsAppWebhookDeliveryFailed({ channel: resolved.channel, inboxId: INBOX_ID, errorCode: code })).rejects.toMatchObject({
-        code: "invalid_error_code",
-      });
-      expect(rpcMock).not.toHaveBeenCalled();
-    },
-  );
-
-  it("marcar falho com código sanitizado", async () => {
-    const { markWhatsAppWebhookDeliveryFailed } = await loadInbox();
-    handlers.whatsapp_inbox_mark_failed = () => ({
-      data: { ...SAFE_ROW, state: "failed", processed_at: null, failed_at: "2026-10-20T12:00:05Z", error_code: "normalizacao_invalida" },
-      error: null,
-    });
-    const resolved = await trustedChannel();
-    await expect(
-      markWhatsAppWebhookDeliveryFailed({ channel: resolved.channel, inboxId: INBOX_ID, errorCode: "normalizacao_invalida" }),
-    ).resolves.toMatchObject({ state: "failed", errorCode: "normalizacao_invalida" });
-    const [, args] = rpcMock.mock.calls.find(([name]) => name === "whatsapp_inbox_mark_failed")!;
-    expect(args).toMatchObject({ p_error_code: "normalizacao_invalida" });
-  });
 
   it("listagem: só metadado, mesmo que o banco devolva um campo a mais", async () => {
     const { listWhatsAppWebhookInbox } = await loadInbox();
-    handlers.whatsapp_inbox_list = () => ({ data: [{ ...SAFE_ROW, ciphertext: "QUJD", nonce: "AAAA", auth_tag: "BBBB", key_version: "1" }], error: null });
+    handlers.whatsapp_inbox_list = () => ({ data: [{ ...SAFE_ROW, ciphertext: "QUJD", nonce: "AAAA", auth_tag: "BBBB", key_version: "1", claim_token: "6f1d2c3b-4a59-4e8f-9a1b-2c3d4e5f6a7b" }], error: null });
     const resolved = await trustedChannel();
     const rows = await listWhatsAppWebhookInbox({ channel: resolved.channel, limit: 10 });
     expect(rows).toHaveLength(1);
+    expect(JSON.stringify(rows)).not.toContain("6f1d2c3b-4a59-4e8f-9a1b-2c3d4e5f6a7b");
     expect(Object.keys(rows[0]!).sort()).toEqual(
       [
         "bodySha256",
+        "claimCount",
+        "claimedAt",
         "conflictCount",
         "errorCode",
         "providerEventType",
         "failedAt",
         "id",
         "lastConflictAt",
+        "lastReleaseCode",
+        "lastReleasedAt",
+        "leaseUntil",
         "processedAt",
         "providerEventId",
         "purgedAt",
@@ -514,7 +388,7 @@ describe("5. estados, listagem e expurgo", () => {
   });
 });
 
-describe("6. erros e logs sem conteúdo", () => {
+describe("5. erros e logs sem conteúdo", () => {
   it("código conhecido do banco é repassado; mensagem desconhecida vira unknown sem o texto original", async () => {
     const { storeWhatsAppWebhookDelivery } = await loadInbox();
     const resolved = await trustedChannel();
