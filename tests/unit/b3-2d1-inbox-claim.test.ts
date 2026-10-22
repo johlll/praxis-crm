@@ -31,6 +31,8 @@ vi.mock("@/server/whatsapp/admin/supabase", () => ({
 }));
 
 const loadInbox = () => import("@/server/whatsapp/inbox");
+type Inbox = Awaited<ReturnType<typeof loadInbox>>;
+type Claim = Parameters<Inbox["completeWhatsAppInboxClaim"]>[0];
 const { encryptWhatsAppInboxBody } = await import("@/server/whatsapp/inbox-crypto");
 const { VerifiedWebhookBody } = await import("@/server/whatsapp/provider/contract");
 
@@ -418,6 +420,29 @@ describe("5. finalizações presas ao token do claim", () => {
     await expect(inbox.completeWhatsAppInboxClaim(forged)).rejects.toMatchObject({ code: "inbox_claim_untrusted" });
     await expect(inbox.failWhatsAppInboxClaim(forged, "normalizacao_invalida")).rejects.toMatchObject({ code: "inbox_claim_untrusted" });
     await expect(inbox.releaseWhatsAppInboxClaim(forged, "banco_indisponivel")).rejects.toMatchObject({ code: "inbox_claim_untrusted" });
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["complete", "whatsapp_inbox_complete", (i: Inbox, c: Claim) => i.completeWhatsAppInboxClaim(c)],
+    ["fail", "whatsapp_inbox_fail", (i: Inbox, c: Claim) => i.failWhatsAppInboxClaim(c, "normalizacao_invalida")],
+    ["release", "whatsapp_inbox_release", (i: Inbox, c: Claim) => i.releaseWhatsAppInboxClaim(c, "banco_indisponivel")],
+  ] as const)("%s com claim_lost (lease vencida ou token substituído): repassado, sem repetir nem outra finalização", async (_name, rpc, run) => {
+    const { inbox, claim } = await claimed();
+    handlers[rpc] = () => ({ data: { outcome: "claim_lost" }, error: null });
+    rpcMock.mockClear();
+    await expect(run(inbox, claim)).resolves.toEqual({ outcome: "claim_lost" });
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+    expect(rpcMock.mock.calls[0]?.[0]).toBe(rpc);
+  });
+
+  it("claim serializado (retorno de step.run, fila, outra execução): recusado antes do banco", async () => {
+    const { inbox, claim } = await claimed();
+    rpcMock.mockClear();
+    const serialized = JSON.parse(JSON.stringify(claim)) as never;
+    await expect(inbox.completeWhatsAppInboxClaim(serialized)).rejects.toMatchObject({ code: "inbox_claim_untrusted" });
+    await expect(inbox.failWhatsAppInboxClaim(serialized, "normalizacao_invalida")).rejects.toMatchObject({ code: "inbox_claim_untrusted" });
+    await expect(inbox.releaseWhatsAppInboxClaim(serialized, "banco_indisponivel")).rejects.toMatchObject({ code: "inbox_claim_untrusted" });
     expect(rpcMock).not.toHaveBeenCalled();
   });
 

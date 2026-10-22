@@ -6,9 +6,11 @@
 -- Estados: pending → processing → processed | failed, e processing →
 -- pending (release); lease vigente responde busy, lease vencida pode ser
 -- reclamada com token novo, e o token antigo deixa de valer. Complete, fail
--- e release só com o token atual. Entrada vencida ou expurgada não é
--- reclamada; outro ambiente não é encontrado; canal pausado, desconectado
--- ou desativado depois do recebimento não aprisiona a entrada. As RPCs
+-- e release só com o token atual E com a lease vigente: vencida a lease,
+-- nem o token atual finaliza, mesmo sem novo claim. Entrada vencida ou
+-- expurgada não é reclamada; outro ambiente não é encontrado; canal
+-- pausado, desconectado ou desativado depois do recebimento não aprisiona
+-- a entrada. As RPCs
 -- antigas sem claim (leitura de pendente e marcações) não existem mais, e
 -- a tabela não tem privilégio direto nem para service_role. claim_count
 -- conta aquisições de processamento e nunca diminui.
@@ -19,10 +21,12 @@
 -- Escrito ANTES da implementação, contra a main 4e7c004. Nenhuma chave
 -- real: os valores cifrados são textos base64 fictícios. Leituras e
 -- escritas das colunas novas passam por funções que capturam o erro: contra
--- a main, o arquivo roda até o fim e mostra cada asserção que falha.
+-- a main, o arquivo roda até o fim e mostra cada asserção que falha. A
+-- seção 13 (lease vencida sem novo claim) foi escrita antes da correção,
+-- contra 49917a6.
 
 begin;
-select plan(82);
+select plan(99);
 
 \set ana      '20000000-0000-0000-0000-000000000001'
 \set bruno    '20000000-0000-0000-0000-000000000002'
@@ -163,6 +167,22 @@ begin
   execute p_sql;
 exception when others then
   null;
+end
+$f$;
+
+-- Retrato de tudo o que uma finalização poderia mudar numa entrada:
+-- estado, contagem, token e todos os horários e códigos.
+create function pg_temp.snap(p_id uuid) returns text language plpgsql as $f$
+declare
+  v text;
+begin
+  select concat_ws('|', state, claim_count, coalesce(claim_token::text, '-'), coalesce(claimed_at::text, '-'), coalesce(lease_until::text, '-'),
+           coalesce(processed_at::text, '-'), coalesce(failed_at::text, '-'), coalesce(error_code, '-'),
+           coalesce(last_release_code, '-'), coalesce(last_released_at::text, '-'))
+  into v from public.whatsapp_webhook_inbox where id = p_id;
+  return coalesce(v, 'NULL');
+exception when others then
+  return 'ERRO:' || sqlerrm;
 end
 $f$;
 
@@ -580,6 +600,97 @@ set local role anon;
 select is((pg_temp.co(pg_temp.claim(:'e4')) like 'ERRO:%')::text, 'true', 'anon não reclama');
 reset role;
 select is(pg_temp.st(:'e4') || ' ' || pg_temp.st(:'e2'), 'pending|0|false|false|false processing|2|true|true|true', 'as tentativas sem service_role não mudaram nada');
+
+-- ---------------------------------------------------------------------
+-- 13) A posse termina no vencimento da lease, mesmo sem novo claim: o
+--     token atual com a lease vencida não completa, não falha e não
+--     libera, e nada muda na entrada. Só um novo claim volta a dar dono.
+-- ---------------------------------------------------------------------
+
+select set_config('request.jwt.claims', '', true);
+select set_config('request.headers', :'h_prev', true);
+set local role service_role;
+select pg_temp.put(:'ch_a', :'ws_um', 'b3c-a', 'evt-lc') as e_lc \gset
+select pg_temp.put(:'ch_a', :'ws_um', 'b3c-a', 'evt-lf') as e_lf \gset
+select pg_temp.put(:'ch_a', :'ws_um', 'b3c-a', 'evt-lr') as e_lr \gset
+select pg_temp.put(:'ch_a', :'ws_um', 'b3c-a', 'evt-lb') as e_lb \gset
+select pg_temp.put(:'ch_a', :'ws_um', 'b3c-a', 'evt-lv') as e_lv \gset
+select coalesce(pg_temp.claim(:'e_lc') ->> 'claim_token', '00000000-0000-0000-0000-000000000000') as tlc \gset
+select coalesce(pg_temp.claim(:'e_lf') ->> 'claim_token', '00000000-0000-0000-0000-000000000000') as tlf \gset
+select coalesce(pg_temp.claim(:'e_lr') ->> 'claim_token', '00000000-0000-0000-0000-000000000000') as tlr \gset
+select coalesce(pg_temp.claim(:'e_lb') ->> 'claim_token', '00000000-0000-0000-0000-000000000000') as tlb \gset
+select coalesce(pg_temp.claim(:'e_lv') ->> 'claim_token', '00000000-0000-0000-0000-000000000000') as tlv \gset
+reset role;
+-- Lease já vencida (um segundo atrás) nas três primeiras; exatamente no
+-- instante atual na quarta; meio minuto à frente na quinta.
+select pg_temp.exec(format($$update public.whatsapp_webhook_inbox set claimed_at = clock_timestamp() - interval '2 minutes', lease_until = clock_timestamp() - interval '1 second' where id in (%L::uuid, %L::uuid, %L::uuid)$$, :'e_lc', :'e_lf', :'e_lr'));
+select pg_temp.exec(format($$update public.whatsapp_webhook_inbox set claimed_at = clock_timestamp() - interval '2 minutes', lease_until = clock_timestamp() where id = %L::uuid$$, :'e_lb'));
+select pg_temp.exec(format($$update public.whatsapp_webhook_inbox set lease_until = clock_timestamp() + interval '30 seconds' where id = %L::uuid$$, :'e_lv'));
+select pg_temp.snap(:'e_lc') as s_lc \gset
+select pg_temp.snap(:'e_lf') as s_lf \gset
+select pg_temp.snap(:'e_lr') as s_lr \gset
+select pg_temp.snap(:'e_lb') as s_lb \gset
+set local role service_role;
+
+select is(pg_temp.fin('complete', :'e_lc', :'tlc'), 'claim_lost', 'lease vencida, sem novo claim: complete com o token atual é claim_lost');
+reset role;
+select is(pg_temp.st(:'e_lc') || '#' || pg_temp.snap(:'e_lc'), 'processing|1|true|true|true#' || :'s_lc', 'complete recusado: segue processing, token, contagem e horários intactos');
+set local role service_role;
+
+select is(pg_temp.fin('fail', :'e_lf', :'tlf', 'codigo_vencido'), 'claim_lost', 'lease vencida, sem novo claim: fail com o token atual é claim_lost');
+reset role;
+select is(pg_temp.st(:'e_lf') || '#' || pg_temp.snap(:'e_lf'), 'processing|1|true|true|true#' || :'s_lf', 'fail recusado: não virou failed nem gravou o código pedido');
+select is(
+  (select count(*)::int from public.audit_logs where action = 'whatsapp.inbox.failed' and resource_id = :'e_lf'::uuid),
+  0, 'fail recusado: nenhuma auditoria de falha'
+);
+set local role service_role;
+
+select is(pg_temp.fin('release', :'e_lr', :'tlr', 'liberacao_vencida'), 'claim_lost', 'lease vencida, sem novo claim: release com o token atual é claim_lost');
+reset role;
+select is(pg_temp.st(:'e_lr') || '#' || pg_temp.snap(:'e_lr'), 'processing|1|true|true|true#' || :'s_lr', 'release recusado: não voltou a pending, sem last_release_code nem last_released_at');
+set local role service_role;
+
+select is(
+  pg_temp.fin('complete', :'e_lb', :'tlb') || ' ' || pg_temp.fin('fail', :'e_lb', :'tlb', 'codigo_vencido') || ' ' || pg_temp.fin('release', :'e_lb', :'tlb', 'liberacao_vencida'),
+  'claim_lost claim_lost claim_lost', 'lease terminando no instante atual já conta como vencida'
+);
+reset role;
+select is(pg_temp.snap(:'e_lb'), :'s_lb', 'fronteira: nada mudou na entrada');
+-- O relógio real não pode ser congelado: a igualdade exata ao microssegundo
+-- fica garantida pela comparação usada na finalização.
+select ok(
+  coalesce((select pg_get_functiondef(p.oid) ~ 'lease_until\s+is\s+null\s+or\s+v_row\.lease_until\s*<=\s*v_now'
+            from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'private' and p.proname = 'whatsapp_inbox_finish'), false),
+  'a finalização trata lease_until nula ou <= o horário da decisão como vencida'
+);
+set local role service_role;
+
+select is(pg_temp.fin('complete', :'e_lv', :'tlv'), 'completed', 'lease realmente futura: o token atual completa');
+
+-- Só um novo claim devolve um dono; o token substituído segue sem valer.
+select pg_temp.claim(:'e_lc') as clc2 \gset
+select coalesce(:'clc2'::jsonb ->> 'claim_token', '00000000-0000-0000-0000-000000000000') as tlc2 \gset
+select is(
+  pg_temp.co(:'clc2'::jsonb) || '|' || coalesce(:'clc2'::jsonb ->> 'claim_count', '-') || '|' || (:'tlc2' <> :'tlc')::text,
+  'claimed|2|true', 'a entrada vencida continua reclamável: novo claim, token novo, claim_count 2'
+);
+select is(
+  pg_temp.fin('complete', :'e_lc', :'tlc') || ' ' || pg_temp.fin('fail', :'e_lc', :'tlc', 'codigo_vencido') || ' ' || pg_temp.fin('release', :'e_lc', :'tlc', 'liberacao_vencida'),
+  'claim_lost claim_lost claim_lost', 'o token substituído continua claim_lost'
+);
+select is(pg_temp.fin('complete', :'e_lc', :'tlc2'), 'completed', 'só o token novo completa');
+select is(pg_temp.fin('complete', :'e_lc', :'tlc') || ' ' || pg_temp.fin('complete', :'e_lc', :'tlc2'), 'already_processed already_processed', 'processada: already_processed para os dois tokens');
+
+select pg_temp.claim(:'e_lf') as clf2 \gset
+select coalesce(:'clf2'::jsonb ->> 'claim_token', '00000000-0000-0000-0000-000000000000') as tlf2 \gset
+select is(pg_temp.co(:'clf2'::jsonb) || ' ' || pg_temp.fin('fail', :'e_lf', :'tlf2', 'codigo_vencido'), 'claimed failed', 'novo claim e fail com o token novo: failed');
+select is(
+  pg_temp.co(pg_temp.claim(:'e_lf')) || ' ' || pg_temp.fin('complete', :'e_lf', :'tlf') || ' ' || pg_temp.fin('complete', :'e_lf', :'tlf2') || ' ' || pg_temp.fin('release', :'e_lf', :'tlf2', 'liberacao_vencida'),
+  'terminal_failed terminal_failed terminal_failed terminal_failed', 'falha segue terminal para claim e para os dois tokens'
+);
+reset role;
 
 select * from finish();
 rollback;

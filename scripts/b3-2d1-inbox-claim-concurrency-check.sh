@@ -13,6 +13,10 @@
 #      recusado (`claim_lost`); só o token novo completa.
 #   3. Um complete com a transação aberta segura a linha: um claim
 #      concorrente espera e, depois, recebe `already_processed`.
+#   4. A lease vence de verdade (15 s) e NINGUÉM reclama a entrada: o
+#      complete com o token original é recusado (`claim_lost`) e a entrada
+#      segue `processing`, com o mesmo token, reclamável por um worker
+#      novo; só o token novo completa.
 #
 # Usa um canal próprio, dados fictícios e o Postgres local do CI (que o
 # passo seguinte recria). Nada de provedor, nada hospedado.
@@ -62,6 +66,8 @@ wait_lock_waiters() { # espera $1 sessões com prefixo $2 paradas numa trava
 claim_sql() { echo "$SERVICE_SQL select public.whatsapp_inbox_claim('$1'::uuid, $2) ->> ${3:-'outcome'};"; }
 finish_sql() { echo "$SERVICE_SQL select public.whatsapp_inbox_complete('$1'::uuid, '$2'::uuid) ->> 'outcome';"; }
 state_of() { psql_as b3d1_main -c "select state || '|' || claim_count from public.whatsapp_webhook_inbox where id = '$1'"; }
+token_of() { psql_as b3d1_main -c "select coalesce(claim_token::text, '-') from public.whatsapp_webhook_inbox where id = '$1'"; }
+lease_over() { psql_as b3d1_main -c "select (lease_until <= clock_timestamp())::text from public.whatsapp_webhook_inbox where id = '$1'"; }
 
 echo "== preparo (canal e entradas próprios)"
 SETUP="$(psql_as b3d1_setup <<SQL
@@ -73,11 +79,11 @@ select public.whatsapp_create_simulated_channel('$CANAL'::uuid, '$WS'::uuid, '$D
   'QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB', '1') is not null as ok \gset
 select string_agg(public.whatsapp_inbox_store('$CANAL'::uuid, '$WS'::uuid, 'simulated', '$ROUTING', 'evt-conc-' || n, 'message.inbound',
   repeat('a', 64), '1', 'AAAAAAAAAAAAAAAA', 'Q29ycG8gZmljdGljaW8gMQ==', 'AAAAAAAAAAAAAAAAAAAAAA==', 3600) ->> 'inbox_id', ' ' order by n)
-from generate_series(1, 3) n;
+from generate_series(1, 4) n;
 SQL
 )"
-read -r E1 E2 E3 <<<"$(echo "$SETUP" | tail -1)"
-[ -n "${E3:-}" ] || fail "preparo sem resultado: $SETUP"
+read -r E1 E2 E3 E4 <<<"$(echo "$SETUP" | tail -1)"
+[ -n "${E4:-}" ] || fail "preparo sem resultado: $SETUP"
 
 echo "== 1. $WORKERS workers pedem o claim da mesma entrada ao mesmo tempo"
 OUT_X="$(mktemp)"
@@ -160,4 +166,25 @@ grep -qx "completed" "$OUT_D" || fail "o complete de D deveria completar: $(cat 
 AFTER="$(claim_sql "$E3" 60 | psql_as b3d1_e | tail -1)"
 [ "$AFTER" = "already_processed" ] || fail "depois do complete, o claim deveria ver already_processed, veio: $AFTER"
 echo "   ok: o claim esperou o complete e depois viu already_processed"
+
+echo "== 4. lease vencida sem novo claim: o token original não completa; só um claim novo devolve o dono"
+TOKEN_F="$(claim_sql "$E4" 15 "'claim_token'" | psql_as b3d1_main | tail -1)"
+[ -n "$TOKEN_F" ] || fail "o worker F não obteve o claim"
+for _ in $(seq 1 250); do
+  [ "$(lease_over "$E4")" = "true" ] && break
+  sleep 0.1
+done
+[ "$(lease_over "$E4")" = "true" ] || fail "a lease de 15 s da entrada 4 não venceu"
+LATE="$(finish_sql "$E4" "$TOKEN_F" | psql_as b3d1_f | tail -1)"
+[ "$LATE" = "claim_lost" ] || fail "o complete com a lease vencida deveria ser recusado, veio: $LATE"
+[ "$(state_of "$E4")|$(token_of "$E4")" = "processing|1|$TOKEN_F" ]   || fail "a entrada 4 deveria seguir processing com o token original: $(state_of "$E4")|$(token_of "$E4")"
+echo "   ok: lease vencida sem novo claim; o complete original foi recusado (claim_lost) e nada mudou"
+TOKEN_G="$(claim_sql "$E4" 60 "'claim_token'" | psql_as b3d1_g | tail -1)"
+[ -n "$TOKEN_G" ] && [ "$TOKEN_G" != "$TOKEN_F" ] || fail "o worker G não reclamou com token novo: $TOKEN_G"
+AGAIN="$(finish_sql "$E4" "$TOKEN_F" | psql_as b3d1_f | tail -1)"
+[ "$AGAIN" = "claim_lost" ] || fail "o token original deveria seguir recusado depois do novo claim, veio: $AGAIN"
+NEW_G="$(finish_sql "$E4" "$TOKEN_G" | psql_as b3d1_g | tail -1)"
+[ "$NEW_G" = "completed" ] || fail "o token novo deveria completar, veio: $NEW_G"
+[ "$(state_of "$E4")" = "processed|2" ] || fail "estado final da entrada 4: $(state_of "$E4")"
+echo "   ok: o worker novo reclamou e só o token novo completou; claim_count = 2"
 echo "== claim da inbox sob concorrência real: OK"
