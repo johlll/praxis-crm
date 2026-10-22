@@ -2992,7 +2992,7 @@ Cada mutação do banco rodou numa PR temporária, sobre `7ffd948`:
 | Mutação | Reprovada por |
 |---|---|
 | D1 lease vigente não dá busy (dois workers com claim) | pgTAP 33: busy (25–27), novo claim e contagem (32), tokens errados (37), processed (39) |
-| D2 claim sem trava de linha | **Não verificada no CI.** O passo "Subir Supabase local" falhou nas 12 tentativas, entre 19:23 de 21/10 e 01:15 de 22/10 (UTC): o `public.ecr.aws` recusa pulls anônimos dos runners (`toomanyrequests: Rate exceeded`). Só o teste de concorrência (cenário 1) pode pegá-la: o pgTAP roda numa sessão só. Esse cenário passou na implementação, com os oito workers parados na trava |
+| D2 claim sem trava de linha | Concorrência real, cenário 1: os oito workers saíram com `claimed` (`claimed=8`), não um. O pgTAP passa, como esperado, porque roda numa sessão só. A primeira versão desta mutação apagou também o `;` do SELECT e a migration não aplicava. Atribuí as falhas ao limite de pulls do `public.ecr.aws`, cujos avisos aparecem no mesmo passo, mas a causa era minha; corrigida a sintaxe, ela rodou |
 | D3 reclaim antes do vencimento da lease | pgTAP 33: os mesmos seis do D1 |
 | D4 token antigo completa | pgTAP 33: 14 testes, entre eles token antigo (33–34), inventado, ausente e de outra entrada (35–37), token liberado (56) |
 | D5 complete sem token | pgTAP 33: token ausente (35–36), nada muda (37), complete com o token atual (38) |
@@ -3007,9 +3007,8 @@ Cada mutação do banco rodou numa PR temporária, sobre `7ffd948`:
 | D14 tabela continua acessível a `service_role` | pgTAP 33: nenhum privilégio direto (11) |
 | D15 sem a guarda de `claim_count` e estados terminais | pgTAP 33: `claim_count` nunca diminui (58), processada não volta a pendente (59) |
 
-As PRs temporárias #78, #79, #81 e #83 a #95 foram fechadas, com as
-branches apagadas. A #82 (D2) continua aberta para nova tentativa quando o
-CI voltar a subir o Supabase local.
+As PRs temporárias #78, #79 e #81 a #95 foram fechadas, com as branches
+apagadas.
 
 ### 19.9 Limitações e requisitos para as próximas etapas
 
