@@ -1536,7 +1536,7 @@ ou número.
 | B3.2b | **Implementada (§17).** `whatsapp_webhook_inbox` cifrada (chave e AAD próprias), única por (canal, id do evento), com prazo de retenção; RPC de gravação; pgTAP | B3.2a |
 | B3.2c | **Implementada (§18).** Rota `/api/webhooks/whatsapp/[provider]/[webhookRouteId]`: bytes → canal pelo localizador opaco da URL (UUID aleatório; o segredo é por canal) → assinatura → inbox → 2xx → evento `{ inboxId }` no Inngest próprio do WhatsApp; 404 sem provedor | B3.2b |
 | B3.2d-1 | **Implementada (§19).** Claim atômico da inbox: só pelo `inboxId`, com lease, token, `claim_count` e contexto resolvido no banco; leitura que decifra e confere o hash antes de devolver o corpo; complete, fail e release presos ao token; leitura e marcações sem claim aposentadas | B3.2c |
-| B3.2d-2 | Rota e função do Inngest do WhatsApp (prefixo `WHATSAPP_`) sobre o claim da B3.2d-1, normalização, `routing_mismatch` (§18.8), decisão por tipo de evento × estado do canal e RPCs de serviço: mensagem, eco, status, eventos de conta; origem técnica `inbound`, `business_app`, `chatbot` (só com correlação positiva) ou `external_api` (fallback), `history`, e classificação do remetente `external`, `internal`, `automation` ou `unresolved` (§15.10); cadastro de identidades internas (telefone e BSUID; owner/admin); busca antes de criar lead; pendência de identificação; lead só por `inbound` + `external`; nada de lead ou atividade para bot, eco, histórico, status, comando interno ou evento técnico; teste de concorrência | B3.2d-1 |
+| B3.2d-2 | Rota e função do Inngest do WhatsApp (prefixo `WHATSAPP_`) sobre o claim da B3.2d-1, normalização, `routing_mismatch` (§18.8), decisão por tipo de evento × estado do canal e RPCs de serviço: mensagem, eco, status, eventos de conta; origem técnica `inbound`, `business_app`, `chatbot` (só com correlação positiva) ou `external_api` (fallback), `history`, e classificação do remetente `external`, `internal`, `automation` ou `unresolved` (§15.10); cadastro de identidades internas (telefone e BSUID; owner/admin); busca antes de criar lead; pendência de identificação; lead só por `inbound` + `external`; nada de lead ou atividade para bot, eco, histórico, status, comando interno ou evento técnico; portão: escrita idempotente pelo id estável do evento e RPC de efeito que confere `inboxId`, token e lease vigente no banco (§19.9); teste de concorrência | B3.2d-1 |
 | B3.2e | Reconciliador: republica as entradas `pending` e as `processing` com lease vencida; batimento do canal (`last_event_at`). Portão obrigatório antes de webhook real (§18.3) | B3.2d-2 |
 | Fora do Praxis | Contrato do §15.6 no chatbot (rota, tabela de pedidos, testes), em branch/PR própria do chatbot, desligado e sem deploy | Decisão 15; implantação real com nova autorização; necessário antes da B3.3 no número do chatbot |
 | Posterior | Resumo e qualificação estruturados do chatbot (decisão 12) | Entrada real estável |
@@ -2722,7 +2722,7 @@ exista e esteja provada antes de qualquer efeito no domínio:
 | Etapa | Conteúdo |
 |---|---|
 | **B3.2d-1** (esta) | Claim, lease, resolução interna pelo `inboxId` e leitura segura (decifra e confere o hash antes de devolver o corpo); finalizações presas ao token; aposentadoria da leitura e das marcações sem claim |
-| **B3.2d-2** | Rota e função do Inngest do WhatsApp (prefixo `WHATSAPP_`), normalização, conferência da routing key do evento (`routing_mismatch`, §18.8), decisão por tipo de evento × estado do canal e aplicação ao domínio (regras do §15.10) |
+| **B3.2d-2** | Rota e função do Inngest do WhatsApp (prefixo `WHATSAPP_`), normalização, conferência da routing key do evento (`routing_mismatch`, §18.8), decisão por tipo de evento × estado do canal e aplicação ao domínio (regras do §15.10). Portão: efeito idempotente e cercado pelo claim vigente no banco (§19.9) |
 | **B3.2e** | Republicação das entradas `pending` e das `processing` com lease vencida; batimento do canal. Continua portão obrigatório antes de qualquer webhook real (§18.3) |
 
 ### 19.2 Máquina de estados da inbox
@@ -2793,9 +2793,22 @@ public.whatsapp_inbox_fail(p_inbox_id uuid, p_claim_token uuid, p_error_code tex
 public.whatsapp_inbox_release(p_inbox_id uuid, p_claim_token uuid, p_error_code text) returns jsonb
 ```
 
-- Só alteram a entrada em `processing` com o **token atual**. Token
-  antigo, inventado, ausente ou de outra entrada → `claim_lost`, sem
-  mudar nada.
+- Só alteram a entrada em `processing` com o **token atual** e a **lease
+  vigente**:
+  - token correto e lease vigente → pode finalizar;
+  - token correto e lease vencida → `claim_lost`;
+  - token antigo, inventado, ausente ou de outra entrada → `claim_lost`.
+  - Em `claim_lost`, nada muda: estado, token, `claim_count`, horários,
+    código e auditoria ficam como estavam.
+- **A posse termina no vencimento da lease**, não só quando aparece outro
+  token. Uma lease vencida volta a ter dono apenas por um novo
+  `whatsapp_inbox_claim`.
+- Com a linha travada, a ordem é: `not_found`, `already_processed`,
+  `terminal_failed`; depois, estado `processing` e token; por fim, um único
+  `clock_timestamp()` decide a lease (`lease_until` nula ou `<=` esse
+  horário → `claim_lost`) e data a transição válida. `lease_until` igual ao
+  horário da decisão já conta como vencida, o complemento exato do `busy`
+  do claim.
 - Resultados: `completed`, `failed`, `released`, `already_processed`,
   `terminal_failed`, `claim_lost` e `not_found` (inclui outro ambiente).
 - Complete repetido → `already_processed`.
@@ -2805,8 +2818,12 @@ public.whatsapp_inbox_release(p_inbox_id uuid, p_claim_token uuid, p_error_code 
 - A falha terminal é auditada (`whatsapp.inbox.failed`) só com ambiente,
   provedor, canal e código. A auditoria nunca leva conteúdo, telefone,
   BSUID, routing key ou erro bruto.
-- Uma lease vencida **sem** novo claim ainda pode ser finalizada pelo dono
-  do token. Quem perde a posse é quem foi substituído por um novo claim.
+- **Correção na revisão da PR #80.** A primeira versão (`49917a6`) não
+  conferia `lease_until` na finalização: com a lease vencida e sem novo
+  claim, o token antigo ainda completava, falhava ou liberava a entrada, o
+  que contradizia o contrato da lease. A própria migration desta etapa foi
+  corrigida (ela não foi mesclada nem aplicada); não há migration
+  corretiva.
 
 ### 19.5 Caminho antigo aposentado
 
@@ -2852,6 +2869,17 @@ public.whatsapp_inbox_release(p_inbox_id uuid, p_claim_token uuid, p_error_code 
 - **Finalizações.** `completeWhatsAppInboxClaim`, `failWhatsAppInboxClaim`
   e `releaseWhatsAppInboxClaim` só aceitam o claim emitido ali. Um objeto
   montado à mão ou copiado → `inbox_claim_untrusted`, sem banco.
+- **`claim_lost` é repassado como veio.** O servidor não repete a chamada,
+  não tenta completar e não dispara outra finalização (release ou fail)
+  depois de um `claim_lost`. A garantia de posse é da RPC; o servidor não
+  decide a lease pelo relógio local.
+- **O claim não atravessa fronteira de execução.** A identidade do claim é
+  a do objeto em memória (`WeakMap`). Ele não sobrevive a serialização,
+  retorno de `step.run`, fila ou outra execução: uma cópia serializada →
+  `inbox_claim_untrusted`, sem banco. Na B3.2d-2, claim, normalização,
+  efeito e finalização acontecem na mesma execução lógica, e nenhuma
+  operação externa ou efeito no domínio pode presumir que um claim
+  serializado continua válido.
 - Nenhuma operação escreve log; os erros são códigos fixos.
 
 ### 19.7 Testes
@@ -2893,9 +2921,40 @@ testes é `c196ecf`.
 - No CI: pgTAP 33 (82) e 31 (94) passam, e o teste de concorrência real
   passa.
 
+**Revisão da PR #80: lease vencida sem novo claim**
+
+Testes escritos antes da correção, contra `49917a6`. O commit só de
+testes é `df3e1b4`; a correção é `8185f38`.
+
+- Vermelho contra `49917a6`:
+  - pgTAP 33 (seção 13): 14 de 99 falham, todos da seção nova. Passam as
+    outras 82 e três da seção 13 que valem nos dois códigos: lease futura
+    finaliza, `already_processed` para os dois tokens e `terminal_failed`
+    depois da falha.
+  - Concorrência real, na PR temporária #96 (pgTAP sem interromper o
+    job): os cenários 1 a 3 passam e o 4 falha, com
+    `o complete com a lease vencida deveria ser recusado, veio: completed`.
+  - Unitários: os 5 novos passam já contra `49917a6`. Eles fixam o
+    contrato do servidor (repassar `claim_lost` sem repetir; recusar claim
+    serializado), que já valia; a garantia da lease é da RPC.
+- Verde (`8185f38`), no CI: unitários 1779 (suíte inteira), typecheck,
+  lint e comparação de tipos limpos; pgTAP 33 (99) e 31 (94) passam;
+  concorrência real com os quatro cenários; build e E2E (76).
+
 **Cobertura**
 
 pgTAP 33:
+- **lease vencida sem novo claim (seção 13):**
+  - complete, fail e release com o token atual → `claim_lost`;
+  - nada muda: estado `processing`, token, `claim_count`, horários,
+    código, `last_release_code`/`last_released_at` e auditoria;
+  - lease terminando no instante atual já conta como vencida; a igualdade
+    exata ao microssegundo não é reproduzível com o relógio real, então um
+    teste estrutural confere a comparação `lease_until is null or
+    lease_until <= v_now` na finalização;
+  - lease 30 s à frente finaliza;
+  - só um novo claim devolve um dono; o token substituído segue
+    `claim_lost`, e `processed`/`failed` seguem nos resultados terminais;
 - **estrutura:**
   - colunas e combinações incoerentes recusadas;
   - `claim_count` que não diminui;
@@ -2937,6 +2996,11 @@ contra o Postgres local:
    o token novo completa (`claim_count` 2).
 3. **Complete segura a linha.** Com um complete de transação aberta, um
    claim concorrente espera e depois recebe `already_processed`.
+4. **Lease vencida sem novo claim.** Um claim de 15 s vence de verdade, sem
+   relógio forçado e sem nenhum outro claim. O complete com o token
+   original recebe `claim_lost`, e a entrada segue `processing` com o
+   mesmo token e `claim_count` 1. Um worker novo reclama com token novo; o
+   token original segue recusado e só o novo completa (`claim_count` 2).
 
 `tests/unit/b3-2d1-inbox-claim.test.ts`:
 - só id e lease vão ao banco, e o contexto do evento é ignorado;
@@ -2951,6 +3015,10 @@ contra o Postgres local:
   terminal;
 - hash divergente leva a falha terminal; chave ausente leva a release;
 - finalizações só com o claim emitido ali, e códigos brutos recusados;
+- `claim_lost` em complete, fail e release repassado com uma única
+  chamada, sem repetir nem outra finalização;
+- claim serializado (JSON, como um retorno de `step.run`) recusado antes do
+  banco;
 - APIs antigas inexistentes, e nenhum arquivo de `src` com RPC antiga ou
   acesso direto à tabela;
 - nenhum erro bruto, token ou conteúdo em erro; nada no console.
@@ -3006,16 +3074,31 @@ Cada mutação do banco rodou numa PR temporária, sobre `7ffd948`:
 | D13 retorno do claim com credencial do canal | pgTAP 33: chaves exatas do retorno (19), nenhuma cifra de credencial (24) |
 | D14 tabela continua acessível a `service_role` | pgTAP 33: nenhum privilégio direto (11) |
 | D15 sem a guarda de `claim_count` e estados terminais | pgTAP 33: `claim_count` nunca diminui (58), processada não volta a pendente (59) |
+| D16 finalização sem conferir `lease_until` (revisão da PR #80, sobre `8185f38`) | pgTAP 33, seção 13: 14 de 99, os mesmos do vermelho: complete, fail e release com a lease vencida (83, 85, 88), nada muda (84, 86, 89), sem auditoria (87), fronteira (90–91), comparação da finalização (92) e o reclaim seguinte (94–96, 98). PR temporária #97 |
 
-As PRs temporárias #78, #79 e #81 a #95 foram fechadas, com as branches
-apagadas.
+As PRs temporárias #78, #79, #81 a #97 foram fechadas, com
+as branches apagadas.
 
 ### 19.9 Limitações e requisitos para as próximas etapas
 
-- **Idempotência no domínio (B3.2d-2).** Um worker pode perder a lease
-  depois de aplicar parte do efeito. O complete dele recebe `claim_lost`,
-  e o novo dono processa de novo. A aplicação ao domínio tem de ser
-  idempotente, por exemplo pelo id da mensagem no provedor.
+- **Portão obrigatório da B3.2d-2: efeito no domínio cercado pelo
+  claim.** Um worker pode perder a lease depois de aplicar parte do
+  efeito; o complete dele recebe `claim_lost`, e o novo dono processa de
+  novo. Antes de qualquer escrita no domínio, a B3.2d-2 precisa garantir:
+  1. toda escrita no domínio é idempotente pelo identificador estável do
+     evento;
+  2. a RPC que aplicar o efeito confere no banco o `inboxId`, o token atual
+     e a lease vigente, com a mesma regra da finalização;
+  3. de preferência, o efeito no domínio e a marcação como `processed`
+     acontecem na mesma transação;
+  4. se forem separados, uma queda entre o efeito e o complete não pode
+     duplicar mensagem, conversa, contato, lead, atividade ou evento
+     técnico;
+  5. eventos ignorados legitimamente (por tipo ou estado do canal) também
+     são finalizados com o claim vigente, nunca por fora dele.
+- **Claim na mesma execução (B3.2d-2).** Claim, normalização, efeito e
+  finalização acontecem na mesma execução lógica. O claim não é devolvido
+  por `step.run`, não vai para fila nem para outra execução (§19.6).
 - **Política de nova tentativa (B3.2d-2/B3.2e).** O release não tem
   espera nem teto. A B3.2d-2 decide o que é transitório, e a B3.2e decide
   quando republicar e o limite de `claim_count` antes de falhar de vez.
