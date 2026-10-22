@@ -226,7 +226,7 @@ begin
   -- Trava de linha: quem chega depois espera e relê a versão final.
   select i.* into v_row
   from public.whatsapp_webhook_inbox i
-  where i.id = p_inbox_id and i.environment = v_env
+  where i.id = p_inbox_id and i.environment = v_env;
   if not found then
     return jsonb_build_object('outcome', 'not_found');
   end if;
