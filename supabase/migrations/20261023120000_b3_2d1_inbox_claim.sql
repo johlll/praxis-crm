@@ -24,10 +24,13 @@
 -- O canal pode estar ativo, pausado, desconectado ou desativado: a entrada
 -- já recebida não fica presa; aplicar ou não ao domínio é da B3.2d-2.
 --
--- FINALIZAÇÃO. complete, fail e release exigem o token ATUAL; token
--- antigo, inventado, ausente ou de outra entrada não muda nada
--- (claim_lost). Repetir um complete devolve already_processed. Códigos de
--- erro são só símbolos (^[a-z0-9_]{1,64}$), nunca mensagem original.
+-- FINALIZAÇÃO. complete, fail e release exigem o token ATUAL e a lease
+-- VIGENTE; token antigo, inventado, ausente ou de outra entrada não muda
+-- nada (claim_lost), e o token atual com a lease vencida também não, mesmo
+-- sem nenhum novo claim: a posse termina no vencimento, e só um novo claim
+-- devolve um dono à entrada. Repetir um complete devolve
+-- already_processed. Códigos de erro são só símbolos (^[a-z0-9_]{1,64}$),
+-- nunca mensagem original.
 --
 -- claim_count conta AQUISIÇÕES de processamento (cada claim bem-sucedido),
 -- não entregas do provedor (essas continuam deduplicadas por canal e id do
@@ -300,7 +303,10 @@ $body$;
 -- ---------------------------------------------------------------------
 
 -- Trava a entrada do ambiente e decide o resultado; só aplica a transição
--- quando a entrada está em processamento com ESTE token.
+-- quando a entrada está em processamento com ESTE token E a lease ainda
+-- vale. A posse termina no vencimento da lease, mesmo que nenhum worker
+-- tenha reclamado a entrada: depois disso, só um novo claim dá dono a ela.
+-- Um único clock_timestamp() decide a lease e data a transição.
 create function private.whatsapp_inbox_finish(
   p_inbox_id uuid,
   p_claim_token uuid,
@@ -343,8 +349,11 @@ begin
   if v_row.state <> 'processing' or p_claim_token is null or v_row.claim_token is distinct from p_claim_token then
     return jsonb_build_object('outcome', 'claim_lost');
   end if;
-
   v_now := clock_timestamp();
+  if v_row.lease_until is null or v_row.lease_until <= v_now then
+    return jsonb_build_object('outcome', 'claim_lost');
+  end if;
+
   if p_target = 'processed' then
     update public.whatsapp_webhook_inbox
     set state = 'processed', processed_at = v_now, claim_token = null, claimed_at = null, lease_until = null

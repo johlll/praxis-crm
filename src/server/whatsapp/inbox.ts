@@ -236,6 +236,15 @@ declare const inboxClaimBrand: unique symbol;
  * e `verified` só existe depois de decifrar com a AAD desse contexto e
  * conferir o SHA-256. O token do claim NÃO é propriedade do objeto: fica
  * num registro interno, e só as finalizações abaixo o usam.
+ *
+ * A posse termina em `leaseUntil`, mesmo que nenhum outro worker tenha
+ * reclamado a entrada: depois disso o banco responde `claim_lost` também
+ * ao token deste claim. A identidade é a do objeto em memória (WeakMap):
+ * o claim NÃO atravessa serialização, retorno de `step.run`, fila ou outra
+ * execução — uma cópia não finaliza nada. Claim, normalização, efeito e
+ * finalização acontecem na mesma execução lógica (B3.2d-2), e nenhuma
+ * operação externa ou efeito no domínio pode presumir que um claim
+ * serializado continua válido.
  */
 export type WhatsAppInboxClaim = Readonly<{
   inboxId: string;
@@ -431,8 +440,10 @@ function requireErrorCode(code: unknown): string {
 
 export type WhatsAppInboxFinishOutcome = z.infer<typeof finishSchema>["outcome"];
 
-/** processing → processed, só com o token deste claim. Repetir devolve
- * `already_processed`; token que perdeu a posse, `claim_lost`. */
+/** processing → processed, só com o token deste claim e a lease vigente.
+ * Repetir devolve `already_processed`; lease vencida ou token substituído,
+ * `claim_lost`. Os resultados do banco são repassados como vieram: nada é
+ * repetido, e um `claim_lost` não dispara outra finalização. */
 export async function completeWhatsAppInboxClaim(claim: WhatsAppInboxClaim): Promise<{ outcome: WhatsAppInboxFinishOutcome }> {
   return finish("whatsapp_inbox_complete", requireClaim(claim));
 }
