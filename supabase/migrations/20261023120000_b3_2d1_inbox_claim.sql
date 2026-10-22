@@ -350,9 +350,6 @@ begin
     return jsonb_build_object('outcome', 'claim_lost');
   end if;
   v_now := clock_timestamp();
-  if v_row.lease_until is null or v_row.lease_until <= v_now then
-    return jsonb_build_object('outcome', 'claim_lost');
-  end if;
 
   if p_target = 'processed' then
     update public.whatsapp_webhook_inbox
