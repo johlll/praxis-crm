@@ -1536,7 +1536,8 @@ ou número.
 | B3.2b | **Implementada (§17).** `whatsapp_webhook_inbox` cifrada (chave e AAD próprias), única por (canal, id do evento), com prazo de retenção; RPC de gravação; pgTAP | B3.2a |
 | B3.2c | **Implementada (§18).** Rota `/api/webhooks/whatsapp/[provider]/[webhookRouteId]`: bytes → canal pelo localizador opaco da URL (UUID aleatório; o segredo é por canal) → assinatura → inbox → 2xx → evento `{ inboxId }` no Inngest próprio do WhatsApp; 404 sem provedor | B3.2b |
 | B3.2d-1 | **Implementada (§19).** Claim atômico da inbox: só pelo `inboxId`, com lease, token, `claim_count` e contexto resolvido no banco; leitura que decifra e confere o hash antes de devolver o corpo; complete, fail e release presos ao token; leitura e marcações sem claim aposentadas | B3.2c |
-| B3.2d-2 | Rota e função do Inngest do WhatsApp (prefixo `WHATSAPP_`) sobre o claim da B3.2d-1, normalização, `routing_mismatch` (§18.8), decisão por tipo de evento × estado do canal e RPCs de serviço: mensagem, eco, status, eventos de conta; origem técnica `inbound`, `business_app`, `chatbot` (só com correlação positiva) ou `external_api` (fallback), `history`, e classificação do remetente `external`, `internal`, `automation` ou `unresolved` (§15.10); cadastro de identidades internas (telefone e BSUID; owner/admin); busca antes de criar lead; pendência de identificação; lead só por `inbound` + `external`; nada de lead ou atividade para bot, eco, histórico, status, comando interno ou evento técnico; portão: escrita idempotente pelo id estável do evento e RPC de efeito que confere `inboxId`, token e lease vigente no banco (§19.9); teste de concorrência | B3.2d-1 |
+| B3.2d-2a | **Implementada (§20).** Rota `/api/inngest/whatsapp` e app `praxis-crm-whatsapp` com chaves próprias `WHATSAPP_`; função do consumidor com o ciclo inteiro num único `step.run`; evento estrito `{ inboxId }`; normalização pelo adaptador do canal; `routing_mismatch`; matriz do estado do canal; falhas terminais × recuperáveis; `ignored`/`unsupported` finalizados com disposição cercada pelo claim (`whatsapp_inbox_dispose`); nenhuma escrita no domínio | B3.2d-1 |
+| B3.2d-2b | Evolução do domínio reaproveitando a A7, sobre o consumidor da B3.2d-2a (§20.9): BSUID sem telefone, mensagens sem texto, custo do provedor, status `accepted` e RPCs de serviço: mensagem, eco, status, eventos de conta; origem técnica `inbound`, `business_app`, `chatbot` (só com correlação positiva) ou `external_api` (fallback), `history`, e classificação do remetente `external`, `internal`, `automation` ou `unresolved` (§15.10); cadastro de identidades internas (telefone e BSUID; owner/admin); busca antes de criar lead; pendência de identificação; lead só por `inbound` + `external`; nada de lead ou atividade para bot, eco, histórico, status, comando interno ou evento técnico; portão: escrita idempotente pelo id estável do evento e RPC de efeito que confere `inboxId`, token e lease vigente no banco (§19.9); teste de concorrência | B3.2d-2a |
 | B3.2e | Reconciliador: republica as entradas `pending` e as `processing` com lease vencida; batimento do canal (`last_event_at`). Portão obrigatório antes de webhook real (§18.3) | B3.2d-2 |
 | Fora do Praxis | Contrato do §15.6 no chatbot (rota, tabela de pedidos, testes), em branch/PR própria do chatbot, desligado e sem deploy | Decisão 15; implantação real com nova autorização; necessário antes da B3.3 no número do chatbot |
 | Posterior | Resumo e qualificação estruturados do chatbot (decisão 12) | Entrada real estável |
@@ -2722,7 +2723,7 @@ exista e esteja provada antes de qualquer efeito no domínio:
 | Etapa | Conteúdo |
 |---|---|
 | **B3.2d-1** (esta) | Claim, lease, resolução interna pelo `inboxId` e leitura segura (decifra e confere o hash antes de devolver o corpo); finalizações presas ao token; aposentadoria da leitura e das marcações sem claim |
-| **B3.2d-2** | Rota e função do Inngest do WhatsApp (prefixo `WHATSAPP_`), normalização, conferência da routing key do evento (`routing_mismatch`, §18.8), decisão por tipo de evento × estado do canal e aplicação ao domínio (regras do §15.10). Portão: efeito idempotente e cercado pelo claim vigente no banco (§19.9) |
+| **B3.2d-2** | Rota e função do Inngest do WhatsApp (prefixo `WHATSAPP_`), normalização, conferência da routing key do evento (`routing_mismatch`, §18.8), decisão por tipo de evento × estado do canal e aplicação ao domínio (regras do §15.10). Portão: efeito idempotente e cercado pelo claim vigente no banco (§19.9). Dividida em B3.2d-2a (consumidor sem efeito no domínio, §20) e B3.2d-2b (domínio, §20.9) |
 | **B3.2e** | Republicação das entradas `pending` e das `processing` com lease vencida; batimento do canal. Continua portão obrigatório antes de qualquer webhook real (§18.3) |
 
 ### 19.2 Máquina de estados da inbox
@@ -3121,3 +3122,446 @@ as branches apagadas.
   - nenhuma mensagem enviada;
   - nenhuma mudança no chatbot;
   - nenhum lead, contato, conversa ou atividade criado.
+
+## 20. B3.2d-2a — consumidor da inbox e app próprio do Inngest (27/10/2026)
+
+Esta etapa implementa só o consumidor e a orquestração segura da inbox.
+**Nada é escrito no domínio**: nenhum contato, lead, oportunidade,
+atividade, conversa, mensagem ou status da A7 é criado ou alterado.
+
+### 20.1 Divisão da B3.2d-2
+
+A B3.2d-2 foi dividida para não misturar execução distribuída com a
+evolução do domínio:
+
+| Etapa | Conteúdo |
+|---|---|
+| **B3.2d-2a** (esta) | Rota e app próprios do Inngest, função do consumidor, validação estrita do evento interno, ciclo inteiro num único `step.run`, normalização pelo adaptador do provedor do canal, roteamento, matriz do estado do canal, classificação das falhas e finalização sem efeito (`ignored`/`unsupported`) |
+| **B3.2d-2b** | Evolução do domínio reaproveitando a A7 (§20.9) |
+
+Motivos da divisão:
+- conversas da A7 exigem telefone, mas a B3 aceita identidade só por
+  BSUID;
+- mensagens da A7 pressupõem texto, e a B3 precisa aceitar mensagens sem
+  texto;
+- origem, classificação do remetente, custo e o status `accepted` ainda
+  precisam de modelagem;
+- uma PR só misturaria execução distribuída com migração do domínio.
+
+### 20.2 App, rota e chaves próprios
+
+- **App** `praxis-crm-whatsapp`, **rota** `/api/inngest/whatsapp`, função
+  `b3-whatsapp-inbox-consumer`. Nada da A11 (`/api/inngest`,
+  `@/server/ingest/*`) nem da agenda (`/api/inngest/calendar`,
+  `@/server/calendar/*`) é importado.
+- **Assinatura** só com `WHATSAPP_INNGEST_SIGNING_KEY`. Na rotação, a
+  reserva própria é `WHATSAPP_INNGEST_SIGNING_KEY_FALLBACK`.
+- **Sem queda para as variáveis genéricas.** Sem as opções, o SDK do
+  Inngest leria sozinho `INNGEST_SIGNING_KEY`,
+  `INNGEST_SIGNING_KEY_FALLBACK` e `INNGEST_EVENT_KEY`, que são da A11 e
+  da agenda. A chave reserva da A11 passaria a autenticar esta rota. Por
+  isso a assinatura, a reserva e a chave de evento são sempre passadas
+  explicitamente. A que não estiver configurada recebe um valor que
+  nunca valida nada (aleatório, por processo) e nunca envia.
+- **Falha fechada.** Em Preview e Production, sem
+  `WHATSAPP_INNGEST_SIGNING_KEY` ou sem o ambiente assinado do WhatsApp
+  (`WHATSAPP_ENV_SIGNING_KEY`), a rota responde `503 service_unavailable`
+  antes do SDK. Nesses ambientes o modo de desenvolvimento nunca liga,
+  mesmo com `INNGEST_DEV`. Fora da Vercel, sem a chave própria, só
+  funciona no modo de desenvolvimento explícito.
+- **Sem log.** O cliente usa um logger silencioso, inclusive para as
+  mensagens internas do SDK.
+- **Publicação.** O publicador da B3.2c continua igual: id do evento =
+  `inboxId`, payload exatamente `{ inboxId }`, chave
+  `WHATSAPP_INNGEST_EVENT_KEY`. O consumidor não publica eventos.
+- **Nada configurado fora do código.** Nenhuma variável foi criada na
+  Vercel e nenhum app foi registrado no Inngest. Production continua sem
+  `WHATSAPP_*`, e a rota responde 503 lá.
+
+### 20.3 Contrato do consumidor
+
+**Evento aceito**, e só ele:
+
+```ts
+{ name: "praxis/whatsapp.inbox.received", data: { inboxId } }
+```
+
+- `inboxId` é UUID; `data` com qualquer campo a mais (workspace, canal,
+  routing key, provedor, ambiente) é recusado;
+- o `id` do evento, quando vier, tem de ser o próprio `inboxId`;
+- evento inválido → `{ outcome: "invalid_event" }`, sem `step.run` e sem
+  banco.
+
+**Um único `step.run`** (`process-inbox-entry`) chama
+`processWhatsAppInboxEntry({ inboxId })`, que faz o ciclo inteiro:
+
+1. **claim** pelo `inboxId` (B3.2d-1). Ambiente, workspace, canal,
+   estado do canal, provedor, routing key, hash e cifra saem do banco;
+2. **decifração** com a AAD montada só com dados da linha, e **SHA-256**
+   conferido em tempo constante (no claim);
+3. **hash conferido de novo** no consumidor, sobre os bytes devolvidos
+   (`bodySha256` no claim);
+4. **adaptador do provedor GRAVADO no canal**
+   (`resolveWhatsAppProvider({ channelProvider })`), nunca o do evento;
+5. **envelope**: id e tipo do evento têm de ser os da linha;
+6. **normalização**: exatamente um evento normalizado, com o mesmo id;
+7. **roteamento**, **estado do canal** e **decisão por tipo** (§20.4);
+8. **uma finalização**: `dispose`, `fail` ou `release`.
+
+**O claim não atravessa o `step.run`.** O retorno do step é só
+`{ outcome, code }`, dado puro e serializável. O objeto do claim:
+- nunca é retornado, serializado, posto em fila ou levado a outra
+  execução;
+- nunca é reconstruído com dados do evento;
+- tem identidade em memória (`WeakMap`, §19.6), e uma cópia não
+  finaliza nada.
+
+Uma nova tentativa do Inngest começa de novo pelo claim.
+
+**Resultados do claim:**
+
+| Claim | Consumidor |
+|---|---|
+| `claimed` | segue o ciclo |
+| `busy` | encerra sem finalizar |
+| `already_processed` | sucesso idempotente |
+| `terminal_failed` | sucesso idempotente |
+| `expired` | sucesso idempotente |
+| `not_found` | resultado sanitizado, sem contexto |
+
+**Resultados da finalização**: `completed` vira `processed`;
+`released`, `failed` e `claim_lost` são repassados com o código. Depois
+de `claim_lost` não há nenhuma repetição nem outra finalização.
+
+### 20.4 Roteamento, estado do canal e decisão
+
+**Roteamento.** Uma routing key presente no evento normalizado tem de ser
+**exatamente igual** à do canal da linha; senão, falha terminal
+`routing_mismatch`, sem nenhum efeito. A routing key recebida nunca serve
+para procurar outro canal.
+
+| Tipo normalizado | Routing key |
+|---|---|
+| `message.inbound`, `message.outbound_observed`, `message.status`, `contact.identity_changed` | obrigatória (o contrato do adaptador a declara); ausente ou vazia → `event_impossible` |
+| `account` de escopo `phone_number` | obrigatória; ausente → `event_impossible` |
+| `account` de escopo `business_account` (WABA) | pode vir sem; o canal é o da linha |
+| `ignored`, `unsupported` | podem vir sem; o canal é o da linha |
+
+Nenhuma routing key é inventada, e nenhuma identidade é extraída de campo
+não documentado.
+
+**Estado atual do canal** (depois do roteamento: falha terminal de
+conteúdo prevalece):
+
+| Estado | Ação |
+|---|---|
+| `active` | segue para a decisão por tipo |
+| `paused` | release `channel_paused`; a entrada fica pendente |
+| `disconnected` | release `channel_disconnected`; fica pendente |
+| `disabled` | release `channel_disabled`; fica pendente |
+
+Nesta etapa nenhuma entrada é descartada só porque o canal mudou de
+estado depois do recebimento. A B3.2e decide quando republicar as
+entradas preservadas.
+
+**Decisão por tipo** (canal ativo):
+
+| Tipo | Ação |
+|---|---|
+| `message.inbound`, `message.outbound_observed`, `message.status`, `contact.identity_changed`, `account` | release `domain_effect_not_implemented`; fica pendente para a B3.2d-2b |
+| `ignored` (`history`, `group_message`, `non_whatsapp_product`) | dispose `ignored_<motivo>` |
+| `unsupported` | dispose `unsupported_event` |
+| tipo ou motivo desconhecido | fail `event_impossible` |
+
+### 20.5 Classificação das falhas
+
+| Falha | Tipo | Código |
+|---|---|---|
+| corpo cifrado inválido (AAD ou cifra) | terminal (fail) | `inbox_decrypt_failed` |
+| hash divergente (no claim ou na reconferência) | terminal | `inbox_integrity_failed` |
+| corpo que não é JSON, envelope ou payload inválido | terminal | `payload_invalid` |
+| versão de envelope não suportada | terminal | `unsupported_version` |
+| lote, zero ou mais de um evento normalizado | terminal | `event_count_invalid` |
+| id ou tipo do evento diferente do gravado na linha | terminal | `event_mismatch` |
+| routing key de outro canal | terminal | `routing_mismatch` |
+| evento estruturalmente impossível | terminal | `event_impossible` |
+| provedor do canal inconsistente com o adaptador | terminal | `provider_invalid` |
+| chave da inbox ausente | recuperável (release) | `inbox_crypto_not_configured` |
+| versão de chave desconhecida | recuperável | `inbox_key_version_unknown` |
+| adaptador não habilitado ou sem normalização | recuperável | `provider_unavailable` |
+| exceção dentro do adaptador ou da decisão | recuperável | `consumer_transient_error` |
+| canal pausado, desconectado ou desativado | recuperável | `channel_paused`, `channel_disconnected`, `channel_disabled` |
+| efeito no domínio ainda não implementado | recuperável | `domain_effect_not_implemented` |
+| banco indisponível no claim ou na finalização | nova tentativa do Inngest (até 3) | `inbox_unavailable`, `inbox_finalize_unavailable` |
+
+- Os dois primeiros e os dois de chave são finalizados pelo próprio claim
+  (B3.2d-1); o consumidor só repassa o resultado.
+- Uma exceção antes da finalização leva a exatamente um release
+  `consumer_transient_error`.
+- Uma exceção **na própria finalização** não leva a nenhuma outra: o
+  Inngest tenta de novo pelo claim, e a lease vencida devolve a entrada.
+- Nunca vão para o banco, o Inngest, a resposta HTTP ou o log: erro
+  bruto, pilha, payload, telefone, BSUID, segredo, chave ou credencial. O
+  erro de nova tentativa leva só o código, inclusive na pilha.
+
+### 20.6 Finalização sem efeito no domínio (`dispose`)
+
+Migration `20261027120000_b3_2d2a_inbox_dispose.sql` (nenhuma migration
+mesclada foi editada):
+
+```sql
+public.whatsapp_inbox_dispose(p_inbox_id uuid, p_claim_token uuid, p_disposition text) returns jsonb
+```
+
+- **Coluna `disposition`**, com lista fechada: `ignored_history`,
+  `ignored_group_message`, `ignored_non_whatsapp_product` e
+  `unsupported_event`. Só existe em `processed`.
+- **Imutável.** Um gatilho só deixa a disposição nascer na transição
+  `processing → processed`; depois não troca nem some, nem por escrita
+  direta (`inbox_disposition_immutable`).
+- **Mesma finalização de complete, fail e release.**
+  `private.whatsapp_inbox_finish` foi recriada (mesma assinatura) para
+  gravar a disposição na transição `processed`, então valem as mesmas
+  regras:
+  - linha travada, e os terminais respondem primeiro;
+  - token atual e lease vigente, decididos por um único
+    `clock_timestamp()`;
+  - lease vencida, token antigo, inventado, ausente ou de outra entrada
+    (inclusive de outro workspace ou canal) → `claim_lost`, sem mudar
+    nada;
+  - outro ambiente ou inexistente → `not_found`;
+  - repetir → `already_processed`, sem mudar a disposição nem o horário.
+- **Sem conteúdo.** A disposição recusa texto (`invalid_disposition`) e
+  não gera auditoria; nada do webhook sai da inbox.
+- **Permissões.** EXECUTE só para `service_role`, SECURITY DEFINER,
+  `search_path` travado. A tabela continua sem privilégio direto, nem
+  para `service_role`.
+- **O `complete` continua existindo**, sem disposição. Ele é o caminho
+  da B3.2d-2b, depois do efeito no domínio.
+
+### 20.7 Testes
+
+Escritos antes da implementação, contra a main `10e617f`. O commit só de
+testes é `c3ec505`; a implementação é `9c58326`.
+
+**Vermelho contra a main**
+- Unitários (local): 163 dos 168 novos falham. Os 5 que passam são
+  invariantes que a main já cumpre:
+  - nenhum arquivo da B3 importa a A11 ou a agenda;
+  - nenhum lê as variáveis genéricas do Inngest;
+  - nenhuma API antiga da inbox;
+  - nenhum acesso direto à tabela;
+  - o claim só na inbox.
+- pgTAP, na PR temporária #98:
+  - 34: 31 de 43 falham. Os 12 que passam valem sem a função:
+    - sem privilégio direto na tabela;
+    - ninguém além de `service_role` executa;
+    - nenhuma auditoria;
+    - o preparo e o `complete`, que já existiam;
+    - as comparações de retrato, que sem a coluna comparam o mesmo erro.
+  - 33: 2 de 99 (as listas exatas de colunas e de funções).
+  - 31: 1 de 94 (a lista de colunas).
+- Concorrência real (#98, com os passos anteriores sem interromper o
+  job): o cenário 1 para em `estado da entrada 1:` vazio, porque a coluna
+  `disposition` não existe.
+- No CI, typecheck e build também falham contra a main, porque os testes
+  importam módulos que ainda não existem.
+
+**Correções nos testes depois do commit de testes**, cada uma em commit
+próprio:
+- `26a381d`: a conferência estática "o consumidor não escreve no
+  domínio" usava `/\.from\(/` e acusaria o `Buffer.from(` da
+  reconferência do hash. Passou a procurar `.from("<tabela>")`, que é o
+  acesso a tabela que ela quer pegar.
+- `8c657bd`: o caso "assinatura adulterada" trocava o primeiro dígito da
+  assinatura por `0`; quando ele já era `0`, a assinatura continuava
+  válida e o teste falhava ao acaso (1 em 16). Apareceu na rodada de
+  mutações. Agora o último dígito é sempre trocado.
+
+**Verde (`9c58326` em diante)**
+- Unitários: suíte inteira 1949; os 168 novos passam. Typecheck e lint
+  limpos.
+- No CI: comparação de tipos limpa; pgTAP 34 (43), 33 (99) e 31 (94)
+  passam; concorrência real da B3.2d-1 (4 cenários) e da B3.2d-2a (3
+  cenários) passam; build e E2E (76) passam.
+
+**Cobertura**
+
+`tests/unit/b3-2d2a-consumidor-inbox.test.ts` (banco simulado,
+adaptador simulado real):
+- evento interno estrito: aceita só `{ name, data: { inboxId } }`; recusa
+  workspace, canal, routing key, provedor ou ambiente no `data`, UUID
+  inválido, outro nome, `id` diferente do `inboxId`;
+- um único `step.run`, com claim e finalização dentro; retorno só
+  `{ outcome, code }`, serializável e sem token, contexto, corpo ou
+  identidade; contexto passado junto com o `inboxId` é ignorado;
+- resultados do claim sem posse, sem finalização;
+- caminho completo: mensagem e status liberados com
+  `domain_effect_not_implemented`; não suportado finalizado com
+  `unsupported_event`; `claim_lost` com uma única chamada;
+- routing key de outro canal, payload inválido, versão não suportada,
+  id ou tipo do evento diferente do da linha, provedor não habilitado, e
+  o canal YCloud nunca recebe o simulador;
+- matriz dos quatro estados do canal, e a falha terminal prevalecendo
+  sobre o canal pausado;
+- decisão por tipo, em tabela (22 casos), e com cada estado do canal;
+- tabela de falhas terminais (12) e recuperáveis (5), com listas
+  disjuntas;
+- hash e AAD: `bodySha256` no claim; AAD de outro workspace, canal,
+  ambiente ou evento → `inbox_decrypt_failed`; hash divergente; chave
+  ausente; versão de chave desconhecida com o código próprio;
+- idempotência e concorrência no servidor: duas entregas simultâneas (um
+  claim, um busy), execução depois de processed, reclaim com token novo,
+  ignorado repetido finalizado uma vez só;
+- banco indisponível no claim e na finalização: erro só com código, sem
+  segunda finalização;
+- em seis cenários: só RPCs da inbox, nenhum acesso a tabela, nenhum
+  cliente do domínio, nada no console, nada sensível nos argumentos ou
+  no resultado;
+- `disposeWhatsAppInboxClaim`: argumentos exatos, lista fechada, claim
+  copiado, serializado ou montado à mão recusado.
+
+`tests/unit/b3-2d2a-consumidor-falhas.test.ts` (módulo da inbox
+isolado):
+- o claim é pedido só com `{ inboxId }`;
+- a finalização recebe o mesmo objeto do claim;
+- reconferência do hash;
+- exceção antes da finalização → um release; exceção na finalização →
+  nenhuma outra; `claim_lost` encerra;
+- erros do claim já finalizados pelo próprio claim → resultado
+  sanitizado; os outros → nova tentativa só com código.
+
+`tests/unit/b3-2d2a-rota-inngest-whatsapp.test.ts` (SDK real, sem
+rede):
+- 503 sanitizado em Preview e Production sem a chave própria (com as da
+  A11 presentes), com a chave vazia, sem o ambiente assinado e fora da
+  Vercel sem modo de desenvolvimento;
+- GET assinado com a chave do WhatsApp → autenticado, app
+  `praxis-crm-whatsapp`, uma função;
+- sem assinatura, com a chave da A11, com a reserva da A11 ou com
+  assinatura adulterada → 401; a reserva própria funciona; `INNGEST_DEV`
+  hospedado não desliga a assinatura;
+- o cliente nunca usa a assinatura, a reserva ou a chave de evento da
+  A11; configuração da função;
+- nada no console.
+
+`tests/unit/b3-2d2a-estatico.test.ts`:
+- nenhum arquivo da B3 importa a A11 ou a agenda ou lê as variáveis
+  genéricas do Inngest;
+- nenhuma API antiga da inbox; nenhum acesso direto à tabela;
+- consumidor e rota sem `.from("<tabela>")`, sem cliente ou módulo do
+  domínio, só RPCs `whatsapp_inbox_*`;
+- um único `step.run`, que chama `processWhatsAppInboxEntry`; só a inbox
+  e o consumidor tocam no claim; o resultado é só `{ outcome, code }`.
+
+`supabase/tests/database/34_b3_2d2a_inbox_dispose.test.sql` (43):
+- coluna, lista fechada, imutabilidade e tabela sem privilégio direto;
+- argumentos exatos, SECURITY DEFINER, só `service_role`;
+- token atual e lease vigente → `completed` com a disposição; repetir →
+  `already_processed` sem mudar nada; nada mais finaliza depois;
+- código bruto, fora da lista, vazio ou ausente recusado;
+- `complete` continua sem disposição; nenhuma auditoria;
+- token substituído, inventado, ausente ou de outra entrada (outro
+  workspace e canal) → `claim_lost`, sem mudar nada;
+- lease vencida e fronteira → `claim_lost`; só um novo claim devolve um
+  dono;
+- falha terminal, Preview × Production, entrada inexistente, sem
+  ambiente assinado, `authenticated` e `anon`.
+
+`scripts/b3-2d2a-inbox-dispose-concurrency-check.sh` (passo novo do CI):
+1. **Dois consumidores** pela mesma entrada, atrás de uma transação que
+   segura a linha: um claim e um busy.
+2. **Duas finalizações com o mesmo token** ao mesmo tempo: a segunda
+   espera a trava (cerca de 3,9 s no CI) e vê `already_processed`; a
+   disposição e o horário são gravados uma vez.
+3. **Lease vencida de verdade** (15 s), sem novo claim: o dispose
+   original recebe `claim_lost` e nada muda; um consumidor novo reclama,
+   o token original segue recusado, só o novo finaliza, e repetir não
+   regrava a disposição.
+
+O pgTAP 31 e o 33 só tiveram as listas exatas de colunas e de funções
+atualizadas.
+
+### 20.8 Mutações
+
+Uma mutação por vez, desfeita depois de cada uma.
+
+**Servidor** (local; 18 mutações, todas detectadas)
+
+| Mutação | Detectada por |
+|---|---|
+| M1 claim fora do `step.run` | claim e finalização dentro do mesmo `step.run`; estático: um único `step.run` com `processWhatsAppInboxEntry` |
+| M2 estado do canal vindo do chamador no lugar do banco | contexto passado junto com o `inboxId` é ignorado (canal pausado na linha) |
+| M2b contexto do chamador repassado ao claim | o claim é pedido só com `{ inboxId }` |
+| M3 `routing_mismatch` ignorado | 10 testes: routing de outro canal (caminho completo e tabela), caixa diferente, falha terminal prevalecendo |
+| M4 canal pausado processado | matriz do canal (`paused`), decisão com cada estado, contexto ignorado |
+| M5 canal desativado descartado | matriz do canal (`disabled`), decisão com cada estado |
+| M6 complete depois da lease vencida | banco, D1 abaixo |
+| M7 segunda finalização depois da finalização (inclusive depois de `claim_lost`) | 29 testes, entre eles "claim_lost: uma única chamada" e "nenhuma outra finalização" |
+| M8 erro bruto como código do release | adaptador falhando por dentro → `consumer_transient_error` (3 testes) |
+| M9 importação da A11 | estático: nenhum arquivo da B3 importa `@/server/ingest` |
+| M10a chave de evento caindo para `INNGEST_EVENT_KEY` | estático: variáveis genéricas; cliente e configuração nunca usam as chaves da A11 |
+| M10b reserva de assinatura omitida (SDK cai em `INNGEST_SIGNING_KEY_FALLBACK`) | GET assinado com a reserva da A11 → 401; reserva própria aceita; chaves do cliente |
+| M10c modo de desenvolvimento não forçado em ambiente hospedado | `INNGEST_DEV` hospedado não desliga a assinatura |
+| M11 evento interno com campos extras aceito | recusa de workspace, canal/routing key e provedor/ambiente no `data`; evento inválido sem `step.run` |
+| M12 escrita em tabela da A7 (`.from("conversations")`) | estático: consumidor sem `.from("<tabela>")` nem cliente do domínio |
+| M14 hash não conferido de novo | reconferência do hash (2 testes) |
+| M15 estado do canal antes do roteamento | a falha terminal prevalece sobre o canal pausado |
+| M16 adaptador escolhido sem olhar o provedor do canal | canal YCloud nunca recebe o simulador |
+| M17 ignorado finalizado pelo `complete`, sem disposição | 16 testes: dispose com a disposição, mesmo objeto do claim, resultados repassados |
+
+Na rodada da M9, um teste da rota também falhou por acaso. Era o teste
+instável da assinatura adulterada, corrigido em `8c657bd`; a M9 é pega
+pelo teste estático.
+
+A M12 só é pega pelo teste estático: na execução, a escrita mutante é
+disparada em segundo plano, e o teste termina antes de ela chegar ao
+cliente simulado. A conferência estática é a barreira para esse caso.
+
+**Banco** (PRs temporárias #100 a #102, sobre `8c657bd`, com o pgTAP sem
+interromper o job)
+
+| Mutação | Reprovada por |
+|---|---|
+| D1 (M6) finalização recriada sem conferir `lease_until` | pgTAP 33, seção 13: 14 de 99 (complete, fail e release com a lease vencida, fronteira e o reclaim seguinte); pgTAP 34: lease vencida, fronteira, nada muda e o reclaim seguinte (28–31). Concorrência da B3.2d-1, cenário 4: `o complete com a lease vencida deveria ser recusado, veio: completed` (o job para ali, antes da concorrência da B3.2d-2a) |
+| D2 (M13) dispose gravando direto, sem conferir token nem lease | pgTAP 34: 13 testes, entre eles token substituído, inventado, ausente e de outra entrada (22–25), só o token atual (26), lease vencida e fronteira (28–31), Production × Preview (35, 37, 40) e sem `service_role` (43). Concorrência, cenário 3: `dispose com a lease vencida deveria ser recusado, veio: completed` |
+| D3 sem o gatilho de imutabilidade | pgTAP 34: a disposição só nasce na transição (2) e é imutável (16). A concorrência passa, como esperado: ela não reescreve a disposição |
+
+As PRs temporárias #98 e #100 a #102 foram fechadas, com as branches
+apagadas.
+
+### 20.9 Limitações e o que fica para a B3.2d-2b e a B3.2e
+
+- **B3.2d-2b — evolução do domínio reaproveitando a A7**, sem tabelas
+  paralelas de conversa ou mensagem:
+  - identidade só por BSUID, sem telefone;
+  - mensagens sem texto;
+  - `origin` e `sender_classification` (§15.10);
+  - identidades internas;
+  - custo informado pelo provedor;
+  - status `accepted`;
+  - idempotência do efeito pelo id estável do evento, com a RPC do efeito
+    conferindo `inboxId`, token e lease vigente no banco (portão do
+    §19.9);
+  - criação de lead só para `inbound` + `external`; nada para chatbot,
+    eco, histórico, status, identidade interna ou evento técnico.
+  - Nada disso existe ainda: `send_message`, o simulador e as regras de
+    lead da A7 e as tabelas de conversa, contato, lead e atividade não
+    foram tocados.
+- **B3.2e — reconciliador.** As entradas liberadas (canal fora de
+  `active`, efeito não implementado, chave ou adaptador indisponível) e
+  as `processing` com lease vencida ficam pendentes, sem republicação.
+  Republicação, espera entre tentativas e teto de `claim_count` são da
+  B3.2e, que continua portão obrigatório antes de qualquer webhook real.
+- **Uma entrega com claim perdido** (`claim_lost`) não é repetida pelo
+  consumidor; a entrada volta a ser reclamável quando a lease vence.
+- **Migration não aplicada no hospedado.**
+- **Nada configurado fora do código:**
+  - nenhuma migration aplicada no Supabase hospedado;
+  - nenhuma variável na Vercel (Production continua sem `WHATSAPP_*`);
+  - nenhum app ou função registrado no Inngest;
+  - nada na YCloud, na Meta ou na Cloudflare;
+  - nenhuma mensagem enviada;
+  - nenhuma mudança no chatbot;
+  - nenhum dado real tocado; nenhum lead, contato, conversa ou atividade
+    criado.
