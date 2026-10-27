@@ -38,6 +38,11 @@ function sign(key: string, body = "", ts = Math.floor(Date.now() / 1000)) {
   return `t=${ts}&s=${createHmac("sha256", raw).update(body + ts).digest("hex")}`;
 }
 
+/** Troca SEMPRE o último dígito da assinatura (nunca fica igual). */
+function tamper(signature: string) {
+  return signature.slice(0, -1) + (signature.endsWith("0") ? "1" : "0");
+}
+
 function hosted(env: "preview" | "production" = "preview") {
   vi.stubEnv("VERCEL_ENV", env);
   vi.stubEnv("WHATSAPP_ENV_SIGNING_KEY", "chave-de-teste-b3-whatsapp-0123456789");
@@ -121,7 +126,7 @@ describe("2. assinatura só com a chave do WhatsApp", () => {
     ["sem assinatura", undefined],
     ["com a signing key da A11/agenda", sign(A11_KEY)],
     ["com a signing key reserva da A11/agenda", sign(A11_FALLBACK)],
-    ["com assinatura adulterada", sign(WHATSAPP_KEY).replace(/s=./, "s=0")],
+    ["com assinatura adulterada", tamper(sign(WHATSAPP_KEY))],
   ])("%s: 401", async (_name, signature) => {
     expect((await get(signature)).status).toBe(401);
   });
