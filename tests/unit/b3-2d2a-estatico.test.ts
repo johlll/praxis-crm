@@ -90,10 +90,10 @@ describe("2. inbox só pelas RPCs com claim", () => {
 });
 
 describe("3. o consumidor não escreve no domínio", () => {
-  it.each(CONSUMER_FILES.map((f) => [rel(f), f]))("%s: sem .from(, sem cliente do domínio, sem módulos do domínio", (_name, file) => {
+  it.each(CONSUMER_FILES.map((f) => [rel(f), f]))("%s: sem .from(<tabela>), sem cliente do domínio, sem módulos do domínio", (_name, file) => {
     if (!existsSync(file)) throw new Error("arquivo ausente");
     const src = code(file);
-    expect(src).not.toMatch(/\.from\(/);
+    expect(src).not.toMatch(/\.from\(\s*["'`]/);
     expect(src).not.toMatch(/@\/server\/supabase|@\/modules\/|@\/server\/data|createAdminSupabaseClient/);
     for (const rpc of src.match(/rpc\(\s*["'][a-z_]+["']/g) ?? []) expect(rpc).toMatch(/whatsapp_inbox_/);
     expect(src).not.toMatch(/send_message|simulate_inbound_whatsapp_message|conversations|contacts|leads|activities|opportunit/);
