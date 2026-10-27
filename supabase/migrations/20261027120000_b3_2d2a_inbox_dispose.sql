@@ -155,6 +155,12 @@ begin
      or p_disposition not in ('ignored_history', 'ignored_group_message', 'ignored_non_whatsapp_product', 'unsupported_event') then
     raise exception 'invalid_disposition';
   end if;
+  update public.whatsapp_webhook_inbox
+  set state = 'processed', processed_at = now(), disposition = p_disposition, claim_token = null, claimed_at = null, lease_until = null
+  where id = p_inbox_id and state = 'processing';
+  if found then
+    return jsonb_build_object('outcome', 'completed');
+  end if;
   return private.whatsapp_inbox_finish(p_inbox_id, p_claim_token, 'processed', p_disposition);
 end;
 $body$;
