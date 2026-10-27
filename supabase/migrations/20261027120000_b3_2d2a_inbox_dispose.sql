@@ -49,9 +49,6 @@ $body$;
 
 revoke all on function private.whatsapp_webhook_inbox_disposition_guard() from public, anon, authenticated;
 
-create trigger whatsapp_webhook_inbox_disposition_guard
-  before update on public.whatsapp_webhook_inbox
-  for each row execute function private.whatsapp_webhook_inbox_disposition_guard();
 
 -- ---------------------------------------------------------------------
 -- Finalização: a mesma de complete, fail e release, com a disposição
