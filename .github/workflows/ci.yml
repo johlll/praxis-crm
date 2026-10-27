@@ -165,6 +165,14 @@ jobs:
         # próprio; roda antes do passo que recria o banco local.
         run: bash scripts/b3-2d1-inbox-claim-concurrency-check.sh
 
+      - name: Teste de concorrência real (B3.2d-2a — finalização sem efeito da inbox)
+        # Dois consumidores pela mesma entrada (um claim só), duas
+        # finalizações com o mesmo token (uma disposição só) e lease vencida
+        # de verdade (o token original perde; só o novo finaliza) — ver
+        # scripts/b3-2d2a-inbox-dispose-concurrency-check.sh. Canal próprio;
+        # roda antes do passo que recria o banco local.
+        run: bash scripts/b3-2d2a-inbox-dispose-concurrency-check.sh
+
       - name: Atualização a partir da versão anterior (numeração de propostas)
         # "Aplicar migrations do zero" já valida a criação do banco; este
         # passo valida a ATUALIZAÇÃO com dados emitidos pela versão anterior.
