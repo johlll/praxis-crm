@@ -230,7 +230,7 @@ select wa_message_id as wamid_env1 from public.messages where id = (:'env1'::jso
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 select apply_message_status_event('b3d2b1-legado', :'wamid_env1', 'delivered', now()) ->> 'status' as st_env1 \gset
-select is(:'st_env1', 'delivered', 'status da A7 continua sendo aplicado');
+select is(:'st_env1'::text, 'delivered'::text, 'status da A7 continua sendo aplicado');
 select is(
   (select (items -> 0 ->> 'wa_id') || '|' || jsonb_array_length(items)::text from list_conversations(:'ws_um'::uuid) limit 1),
   '+5511900001001|1', 'list_conversations continua igual (telefone da conversa)'

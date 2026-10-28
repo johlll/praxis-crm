@@ -81,20 +81,29 @@ supabase migration up --local
 
 echo "== 4. conferências"
 psql_db <<SQL
--- Leituras da A7: exatamente as mesmas de antes.
+-- Leituras da A7: exatamente as mesmas de antes. Os ids saem do retrato
+-- (só o postgres o lê) e as leituras rodam como a Ana.
+select split_part(chave, ':', 2) as conv_r1 from public.upgrade_b3d2b1_leituras where chave like 'page1:%' \gset
+select split_part(chave, ':', 2) as conv_r3 from public.upgrade_b3d2b1_leituras
+where chave like 'conversation:%' and split_part(chave, ':', 2) <> :'conv_r1' \gset
 begin;
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', '$ANA', 'role', 'authenticated')::text, true);
-create temporary table leituras_depois on commit drop as
-select s.chave,
-  case
-    when s.chave = 'list_conversations' then (select to_jsonb(lc) from list_conversations('$WS_UM'::uuid) lc limit 1)
-    when s.chave like 'messages:%' then (select to_jsonb(lm) from list_conversation_messages(split_part(s.chave, ':', 2)::uuid, null, 30, null) lm limit 1)
-    when s.chave like 'page1:%' then (select to_jsonb(lm) from list_conversation_messages(split_part(s.chave, ':', 2)::uuid, null, 1, null) lm limit 1)
-    else get_conversation(split_part(s.chave, ':', 2)::uuid)
-  end as valor
-from public.upgrade_b3d2b1_leituras s;
+create temporary table leituras_depois on commit preserve rows as
+select 'list_conversations' as chave, (select to_jsonb(lc) from list_conversations('$WS_UM'::uuid) lc limit 1) as valor
+union all
+select 'messages:' || :'conv_r1', (select to_jsonb(lm) from list_conversation_messages(:'conv_r1'::uuid, null, 30, null) lm limit 1)
+union all
+select 'messages:' || :'conv_r3', (select to_jsonb(lm) from list_conversation_messages(:'conv_r3'::uuid, null, 30, null) lm limit 1)
+union all
+select 'page1:' || :'conv_r1', (select to_jsonb(lm) from list_conversation_messages(:'conv_r1'::uuid, null, 1, null) lm limit 1)
+union all
+select 'conversation:' || :'conv_r1', get_conversation(:'conv_r1'::uuid)
+union all
+select 'conversation:' || :'conv_r3', get_conversation(:'conv_r3'::uuid);
 reset role;
+commit;
+
 do \$check\$
 declare
   v_diff integer;
@@ -107,7 +116,6 @@ begin
   end if;
 end;
 \$check\$;
-commit;
 
 do \$check\$
 declare
@@ -164,7 +172,6 @@ end;
 
 -- A7 continua funcionando depois: nova recebida e novo envio pelo CRM
 -- numa conversa antiga (que já tem consentimento).
-select split_part(chave, ':', 2) as conv_r1 from public.upgrade_b3d2b1_leituras where chave like 'page1:%' \gset
 begin;
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', '$ANA', 'role', 'authenticated')::text, true);
