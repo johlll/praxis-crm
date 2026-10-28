@@ -232,7 +232,7 @@ begin
   get diagnostics v_inbound = row_count;
 
   update public.messages
-  set origin = 'crm', sender_classification = 'internal'
+  set origin = 'chatbot', sender_classification = 'automation', origin_correlation_kind = 'chatbot_request', origin_correlation_ref = 'backfill'
   where origin is null and direction = 'outbound' and sent_by is not null;
   get diagnostics v_outbound = row_count;
 
