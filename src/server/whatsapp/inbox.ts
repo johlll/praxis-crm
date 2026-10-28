@@ -66,6 +66,7 @@ export const WHATSAPP_INBOX_ERROR_CODES = [
   "inbox_batch_not_supported",
   "retention_not_configured",
   "inbox_crypto_not_configured",
+  "inbox_key_version_unknown",
   "inbox_decrypt_failed",
   "inbox_integrity_failed",
   "invalid_inbox_event",
@@ -73,6 +74,7 @@ export const WHATSAPP_INBOX_ERROR_CODES = [
   "invalid_inbox_ciphertext",
   "invalid_retention",
   "invalid_error_code",
+  "invalid_disposition",
   "invalid_limit",
   "invalid_lease",
   "inbox_claim_invalid",
@@ -100,6 +102,9 @@ function toInboxError(error: { message?: string } | null | undefined): WhatsAppI
 function cryptoError(error: unknown, fallback: WhatsAppInboxErrorCode): WhatsAppInboxError {
   if (error instanceof WhatsAppInboxCryptoError && error.code === "not_configured") {
     return new WhatsAppInboxError("inbox_crypto_not_configured");
+  }
+  if (error instanceof WhatsAppInboxCryptoError && error.code === "unknown_key_version") {
+    return new WhatsAppInboxError("inbox_key_version_unknown");
   }
   return new WhatsAppInboxError(fallback);
 }
@@ -262,6 +267,8 @@ export type WhatsAppInboxClaim = Readonly<{
   retainUntil: string;
   /** Aquisições de processamento desta entrada, contando esta. */
   claimCount: number;
+  /** SHA-256 gravado na linha; o consumidor o confere de novo (B3.2d-2a). */
+  bodySha256: string;
   claimedAt: string;
   leaseUntil: string;
   verified: VerifiedWebhookBody;
@@ -312,15 +319,17 @@ const finishSchema = z
   .strict();
 
 async function finish(
-  rpc: "whatsapp_inbox_complete" | "whatsapp_inbox_fail" | "whatsapp_inbox_release",
+  rpc: "whatsapp_inbox_complete" | "whatsapp_inbox_fail" | "whatsapp_inbox_release" | "whatsapp_inbox_dispose",
   entry: { inboxId: string; token: string },
-  errorCode?: string,
+  code?: string,
 ) {
   const admin = createWhatsAppAdminSupabaseClient();
   const args =
     rpc === "whatsapp_inbox_complete"
       ? { p_inbox_id: entry.inboxId, p_claim_token: entry.token }
-      : { p_inbox_id: entry.inboxId, p_claim_token: entry.token, p_error_code: errorCode! };
+      : rpc === "whatsapp_inbox_dispose"
+        ? { p_inbox_id: entry.inboxId, p_claim_token: entry.token, p_disposition: code! }
+        : { p_inbox_id: entry.inboxId, p_claim_token: entry.token, p_error_code: code! };
   const { data, error } = await admin.rpc(rpc, args as never);
   if (error) throw toInboxError(error);
   const parsed = finishSchema.safeParse(data);
@@ -419,6 +428,7 @@ export async function claimWhatsAppInboxEntry(params: { inboxId: string; leaseSe
     receivedAt: row.received_at,
     retainUntil: row.retain_until,
     claimCount: row.claim_count,
+    bodySha256: row.body_sha256,
     claimedAt: row.claimed_at,
     leaseUntil: row.lease_until,
     verified: VerifiedWebhookBody.afterSignatureCheck(bytes),
@@ -460,6 +470,34 @@ export async function failWhatsAppInboxClaim(claim: WhatsAppInboxClaim, errorCod
 export async function releaseWhatsAppInboxClaim(claim: WhatsAppInboxClaim, errorCode: string): Promise<{ outcome: WhatsAppInboxFinishOutcome }> {
   const entry = requireClaim(claim);
   return finish("whatsapp_inbox_release", entry, requireErrorCode(errorCode));
+}
+
+/**
+ * Disposições de uma entrada finalizada SEM efeito no domínio (B3.2d-2a,
+ * docs/decisoes/b3-whatsapp-real.md §20): lista fechada, igual à do banco.
+ */
+export const WHATSAPP_INBOX_DISPOSITIONS = [
+  "ignored_history",
+  "ignored_group_message",
+  "ignored_non_whatsapp_product",
+  "unsupported_event",
+] as const;
+
+export type WhatsAppInboxDisposition = (typeof WHATSAPP_INBOX_DISPOSITIONS)[number];
+
+const DISPOSITIONS: ReadonlySet<string> = new Set(WHATSAPP_INBOX_DISPOSITIONS);
+
+/** processing → processed SEM efeito no domínio, com a disposição, só com o
+ * token deste claim e a lease vigente (a mesma regra do complete). Repetir
+ * devolve `already_processed`; lease vencida ou token substituído,
+ * `claim_lost`. Nada é repetido. */
+export async function disposeWhatsAppInboxClaim(
+  claim: WhatsAppInboxClaim,
+  disposition: WhatsAppInboxDisposition,
+): Promise<{ outcome: WhatsAppInboxFinishOutcome }> {
+  const entry = requireClaim(claim);
+  if (typeof disposition !== "string" || !DISPOSITIONS.has(disposition)) throw new WhatsAppInboxError("invalid_disposition");
+  return finish("whatsapp_inbox_dispose", entry, disposition);
 }
 
 // ---------------------------------------------------------------------

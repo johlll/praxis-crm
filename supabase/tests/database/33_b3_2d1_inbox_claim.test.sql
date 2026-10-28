@@ -229,7 +229,7 @@ select is(
   (select coalesce(string_agg(column_name::text, ',' order by column_name::text collate "C"), '')
    from information_schema.columns
    where table_schema = 'public' and table_name = 'whatsapp_webhook_inbox'),
-  'auth_tag,body_sha256,channel_id,ciphertext,claim_count,claim_token,claimed_at,conflict_count,environment,error_code,failed_at,id,key_version,last_conflict_at,last_conflict_sha256,last_release_code,last_released_at,lease_until,nonce,processed_at,provider,provider_event_id,provider_event_type,purged_at,received_at,retain_until,state,workspace_id',
+  'auth_tag,body_sha256,channel_id,ciphertext,claim_count,claim_token,claimed_at,conflict_count,disposition,environment,error_code,failed_at,id,key_version,last_conflict_at,last_conflict_sha256,last_release_code,last_released_at,lease_until,nonce,processed_at,provider,provider_event_id,provider_event_type,purged_at,received_at,retain_until,state,workspace_id',
   'colunas: as da B3.2b mais token, horário e lease do claim, contagem de claims e evidência sanitizada da última liberação'
 );
 select is(
@@ -307,8 +307,8 @@ select is(
   (select string_agg(p.proname, ',' order by p.proname collate "C")
    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public' and p.proname like 'whatsapp\_inbox\_%'),
-  'whatsapp_inbox_claim,whatsapp_inbox_complete,whatsapp_inbox_fail,whatsapp_inbox_list,whatsapp_inbox_purge_expired,whatsapp_inbox_release,whatsapp_inbox_store',
-  'funções da inbox: gravação, listagem segura, expurgo e as do claim; nenhuma outra'
+  'whatsapp_inbox_claim,whatsapp_inbox_complete,whatsapp_inbox_dispose,whatsapp_inbox_fail,whatsapp_inbox_list,whatsapp_inbox_purge_expired,whatsapp_inbox_release,whatsapp_inbox_store',
+  'funções da inbox: gravação, listagem segura, expurgo, as do claim e a finalização sem efeito (B3.2d-2a); nenhuma outra'
 );
 select is(
   (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace

@@ -3442,6 +3442,7 @@ export type Database = {
           claim_token: string | null
           claimed_at: string | null
           conflict_count: number
+          disposition: string | null
           environment: Database["public"]["Enums"]["whatsapp_environment"]
           error_code: string | null
           failed_at: string | null
@@ -3472,6 +3473,7 @@ export type Database = {
           claim_token?: string | null
           claimed_at?: string | null
           conflict_count?: number
+          disposition?: string | null
           environment: Database["public"]["Enums"]["whatsapp_environment"]
           error_code?: string | null
           failed_at?: string | null
@@ -3502,6 +3504,7 @@ export type Database = {
           claim_token?: string | null
           claimed_at?: string | null
           conflict_count?: number
+          disposition?: string | null
           environment?: Database["public"]["Enums"]["whatsapp_environment"]
           error_code?: string | null
           failed_at?: string | null
@@ -5163,6 +5166,14 @@ export type Database = {
       }
       whatsapp_inbox_complete: {
         Args: { p_claim_token: string; p_inbox_id: string }
+        Returns: Json
+      }
+      whatsapp_inbox_dispose: {
+        Args: {
+          p_claim_token: string
+          p_disposition: string
+          p_inbox_id: string
+        }
         Returns: Json
       }
       whatsapp_inbox_fail: {
