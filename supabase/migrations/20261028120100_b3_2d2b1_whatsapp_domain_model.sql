@@ -777,6 +777,7 @@ create table public.whatsapp_effect_ledger (
   )),
   inbox_id uuid references public.whatsapp_webhook_inbox (id) on delete set null,
   message_id uuid,
+  body_text text,
   recorded_at timestamptz not null default now(),
   -- O ambiente, o workspace e o provedor são os do canal: nenhum efeito
   -- cruza canal, workspace ou ambiente.
