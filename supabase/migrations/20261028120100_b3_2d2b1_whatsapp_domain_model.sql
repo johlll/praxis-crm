@@ -605,7 +605,8 @@ begin
   if p_actor_user_id is null or p_workspace_id is null then
     raise exception 'actor_required';
   end if;
-  if not private.whatsapp_actor_can_manage(p_workspace_id, p_actor_user_id) then
+  if not exists (select 1 from public.memberships m where m.workspace_id = p_workspace_id and m.user_id = p_actor_user_id
+                 and m.status = 'active' and m.role in ('owner', 'admin', 'manager')) then
     raise exception 'insufficient_permission';
   end if;
   if not exists (
@@ -709,7 +710,8 @@ begin
   if p_actor_user_id is null or p_workspace_id is null then
     raise exception 'actor_required';
   end if;
-  if not private.whatsapp_actor_can_manage(p_workspace_id, p_actor_user_id) then
+  if not exists (select 1 from public.memberships m where m.workspace_id = p_workspace_id and m.user_id = p_actor_user_id
+                 and m.status = 'active' and m.role in ('owner', 'admin', 'manager')) then
     raise exception 'insufficient_permission';
   end if;
   if p_active is null then
