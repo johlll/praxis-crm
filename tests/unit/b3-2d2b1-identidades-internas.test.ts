@@ -200,6 +200,37 @@ describe("3. listagem e ativação", () => {
 });
 
 describe("4. erros sanitizados, nada no console", () => {
+  it("código conhecido vira a mensagem do produto; mensagem crua vira a genérica", async () => {
+    const s = await loadService();
+    const { toUserMessage } = await import("@/lib/errors");
+    rpcMock.mockResolvedValue({ data: null, error: { message: "internal_identity_taken" } });
+    await expect(s.createWhatsAppInternalIdentity({ channelId: CHANNEL, label: "X", phoneE164: PHONE })).resolves.toEqual({
+      ok: false,
+      error: "Este número ou BSUID já está cadastrado como interno neste canal.",
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    rpcMock.mockResolvedValue({ data: null, error: { message: `violates check constraint (${PHONE})` } });
+    await expect(s.createWhatsAppInternalIdentity({ channelId: CHANNEL, label: "X", phoneE164: PHONE })).resolves.toEqual({
+      ok: false,
+      error: toUserMessage({ message: "unknown" }),
+    });
+  });
+
+  it("camada do servidor: mensagem crua do banco vira o código unknown, sem o valor", async () => {
+    const { adminCreateWhatsAppInternalIdentity } = await import("@/server/whatsapp/admin/internal-identities");
+    rpcMock.mockResolvedValue({ data: null, error: { message: `duplicate key (phone_e164)=(${PHONE})` } });
+    const error = await adminCreateWhatsAppInternalIdentity({
+      workspaceId: WS,
+      actorUserId: USER,
+      channelId: CHANNEL,
+      label: "X",
+      phoneE164: PHONE,
+      bsuid: null,
+    }).catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: "unknown", message: "unknown" });
+    expect(String((error as Error).stack)).not.toContain(PHONE);
+  });
+
   it.each([
     ["internal_identity_taken"],
     ["insufficient_permission"],
