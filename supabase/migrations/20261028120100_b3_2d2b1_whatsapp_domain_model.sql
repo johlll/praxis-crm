@@ -469,6 +469,7 @@ set search_path = ''
 as $body$
   select case
     when p_incoming is null then false
+    when p_incoming = 'accepted' then false
     when p_current is null then true
     when p_current = p_incoming then false
     when p_incoming = 'failed' then p_current not in ('delivered', 'read')
