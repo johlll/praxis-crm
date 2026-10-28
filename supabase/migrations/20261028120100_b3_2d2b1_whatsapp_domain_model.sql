@@ -425,9 +425,6 @@ $body$;
 
 revoke all on function private.messages_provider_cost_guard() from public, anon, authenticated, service_role;
 
-create trigger messages_provider_cost_guard
-  before update on public.messages
-  for each row execute function private.messages_provider_cost_guard();
 
 -- ---------------------------------------------------------------------
 -- Status
