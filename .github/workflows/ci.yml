@@ -173,6 +173,14 @@ jobs:
         # roda antes do passo que recria o banco local.
         run: bash scripts/b3-2d2a-inbox-dispose-concurrency-check.sh
 
+      - name: Teste de concorrência real (B3.2d-2b1 — reserva do ledger de efeitos)
+        # Duas reservas do mesmo evento (reserved e duplicate com o mesmo
+        # id), uma reserva desfeita por falha depois dela (a outra reserva)
+        # e o mesmo evento com outro efeito (conflict) — ver
+        # scripts/b3-2d2b1-ledger-concurrency-check.sh. Canal próprio; roda
+        # antes do passo que recria o banco local.
+        run: bash scripts/b3-2d2b1-ledger-concurrency-check.sh
+
       - name: Atualização a partir da versão anterior (numeração de propostas)
         # "Aplicar migrations do zero" já valida a criação do banco; este
         # passo valida a ATUALIZAÇÃO com dados emitidos pela versão anterior.

@@ -16,7 +16,10 @@
 --  - identidades internas: só owner e admin, por workspace, ambiente e
 --    canal; listagem sem índice cego nem cifra;
 --  - ledger: chave (ambiente, canal, provedor, evento), sem conteúdo,
---    sem colisão entre canal, provedor e ambiente;
+--    sem colisão entre canal, provedor e ambiente; todo efeito preso à
+--    inbox do mesmo contexto e, quando houver, à mensagem do mesmo
+--    canal; reserva que lê o contexto da inbox e separa reserved,
+--    duplicate e conflict;
 --  - backfill determinístico e idempotente.
 --
 -- Escrito ANTES da implementação, contra a main 6633084. Tudo fictício:
@@ -25,7 +28,7 @@
 -- arquivo roda até o fim e mostra cada asserção que falha.
 
 begin;
-select plan(82);
+select plan(101);
 
 \set ana    '20000000-0000-0000-0000-000000000001'
 \set bruno  '20000000-0000-0000-0000-000000000002'
@@ -580,44 +583,191 @@ select is(
 reset role;
 
 -- ---------------------------------------------------------------------
--- 8) Ledger de efeitos: idempotente e sem colisão
+-- 8) Ledger de efeitos: preso à inbox e à mensagem do mesmo contexto
 -- ---------------------------------------------------------------------
 
-create function pg_temp.lr(p_env text, p_ws text, p_ch text, p_prov text, p_evt text, p_effect text default 'message.inbound') returns text language plpgsql as $f$
-declare
-  v uuid;
+-- Canal YCloud no mesmo workspace e ambiente, só para o caso "outro
+-- provedor" (o canal fixa o provedor: só muda junto com o canal).
+\set ch_yc '38000000-0000-0000-0000-000000000005'
+insert into public.whatsapp_channels (id, workspace_id, label, display_phone_number, created_by, provider, is_simulator, environment, routing_key)
+values (:'ch_yc'::uuid, :'ws_um'::uuid, 'YCloud', '1', :'ana'::uuid, 'ycloud', false, 'preview', 'b3d2b1-yc');
+
+-- Entrada fictícia da inbox (cifra de mentira; nenhum corpo real).
+create function pg_temp.inbox(p_env text, p_ws text, p_ch text, p_prov text, p_evt text) returns text language sql as $f$
+  insert into public.whatsapp_webhook_inbox (environment, workspace_id, channel_id, provider, provider_event_id, provider_event_type,
+    body_sha256, key_version, nonce, ciphertext, auth_tag, retain_until)
+  values (p_env::public.whatsapp_environment, p_ws::uuid, p_ch::uuid, p_prov::public.whatsapp_provider, p_evt, 'whatsapp.inbound_message.received',
+    repeat('a', 64), '1', 'AAAAAAAAAAAAAAAA', 'Q29ycG8gZmljdGljaW8=', 'AAAAAAAAAAAAAAAAAAAAAA==', now() + interval '1 hour')
+  returning id::text
+$f$;
+
+select pg_temp.inbox('preview', :'ws_um', :'ch_a', 'simulated', 'evt-1') as in_a1 \gset
+select pg_temp.inbox('preview', :'ws_um', :'ch_a', 'simulated', 'evt-x') as in_ax \gset
+select pg_temp.inbox('preview', :'ws_um', :'ch_a', 'simulated', 'evt-rb') as in_rb \gset
+select pg_temp.inbox('preview', :'ws_um', :'ch_a', 'simulated', 'evt-del') as in_del \gset
+select pg_temp.inbox('preview', :'ws_um', :'ch_a2', 'simulated', 'evt-1') as in_a2 \gset
+select pg_temp.inbox('preview', :'ws_dois', :'ch_b', 'simulated', 'evt-1') as in_b \gset
+select pg_temp.inbox('production', :'ws_um', :'ch_prod', 'simulated', 'evt-1') as in_prod \gset
+select pg_temp.inbox('preview', :'ws_um', :'ch_yc', 'ycloud', 'evt-1') as in_yc \gset
+
+-- Mensagens do mesmo canal, de outro canal do mesmo workspace e de outro
+-- workspace.
+select pg_temp.txt(format($$insert into public.conversations (workspace_id, channel_id, wa_id) values (%L, %L, '+5511900004001') returning id::text$$, :'ws_um', :'ch_a2')) as conv_a2 \gset
+select pg_temp.txt(format($$insert into public.conversations (workspace_id, channel_id, wa_id) values (%L, %L, '+5511900004002') returning id::text$$, :'ws_dois', :'ch_b')) as conv_ws2 \gset
+select pg_temp.msg(:'conv_b', :'ws_um', :'ch_a', 'inbound', 'inbound', 'external', 'image', null, 'pm-l1') as ok \gset
+select pg_temp.msg(:'conv_b', :'ws_um', :'ch_a', 'inbound', 'inbound', 'external', 'image', null, 'pm-l4') as ok \gset
+select pg_temp.msg(:'conv_a2', :'ws_um', :'ch_a2', 'inbound', 'inbound', 'external', 'image', null, 'pm-l2') as ok \gset
+select pg_temp.msg(:'conv_ws2', :'ws_dois', :'ch_b', 'inbound', 'inbound', 'external', 'image', null, 'pm-l3') as ok \gset
+select pg_temp.txt($$select id::text from public.messages where provider_message_id = 'pm-l1'$$) as msg_a \gset
+select pg_temp.txt($$select id::text from public.messages where provider_message_id = 'pm-l4'$$) as msg_del \gset
+select pg_temp.txt($$select id::text from public.messages where provider_message_id = 'pm-l2'$$) as msg_a2 \gset
+select pg_temp.txt($$select id::text from public.messages where provider_message_id = 'pm-l3'$$) as msg_ws2 \gset
+
+-- Gravação direta no ledger (como postgres): 'ok' ou o SQLSTATE. Sem
+-- p_keep, a linha é desfeita logo depois: cada caso fica independente.
+create function pg_temp.li(p_env text, p_ws text, p_ch text, p_evt text, p_inbox text, p_msg text default null,
+  p_effect text default 'message.inbound', p_keep boolean default false, p_prov text default 'simulated') returns text language plpgsql as $f$
 begin
-  execute format('select private.whatsapp_effect_ledger_reserve(%L::public.whatsapp_environment, %L::uuid, %L::uuid, %L::public.whatsapp_provider, %L, %L, null)',
-    p_env, p_ws, p_ch, p_prov, p_evt, p_effect) into v;
-  return case when v is null then 'duplicado' else 'reservado' end;
-exception when others then
-  return sqlstate;
+  begin
+    execute format(
+      'insert into public.whatsapp_effect_ledger (environment, workspace_id, channel_id, provider, provider_event_id, effect, inbox_id, message_id) values (%L, %L, %L, %L, %L, %L, %L, %L)',
+      p_env, p_ws, p_ch, p_prov, p_evt, p_effect, p_inbox, p_msg);
+    if not p_keep then
+      raise exception 'li_desfazer';
+    end if;
+  exception when others then
+    if sqlerrm = 'li_desfazer' then
+      return 'ok';
+    end if;
+    return sqlstate;
+  end;
+  return 'ok';
 end
 $f$;
 
-select is(pg_temp.lr('preview', :'ws_um', :'ch_a', 'simulated', 'evt-1'), 'reservado', 'primeiro efeito do evento: reservado');
-select is(pg_temp.lr('preview', :'ws_um', :'ch_a', 'simulated', 'evt-1'), 'duplicado', 'o mesmo evento estável de novo: duplicado, nenhum efeito novo');
-select is(pg_temp.lr('preview', :'ws_um', :'ch_a', 'simulated', 'evt-1', 'message.status'), 'duplicado', 'o mesmo evento com outro efeito declarado continua duplicado');
+select is(pg_temp.li('preview', :'ws_um', :'ch_a', 'evt-1', null), '23502', 'ledger sem inbox: recusado (todo efeito tem uma inbox)');
+select is(pg_temp.li('preview', :'ws_um', :'ch_a', 'evt-1', :'in_b'), '23503', 'inbox de outro workspace: recusada');
+select is(pg_temp.li('preview', :'ws_um', :'ch_a', 'evt-1', :'in_a2'), '23503', 'inbox de outro canal do mesmo workspace: recusada');
+select is(pg_temp.li('preview', :'ws_um', :'ch_a', 'evt-1', :'in_prod'), '23503', 'inbox de outro ambiente: recusada');
+select is(pg_temp.li('preview', :'ws_um', :'ch_a', 'evt-1', :'in_yc'), '23503', 'inbox de outro provedor (canal YCloud do mesmo workspace e ambiente): recusada');
+select is(pg_temp.li('preview', :'ws_um', :'ch_a', 'evt-1', :'in_ax'), '23503', 'inbox do mesmo canal com outro provider_event_id: recusada');
+select is(pg_temp.li('preview', :'ws_um', :'ch_a', 'evt-1', :'in_a1', :'msg_a2'), '23503', 'mensagem de outro canal do mesmo workspace: recusada');
+select is(pg_temp.li('preview', :'ws_um', :'ch_a', 'evt-1', :'in_a1', :'msg_ws2'), '23503', 'mensagem de outro workspace: recusada');
+select is(pg_temp.li('preview', :'ws_um', :'ch_a', 'evt-1', :'in_a1', null, 'account'), 'ok', 'inbox exatamente do mesmo contexto, sem mensagem (efeito que não produz mensagem): aceita');
+select is(pg_temp.li('preview', :'ws_um', :'ch_a', 'evt-1', :'in_a1', :'msg_a'), 'ok', 'mensagem do mesmo workspace e canal: aceita');
 select is(
-  pg_temp.lr('preview', :'ws_um', :'ch_a2', 'simulated', 'evt-1') || ' ' || pg_temp.lr('preview', :'ws_dois', :'ch_b', 'simulated', 'evt-1') || ' ' || pg_temp.lr('production', :'ws_um', :'ch_prod', 'simulated', 'evt-1'),
-  'reservado reservado reservado', 'o mesmo id de evento em outro canal, workspace ou ambiente não colide'
+  pg_temp.li('preview', :'ws_um', :'ch_a', '+5511900001001', :'in_a1') || ' ' || pg_temp.li('preview', :'ws_um', :'ch_a', 'evt-1', :'in_a1', null, 'mensagem com texto'),
+  '23514 23514', 'id de evento com cara de telefone ou efeito fora da lista: recusados no próprio ledger'
+);
+
+-- Remoções: a mensagem pode sair (o ledger guarda o resto); a inbox não.
+select is(pg_temp.li('preview', :'ws_um', :'ch_a', 'evt-del', :'in_del', :'msg_del', 'message.inbound', true), 'ok', 'efeito com mensagem gravado');
+delete from public.messages where id = :'msg_del'::uuid;
+select is(
+  pg_temp.txt(format($$select coalesce(message_id::text, 'null') || '|' || (workspace_id = %L::uuid) || '|' || (channel_id = %L::uuid) || '|' || (inbox_id = %L::uuid) || '|' || provider_event_id
+    from public.whatsapp_effect_ledger where provider_event_id = 'evt-del'$$, :'ws_um', :'ch_a', :'in_del')),
+  'null|true|true|true|evt-del', 'mensagem removida: só message_id zera; workspace, canal, inbox e evento ficam'
 );
 select is(
-  pg_temp.lr('production', :'ws_um', :'ch_a', 'simulated', 'evt-2') || ' ' || pg_temp.lr('preview', :'ws_dois', :'ch_a', 'simulated', 'evt-2') || ' ' || pg_temp.lr('preview', :'ws_um', :'ch_a', 'ycloud', 'evt-2'),
-  '23503 23503 23503', 'ambiente, workspace ou provedor que não são os do canal: recusados'
+  pg_temp.st(format($$delete from public.whatsapp_webhook_inbox where id = %L$$, :'in_del')),
+  '23503', 'a inbox de um efeito não pode ser removida (nunca deixa o ledger sem origem)'
 );
 select is(
-  pg_temp.lr('preview', :'ws_um', :'ch_a', 'simulated', 'evt com espaço') || ' ' || pg_temp.lr('preview', :'ws_um', :'ch_a', 'simulated', '+5511900001001') || ' ' ||
-  pg_temp.lr('preview', :'ws_um', :'ch_a', 'simulated', repeat('e', 129)) || ' ' || pg_temp.lr('preview', :'ws_um', :'ch_a', 'simulated', 'evt-3', 'mensagem com texto'),
-  '23514 23514 23514 23514', 'id de evento malformado (inclusive um telefone) ou efeito fora da lista: recusados'
+  pg_temp.txt($$select string_agg(pg_get_constraintdef(oid), ' ; ' order by conname) from pg_constraint
+    where conrelid = 'public.whatsapp_effect_ledger'::regclass and contype = 'f' and conname in ('whatsapp_effect_ledger_inbox_fkey', 'whatsapp_effect_ledger_message_fkey')$$),
+  'FOREIGN KEY (inbox_id, workspace_id, channel_id, environment, provider, provider_event_id) REFERENCES whatsapp_webhook_inbox(id, workspace_id, channel_id, environment, provider, provider_event_id) ; '
+  || 'FOREIGN KEY (message_id, workspace_id, channel_id) REFERENCES messages(id, workspace_id, channel_id) ON DELETE SET NULL (message_id)',
+  'FKs compostas: a inbox inteira (sem cascata nem set null) e a mensagem do mesmo workspace e canal'
+);
+
+-- Reserva: lê ambiente, workspace, canal, provedor e evento da própria
+-- inbox, no ambiente autenticado. 'reserved', 'duplicate' ou 'conflict'.
+create function pg_temp.lr(p_inbox text, p_effect text default 'message.inbound') returns text language plpgsql as $f$
+declare
+  v_outcome text;
+begin
+  execute format('select outcome from private.whatsapp_effect_ledger_reserve(%L::uuid, %L)', p_inbox, p_effect) into v_outcome;
+  return coalesce(v_outcome, 'NULL');
+exception when others then
+  return case when sqlstate = 'P0001' then sqlerrm else sqlstate end;
+end
+$f$;
+create function pg_temp.lr_id(p_inbox text, p_effect text default 'message.inbound') returns text language plpgsql as $f$
+declare
+  v_id uuid;
+begin
+  execute format('select ledger_id from private.whatsapp_effect_ledger_reserve(%L::uuid, %L)', p_inbox, p_effect) into v_id;
+  return coalesce(v_id::text, 'NULL');
+exception when others then
+  return 'ERRO:' || sqlstate;
+end
+$f$;
+
+select pg_temp.lr_id(:'in_a1') as led_a1 \gset
+select is(
+  pg_temp.txt(format($$select (id = %L::uuid)::text || '|' || environment || '|' || (workspace_id = %L::uuid) || '|' || (channel_id = %L::uuid) || '|' || provider || '|' || provider_event_id || '|' || effect
+    from public.whatsapp_effect_ledger where inbox_id = %L::uuid$$, :'led_a1', :'ws_um', :'ch_a', :'in_a1')),
+  'true|preview|true|true|simulated|evt-1|message.inbound', 'primeira reserva: contexto inteiro copiado da inbox, nenhum do chamador'
 );
 select is(
-  pg_temp.txt(format($$select count(*)::text from public.whatsapp_effect_ledger where provider_event_id = 'evt-1'$$)),
-  '4', 'quatro chaves distintas para evt-1, uma por canal/ambiente'
+  pg_temp.lr(:'in_a1') || ' ' || (pg_temp.lr_id(:'in_a1') = :'led_a1')::text,
+  'duplicate true', 'mesma inbox, mesmo evento, mesmo efeito: duplicate, com o id já gravado'
 );
+select is(
+  pg_temp.lr(:'in_a1', 'message.status') || ' ' || pg_temp.lr_id(:'in_a1', 'message.status'),
+  'conflict NULL', 'mesma chave estável com outro efeito: conflict, nunca duplicate'
+);
+select is(
+  pg_temp.lr(:'in_a2') || ' ' || pg_temp.lr(:'in_b'),
+  'reserved reserved', 'o mesmo id de evento em outro canal ou workspace não colide'
+);
+select is(
+  pg_temp.lr(:'in_prod') || ' ' || pg_temp.lr(:'inventado') || ' ' || pg_temp.lr(null),
+  'ledger_inbox_not_found ledger_inbox_not_found ledger_inbox_not_found', 'inbox de outro ambiente, inexistente ou nula: não encontrada'
+);
+select set_config('request.headers', :'h_prod', true);
+select is(
+  pg_temp.lr(:'in_a2', 'message.status') || ' ' || pg_temp.lr(:'in_ax') || ' ' || pg_temp.lr(:'in_prod'),
+  'ledger_inbox_not_found ledger_inbox_not_found reserved', 'autenticado em Production: inbox de Preview não é encontrada; a de Production reserva sem colidir'
+);
+select set_config('request.headers', '', true);
+select is(pg_temp.lr(:'in_ax'), 'whatsapp_environment_required', 'sem ambiente autenticado: recusado');
+select set_config('request.headers', :'h_prev', true);
+select is(pg_temp.lr(:'in_ax', 'mensagem com texto'), '23514', 'efeito fora da lista: recusado');
+
+-- Reserva desfeita quando a transação falha depois dela.
+create function pg_temp.reserve_then_fail(p_inbox text) returns text language plpgsql as $f$
+begin
+  perform private.whatsapp_effect_ledger_reserve(p_inbox::uuid, 'message.inbound');
+  raise exception 'falha_depois_da_reserva';
+exception when others then
+  return sqlerrm;
+end
+$f$;
+select is(
+  pg_temp.reserve_then_fail(:'in_rb') || ' ' || pg_temp.txt(format($$select count(*)::text from public.whatsapp_effect_ledger where inbox_id = %L::uuid$$, :'in_rb')) || ' ' || pg_temp.lr(:'in_rb'),
+  'falha_depois_da_reserva 0 reserved', 'falha depois da reserva: nada fica no ledger, e o evento reserva de novo'
+);
+select is(
+  pg_temp.txt($$select count(*)::text from public.whatsapp_effect_ledger where provider_event_id = 'evt-1'$$),
+  '4', 'quatro chaves distintas para evt-1 (dois canais, outro workspace e Production)'
+);
+
+-- Mesma chave estável com outra inbox: o banco já impede (inbox única por
+-- canal e evento). Para exercitar a defesa da própria reserva, a
+-- unicidade sai só dentro desta transação e volta em seguida.
+alter table public.whatsapp_webhook_inbox drop constraint whatsapp_webhook_inbox_channel_event_key;
+select pg_temp.inbox('preview', :'ws_um', :'ch_a', 'simulated', 'evt-1') as in_a1_bis \gset
+select is(
+  pg_temp.lr(:'in_a1_bis') || ' ' || pg_temp.txt(format($$select count(*)::text from public.whatsapp_effect_ledger where inbox_id = %L::uuid$$, :'in_a1_bis')),
+  'conflict 0', 'mesma chave estável com inbox diferente: conflict, nada gravado'
+);
+delete from public.whatsapp_webhook_inbox where id = :'in_a1_bis'::uuid;
+alter table public.whatsapp_webhook_inbox add constraint whatsapp_webhook_inbox_channel_event_key unique (channel_id, provider_event_id);
+
 set local role service_role;
 select is(
-  pg_temp.txt($$select count(*)::text from public.whatsapp_effect_ledger$$) like 'ERRO:42501%' and pg_temp.txt(format($$select private.whatsapp_effect_ledger_reserve('preview', %L::uuid, %L::uuid, 'simulated', 'evt-9', 'message.inbound', null)::text$$, :'ws_um', :'ch_a')) like 'ERRO:42501%',
+  pg_temp.txt($$select count(*)::text from public.whatsapp_effect_ledger$$) like 'ERRO:42501%' and pg_temp.lr(:'in_ax') = '42501',
   true, 'service_role não lê o ledger nem reserva efeito direto'
 );
 reset role;
