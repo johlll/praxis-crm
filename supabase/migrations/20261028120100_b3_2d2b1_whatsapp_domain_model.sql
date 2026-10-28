@@ -278,8 +278,8 @@ alter table public.messages
   add constraint messages_text_requires_body check (content_kind <> 'text' or body_text is not null),
   add constraint messages_provider_id_present check (wa_message_id is not null or provider_message_id is not null),
   add constraint messages_provider_ids_format check (
-    (provider_message_id is null or provider_message_id ~ '^\S{1,256}$')
-    and (provider_external_id is null or provider_external_id ~ '^\S{1,256}$')
+    (provider_message_id is null or provider_message_id ~ '^\S{1,255}$')
+    and (provider_external_id is null or provider_external_id ~ '^\S{1,255}$')
     and (provider_message_id is null or provider is not null)
   ),
   add constraint messages_origin_direction check (
