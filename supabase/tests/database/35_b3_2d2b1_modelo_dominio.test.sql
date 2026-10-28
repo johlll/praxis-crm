@@ -235,8 +235,11 @@ select is(
   (select (items -> 0 ->> 'wa_id') || '|' || jsonb_array_length(items)::text from list_conversations(:'ws_um'::uuid) limit 1),
   '+5511900001001|1', 'list_conversations continua igual (telefone da conversa)'
 );
+-- As duas mensagens nascem na mesma transação (mesmo created_at): a
+-- ordem entre elas é a do id, então a conferência não depende dela.
 select is(
-  (select jsonb_array_length(items)::text || '|' || (items -> 0 ->> 'body_text') || '|' || (items -> 1 ->> 'body_text') || '|' || has_more::text
+  (select jsonb_array_length(items)::text || '|' ||
+     (select string_agg(e ->> 'body_text', '|' order by e ->> 'body_text') from jsonb_array_elements(items) e) || '|' || has_more::text
    from list_conversation_messages((:'sim1'::jsonb ->> 'conversation_id')::uuid, null, 30, null)),
   '2|Mensagem fictícia|Resposta fictícia|false', 'list_conversation_messages continua paginando como antes'
 );
