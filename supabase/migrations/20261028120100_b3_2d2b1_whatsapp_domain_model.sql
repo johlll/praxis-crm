@@ -472,7 +472,7 @@ as $body$
     when p_current is null then true
     when p_current = p_incoming then false
     when p_incoming = 'failed' then p_current not in ('delivered', 'read')
-    when p_current = 'failed' then p_incoming in ('delivered', 'read')
+    when p_current = 'failed' then false
     else (case p_incoming when 'queued' then 0 when 'accepted' then 1 when 'sent' then 2 when 'delivered' then 3 when 'read' then 4 end)
        > (case p_current when 'queued' then 0 when 'accepted' then 1 when 'sent' then 2 when 'delivered' then 3 when 'read' then 4 end)
   end;
