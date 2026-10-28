@@ -91,8 +91,7 @@ create table public.whatsapp_identities (
     bsuid_blind_index is null
     or (octet_length(bsuid_blind_index) = 32 and octet_length(bsuid_ciphertext) between 29 and 512
         and bsuid_key_version ~ '^[A-Za-z0-9_-]{1,32}$')
-  ),
-  constraint whatsapp_identities_not_empty check (phone_e164 is not null or bsuid_blind_index is not null)
+  )
 );
 
 comment on table public.whatsapp_identities is
