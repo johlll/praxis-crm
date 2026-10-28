@@ -791,7 +791,7 @@ comment on table public.whatsapp_effect_ledger is
   'Ledger técnico: um efeito por (ambiente, canal, provedor, id estável do evento). Sem conteúdo do webhook. Sem acesso direto; só funções internas com contexto confiável.';
 
 create unique index whatsapp_effect_ledger_event_key
-  on public.whatsapp_effect_ledger (environment, channel_id, provider, provider_event_id);
+  on public.whatsapp_effect_ledger (channel_id, provider, provider_event_id);
 create index whatsapp_effect_ledger_workspace_idx on public.whatsapp_effect_ledger (workspace_id);
 
 -- Reserva o efeito do evento: o id quando é a primeira vez, NULL quando o
@@ -815,7 +815,7 @@ declare
 begin
   insert into public.whatsapp_effect_ledger (environment, workspace_id, channel_id, provider, provider_event_id, effect, inbox_id)
   values (p_environment, p_workspace_id, p_channel_id, p_provider, p_provider_event_id, p_effect, p_inbox_id)
-  on conflict (environment, channel_id, provider, provider_event_id) do nothing
+  on conflict (channel_id, provider, provider_event_id) do nothing
   returning id into v_id;
   return v_id;
 end;
