@@ -275,7 +275,7 @@ alter table public.messages
     'text', 'image', 'video', 'audio', 'document', 'sticker', 'location', 'contacts',
     'interactive', 'button', 'reaction', 'order', 'request_welcome', 'template', 'unsupported', 'other'
   )),
-  add constraint messages_text_requires_body check (content_kind <> 'text' or body_text is not null),
+  add constraint messages_text_requires_body check (body_text is not null),
   add constraint messages_provider_id_present check (wa_message_id is not null or provider_message_id is not null),
   add constraint messages_provider_ids_format check (
     (provider_message_id is null or provider_message_id ~ '^\S{1,255}$')
