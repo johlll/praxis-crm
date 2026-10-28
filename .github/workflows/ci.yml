@@ -179,6 +179,14 @@ jobs:
         # Recria o banco local, por isso roda depois do e2e.
         run: bash scripts/check-upgrade-proposal-counter.sh
 
+      - name: Atualização a partir da versão anterior (B3.2d-2b1 — domínio do WhatsApp sobre a A7)
+        # Usa a A7 na versão anterior (simulador, envio, status), aplica o
+        # modelo do domínio e confere: leituras da A7 idênticas, nada criado
+        # ou apagado, identidades e classificação sem inferência, backfill
+        # idempotente — ver scripts/check-upgrade-b3-2d2b1-dominio.sh.
+        # Recria o banco local, por isso roda por último.
+        run: bash scripts/check-upgrade-b3-2d2b1-dominio.sh
+
       - name: Publicar relatório do Playwright (só se algo falhar)
         if: failure()
         uses: actions/upload-artifact@v4
