@@ -5112,6 +5112,19 @@ export type Database = {
         }
         Returns: Json
       }
+      whatsapp_create_internal_identity: {
+        Args: {
+          p_actor_user_id: string
+          p_bsuid_blind_index: string
+          p_bsuid_ciphertext: string
+          p_bsuid_key_version: string
+          p_channel_id: string
+          p_label: string
+          p_phone_e164: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       whatsapp_create_simulated_channel: {
         Args: {
           p_actor_user_id: string
@@ -5256,6 +5269,14 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      whatsapp_list_internal_identities: {
+        Args: {
+          p_actor_user_id: string
+          p_channel_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       whatsapp_resolve_webhook_route: {
         Args: {
           p_provider: Database["public"]["Enums"]["whatsapp_provider"]
@@ -5269,6 +5290,15 @@ export type Database = {
           status: string
           workspace_id: string
         }[]
+      }
+      whatsapp_set_internal_identity_active: {
+        Args: {
+          p_active: boolean
+          p_actor_user_id: string
+          p_identity_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       whatsapp_store_channel_credential: {
         Args: {
@@ -5357,7 +5387,13 @@ export type Database = {
         | "viewer"
       membership_status: "active" | "suspended"
       message_direction: "inbound" | "outbound"
-      message_status: "queued" | "sent" | "delivered" | "read" | "failed"
+      message_status:
+        | "queued"
+        | "accepted"
+        | "sent"
+        | "delivered"
+        | "read"
+        | "failed"
       opportunity_status: "open" | "won" | "lost"
       outbox_state:
         | "pending"
@@ -5382,7 +5418,19 @@ export type Database = {
         | "purged"
       whatsapp_credential_purpose: "api_key" | "webhook_secret"
       whatsapp_environment: "production" | "preview"
+      whatsapp_message_origin:
+        | "inbound"
+        | "crm"
+        | "business_app"
+        | "chatbot"
+        | "external_api"
+        | "history"
       whatsapp_provider: "simulated" | "ycloud" | "meta"
+      whatsapp_sender_classification:
+        | "external"
+        | "internal"
+        | "automation"
+        | "unresolved"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -5569,7 +5617,14 @@ export const Constants = {
       ],
       membership_status: ["active", "suspended"],
       message_direction: ["inbound", "outbound"],
-      message_status: ["queued", "sent", "delivered", "read", "failed"],
+      message_status: [
+        "queued",
+        "accepted",
+        "sent",
+        "delivered",
+        "read",
+        "failed",
+      ],
       opportunity_status: ["open", "won", "lost"],
       outbox_state: [
         "pending",
@@ -5596,7 +5651,21 @@ export const Constants = {
       ],
       whatsapp_credential_purpose: ["api_key", "webhook_secret"],
       whatsapp_environment: ["production", "preview"],
+      whatsapp_message_origin: [
+        "inbound",
+        "crm",
+        "business_app",
+        "chatbot",
+        "external_api",
+        "history",
+      ],
       whatsapp_provider: ["simulated", "ycloud", "meta"],
+      whatsapp_sender_classification: [
+        "external",
+        "internal",
+        "automation",
+        "unresolved",
+      ],
     },
   },
 } as const

@@ -158,6 +158,10 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   invalid_credential: "Não foi possível guardar a credencial do canal.",
   credential_purpose_not_allowed: "Este tipo de credencial não é aceito para este canal.",
   channel_environment_mismatch: "Este canal pertence a outro ambiente e não pode ser usado aqui.",
+  // B3.2d-2b1 — identidades internas do WhatsApp.
+  invalid_internal_identity: "Informe um nome e um telefone (formato internacional) ou um BSUID válidos.",
+  internal_identity_taken: "Este número ou BSUID já está cadastrado como interno neste canal.",
+  internal_identity_not_found: "Identidade interna não encontrada.",
 };
 
 /** update_lead_basic_fields()/assign_lead()/set_lead_status()/set_lead_value()
