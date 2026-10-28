@@ -610,7 +610,7 @@ begin
   end if;
   if not exists (
     select 1 from public.whatsapp_channels c
-    where c.id = p_channel_id and c.workspace_id = p_workspace_id and c.environment = v_env
+    where c.id = p_channel_id and c.environment = v_env
   ) then
     raise exception 'channel_not_found';
   end if;
@@ -618,7 +618,7 @@ begin
   return coalesce((
     select jsonb_agg(private.whatsapp_internal_identity_safe_row(i) order by i.created_at, i.id)
     from public.whatsapp_internal_identities i
-    where i.channel_id = p_channel_id and i.workspace_id = p_workspace_id and i.environment = v_env
+    where i.channel_id = p_channel_id and i.environment = v_env
   ), '[]'::jsonb);
 end;
 $body$;
