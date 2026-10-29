@@ -3469,7 +3469,7 @@ export type Database = {
           effect: string
           environment: Database["public"]["Enums"]["whatsapp_environment"]
           id: string
-          inbox_id: string | null
+          inbox_id: string
           message_id: string | null
           provider: Database["public"]["Enums"]["whatsapp_provider"]
           provider_event_id: string
@@ -3481,7 +3481,7 @@ export type Database = {
           effect: string
           environment: Database["public"]["Enums"]["whatsapp_environment"]
           id?: string
-          inbox_id?: string | null
+          inbox_id: string
           message_id?: string | null
           provider: Database["public"]["Enums"]["whatsapp_provider"]
           provider_event_id: string
@@ -3493,7 +3493,7 @@ export type Database = {
           effect?: string
           environment?: Database["public"]["Enums"]["whatsapp_environment"]
           id?: string
-          inbox_id?: string | null
+          inbox_id?: string
           message_id?: string | null
           provider?: Database["public"]["Enums"]["whatsapp_provider"]
           provider_event_id?: string
@@ -3509,18 +3509,32 @@ export type Database = {
             referencedColumns: ["workspace_id", "id", "environment", "provider"]
           },
           {
-            foreignKeyName: "whatsapp_effect_ledger_inbox_id_fkey"
-            columns: ["inbox_id"]
+            foreignKeyName: "whatsapp_effect_ledger_inbox_fkey"
+            columns: [
+              "inbox_id",
+              "workspace_id",
+              "channel_id",
+              "environment",
+              "provider",
+              "provider_event_id",
+            ]
             isOneToOne: false
             referencedRelation: "whatsapp_webhook_inbox"
-            referencedColumns: ["id"]
+            referencedColumns: [
+              "id",
+              "workspace_id",
+              "channel_id",
+              "environment",
+              "provider",
+              "provider_event_id",
+            ]
           },
           {
-            foreignKeyName: "whatsapp_effect_ledger_message_same_workspace_fkey"
-            columns: ["workspace_id", "message_id"]
+            foreignKeyName: "whatsapp_effect_ledger_message_fkey"
+            columns: ["message_id", "workspace_id", "channel_id"]
             isOneToOne: false
             referencedRelation: "messages"
-            referencedColumns: ["workspace_id", "id"]
+            referencedColumns: ["id", "workspace_id", "channel_id"]
           },
           {
             foreignKeyName: "whatsapp_effect_ledger_workspace_id_fkey"

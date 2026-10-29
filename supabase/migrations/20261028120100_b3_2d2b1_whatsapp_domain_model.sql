@@ -763,6 +763,15 @@ revoke all on function private.whatsapp_is_internal_identity(uuid, text, bytea) 
 -- Ledger técnico de efeitos (idempotência pelo evento estável)
 -- ---------------------------------------------------------------------
 
+-- Alvos das FKs compostas do ledger: a inbox inteira (id e o contexto do
+-- evento) e a mensagem com o canal dela. Só acrescentam unicidade sobre
+-- colunas que já são únicas pelo id.
+alter table public.whatsapp_webhook_inbox
+  add constraint whatsapp_webhook_inbox_effect_ref_key
+    unique (id, workspace_id, channel_id, environment, provider, provider_event_id);
+alter table public.messages
+  add constraint messages_id_workspace_channel_key unique (id, workspace_id, channel_id);
+
 -- Não é uma segunda tabela de mensagens: só a chave do evento, o efeito
 -- declarado e referências. Nenhum corpo, telefone, BSUID, mídia ou payload.
 create table public.whatsapp_effect_ledger (
@@ -775,7 +784,10 @@ create table public.whatsapp_effect_ledger (
   effect text not null check (effect in (
     'message.inbound', 'message.outbound_observed', 'message.status', 'contact.identity_changed', 'account', 'ignored', 'unsupported'
   )),
-  inbox_id uuid references public.whatsapp_webhook_inbox (id) on delete set null,
+  -- Todo efeito nasce de uma entrada da inbox.
+  inbox_id uuid not null,
+  -- Só quando o efeito produz mensagem (conta, identidade ou evento
+  -- técnico não produzem).
   message_id uuid,
   recorded_at timestamptz not null default now(),
   -- O ambiente, o workspace e o provedor são os do canal: nenhum efeito
@@ -783,45 +795,95 @@ create table public.whatsapp_effect_ledger (
   constraint whatsapp_effect_ledger_channel_identity_fkey
     foreign key (workspace_id, channel_id, environment, provider)
     references public.whatsapp_channels (workspace_id, id, environment, provider) on delete restrict,
-  constraint whatsapp_effect_ledger_message_same_workspace_fkey
-    foreign key (workspace_id, message_id) references public.messages (workspace_id, id) on delete set null (message_id)
+  -- A inbox é a do MESMO evento: workspace, canal, ambiente, provedor e
+  -- provider_event_id iguais aos dela. Sem ação na remoção: o expurgo
+  -- preserva a inbox como tombstone, e nada pode apagar a origem de um
+  -- efeito (NO ACTION, conferido no fim do comando, deixa a cascata do
+  -- workspace apagar os dois juntos).
+  constraint whatsapp_effect_ledger_inbox_fkey
+    foreign key (inbox_id, workspace_id, channel_id, environment, provider, provider_event_id)
+    references public.whatsapp_webhook_inbox (id, workspace_id, channel_id, environment, provider, provider_event_id),
+  -- A mensagem é do mesmo workspace E do mesmo canal. Se ela for
+  -- removida, só message_id zera; o registro técnico fica.
+  constraint whatsapp_effect_ledger_message_fkey
+    foreign key (message_id, workspace_id, channel_id)
+    references public.messages (id, workspace_id, channel_id) on delete set null (message_id)
 );
 
 comment on table public.whatsapp_effect_ledger is
-  'Ledger técnico: um efeito por (ambiente, canal, provedor, id estável do evento). Sem conteúdo do webhook. Sem acesso direto; só funções internas com contexto confiável.';
+  'Ledger técnico: um efeito por (ambiente, canal, provedor, id estável do evento), sempre preso à entrada da inbox do mesmo evento e, quando houver, à mensagem do mesmo canal. Sem conteúdo do webhook. Sem acesso direto; só a reserva interna, que lê o contexto da inbox.';
 
 create unique index whatsapp_effect_ledger_event_key
   on public.whatsapp_effect_ledger (environment, channel_id, provider, provider_event_id);
 create index whatsapp_effect_ledger_workspace_idx on public.whatsapp_effect_ledger (workspace_id);
+create index whatsapp_effect_ledger_inbox_idx on public.whatsapp_effect_ledger (inbox_id);
+create index whatsapp_effect_ledger_message_idx on public.whatsapp_effect_ledger (message_id) where message_id is not null;
 
--- Reserva o efeito do evento: o id quando é a primeira vez, NULL quando o
--- mesmo evento estável já produziu efeito. Para a B3.2d-2b2, dentro da
--- mesma transação do efeito.
+-- Reserva o efeito de uma entrada da inbox. O chamador informa só a
+-- entrada e o efeito; ambiente, workspace, canal, provedor e
+-- provider_event_id vêm da própria linha da inbox, no ambiente autenticado.
+-- Resultado:
+--   reserved  — primeira vez: ledger_id é a linha nova;
+--   duplicate — a mesma entrada já reservou o MESMO efeito: ledger_id é a
+--               linha existente; nenhum efeito novo;
+--   conflict  — a chave estável já foi reservada com outro efeito ou por
+--               outra entrada: integridade quebrada, nunca tratada como
+--               duplicação; ledger_id nulo.
+-- Para a B3.2d-2b2: a RPC do efeito trava a inbox, confere token e lease
+-- e chama esta reserva na mesma transação; se ela falhar depois, a reserva
+-- é desfeita junto. Uma reserva concorrente da mesma chave espera a
+-- primeira terminar (índice único) e então vê duplicate ou conflict, ou
+-- reserva, se a primeira foi desfeita.
 create function private.whatsapp_effect_ledger_reserve(
-  p_environment public.whatsapp_environment,
-  p_workspace_id uuid,
-  p_channel_id uuid,
-  p_provider public.whatsapp_provider,
-  p_provider_event_id text,
+  p_inbox_id uuid,
   p_effect text,
-  p_inbox_id uuid
+  out outcome text,
+  out ledger_id uuid
 )
-returns uuid
 language plpgsql
 set search_path = ''
 as $body$
 declare
-  v_id uuid;
+  v_env public.whatsapp_environment := private.require_whatsapp_environment();
+  v_inbox public.whatsapp_webhook_inbox;
+  v_existing public.whatsapp_effect_ledger;
 begin
+  select i.* into v_inbox
+  from public.whatsapp_webhook_inbox i
+  where i.id = p_inbox_id and i.environment = v_env;
+  if not found then
+    raise exception 'ledger_inbox_not_found';
+  end if;
+
   insert into public.whatsapp_effect_ledger (environment, workspace_id, channel_id, provider, provider_event_id, effect, inbox_id)
-  values (p_environment, p_workspace_id, p_channel_id, p_provider, p_provider_event_id, p_effect, p_inbox_id)
+  values (v_inbox.environment, v_inbox.workspace_id, v_inbox.channel_id, v_inbox.provider, v_inbox.provider_event_id, p_effect, v_inbox.id)
   on conflict (environment, channel_id, provider, provider_event_id) do nothing
-  returning id into v_id;
-  return v_id;
+  returning id into ledger_id;
+  if ledger_id is not null then
+    outcome := 'reserved';
+    return;
+  end if;
+
+  -- A chave já existe (gravada por quem terminou antes, inclusive numa
+  -- transação concorrente pela qual o INSERT esperou).
+  select l.* into v_existing
+  from public.whatsapp_effect_ledger l
+  where l.environment = v_inbox.environment and l.channel_id = v_inbox.channel_id
+    and l.provider = v_inbox.provider and l.provider_event_id = v_inbox.provider_event_id;
+  if not found then
+    raise exception 'ledger_reserve_inconsistent';
+  end if;
+  if v_existing.inbox_id = v_inbox.id and v_existing.effect = p_effect then
+    outcome := 'duplicate';
+    ledger_id := v_existing.id;
+  else
+    outcome := 'conflict';
+    ledger_id := null;
+  end if;
 end;
 $body$;
 
-revoke all on function private.whatsapp_effect_ledger_reserve(public.whatsapp_environment, uuid, uuid, public.whatsapp_provider, text, text, uuid)
+revoke all on function private.whatsapp_effect_ledger_reserve(uuid, text)
   from public, anon, authenticated, service_role;
 
 -- ---------------------------------------------------------------------
