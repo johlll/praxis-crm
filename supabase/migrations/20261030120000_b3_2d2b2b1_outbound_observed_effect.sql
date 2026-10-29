@@ -209,7 +209,7 @@ begin
     -- BSUID. Dois ecos da mesma mensagem esperam um pelo outro.
     v_locks := array[hashtextextended(v_row.channel_id::text || ':message:' || p_provider_message_id, 0)];
     if p_wa_message_id is not null then
-      v_locks := v_locks || hashtextextended(v_row.channel_id::text || ':wamid:' || p_wa_message_id, 0);
+      null;
     end if;
     if p_phone_e164 is not null then
       v_locks := v_locks || hashtextextended(v_row.channel_id::text || ':' || p_phone_e164, 0);
