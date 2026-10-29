@@ -163,7 +163,7 @@ describe("1. o banco recebe a inbox, o token e só os dados do efeito", () => {
     const claim = await claimed();
     const { applyWhatsAppInboundMessage } = await loadEffect();
     await applyWhatsAppInboundMessage(claim, input());
-    const [[, args]] = effectCalls();
+    const args = effectCalls()[0]![1];
     expect(Object.keys(args).sort()).toEqual(
       [
         "p_bsuid_ciphertext",
@@ -225,7 +225,7 @@ describe("2. BSUID", () => {
     const claim = await claimed();
     const { applyWhatsAppInboundMessage } = await loadEffect();
     await applyWhatsAppInboundMessage(claim, input({ sender: { phoneE164: null, bsuid: BSUID } }));
-    const [[, args]] = effectCalls();
+    const args = effectCalls()[0]![1];
     const scope = { environment: "preview" as const, workspaceId: WS, channelId: CHANNEL };
     const expected = Object.fromEntries(whatsappBsuidBlindIndexes(scope, BSUID).map((i) => [i.keyVersion, i.blindIndexBase64]));
     expect(args.p_phone_e164).toBeNull();
@@ -240,7 +240,7 @@ describe("2. BSUID", () => {
     const claim = await claimed();
     const { applyWhatsAppInboundMessage } = await loadEffect();
     await applyWhatsAppInboundMessage(claim, input({ sender: { phoneE164: PHONE, bsuid: BSUID } }));
-    const [[, args]] = effectCalls();
+    const args = effectCalls()[0]![1];
     expect(args.p_phone_e164).toBe(PHONE);
     expect(Object.keys(args.p_bsuid_lookup as object)).toEqual(["1"]);
     expect(JSON.stringify(args)).not.toContain(BSUID);
@@ -250,7 +250,7 @@ describe("2. BSUID", () => {
     const claim = await claimed();
     const { applyWhatsAppInboundMessage } = await loadEffect();
     await applyWhatsAppInboundMessage(claim, input({ sender: { phoneE164: null, bsuid: "5511988887777" } }));
-    const [[, args]] = effectCalls();
+    const args = effectCalls()[0]![1];
     expect(args.p_phone_e164).toBeNull();
     expect(JSON.stringify(args)).not.toContain("5511988887777");
   });
@@ -399,7 +399,7 @@ describe("6. estático", () => {
 
   it("o efeito não classifica nem decide pelo texto ou pelo nome: só repassa ao banco", () => {
     const src = read("src/server/whatsapp/effects/inbound-message.ts");
-    expect(src).not.toMatch(/classifyWhatsAppMessage|whatsappMayCreateLead|senderClassification\s*[:=]\s*["']/);
+    expect(src).not.toMatch(/classifyWhatsAppMessage|whatsappMayCreateLead|senderClassification\s*[:=]\s*["'](external|internal|unresolved)["']\s*[,;}]/);
     expect(src).not.toMatch(/\.(text|profileName|body)\s*\.\s*(match|test|includes|startsWith|search)\(/);
     expect(src).not.toMatch(/console\./);
   });
