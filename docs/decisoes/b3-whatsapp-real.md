@@ -4200,6 +4200,20 @@ só para `service_role`.
 | `already_processed`, `terminal_failed`, `claim_lost`, `not_found` | como na finalização da B3.2d-1 | nada muda |
 | `identity_conflict` | telefone e BSUID não batem com uma identidade só | nada gravado; claim continua |
 | `effect_conflict` | a chave estável já tem outro efeito | nada gravado; claim continua |
+| `channel_paused`, `channel_disconnected`, `channel_disabled` | o canal foi pausado, desconectado ou desativado depois do claim | nada gravado; claim continua |
+
+**Status do canal no momento do efeito.** O consumidor confere o estado do
+canal antes de chamar o efeito, mas entre o claim e a aplicação um
+administrador pode pausar, desconectar ou desativar o canal. Por isso a RPC
+reconfere o status **atual** do canal da linha, depois de travar a inbox e
+antes de reservar o ledger: fora de `active`, devolve o resultado do
+estado, sem gravar ledger, identidade, conversa, mensagem, registro
+comercial ou auditoria, e a entrada fica em `processing` com o mesmo
+claim. A linha do canal é lida `for share`: uma mudança de estado
+concorrente espera o efeito em andamento terminar, e o efeito seguinte já
+vê o estado novo. **Quem libera o claim é a B3.2d-2b3**, ao receber esses
+resultados (`whatsapp_inbox_release` com o mesmo código, como o consumidor
+já faz com `channel_paused`, `channel_disconnected` e `channel_disabled`).
 
 `applied` devolve só `message_id`, `conversation_id`,
 `sender_classification`, `contact_created` e `lead_created`: nenhum
@@ -4208,7 +4222,8 @@ telefone, BSUID ou texto.
 ### 22.2 Ordem, numa transação só
 
 1. inbox travada (`for update`) no ambiente autenticado; `processing`,
-   token igual e lease vigente (um `clock_timestamp()`);
+   token igual e lease vigente (um `clock_timestamp()`); canal da linha
+   lido `for share` e ainda `active`;
 2. `private.whatsapp_effect_ledger_reserve(inbox, 'message.inbound')`;
 3. travas consultivas em ordem fixa: a mensagem do provedor no canal, o
    telefone (a mesma chave do simulador da A7) e o BSUID;
@@ -4222,7 +4237,8 @@ telefone, BSUID ou texto.
 9. auditoria sem ator e sem telefone, nome ou texto; ledger aponta para a
    mensagem; inbox `processed`.
 
-Os dois conflitos voltam como resultado depois de desfazer o bloco (ledger,
+Os três estados do canal voltam no passo 1, antes de qualquer escrita. Os
+dois conflitos voltam como resultado depois de desfazer o bloco (ledger,
 identidade, conversa, mensagem); qualquer outra falha propaga e desfaz
 tudo, inclusive a reserva e a finalização.
 
@@ -4261,16 +4277,22 @@ Nunca pelo texto, pelo nome do perfil, pelo formato de um id ou por
 exclusão de outras origens.
 
 No caso `unresolved`, identidade, conversa e mensagem são gravadas
-normalmente e a conversa fica para revisão; nada comercial é criado.
+normalmente e a conversa fica sempre para revisão; nada comercial é
+criado **nem vinculado** (§22.5).
 
 ### 22.5 Contato e lead (A3, A4 e A7)
 
 Só numa **conversa nova**, como na A7 (mensagem seguinte não reabre o
 vínculo):
 - `internal`: nada de contato ou lead; conversa sem revisão;
-- `external` ou `unresolved` com telefone: casa um contato existente pelo
-  identificador `whatsapp` (dígitos do E.164) ou por telefone único, e o
-  lead/oportunidade ativos dele, como a A7;
+- `unresolved`: **não procura nem vincula** contato, lead ou oportunidade,
+  e não cria nada comercial, mesmo que um contato do workspace tenha o
+  mesmo telefone. Grava só identidade, conversa e mensagem; a conversa
+  fica com `needs_link_review = true` e `contact_id`, `lead_id` e
+  `opportunity_id` nulos, sem candidatos. O vínculo, se houver, é humano;
+- **só `inbound` + `external`** com telefone casa um contato existente
+  pelo identificador `whatsapp` (dígitos do E.164) ou por telefone único,
+  e o lead/oportunidade ativos dele, como a A7;
 - **só `inbound` + `external`** sem contato conhecido cria,
   atomicamente, na mesma transação da conversa, da mensagem e do ledger:
   - contato (com telefone `whatsapp_inbound` e identificador `whatsapp`);
@@ -4278,8 +4300,8 @@ vínculo):
   - oportunidade na primeira etapa do pipeline padrão;
   - atividade de resposta ao primeiro contato.
   Qualquer falha desfaz todos esses registros e o ledger;
-- sem telefone (só BSUID) ou `unresolved` sem contato: conversa para
-  revisão humana, sem criar nada.
+- `external` sem telefone (só BSUID): conversa para revisão humana, sem
+  criar nada.
 
 **Autoria técnica (decisão do João).** `created_by` é obrigatório nessas
 tabelas e o webhook não tem usuário. Contato, lead, oportunidade e
@@ -4333,13 +4355,35 @@ Vermelho na PR temporária #150: no pgTAP 36, 2 de 61 falham ("nenhuma
 identidade ativa" e "só identidade desativada" davam `external`); o teste
 de atualização também falha. Correção na própria migration em `50145ba`.
 
+**Rodada do vínculo e do status do canal.** Testes primeiro em `c0a974e`,
+sobre `5125812`; correção do próprio teste em `b7762e6` (o `concat_ws`
+escrevia o booleano como `t`/`f`, e a conferência depois da liberação lia
+a inbox ainda como `service_role`). Vermelho na PR temporária #154 (os
+testes corrigidos sobre o código anterior):
+- pgTAP 36: 7 de 69 falham:
+  - 62 e 63: o `unresolved` vinculava o cliente já cadastrado pelo
+    telefone (contato, lead e oportunidade) e, no 63, ainda acrescentava o
+    identificador `whatsapp`;
+  - 65 a 67: com o canal pausado, desconectado ou desativado depois do
+    claim, o efeito aplicava e criava contato e lead;
+  - 68: a entrada já estava processada, e o claim não podia mais ser
+    liberado;
+  - 69: falha em cascata do 65 (o telefone já tinha conversa);
+  - o controle `external` (64) passa;
+- unitários: 3 de 44 falham (os três `channel_*` davam `invalid_response`);
+- concorrência, cenário 5: a pausa terminava sem esperar o efeito em
+  andamento.
+
+Correção na própria migration em `7142c29`.
+
 **Cobertura:**
-- `tests/unit/b3-2d2b2a-mensagem-recebida.test.ts` (40): argumentos
+- `tests/unit/b3-2d2b2a-mensagem-recebida.test.ts` (44): argumentos
   exatos, BSUID só como índices e cifra (inclusive duas versões de chave e
   BSUID com cara de telefone), chaves ausentes, 12 entradas inválidas antes
-  do banco, claim não confiável, resultados conferidos, erros sanitizados,
-  estáticos;
-- `supabase/tests/database/36_b3_2d2b2a_mensagem_recebida.test.sql` (61):
+  do banco, claim não confiável, resultados conferidos (inclusive os três
+  `channel_*`, que são os mesmos códigos que o consumidor libera), erros
+  sanitizados, estáticos;
+- `supabase/tests/database/36_b3_2d2b2a_mensagem_recebida.test.sql` (69):
   estrutura e permissões; claim (pending, token, lease, ambiente, sem
   ambiente, inexistente); entrada inválida; aplicação completa pela A7 com
   autoria e auditoria; reentrega; matriz de identidade e versão antiga da
@@ -4350,16 +4394,25 @@ de atualização também falha. Correção na própria migration em `50145ba`.
   do canal de outro usuário, auditoria sem ator e com a origem); effect_conflict,
   duplicate e mesma mensagem por outro evento; mídia; rollback integral
   depois da reserva; outro workspace e Production; leituras da A7;
+  `unresolved` sem vínculo nem alteração comercial, com um cliente já
+  cadastrado pelo telefone (canal sem identidade interna ativa e
+  identidade incomparável), e o controle `external` que reutiliza;
+  canal pausado, desconectado e desativado depois do claim (nada gravado,
+  nem auditoria; claim intacto e liberável) e o controle com canal ativo;
 - concorrência real (`scripts/b3-2d2b2a-inbound-concurrency-check.sh`):
   o mesmo evento duas vezes (applied e already_processed), o mesmo
   remetente novo em dois eventos (uma identidade, uma conversa, um lead),
-  enriquecimento simultâneo e telefone/BSUID de identidades diferentes
-  (dois identity_conflict sem efeito).
+  enriquecimento simultâneo, telefone/BSUID de identidades diferentes
+  (dois identity_conflict sem efeito) e a pausa do canal com um efeito em
+  andamento (a pausa espera; o claim antigo usado depois vê
+  `channel_paused`, sem efeito).
 
 ### 22.8 Mutações
 
-Banco: uma PR temporária por mutação (#137 a #149 sobre `8cb6dfa`; #151
-sobre `50145ba`), todas reprovadas e fechadas:
+Banco: as 16 rodadas de novo sobre a correção `b7762e6`, uma PR temporária
+por mutação (#155 a #170), todas reprovadas e fechadas. As rodadas
+anteriores (M1 a M13 em #137 a #149 sobre `8cb6dfa`; M14 em #151 sobre
+`50145ba`) também tinham sido reprovadas.
 
 | Mutação | Detectada por |
 |---|---|
@@ -4371,15 +4424,19 @@ sobre `50145ba`), todas reprovadas e fechadas:
 | M6 telefone conhecido com outro BSUID aceito | pgTAP 36 (identity_conflict) |
 | M7 sem as travas do telefone e do BSUID | concorrência, cenário 2 |
 | M8 identidade interna inativa conta | pgTAP 36 (a inativa não conta) |
-| M9 incomparável vira external | pgTAP 36 (unresolved) |
-| M10 unresolved cria contato e lead | pgTAP 36 (nada comercial para unresolved) |
+| M9 incomparável vira external | pgTAP 36 (unresolved, inclusive com cliente cadastrado) |
+| M10 unresolved cria contato e lead | pgTAP 36 (nada comercial nem vínculo para unresolved) |
 | M11 internal cria contato e lead | pgTAP 36 (nada comercial para internal) |
 | M12 mesma mensagem do provedor por outro evento não conferida | pgTAP 36 (duplicate) |
 | M13 falha depois da reserva não desfaz o ledger | pgTAP 36 (rollback integral; conflito sem ledger) e concorrência, cenário 4 |
-| M14 canal sem identidade interna ativa volta a external | pgTAP 36 (nenhuma identidade ativa; só desativada) |
+| M14 canal sem identidade interna ativa volta a external | pgTAP 36 (nenhuma identidade ativa; só desativada; cliente cadastrado) |
+| M15 unresolved volta a procurar e vincular contato, lead e oportunidade | pgTAP 36 (62 e 63: sem vínculo nem alteração comercial) |
+| M16 status atual do canal não reconferido no efeito | pgTAP 36 (65 a 69: três estados, liberação e controle) e concorrência, cenário 5 |
 
-A primeira execução da M5 não chegou aos testes: o Supabase local não
-subiu no CI (limite do registro de imagens). Reexecutada, foi reprovada.
+Na primeira execução, a M6 e a M16 não chegaram aos testes: o Supabase
+local não subiu no CI (limite do registro de imagens, "Rate exceeded").
+Reexecutadas, foram reprovadas. O mesmo já tinha acontecido com a M5 na
+primeira rodada.
 
 Servidor, localmente, uma de cada vez e restauradas: BSUID em claro nos
 argumentos, erro cru repassado, identidade vazia aceita e workspace do
