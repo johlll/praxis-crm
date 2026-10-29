@@ -4,12 +4,15 @@
 -- public.whatsapp_effect_inbound_message aplica, numa transação só e sob a
 -- trava da entrada da inbox:
 --   1. inbox no ambiente autenticado, em processing, com o token do claim e
---      a lease vigente;
+--      a lease vigente; o canal da linha ainda ativo (status ATUAL, não o
+--      do momento do claim);
 --   2. reserva message.inbound no ledger (contexto lido da inbox);
 --   3. resolve a identidade por telefone e BSUID;
 --   4. classifica o remetente pelas identidades internas ativas;
 --   5. conversa, mensagem e, só para inbound + external com telefone numa
---      conversa nova, contato, lead, oportunidade e atividade (regras da A7);
+--      conversa nova, a busca e o vínculo de contato, lead e oportunidade,
+--      ou a criação deles e da atividade (regras da A7); internal e
+--      unresolved gravam só identidade, conversa e mensagem;
 --   6. marca a inbox como processed.
 -- Qualquer falha desfaz tudo. Workspace, canal, ambiente, provedor e id do
 -- evento vêm da linha da inbox, nunca do chamador.
@@ -161,9 +164,12 @@ revoke all on function private.whatsapp_resolve_inbound_identity(public.whatsapp
 --                       finalização da B3.2d-1, sem mudar nada;
 --   identity_conflict — telefone e BSUID não batem com uma identidade só;
 --   effect_conflict   — a chave estável já tem outro efeito ou outra
---                       entrada.
--- Nos dois conflitos nada fica gravado e o claim continua: quem chama
--- decide (B3.2d-2b3). Entrada malformada: invalid_inbound_message.
+--                       entrada;
+--   channel_paused, channel_disconnected, channel_disabled — o canal
+--                       deixou de estar ativo depois do claim.
+-- Nos conflitos e nos três estados do canal nada fica gravado e o claim
+-- continua: quem chama libera ou decide (B3.2d-2b3). Entrada malformada:
+-- invalid_inbound_message.
 create function public.whatsapp_effect_inbound_message(
   p_inbox_id uuid,
   p_claim_token uuid,
@@ -279,10 +285,20 @@ begin
     return jsonb_build_object('outcome', 'claim_lost');
   end if;
 
-  -- O canal da própria linha (a FK da inbox garante que existe).
+  -- O canal da própria linha (a FK da inbox garante que existe), no estado
+  -- ATUAL: pausar, desconectar ou desativar depois do claim fecha a porta
+  -- antes de qualquer reserva ou efeito. FOR SHARE: uma mudança de estado
+  -- concorrente espera este efeito terminar, e o efeito seguinte já a vê.
   select c.* into v_channel from public.whatsapp_channels c
   where c.id = v_row.channel_id and c.workspace_id = v_row.workspace_id
-    and c.environment = v_row.environment and c.provider = v_row.provider;
+    and c.environment = v_row.environment and c.provider = v_row.provider
+  for share;
+  if v_channel.status is distinct from 'active' then
+    return jsonb_build_object('outcome', case v_channel.status
+      when 'paused' then 'channel_paused'
+      when 'disconnected' then 'channel_disconnected'
+      else 'channel_disabled' end);
+  end if;
 
   begin
     select r.outcome, r.ledger_id into v_reserve
@@ -328,9 +344,11 @@ begin
 
     if v_conversation.id is null then
       v_new_conversation := true;
-      -- Contato e lead (a7-conversas.md §5–§7), só com telefone e nunca
-      -- para internal: o contato é casado pelo telefone, como na A7.
-      if v_class <> 'internal' and v_identity.phone_e164 is not null then
+      -- Contato e lead (a7-conversas.md §5–§7), só para external com
+      -- telefone: o contato é casado pelo telefone, como na A7. internal e
+      -- unresolved não procuram, não vinculam e não criam nada comercial,
+      -- mesmo que um contato do workspace tenha o mesmo telefone.
+      if v_class = 'external' and v_identity.phone_e164 is not null then
         select ct.id into v_contact_id
         from public.contacts ct
         where ct.workspace_id = v_row.workspace_id and ct.merged_into_contact_id is null
@@ -391,8 +409,9 @@ begin
         end if;
       end if;
 
-      -- Sem contato: revisão humana, menos para o próprio escritório.
-      if v_contact_id is null and v_class <> 'internal' then
+      -- unresolved sempre vai para revisão humana; external, quando não
+      -- achou contato; o próprio escritório, nunca.
+      if v_class = 'unresolved' or (v_class = 'external' and v_contact_id is null) then
         v_needs_review := true;
       end if;
 

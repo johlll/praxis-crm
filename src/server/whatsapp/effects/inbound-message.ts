@@ -66,6 +66,11 @@ export type WhatsAppInboundEffectResult =
     }
   | {
       outcome: "duplicate" | "already_processed" | "terminal_failed" | "claim_lost" | "not_found" | "identity_conflict" | "effect_conflict";
+    }
+  | {
+      /** O canal deixou de estar ativo depois do claim: nada gravado, o
+       * claim continua para quem chamou liberar (B3.2d-2b3). */
+      outcome: "channel_paused" | "channel_disconnected" | "channel_disabled";
     };
 
 const inputSchema = z
@@ -92,7 +97,18 @@ const appliedSchema = z
 
 const otherSchema = z
   .object({
-    outcome: z.enum(["duplicate", "already_processed", "terminal_failed", "claim_lost", "not_found", "identity_conflict", "effect_conflict"]),
+    outcome: z.enum([
+      "duplicate",
+      "already_processed",
+      "terminal_failed",
+      "claim_lost",
+      "not_found",
+      "identity_conflict",
+      "effect_conflict",
+      "channel_paused",
+      "channel_disconnected",
+      "channel_disabled",
+    ]),
   })
   .strict();
 
@@ -113,8 +129,8 @@ function bsuidArgs(claim: WhatsAppInboxClaim, bsuid: string | null) {
 }
 
 /** Aplica a mensagem recebida ao domínio numa transação só. Os resultados
- * do banco voltam como vieram; nos conflitos nada foi gravado e o claim
- * continua com quem chamou. */
+ * do banco voltam como vieram; nos conflitos e com o canal não ativo nada
+ * foi gravado e o claim continua com quem chamou. */
 export async function applyWhatsAppInboundMessage(
   claim: WhatsAppInboxClaim,
   input: WhatsAppInboundMessageInput,
