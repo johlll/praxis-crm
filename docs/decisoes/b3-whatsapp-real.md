@@ -4584,11 +4584,102 @@ baixada.
 
 ### 23.8 Testes
 
-<!-- TESTES_2B2B1 -->
+Commit só de testes `2230425`, contra a main `740f0f8`.
+
+**Correções nos testes**, em commits próprios:
+- `ba13bc8`: sem a função, um `\gset` de valor nulo deixava a variável
+  indefinida e o pgTAP 37 parava no meio; no cenário 3 da concorrência, o
+  booleano concatenado sai `true`, não `t`;
+- `322089b`: a mensagem inserida à mão no §8 do pgTAP usava uma conversa
+  que, sem a função, não existe;
+- `ad2ff7f`: telefone válido com BSUID malformado (e o inverso) recusados
+  antes do banco — acrescentado depois de uma mutação do servidor;
+- `3670ab0`: no cenário 4 da concorrência, a trava do telefone mascarava a
+  falta da trava do wamid (a mutação N8 sobrevivia); agora os dois eventos
+  têm destinatários identificados de jeitos diferentes e só a trava do
+  wamid os põe em fila.
+
+**Vermelho** (os testes corrigidos sobre a main, PR temporária #174):
+- typecheck: o módulo do efeito não existe;
+- unitários: 46 de 47 falham (passa o estático de que o consumidor não
+  chama o efeito);
+- pgTAP 37: 45 de 54 falham (passam as conferências de "nada mudou",
+  verdadeiras sem a função);
+- concorrência e atualização da 2b2b1: falham (a função não existe).
+
+Implementação: `feb165d` (módulo comum de identidade, sem mudar a 2b2a) e
+`d704aaa` (RPC, servidor e tipos).
+
+**Cobertura:**
+- `tests/unit/b3-2d2b2b1-saida-observada.test.ts` (49): argumentos exatos
+  (nenhum contexto, origem, classificação ou autor), wamid opcional, mídia
+  sem texto, destinatário por telefone, BSUID ou os dois (mesmos argumentos
+  da 2b2a), chaves ausentes, 16 entradas inválidas antes do banco, claim
+  não confiável, resultados conferidos, erros sanitizados, estáticos (não
+  envia, não chama o provedor, criptografia sem cópia, consumidor não
+  ligado);
+- `supabase/tests/database/37_b3_2d2b2b1_saida_observada.test.sql` (54):
+  estrutura e permissões; claim (pending, token, lease, ambiente, sem
+  ambiente, inexistente); entrada inválida (inclusive wamid); primeira
+  mensagem com destinatário desconhecido (origem, autoria, ledger,
+  revisão, nada comercial, auditoria); reentrega; conversa já existente
+  (criada pela 2b2a); vínculo exato pelo identificador e pelo telefone
+  único; contato, lead e oportunidade ambíguos → revisão; nada comercial
+  criado ou alterado; só BSUID, os dois, enriquecimento e
+  `identity_conflict`; duplicação por id do provedor e por wamid; echoes +
+  created; `message_conflict` (ids de mensagens diferentes, outro id,
+  mensagem recebida) sem alterar nada; `effect_conflict` e efeito já
+  reservado; mídia; canal pausado, desconectado e desativado depois do
+  claim, liberação e controle; rollback integral depois da reserva; outro
+  workspace e Production; nenhuma atividade ou criação comercial; leituras
+  da A7;
+- concorrência real (`scripts/b3-2d2b2b1-outbound-concurrency-check.sh`):
+  o mesmo evento duas vezes; echoes e created da mesma mensagem (uma
+  mensagem, com o wamid); o mesmo destinatário novo em duas mensagens (uma
+  identidade, uma conversa); o mesmo wamid com ids e destinatários
+  diferentes (`message_conflict` sem efeito); a pausa do canal durante o
+  efeito;
+- teste de atualização (§23.7).
 
 ### 23.9 Mutações
 
-<!-- MUTACOES_2B2B1 -->
+Banco: uma PR temporária por mutação sobre `322089b` (#175 a #191; a N8
+refeita em #192 sobre `3670ab0`), todas reprovadas e fechadas:
+
+| Mutação | Detectada por |
+|---|---|
+| N1 token do claim não conferido | pgTAP 37 (recusas, aplicação, ledger, A7) |
+| N2 lease não conferida | pgTAP 37 (lease vencida e "nada escrito") |
+| N3 inbox de qualquer ambiente | pgTAP 37 (outro ambiente; Production a partir de Preview) |
+| N4 status atual do canal não reconferido | pgTAP 37 (três estados e liberação) e concorrência, cenário 5 |
+| N5 conflito de efeito ignorado | pgTAP 37 (effect_conflict, efeito já reservado) |
+| N6 falha depois da reserva não desfaz o ledger | pgTAP 37 (rollback integral; conflitos sem ledger) e concorrência, cenário 4 |
+| N7 sem as travas consultivas | concorrência, cenário 2 |
+| N8 sem a trava do wamid | concorrência, cenário 4 |
+| N9 id do provedor e wamid de mensagens diferentes não conferidos | pgTAP 37 (message_conflict) |
+| N10 mensagem com outro id, ou recebida, converge | pgTAP 37 (message_conflict sem alterar nada) e concorrência, cenário 4 |
+| N11 a mesma mensagem não é procurada pelo wamid | pgTAP 37 (duplicação por wamid, conflitos) e concorrência, cenário 2 |
+| N12 a mesma mensagem não é procurada pelo id do provedor | pgTAP 37 (duplicação por id, echoes + created) e concorrência, cenário 2 |
+| N13 com telefone, o BSUID é ignorado na identidade | pgTAP 37 (os dois identificadores, enriquecimento, identity_conflict) e concorrência, cenário 3 |
+| N14 contato ambíguo vinculado ao primeiro | pgTAP 37 (dois contatos com o telefone) |
+| N15 lead ambíguo vinculado ao primeiro | pgTAP 37 (dois leads ativos) |
+| N16 destinatário desconhecido sem revisão | pgTAP 37 (desconhecido; só BSUID) |
+| N17 origem external_api/unresolved | pgTAP 37 (mensagem campo a campo) |
+
+Na primeira execução, a N4, a N5 e a N17 não chegaram aos testes: o
+Supabase local não subiu no CI ("Rate exceeded" no registro de imagens).
+Reexecutadas, foram reprovadas. A N8 sobreviveu à primeira versão do
+cenário 4 (a trava do telefone serializava os dois eventos); com o cenário
+corrigido em `3670ab0`, foi reprovada.
+
+Servidor, localmente, uma de cada vez e restauradas, todas detectadas
+pelos unitários: BSUID em claro nos argumentos; erro cru do banco
+repassado; campo extra aceito (origem ou autor do chamador); workspace e
+origem do chamador nos argumentos; destinatário inválido passado ao banco
+como veio; wamid fora do formato. Uma primeira versão desta última
+mutação de identidade (só tirar a conferência) era equivalente: o
+`whatsappContactIdentity` já recusa qualquer identificador malformado e o
+efeito falha fechado do mesmo jeito.
 
 ### 23.10 Fora do escopo e riscos
 
