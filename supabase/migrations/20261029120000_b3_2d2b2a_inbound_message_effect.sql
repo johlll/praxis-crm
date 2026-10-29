@@ -300,9 +300,6 @@ begin
     if v_blind is not null then
       v_locks := v_locks || hashtextextended(v_row.channel_id::text || ':bsuid:' || encode(v_blind, 'hex'), 0);
     end if;
-    for v_lock in select l from unnest(v_locks) l order by l loop
-      perform pg_advisory_xact_lock(v_lock);
-    end loop;
 
     -- A mesma mensagem do provedor por outro evento: nada repetido.
     select m.id into v_existing_message from public.messages m
