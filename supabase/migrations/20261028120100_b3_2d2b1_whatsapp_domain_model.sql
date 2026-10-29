@@ -801,8 +801,7 @@ create table public.whatsapp_effect_ledger (
   -- efeito (NO ACTION, conferido no fim do comando, deixa a cascata do
   -- workspace apagar os dois juntos).
   constraint whatsapp_effect_ledger_inbox_fkey
-    foreign key (inbox_id, workspace_id, channel_id, environment, provider, provider_event_id)
-    references public.whatsapp_webhook_inbox (id, workspace_id, channel_id, environment, provider, provider_event_id),
+    foreign key (inbox_id) references public.whatsapp_webhook_inbox (id),
   -- A mensagem é do mesmo workspace E do mesmo canal. Se ela for
   -- removida, só message_id zera; o registro técnico fica.
   constraint whatsapp_effect_ledger_message_fkey
