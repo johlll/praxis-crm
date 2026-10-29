@@ -324,7 +324,7 @@ begin
       v_new_conversation := true;
       -- Contato e lead (a7-conversas.md §5–§7), só com telefone e nunca
       -- para internal: o contato é casado pelo telefone, como na A7.
-      if v_class <> 'internal' and v_identity.phone_e164 is not null then
+      if v_identity.phone_e164 is not null then
         select ct.id into v_contact_id
         from public.contacts ct
         where ct.workspace_id = v_row.workspace_id and ct.merged_into_contact_id is null
@@ -349,7 +349,7 @@ begin
             on conflict (workspace_id, provider, external_id) do nothing;
           elsif v_candidate_count > 1 then
             v_needs_review := true;
-          elsif private.whatsapp_may_create_lead('inbound', v_class) then
+          else
             -- Só inbound + external cria contato (e, abaixo, lead).
             v_contact_created := true;
             insert into public.contacts (workspace_id, type, name, preferred_channel, created_by)
