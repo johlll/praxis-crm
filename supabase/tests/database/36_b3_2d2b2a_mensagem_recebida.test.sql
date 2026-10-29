@@ -673,7 +673,7 @@ $f$;
 create function pg_temp.vinc(p jsonb) returns text language sql as $f$
   select concat_ws('|', coalesce(p ->> 'outcome', p ->> 'erro'), p ->> 'sender_classification', p ->> 'contact_created', p ->> 'lead_created') || ' '
     || coalesce((select concat_ws('|', coalesce(c.contact_id::text, '-'), coalesce(c.lead_id::text, '-'), coalesce(c.opportunity_id::text, '-'),
-         c.needs_link_review, cardinality(c.link_candidate_contact_ids) + cardinality(c.link_candidate_lead_ids))
+         c.needs_link_review::text, cardinality(c.link_candidate_contact_ids) + cardinality(c.link_candidate_lead_ids))
        from public.conversations c where c.id = (p ->> 'conversation_id')::uuid), 'NULL')
 $f$;
 
@@ -747,12 +747,12 @@ select is(pg_temp.st('disabled', 'evt-s3', 'pm-s3'), '{"outcome": "channel_disab
 
 select id::text || '|' || coalesce(claim_token::text, '00000000-0000-0000-0000-000000000000') as e_s3 from public.whatsapp_webhook_inbox where provider_event_id = 'evt-s3' and channel_id = :'ch_s'::uuid \gset
 set local role service_role;
+select public.whatsapp_inbox_release(split_part(:'e_s3', '|', 1)::uuid, split_part(:'e_s3', '|', 2)::uuid, 'channel_disabled') ->> 'outcome' as rel_s3 \gset
+reset role;
 select is(
-  (public.whatsapp_inbox_release(split_part(:'e_s3', '|', 1)::uuid, split_part(:'e_s3', '|', 2)::uuid, 'channel_disabled') ->> 'outcome')
-  || ' ' || pg_temp.txt(format($$select state || '|' || coalesce(claim_token::text, '-') || '|' || last_release_code from public.whatsapp_webhook_inbox where id = %L::uuid$$, split_part(:'e_s3', '|', 1))),
+  :'rel_s3' || ' ' || pg_temp.txt(format($$select state || '|' || coalesce(claim_token::text, '-') || '|' || last_release_code from public.whatsapp_webhook_inbox where id = %L::uuid$$, split_part(:'e_s3', '|', 1))),
   'released pending|-|channel_disabled', 'o claim recusado pelo estado do canal ainda pode ser liberado'
 );
-reset role;
 
 update public.whatsapp_channels set status = 'active', status_changed_at = now() where id = :'ch_s'::uuid;
 select pg_temp.entrada(:'ch_s', :'ws_um', 'b3d2b2a-s', 'evt-s4') as e_s4 \gset
