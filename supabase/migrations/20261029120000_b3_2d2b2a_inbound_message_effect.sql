@@ -119,7 +119,7 @@ begin
       return v_by_phone;
     end if;
     if v_by_phone.bsuid_blind_index is not null then
-      raise exception 'identity_conflict';
+      return v_by_phone;
     end if;
     update public.whatsapp_identities
     set bsuid_blind_index = p_bsuid_blind_index, bsuid_ciphertext = p_bsuid_ciphertext, bsuid_key_version = p_bsuid_key_version
