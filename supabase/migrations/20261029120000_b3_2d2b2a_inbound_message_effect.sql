@@ -22,11 +22,13 @@
 -- Classificação do remetente: só o casamento com as identidades internas
 -- ---------------------------------------------------------------------
 
--- internal: casa com uma identidade interna ATIVA do canal (telefone, ou o
--- índice cego da mesma versão de chave). external: todas as ativas são
--- comparáveis com o remetente (ao menos um identificador do mesmo tipo dos
--- dois lados) e nenhuma casa. unresolved: alguma ativa não dá para
--- comparar. Nunca o texto, o nome do perfil ou o formato de um id.
+-- unresolved: o canal não tem NENHUMA identidade interna ativa (sem
+-- cadastro, não há como saber se é o escritório). internal: casa com uma
+-- identidade interna ATIVA do canal (telefone, ou o índice cego da mesma
+-- versão de chave). external: todas as ativas são comparáveis com o
+-- remetente (ao menos um identificador do mesmo tipo dos dois lados) e
+-- nenhuma casa. unresolved: alguma ativa não dá para comparar. Nunca o
+-- texto, o nome do perfil ou o formato de um id.
 create function private.whatsapp_classify_inbound_sender(
   p_channel_id uuid,
   p_phone_e164 text,
@@ -38,6 +40,10 @@ stable
 set search_path = ''
 as $body$
   select case
+    when not exists (
+      select 1 from public.whatsapp_internal_identities i
+      where i.channel_id = p_channel_id and i.is_active
+    ) then 'unresolved'::public.whatsapp_sender_classification
     when exists (
       select 1 from public.whatsapp_internal_identities i
       where i.channel_id = p_channel_id and i.is_active
