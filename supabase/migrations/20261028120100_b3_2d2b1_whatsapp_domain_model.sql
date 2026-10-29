@@ -873,7 +873,7 @@ begin
   if not found then
     raise exception 'ledger_reserve_inconsistent';
   end if;
-  if v_existing.inbox_id = v_inbox.id and v_existing.effect = p_effect then
+  if v_existing.inbox_id = v_inbox.id then
     outcome := 'duplicate';
     ledger_id := v_existing.id;
   else
