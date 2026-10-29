@@ -806,8 +806,8 @@ create table public.whatsapp_effect_ledger (
   -- A mensagem é do mesmo workspace E do mesmo canal. Se ela for
   -- removida, só message_id zera; o registro técnico fica.
   constraint whatsapp_effect_ledger_message_fkey
-    foreign key (message_id, workspace_id, channel_id)
-    references public.messages (id, workspace_id, channel_id) on delete set null (message_id)
+    foreign key (workspace_id, message_id)
+    references public.messages (workspace_id, id) on delete set null (message_id)
 );
 
 comment on table public.whatsapp_effect_ledger is
