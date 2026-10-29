@@ -1559,6 +1559,7 @@ export type Database = {
           contact_id: string | null
           created_at: string
           id: string
+          identity_id: string
           last_message_at: string | null
           lead_id: string | null
           link_candidate_contact_ids: string[]
@@ -1566,7 +1567,7 @@ export type Database = {
           needs_link_review: boolean
           opportunity_id: string | null
           updated_at: string
-          wa_id: string
+          wa_id: string | null
           workspace_id: string
         }
         Insert: {
@@ -1574,6 +1575,7 @@ export type Database = {
           contact_id?: string | null
           created_at?: string
           id?: string
+          identity_id: string
           last_message_at?: string | null
           lead_id?: string | null
           link_candidate_contact_ids?: string[]
@@ -1581,7 +1583,7 @@ export type Database = {
           needs_link_review?: boolean
           opportunity_id?: string | null
           updated_at?: string
-          wa_id: string
+          wa_id?: string | null
           workspace_id: string
         }
         Update: {
@@ -1589,6 +1591,7 @@ export type Database = {
           contact_id?: string | null
           created_at?: string
           id?: string
+          identity_id?: string
           last_message_at?: string | null
           lead_id?: string | null
           link_candidate_contact_ids?: string[]
@@ -1596,7 +1599,7 @@ export type Database = {
           needs_link_review?: boolean
           opportunity_id?: string | null
           updated_at?: string
-          wa_id?: string
+          wa_id?: string | null
           workspace_id?: string
         }
         Relationships: [
@@ -1612,6 +1615,13 @@ export type Database = {
             columns: ["workspace_id", "contact_id"]
             isOneToOne: false
             referencedRelation: "contacts"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "conversations_identity_same_workspace_fkey"
+            columns: ["workspace_id", "identity_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_identities"
             referencedColumns: ["workspace_id", "id"]
           },
           {
@@ -2124,51 +2134,90 @@ export type Database = {
       }
       messages: {
         Row: {
-          body_text: string
+          body_text: string | null
           channel_id: string
           client_dedupe_key: string | null
+          content_kind: string
           conversation_id: string
           created_at: string
           direction: Database["public"]["Enums"]["message_direction"]
           error_reason: string | null
           id: string
+          origin: Database["public"]["Enums"]["whatsapp_message_origin"]
+          origin_correlation_kind: string | null
+          origin_correlation_ref: string | null
+          provider: Database["public"]["Enums"]["whatsapp_provider"] | null
+          provider_cost_amount: number | null
+          provider_cost_billable_amount: number | null
+          provider_cost_category: string | null
+          provider_cost_currency: string | null
+          provider_cost_finality: string | null
+          provider_external_id: string | null
+          provider_message_id: string | null
+          sender_classification: Database["public"]["Enums"]["whatsapp_sender_classification"]
           sent_by: string | null
           status: Database["public"]["Enums"]["message_status"]
           status_updated_at: string
           updated_at: string
-          wa_message_id: string
+          wa_message_id: string | null
           workspace_id: string
         }
         Insert: {
-          body_text: string
+          body_text?: string | null
           channel_id: string
           client_dedupe_key?: string | null
+          content_kind?: string
           conversation_id: string
           created_at?: string
           direction: Database["public"]["Enums"]["message_direction"]
           error_reason?: string | null
           id?: string
+          origin: Database["public"]["Enums"]["whatsapp_message_origin"]
+          origin_correlation_kind?: string | null
+          origin_correlation_ref?: string | null
+          provider?: Database["public"]["Enums"]["whatsapp_provider"] | null
+          provider_cost_amount?: number | null
+          provider_cost_billable_amount?: number | null
+          provider_cost_category?: string | null
+          provider_cost_currency?: string | null
+          provider_cost_finality?: string | null
+          provider_external_id?: string | null
+          provider_message_id?: string | null
+          sender_classification: Database["public"]["Enums"]["whatsapp_sender_classification"]
           sent_by?: string | null
           status: Database["public"]["Enums"]["message_status"]
           status_updated_at?: string
           updated_at?: string
-          wa_message_id: string
+          wa_message_id?: string | null
           workspace_id: string
         }
         Update: {
-          body_text?: string
+          body_text?: string | null
           channel_id?: string
           client_dedupe_key?: string | null
+          content_kind?: string
           conversation_id?: string
           created_at?: string
           direction?: Database["public"]["Enums"]["message_direction"]
           error_reason?: string | null
           id?: string
+          origin?: Database["public"]["Enums"]["whatsapp_message_origin"]
+          origin_correlation_kind?: string | null
+          origin_correlation_ref?: string | null
+          provider?: Database["public"]["Enums"]["whatsapp_provider"] | null
+          provider_cost_amount?: number | null
+          provider_cost_billable_amount?: number | null
+          provider_cost_category?: string | null
+          provider_cost_currency?: string | null
+          provider_cost_finality?: string | null
+          provider_external_id?: string | null
+          provider_message_id?: string | null
+          sender_classification?: Database["public"]["Enums"]["whatsapp_sender_classification"]
           sent_by?: string | null
           status?: Database["public"]["Enums"]["message_status"]
           status_updated_at?: string
           updated_at?: string
-          wa_message_id?: string
+          wa_message_id?: string | null
           workspace_id?: string
         }
         Relationships: [
@@ -3414,6 +3463,88 @@ export type Database = {
           },
         ]
       }
+      whatsapp_effect_ledger: {
+        Row: {
+          channel_id: string
+          effect: string
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          id: string
+          inbox_id: string
+          message_id: string | null
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          provider_event_id: string
+          recorded_at: string
+          workspace_id: string
+        }
+        Insert: {
+          channel_id: string
+          effect: string
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          id?: string
+          inbox_id: string
+          message_id?: string | null
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          provider_event_id: string
+          recorded_at?: string
+          workspace_id: string
+        }
+        Update: {
+          channel_id?: string
+          effect?: string
+          environment?: Database["public"]["Enums"]["whatsapp_environment"]
+          id?: string
+          inbox_id?: string
+          message_id?: string | null
+          provider?: Database["public"]["Enums"]["whatsapp_provider"]
+          provider_event_id?: string
+          recorded_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_effect_ledger_channel_identity_fkey"
+            columns: ["workspace_id", "channel_id", "environment", "provider"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_channels"
+            referencedColumns: ["workspace_id", "id", "environment", "provider"]
+          },
+          {
+            foreignKeyName: "whatsapp_effect_ledger_inbox_fkey"
+            columns: [
+              "inbox_id",
+              "workspace_id",
+              "channel_id",
+              "environment",
+              "provider",
+              "provider_event_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "whatsapp_webhook_inbox"
+            referencedColumns: [
+              "id",
+              "workspace_id",
+              "channel_id",
+              "environment",
+              "provider",
+              "provider_event_id",
+            ]
+          },
+          {
+            foreignKeyName: "whatsapp_effect_ledger_message_fkey"
+            columns: ["message_id", "workspace_id", "channel_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id", "workspace_id", "channel_id"]
+          },
+          {
+            foreignKeyName: "whatsapp_effect_ledger_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       whatsapp_environment_keys: {
         Row: {
           environment: Database["public"]["Enums"]["whatsapp_environment"]
@@ -3431,6 +3562,142 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      whatsapp_identities: {
+        Row: {
+          bsuid_blind_index: string | null
+          bsuid_ciphertext: string | null
+          bsuid_key_version: string | null
+          channel_id: string
+          created_at: string
+          environment:
+            | Database["public"]["Enums"]["whatsapp_environment"]
+            | null
+          id: string
+          phone_e164: string | null
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          bsuid_blind_index?: string | null
+          bsuid_ciphertext?: string | null
+          bsuid_key_version?: string | null
+          channel_id: string
+          created_at?: string
+          environment?:
+            | Database["public"]["Enums"]["whatsapp_environment"]
+            | null
+          id?: string
+          phone_e164?: string | null
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          bsuid_blind_index?: string | null
+          bsuid_ciphertext?: string | null
+          bsuid_key_version?: string | null
+          channel_id?: string
+          created_at?: string
+          environment?:
+            | Database["public"]["Enums"]["whatsapp_environment"]
+            | null
+          id?: string
+          phone_e164?: string | null
+          provider?: Database["public"]["Enums"]["whatsapp_provider"]
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_identities_channel_fkey"
+            columns: ["workspace_id", "channel_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_channels"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "whatsapp_identities_channel_identity_fkey"
+            columns: ["workspace_id", "channel_id", "environment", "provider"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_channels"
+            referencedColumns: ["workspace_id", "id", "environment", "provider"]
+          },
+          {
+            foreignKeyName: "whatsapp_identities_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      whatsapp_internal_identities: {
+        Row: {
+          bsuid_blind_index: string | null
+          bsuid_ciphertext: string | null
+          bsuid_key_version: string | null
+          channel_id: string
+          created_at: string
+          created_by: string
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          id: string
+          is_active: boolean
+          label: string
+          phone_e164: string | null
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          bsuid_blind_index?: string | null
+          bsuid_ciphertext?: string | null
+          bsuid_key_version?: string | null
+          channel_id: string
+          created_at?: string
+          created_by: string
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          id?: string
+          is_active?: boolean
+          label: string
+          phone_e164?: string | null
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          bsuid_blind_index?: string | null
+          bsuid_ciphertext?: string | null
+          bsuid_key_version?: string | null
+          channel_id?: string
+          created_at?: string
+          created_by?: string
+          environment?: Database["public"]["Enums"]["whatsapp_environment"]
+          id?: string
+          is_active?: boolean
+          label?: string
+          phone_e164?: string | null
+          provider?: Database["public"]["Enums"]["whatsapp_provider"]
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_internal_identities_channel_identity_fkey"
+            columns: ["workspace_id", "channel_id", "environment", "provider"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_channels"
+            referencedColumns: ["workspace_id", "id", "environment", "provider"]
+          },
+          {
+            foreignKeyName: "whatsapp_internal_identities_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       whatsapp_webhook_inbox: {
         Row: {
@@ -5112,6 +5379,19 @@ export type Database = {
         }
         Returns: Json
       }
+      whatsapp_create_internal_identity: {
+        Args: {
+          p_actor_user_id: string
+          p_bsuid_blind_index: string
+          p_bsuid_ciphertext: string
+          p_bsuid_key_version: string
+          p_channel_id: string
+          p_label: string
+          p_phone_e164: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       whatsapp_create_simulated_channel: {
         Args: {
           p_actor_user_id: string
@@ -5224,6 +5504,14 @@ export type Database = {
         Args: { p_actor_user_id: string; p_workspace_id: string }
         Returns: Json
       }
+      whatsapp_list_internal_identities: {
+        Args: {
+          p_actor_user_id: string
+          p_channel_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       whatsapp_pause_channel: {
         Args: {
           p_actor_user_id: string
@@ -5269,6 +5557,15 @@ export type Database = {
           status: string
           workspace_id: string
         }[]
+      }
+      whatsapp_set_internal_identity_active: {
+        Args: {
+          p_active: boolean
+          p_actor_user_id: string
+          p_identity_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
       }
       whatsapp_store_channel_credential: {
         Args: {
@@ -5357,7 +5654,13 @@ export type Database = {
         | "viewer"
       membership_status: "active" | "suspended"
       message_direction: "inbound" | "outbound"
-      message_status: "queued" | "sent" | "delivered" | "read" | "failed"
+      message_status:
+        | "queued"
+        | "accepted"
+        | "sent"
+        | "delivered"
+        | "read"
+        | "failed"
       opportunity_status: "open" | "won" | "lost"
       outbox_state:
         | "pending"
@@ -5382,7 +5685,19 @@ export type Database = {
         | "purged"
       whatsapp_credential_purpose: "api_key" | "webhook_secret"
       whatsapp_environment: "production" | "preview"
+      whatsapp_message_origin:
+        | "inbound"
+        | "crm"
+        | "business_app"
+        | "chatbot"
+        | "external_api"
+        | "history"
       whatsapp_provider: "simulated" | "ycloud" | "meta"
+      whatsapp_sender_classification:
+        | "external"
+        | "internal"
+        | "automation"
+        | "unresolved"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -5569,7 +5884,14 @@ export const Constants = {
       ],
       membership_status: ["active", "suspended"],
       message_direction: ["inbound", "outbound"],
-      message_status: ["queued", "sent", "delivered", "read", "failed"],
+      message_status: [
+        "queued",
+        "accepted",
+        "sent",
+        "delivered",
+        "read",
+        "failed",
+      ],
       opportunity_status: ["open", "won", "lost"],
       outbox_state: [
         "pending",
@@ -5596,7 +5918,21 @@ export const Constants = {
       ],
       whatsapp_credential_purpose: ["api_key", "webhook_secret"],
       whatsapp_environment: ["production", "preview"],
+      whatsapp_message_origin: [
+        "inbound",
+        "crm",
+        "business_app",
+        "chatbot",
+        "external_api",
+        "history",
+      ],
       whatsapp_provider: ["simulated", "ycloud", "meta"],
+      whatsapp_sender_classification: [
+        "external",
+        "internal",
+        "automation",
+        "unresolved",
+      ],
     },
   },
 } as const

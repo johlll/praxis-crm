@@ -2,6 +2,8 @@ import type { MessageStatus } from "@/modules/conversations/queries";
 
 export const MESSAGE_STATUS_LABEL: Record<MessageStatus, string> = {
   queued: "Enviando…",
+  // B3.2d-2b1: aceita pelo provedor, ainda sem `sent`.
+  accepted: "Aceita",
   sent: "Enviada",
   delivered: "Entregue",
   read: "Lida",
@@ -10,6 +12,7 @@ export const MESSAGE_STATUS_LABEL: Record<MessageStatus, string> = {
 
 export const MESSAGE_STATUS_CLASS: Record<MessageStatus, string> = {
   queued: "bg-neutral-bg text-neutral",
+  accepted: "bg-neutral-bg text-neutral",
   sent: "bg-neutral-bg text-neutral",
   delivered: "bg-info-bg text-info",
   read: "bg-success-bg text-success",

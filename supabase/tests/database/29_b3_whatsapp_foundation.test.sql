@@ -125,6 +125,8 @@ select is(
      -- resolução pelo localizador opaco (B3.2c), o 32.
      and p.proname not like 'whatsapp\_inbox\_%'
      and p.proname <> 'whatsapp_resolve_webhook_route'
+     -- As três de identidade interna (B3.2d-2b1) têm teste próprio (35).
+     and p.proname not like 'whatsapp\_%internal\_identit%'
      and has_function_privilege('service_role', p.oid, 'execute')),
   10,
   'as 10 funções public.whatsapp_* da B3.1 são executáveis por service_role'

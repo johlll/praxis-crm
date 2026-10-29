@@ -173,11 +173,27 @@ jobs:
         # roda antes do passo que recria o banco local.
         run: bash scripts/b3-2d2a-inbox-dispose-concurrency-check.sh
 
+      - name: Teste de concorrência real (B3.2d-2b1 — reserva do ledger de efeitos)
+        # Duas reservas do mesmo evento (reserved e duplicate com o mesmo
+        # id), uma reserva desfeita por falha depois dela (a outra reserva)
+        # e o mesmo evento com outro efeito (conflict) — ver
+        # scripts/b3-2d2b1-ledger-concurrency-check.sh. Canal próprio; roda
+        # antes do passo que recria o banco local.
+        run: bash scripts/b3-2d2b1-ledger-concurrency-check.sh
+
       - name: Atualização a partir da versão anterior (numeração de propostas)
         # "Aplicar migrations do zero" já valida a criação do banco; este
         # passo valida a ATUALIZAÇÃO com dados emitidos pela versão anterior.
         # Recria o banco local, por isso roda depois do e2e.
         run: bash scripts/check-upgrade-proposal-counter.sh
+
+      - name: Atualização a partir da versão anterior (B3.2d-2b1 — domínio do WhatsApp sobre a A7)
+        # Usa a A7 na versão anterior (simulador, envio, status), aplica o
+        # modelo do domínio e confere: leituras da A7 idênticas, nada criado
+        # ou apagado, identidades e classificação sem inferência, backfill
+        # idempotente — ver scripts/check-upgrade-b3-2d2b1-dominio.sh.
+        # Recria o banco local, por isso roda por último.
+        run: bash scripts/check-upgrade-b3-2d2b1-dominio.sh
 
       - name: Publicar relatório do Playwright (só se algo falhar)
         if: failure()

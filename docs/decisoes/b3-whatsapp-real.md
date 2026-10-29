@@ -1537,8 +1537,10 @@ ou número.
 | B3.2c | **Implementada (§18).** Rota `/api/webhooks/whatsapp/[provider]/[webhookRouteId]`: bytes → canal pelo localizador opaco da URL (UUID aleatório; o segredo é por canal) → assinatura → inbox → 2xx → evento `{ inboxId }` no Inngest próprio do WhatsApp; 404 sem provedor | B3.2b |
 | B3.2d-1 | **Implementada (§19).** Claim atômico da inbox: só pelo `inboxId`, com lease, token, `claim_count` e contexto resolvido no banco; leitura que decifra e confere o hash antes de devolver o corpo; complete, fail e release presos ao token; leitura e marcações sem claim aposentadas | B3.2c |
 | B3.2d-2a | **Implementada (§20).** Rota `/api/inngest/whatsapp` e app `praxis-crm-whatsapp` com chaves próprias `WHATSAPP_`; função do consumidor com o ciclo inteiro num único `step.run`; evento estrito `{ inboxId }`; normalização pelo adaptador do canal; `routing_mismatch`; matriz do estado do canal; falhas terminais × recuperáveis; `ignored`/`unsupported` finalizados com disposição cercada pelo claim (`whatsapp_inbox_dispose`); nenhuma escrita no domínio | B3.2d-1 |
-| B3.2d-2b | Evolução do domínio reaproveitando a A7, sobre o consumidor da B3.2d-2a (§20.9): BSUID sem telefone, mensagens sem texto, custo do provedor, status `accepted` e RPCs de serviço: mensagem, eco, status, eventos de conta; origem técnica `inbound`, `business_app`, `chatbot` (só com correlação positiva) ou `external_api` (fallback), `history`, e classificação do remetente `external`, `internal`, `automation` ou `unresolved` (§15.10); cadastro de identidades internas (telefone e BSUID; owner/admin); busca antes de criar lead; pendência de identificação; lead só por `inbound` + `external`; nada de lead ou atividade para bot, eco, histórico, status, comando interno ou evento técnico; portão: escrita idempotente pelo id estável do evento e RPC de efeito que confere `inboxId`, token e lease vigente no banco (§19.9); teste de concorrência | B3.2d-2a |
-| B3.2e | Reconciliador: republica as entradas `pending` e as `processing` com lease vencida; batimento do canal (`last_event_at`). Portão obrigatório antes de webhook real (§18.3) | B3.2d-2 |
+| B3.2d-2b1 | **Implementada (§21).** Modelo do domínio sobre a A7: identidades por telefone, BSUID ou os dois (BSUID só com índice cego e cifra); conversa com identidade obrigatória e telefone opcional; mensagens com texto opcional, tipo de conteúdo, `origin` e `sender_classification` separados, correlação positiva, ids do provedor e custo estimado × final; `accepted`; identidades internas (owner/admin); ledger técnico de efeitos; backfill determinístico; contratos tipados. Nenhuma RPC de efeito | B3.2d-2a |
+| B3.2d-2b2 | RPCs atômicas dos efeitos, sobre o modelo da B3.2d-2b1: mensagem, eco, status e eventos de conta; classificação pelo casamento com as identidades internas e por correlação positiva (§15.10); busca antes de criar lead; pendência de identificação; lead só por `inbound` + `external`; nada de lead ou atividade para bot, eco, histórico, status, comando interno ou evento técnico; efeito e ledger na mesma transação, com a RPC conferindo `inboxId`, token e lease vigente no banco (§19.9); teste de concorrência | B3.2d-2b1 |
+| B3.2d-2b3 | Ligação do consumidor da B3.2d-2a às RPCs da B3.2d-2b2: o release `domain_effect_not_implemented` dá lugar ao efeito; a decisão por tipo e estado do canal continua a do §20.4 | B3.2d-2b2 |
+| B3.2e | Reconciliador: republica as entradas `pending` e as `processing` com lease vencida; batimento do canal (`last_event_at`). Portão obrigatório antes de webhook real (§18.3) | B3.2d-2b3 |
 | Fora do Praxis | Contrato do §15.6 no chatbot (rota, tabela de pedidos, testes), em branch/PR própria do chatbot, desligado e sem deploy | Decisão 15; implantação real com nova autorização; necessário antes da B3.3 no número do chatbot |
 | Posterior | Resumo e qualificação estruturados do chatbot (decisão 12) | Entrada real estável |
 
@@ -3532,7 +3534,7 @@ apagadas.
 
 ### 20.9 Limitações e o que fica para a B3.2d-2b e a B3.2e
 
-- **B3.2d-2b — evolução do domínio reaproveitando a A7**, sem tabelas
+- **B3.2d-2b — evolução do domínio reaproveitando a A7** (dividida em 2b1, 2b2 e 2b3 no §21.1), sem tabelas
   paralelas de conversa ou mensagem:
   - identidade só por BSUID, sem telefone;
   - mensagens sem texto;
@@ -3565,3 +3567,600 @@ apagadas.
   - nenhuma mudança no chatbot;
   - nenhum dado real tocado; nenhum lead, contato, conversa ou atividade
     criado.
+
+## 21. B3.2d-2b1 — modelo do domínio do WhatsApp sobre a A7 (28/10/2026)
+
+Esta etapa prepara o domínio existente da A7 para os eventos reais. Ela
+entrega schema, restrições, backfill, RLS e permissões, tipos, o serviço
+de administração das identidades internas e os contratos tipados que a
+próxima etapa usará.
+
+Ficam de fora:
+- RPCs que apliquem mensagens reais ao domínio;
+- criação automática de contato ou lead;
+- processamento de status pela inbox;
+- ligação do consumidor da B3.2d-2a ao domínio;
+- publicação para C1, download de mídia, reconciliador, telas e envio.
+
+### 21.1 Nova divisão da B3.2d-2b
+
+| Etapa | Conteúdo |
+|---|---|
+| **B3.2d-2b1** (esta) | Modelo do domínio: identidades, mensagens, status, custo, identidades internas, ledger, backfill e contratos |
+| **B3.2d-2b2** | RPCs atômicas dos efeitos (mensagem, eco, status, conta), com o ledger e o claim vigente na mesma transação |
+| **B3.2d-2b3** | Ligação do consumidor da B3.2d-2a às RPCs da 2b2 |
+
+**Sem sistemas duplicados.** A B3 evolui as tabelas da A7: nenhuma tabela
+nova de conversas ou mensagens. O chatbot não foi lido, copiado nem
+alterado; nada da fila, do D1 ou do webhook dele entrou no Praxis.
+
+### 21.2 Identidades
+
+**Decisão:** uma tabela própria, `whatsapp_identities`, com uma
+identidade por canal. A conversa aponta para ela.
+
+| Coluna | Conteúdo |
+|---|---|
+| `phone_e164` | telefone E.164, opcional |
+| `bsuid_blind_index`, `bsuid_ciphertext`, `bsuid_key_version` | BSUID: só índice cego (32 bytes) e texto cifrado, os três juntos |
+| `workspace_id`, `channel_id`, `environment`, `provider` | os do canal (conferidos por FK e gatilho); `environment` nulo só no canal legado da A7 |
+
+- **Telefone, BSUID ou os dois; nunca nenhum.** Uma restrição recusa a
+  identidade vazia.
+- **Único por canal**, pelo telefone e pelo índice do BSUID. O mesmo
+  telefone em outro canal é outra identidade.
+- **Imutável.** Canal, ambiente, provedor, telefone e BSUID não mudam
+  depois de gravados. Um identificador que faltava pode ser acrescentado,
+  por exemplo o telefone de quem só tinha BSUID.
+- **Nenhum telefone é fabricado a partir do BSUID**, nem quando ele
+  parece um número; o formato de um identificador nunca diz quem enviou.
+
+**PII.**
+- O telefone fica em texto, como já está em `conversations.wa_id` e em
+  `contact_phones` (A3/A7). É por ele que o contato é casado; cifrá-lo
+  aqui quebraria esse casamento sem proteger nada novo.
+- O BSUID é PII nova e segue o padrão aprovado na A3 para CPF/CNPJ:
+  AES-256-GCM decifrado só no Node e índice cego HMAC-SHA256
+  (`src/server/whatsapp/identity-crypto.ts`).
+- **Chaves próprias:** `WHATSAPP_IDENTITY_KEY_VERSIONS` e
+  `WHATSAPP_IDENTITY_ACTIVE_KEY_VERSION`, nunca as da inbox, das
+  credenciais ou dos contatos. Cada chave gera, por HKDF, uma subchave de
+  cifra e outra de índice.
+- **Escopo** (ambiente, workspace e canal) no índice e na AAD: o mesmo
+  BSUID em outro canal, workspace ou ambiente gera outro índice, e um
+  texto cifrado não decifra fora do escopo dele.
+- Nenhuma dessas variáveis foi configurada em ambiente nenhum.
+
+**Conversas.**
+- `identity_id` passa a ser obrigatório e único por conversa.
+- `wa_id` passa a ser opcional, para conversa só com BSUID.
+- Um gatilho dá à conversa que nasce pela A7 (só com `wa_id`) a
+  identidade do telefone no canal dela, e recusa telefone que diverge da
+  identidade, conversa sem identidade e identidade de outro canal.
+
+### 21.3 Mensagens
+
+Colunas novas em `messages`, todas compatíveis com as linhas antigas:
+- `body_text` opcional;
+- `content_kind` (lista do contrato do adaptador, padrão `text`);
+- `origin` e `sender_classification`, separados e obrigatórios;
+- `origin_correlation_kind`/`_ref`: prova positiva e confiável da
+  origem (`crm_outbox` ou `chatbot_request`);
+- `provider`, `provider_message_id` (único por canal) e
+  `provider_external_id` (valor opaco);
+- custo: `provider_cost_amount`, `_currency`, `_category`, `_finality`, e
+  `provider_cost_billable_amount`, calculado só com o custo final.
+
+**Origem × classificação**:
+
+| `origin` | Direção | `sender_classification` permitidas |
+|---|---|---|
+| `inbound` | recebida | `external`, `internal`, `unresolved` |
+| `crm` | enviada | `internal` (com autor e chave de envio), `automation` |
+| `business_app` | enviada | `internal` |
+| `chatbot` | enviada | `automation` — só com correlação `chatbot_request` |
+| `external_api` | enviada | `unresolved`, `automation` |
+| `history` | qualquer | qualquer |
+
+- `internal` nunca é origem.
+- Sem prova, a saída por API é `external_api` + `unresolved`.
+- A mensagem do advogado pelo aplicativo é `business_app` + `internal`.
+- O comando vindo do número pessoal interno é `inbound` + `internal`.
+- **Nenhuma classificação sai do texto da mensagem** nem do formato do
+  `externalId`. O contrato `classifyWhatsAppMessage` nem recebe o texto, e
+  um teste estático confere o código dele.
+- Lead só para `inbound` + `external` (`whatsappMayCreateLead` e
+  `private.whatsapp_may_create_lead`). Identidade interna, automação, eco,
+  histórico e API sem prova nunca criam lead.
+
+**Conteúdo.** Texto exige corpo; mídia aceita legenda ou nenhum texto.
+
+**Compatibilidade com a A7.**
+- As regras antigas "toda saída tem autor e chave de reenvio" viraram
+  regras da origem `crm`: eco, chatbot e API não têm autor do CRM.
+- Um gatilho classifica a mensagem que chega pela A7 pelo CAMINHO de
+  inserção: recebida do simulador → `inbound`/`unresolved`; enviada por
+  usuário do CRM → `crm`/`internal`. Qualquer outro caminho precisa
+  informar as duas colunas.
+- A classificação `unresolved` das recebidas da A7 não muda o simulador:
+  ele continua criando contato e lead como antes. A regra de lead da B3
+  vale para o caminho real (B3.2d-2b2).
+
+### 21.4 Status e custo
+
+- **`accepted`** entra no enum antes de `sent`, em migration própria (o
+  Postgres não deixa usar o valor novo na mesma transação).
+- **A regra da A7 não muda:** no rank dela, `accepted` fica no nível de
+  `queued`, e `apply_message_status_event` é a mesma.
+- **A regra da B3** fica em `private.whatsapp_message_status_should_apply`,
+  igual à projeção da B3.2a:
+  - avança em accepted → sent → delivered → read;
+  - `failed` a partir de qualquer status antes da entrega;
+  - `delivered` e `read` corrigem `failed`;
+  - nada regride, e `accepted`/`sent` depois de `failed` não apagam o
+    `failed`.
+- **Custo:**
+  - um gatilho impede que o custo final seja substituído, nem por
+    estimativa nem por outro valor;
+  - mensagem `failed` nunca tem custo final;
+  - só o custo final entra em `provider_cost_billable_amount`;
+  - a categoria é aberta e bem formada (`^[a-z][a-z0-9_]{0,63}$`), então
+    uma categoria futura é preservada;
+  - nenhuma tarifa da Meta ou da YCloud está no código ou no banco.
+
+### 21.5 Identidades internas
+
+`whatsapp_internal_identities`: números e BSUIDs do próprio escritório.
+
+- Ligada a workspace, ambiente e canal (FK para a identidade do canal),
+  com telefone e/ou BSUID (índice cego e cifra), `is_active` e datas.
+- **Só owner e admin administram**, por três RPCs de `service_role` com
+  ambiente autenticado. Manager e members recebem
+  `insufficient_permission`.
+  - `whatsapp_list_internal_identities`;
+  - `whatsapp_create_internal_identity`;
+  - `whatsapp_set_internal_identity_active`.
+- Canal de outro workspace, de outro ambiente ou legado → `channel_not_found`.
+- A listagem nunca devolve índice cego, cifra ou versão de chave.
+- A auditoria leva só ambiente, provedor, canal e se há telefone/BSUID.
+- Serviço no servidor sem tela:
+  `src/modules/whatsapp-channels/internal-identities.ts`. Ele exige
+  `channel.manage` da sessão e entrada estrita; o BSUID é cifrado antes de
+  ir ao banco.
+- `private.whatsapp_is_internal_identity` faz o casamento para a
+  B3.2d-2b2: só identidade ativa, do mesmo canal.
+- Uma identidade interna nunca cria lead.
+- Nenhuma identidade real foi cadastrada.
+
+### 21.6 Ledger técnico de efeitos
+
+`whatsapp_effect_ledger`: um efeito por **(ambiente, canal, provedor, id
+estável do evento)**.
+- Não é uma segunda tabela de mensagens. Guarda só a chave, o efeito
+  declarado (lista fechada), o `inbox_id` e o `message_id`.
+- **Nenhuma coluna de corpo, telefone, BSUID, mídia ou payload**, e o id
+  do evento tem formato restrito (um telefone com `+` é recusado).
+- O ambiente, o workspace e o provedor têm de ser os do canal (FK
+  composta): nenhum efeito cruza canal, workspace ou ambiente.
+- **Todo efeito tem uma inbox** (`inbox_id NOT NULL`), e ela é a do
+  mesmo evento. FK composta
+  `(inbox_id, workspace_id, channel_id, environment, provider, provider_event_id)`
+  → `whatsapp_webhook_inbox (id, workspace_id, channel_id, environment, provider, provider_event_id)`,
+  sobre uma unicidade nova da inbox com essas seis colunas.
+  - Sem ação na remoção (`NO ACTION`): a inbox de um efeito não pode ser
+    apagada. O expurgo já preserva a inbox como tombstone; a cascata do
+    workspace apaga os dois no mesmo comando.
+- **A mensagem, quando há, é do mesmo workspace e do mesmo canal.** FK
+  composta `(message_id, workspace_id, channel_id)` →
+  `messages (id, workspace_id, channel_id)`, sobre uma unicidade nova de
+  `messages`. Se a mensagem for removida, só `message_id` zera
+  (`ON DELETE SET NULL (message_id)`); workspace, canal, inbox e evento
+  ficam. `message_id` é nulo para efeitos que não produzem mensagem
+  (conta, identidade, evento técnico).
+- Só `private.whatsapp_effect_ledger_reserve(p_inbox_id, p_effect)`
+  grava. O chamador informa só a entrada e o efeito; ambiente,
+  workspace, canal, provedor e `provider_event_id` vêm da linha da inbox,
+  buscada no **ambiente autenticado** pelo cabeçalho assinado. Devolve
+  `(outcome, ledger_id)`:
+
+  | `outcome` | Quando | `ledger_id` |
+  |---|---|---|
+  | `reserved` | primeira vez | a linha nova |
+  | `duplicate` | a mesma inbox já reservou o mesmo efeito | a linha existente |
+  | `conflict` | a chave já foi reservada com outro efeito ou por outra inbox | nulo |
+
+  - `conflict` é integridade quebrada, nunca duplicação silenciosa.
+  - Inbox inexistente, nula ou de outro ambiente: `ledger_inbox_not_found`.
+    Sem ambiente autenticado: `whatsapp_environment_required`.
+  - Na B3.2d-2b2, a RPC do efeito trava a inbox, confere token e lease
+    vigente e chama a reserva na mesma transação; se algo falhar depois,
+    a reserva é desfeita junto.
+  - Ninguém, nem `service_role`, alcança a tabela ou a função
+    diretamente.
+
+### 21.7 Migrations e backfill
+
+- `20261028120000_b3_2d2b1_message_status_accepted.sql`: o valor
+  `accepted`.
+- `20261028120100_b3_2d2b1_whatsapp_domain_model.sql`: o resto. Nenhuma
+  migration mesclada foi editada.
+
+**Backfill** (`private.whatsapp_domain_backfill`, chamado na migration):
+1. uma identidade por (canal, telefone) já usado numa conversa, com o
+   ambiente e o provedor do canal;
+2. cada conversa aponta para a identidade do próprio telefone;
+3. recebidas → `inbound`/`unresolved`; enviadas (sempre por usuário do
+   CRM na A7) → `crm`/`internal`; todas `text`.
+
+- É **determinístico** e **idempotente**: rodar de novo devolve zero em
+  tudo.
+- Não muda o `updated_at` das linhas antigas.
+- Nenhuma linha vira `chatbot` e nada é classificado pelo texto.
+- O backfill **cria identidades técnicas** em `whatsapp_identities`. Não
+  cria nem apaga contatos, leads, oportunidades, atividades, conversas ou
+  mensagens, e não altera o conteúdo nem as datas de atualização desses
+  registros.
+- As restrições novas recusariam um backfill que marcasse mensagem
+  antiga como chatbot.
+
+**Reversão:** apagar as três tabelas e as colunas novas, e voltar `wa_id`,
+`body_text` e `wa_message_id` a `NOT NULL`. Toda linha antiga ainda tem os
+três.
+
+### 21.8 Compatibilidade com a A7
+
+- As funções da A7 não foram alteradas: simulador, envio, status,
+  vínculo, leituras e paginação.
+- O pgTAP 12 (A7) e o 14 (A9) continuam passando.
+- O E2E das conversas continua passando sem mudança visível. A
+  interface ganhou só o rótulo "Aceita" para o status novo, que nenhuma
+  mensagem antiga tem.
+- **Teste de atualização** (`scripts/check-upgrade-b3-2d2b1-dominio.sh`,
+  passo novo do CI):
+  1. usa a A7 na versão anterior: duas conversas, três mensagens
+     recebidas, consentimento, envio e status;
+  2. aplica a migration;
+  3. confere que as leituras da A7 devolvem exatamente o mesmo de antes;
+  4. confere que nenhum contato, lead, oportunidade, atividade, conversa,
+     mensagem ou evento de status foi criado ou apagado;
+  5. confere as identidades e a classificação, sem chatbot;
+  6. confere que o backfill de novo não muda nada;
+  7. confere que o simulador e o envio continuam funcionando depois.
+
+### 21.9 Testes
+
+Escritos antes da implementação, contra a main `6633084`. O commit só de
+testes é `ec66c8c`; a implementação é `b0457df`.
+
+**Vermelho contra a main**
+- Unitários (local): 143 dos 144 falham. O que passa é a matriz de papéis
+  (`channel.manage` só para owner e admin), que já existe.
+- pgTAP 35, na PR temporária #103: 75 de 82 falham. Os 7 que passam já
+  valem na main: as leituras da A7 (status, listas, paginação e
+  detalhe), a auditoria sem PII e "só o simulador criou contato e lead".
+- Teste de atualização (#103): as leituras da A7 batem, e ele falha em
+  seguida, porque `whatsapp_identities` não existe.
+
+**Correções nos testes**, cada uma em commit próprio:
+- `0d65105`: dois defeitos meus apareceram no vermelho.
+  - o pgTAP 35 comparava dois literais sem tipo
+    (`is(:'st_env1', 'delivered')`) e abortava o arquivo depois da 13ª
+    asserção;
+  - o teste de atualização lia o retrato como `authenticated`, que não
+    tem acesso a ele.
+  - O vermelho foi refeito com as correções.
+- `99d26d3`: a mutação T19 sobreviveu (abaixo). Entraram dois testes: a
+  mensagem do produto para um código conhecido e o `unknown` sem valor na
+  camada do servidor.
+- `465c946`:
+  - o pgTAP 29 (B3.1) conta as funções `whatsapp_*` de `service_role` e
+    esperava 10; as três de identidade interna têm teste próprio e
+    ficaram de fora, como as da inbox;
+  - um teste do 35 presumia a ordem de duas mensagens gravadas na mesma
+    transação, que é a do id aleatório (instável).
+
+**Correção na implementação durante o verde** (`750c251`): a restrição dos
+ids do provedor usava `\S{1,256}`, acima do limite de repetição das
+expressões regulares do Postgres (255). Todo INSERT de mensagem com id do
+provedor falhava com `2201B`, e por isso 13 asserções do pgTAP 35 caíram
+no primeiro CI. Corrigida na própria migration, que não foi mesclada. A
+primeira rodada de mutações do banco (#105 a #114) usava essa base com
+defeito, foi fechada e refeita sobre a base corrigida.
+
+**Verde**
+- Unitários: suíte inteira 2098; os 146 da etapa passam. Typecheck e lint
+  limpos.
+- No CI (`465c946`): comparação de tipos limpa; pgTAP inteiro, com o 35
+  (82), o 12 (A7), o 14 (A9) e o 29 a 34 da B3; concorrência real;
+  teste de atualização; build e E2E (76).
+
+**Cobertura**
+
+`tests/unit/b3-2d2b1-modelo-dominio.test.ts`:
+- valores de `origin` e `sender_classification`;
+- matriz de combinações (6 × 4) e direção de cada origem;
+- classificação por caminho: 11 casos;
+- `externalId` com cara de chatbot sem correlação continua
+  `external_api` + `unresolved`;
+- correlação malformada não prova nada;
+- o texto nunca muda o resultado (com teste estático);
+- lead só para `inbound` + `external`;
+- identidade: telefone, BSUID, os dois; BSUID com cara de telefone
+  continua BSUID; nove formas de identidade inválida;
+- conteúdo: texto, mídia sem texto, legenda, tipo desconhecido e texto
+  longo;
+- status: 15 transições, com `accepted` e as correções depois de
+  `failed`;
+- custo: estimado × final, total cobrado, `failed` estimado, categoria
+  futura, valores inválidos; nenhuma tarifa fixa (estático);
+- chave do ledger: só os quatro campos, sete chaves inválidas.
+
+`tests/unit/b3-2d2b1-identidade-cifra.test.ts`:
+- índice determinístico de 32 bytes, diferente por canal, workspace,
+  ambiente e canal legado;
+- não é hash simples nem HMAC com a chave crua;
+- cifra com IV aleatório e sem o BSUID; decifra só no próprio escopo;
+- busca em todas as versões de chave, gravação na ativa; versão
+  desconhecida recusada;
+- BSUID e escopo inválidos recusados;
+- não cai nas chaves da inbox, das credenciais ou dos contatos
+  (estático); nenhum erro com o BSUID ou a chave.
+
+`tests/unit/b3-2d2b1-identidades-internas.test.ts`:
+- `channel.manage` só para owner e admin, e a recusa da sessão não chega
+  ao banco;
+- telefone, BSUID ou os dois; o BSUID vai só como índice e cifra do
+  escopo do canal;
+- nove entradas inválidas recusadas antes do banco, inclusive workspace,
+  ator ou ambiente no formulário;
+- sem as chaves de identidade ou sem o ambiente do WhatsApp: recusa;
+- listagem segura (resposta com índice ou cifra é recusada);
+- ativação;
+- erros sanitizados: mensagem do produto, `unknown` sem valor, nada
+  sensível no console.
+
+`supabase/tests/database/35_b3_2d2b1_modelo_dominio.test.sql` (82):
+- estrutura:
+  - enums;
+  - colunas exatas das três tabelas novas, inclusive o ledger sem coluna
+    de conteúdo;
+  - o índice único do ledger;
+  - nulidade das colunas de conversas e mensagens;
+  - nenhum acesso direto;
+  - RLS;
+  - RPCs só de `service_role` e funções privadas sem EXECUTE;
+- A7 igual: status, `list_conversations`, `list_conversation_messages`
+  (com paginação), `get_conversation`, identidade e classificação
+  automáticas;
+- identidades:
+  - telefone, BSUID, os dois e vazia;
+  - BSUID incompleto e telefone fora do E.164;
+  - unicidade;
+  - ambiente, workspace e provedor diferentes do canal;
+  - imutabilidade e acréscimo;
+  - conversa só com BSUID e conversa incoerente;
+- mensagens: mídia sem texto, legenda, texto sem corpo, matriz de origem
+  (aceitas e proibidas), chatbot só com correlação, sem id do provedor,
+  unicidade;
+- custo: estimado, final, final imutável, `failed` estimado, categoria,
+  moeda, valor e total cobrado;
+- status: as transições da regra da B3, o rank da A7 e a regra de lead;
+- identidades internas:
+  - owner e admin criam; manager, lawyer e viewer não;
+  - outro workspace, ambiente ou canal legado não alcançam;
+  - entradas inválidas e duplicadas;
+  - listagem sem índice nem cifra;
+  - desativação;
+  - casamento interno;
+  - auditoria sem valores;
+  - `authenticated` sem acesso;
+- ledger (ampliado no §21.13): FKs da inbox e da mensagem, remoções,
+  reserva com `reserved`, `duplicate` e `conflict`, outro ambiente
+  autenticado, reserva desfeita, evento malformado (inclusive um
+  telefone); `service_role` sem acesso;
+- backfill idempotente, nenhum chatbot; nenhum contato ou lead além do
+  que o simulador da A7 sempre cria.
+
+O teste de atualização está no §21.8. O pgTAP 12 (A7), o 14 (A9) e o E2E
+continuam passando.
+
+### 21.10 Mutações
+
+**Servidor** (local, uma por vez; 20 mutações (T1 a T19 e T19b), todas detectadas)
+
+| Mutação | Detectada por |
+|---|---|
+| T1 BSUID tratado como telefone | BSUID com cara de telefone continua BSUID (3 testes) |
+| T2 identidade vazia aceita | identidades inválidas e entradas vazias do serviço (10) |
+| T3 serviço pedindo outra permissão (manager/member passariam) | toda operação pede `channel.manage` |
+| T4 workspace, ator ou ambiente aceitos do formulário | os três recusados antes do banco |
+| T5 origem inferida pelo texto | o texto nunca muda a classificação; estático da classificação |
+| T6 `external_api` vira chatbot pelo formato do externalId | os quatro externalId com cara de chatbot |
+| T7 mensagem sem texto recusada | mídia sem texto aceita (10) |
+| T8 `accepted` descartado | null → accepted aplica |
+| T9 `failed` impedindo delivered | delivered/read corrigem failed (inclusive na projeção da B3.2a) |
+| T10 custo estimado sobrescrevendo final | estimado nunca substitui o final |
+| T11 custo de failed continua final | custo de failed permanece estimado |
+| T12 total cobrado com estimativa | só o final entra no total |
+| T13 chave do ledger sem ambiente | só os quatro campos da chave |
+| T14 chave do ledger carregando conteúdo | só os quatro campos da chave |
+| T15 lead para inbound sem prova | lead só para inbound + external |
+| T16 BSUID em claro para o banco | o BSUID vai só como índice e cifra |
+| T17 índice sem o canal no escopo | outro canal gera outro índice; AAD |
+| T18 identidade caindo na chave da inbox | só as chaves da inbox: not_configured; estático |
+| T19 resposta com o erro em vez da mensagem do produto | **sobreviveu** na primeira rodada; pega pelos testes de `99d26d3` |
+| T19b servidor repassando a mensagem crua do banco | `unknown` sem valor na camada do servidor (`99d26d3`) |
+
+A T19 não vazava nada (a camada do servidor já reduzia o erro a um
+código), mas nenhum teste conferia a mensagem que a pessoa vê.
+
+**Banco** (PRs temporárias #115 a #124, sobre `465c946`; os passos de
+tipos, pgTAP, build e E2E só marcam a falha, para o teste de atualização
+também rodar)
+
+| Mutação | Reprovada por |
+|---|---|
+| D1 identidade vazia aceita | pgTAP 35: identidade vazia recusada (24) |
+| D2 manager administrando identidade interna | pgTAP 35: manager não lista, não desativa; casamento e auditoria mudam (65, 67, 68, 70) |
+| D3 outro workspace lendo identidade interna | pgTAP 35: o owner de outro workspace não alcança o canal (65) |
+| D4 mensagem sem texto recusada | pgTAP 35: mídia sem texto aceita (35) e o que dependia dela (44) |
+| D5 `accepted` descartado | pgTAP 35: accepted → sent → delivered → read (52) |
+| D6 `failed` impedindo delivered | pgTAP 35: delivered e read corrigem failed (53) |
+| D7 custo estimado sobrescrevendo o final | pgTAP 35: custo final nunca substituído (48) e total cobrado (51) |
+| D8 ledger sem ambiente na chave | pgTAP 35: índice único por ambiente, canal, provedor e evento (7) |
+| D9 ledger guardando conteúdo | pgTAP 35: colunas exatas do ledger (6); comparação de tipos |
+| D10 backfill classificando mensagem antiga como chatbot | Teste de atualização: a migration é recusada sobre os dados antigos da A7 (`messages_sent_by_only_crm`). O pgTAP passa, como esperado: o banco do zero não tem mensagem antiga |
+
+As PRs temporárias #103 e #105 a #124 foram fechadas, com as branches
+apagadas (#105 a #114 eram a primeira rodada, sobre a base com a regex
+inválida).
+
+### 21.11 Revisão manual de segurança
+
+Feita explicitamente, porque o plugin security-guidance não foi instalado
+no Windows.
+
+| Item | Resultado |
+|---|---|
+| RLS e GRANTs | As três tabelas novas: RLS ligada e forçada, políticas de recusa, nenhum privilégio para `anon`, `authenticated` ou `service_role` (os padrões do Supabase foram revogados explicitamente). Conversas e mensagens continuam sem acesso direto |
+| SECURITY DEFINER | Só as três RPCs de identidade interna; elas revalidam papel, workspace, ambiente e canal por dentro |
+| `search_path` | Vazio nas 15 funções novas, com nomes totalmente qualificados |
+| Enumerações e checks | Origem e classificação em enum; conteúdo, correlação, custo, ids e efeito em listas ou regex fechadas |
+| PII em texto puro | Só o telefone, como já existia na A3/A7. O BSUID só com índice cego e cifra; nenhum telefone ou BSUID em auditoria, listagem segura, ledger ou erro |
+| Índices cegos | HMAC com subchave própria (HKDF) e escopo de ambiente, workspace e canal; sem correlação entre canais |
+| Colisão entre ambientes | Ledger único por ambiente + canal + provedor + evento, com FK para o canal; identidades únicas por canal |
+| Integridade do ledger | Todo efeito preso, pelo banco, à inbox do mesmo evento (seis colunas) e à mensagem do mesmo canal; a reserva não aceita contexto do chamador e separa duplicação de conflito (§21.13) |
+| Enumeração de identidades | Só owner/admin do workspace, no ambiente e canal certos, listam. Outro workspace, ambiente ou canal legado respondem `channel_not_found` sem distinguir. O casamento interno é função privada |
+| Erros sanitizados | O banco levanta só códigos fixos (violação de unicidade ou check vira código). O servidor reduz mensagem crua a `unknown`, e o serviço devolve só a mensagem do produto |
+| `service_role` | Executa só as três RPCs; não lê tabela nem função privada |
+| Logs e auditoria | Log só com o código e o workspace; auditoria sem valores |
+| Backfill | Determinístico, idempotente, sem mudar `updated_at`, reversível |
+
+**Riscos que ficam documentados:**
+- O telefone em texto segue o padrão atual do CRM.
+- A rotação da chave do BSUID vai exigir uma função própria, porque
+  índice e cifra são imutáveis.
+- A listagem de identidades internas mostra o telefone a owner e admin,
+  de propósito.
+
+### 21.12 Limitações e próximas etapas
+
+- **B3.2d-2b2:**
+  - RPCs que aplicam mensagem, eco, status e eventos de conta, com o
+    ledger e a conferência do claim vigente (`inboxId`, token, lease) na
+    mesma transação;
+  - classificação pelo casamento com as identidades internas;
+  - criação de contato e lead só para `inbound` + `external`;
+  - status pela regra da B3;
+  - custo pelo gatilho desta etapa.
+- **B3.2d-2b3:** o consumidor troca o release
+  `domain_effect_not_implemented` pelas RPCs da 2b2.
+- **B3.2e:** reconciliador, portão antes de qualquer webhook real.
+- **A interface ainda presume telefone** (`waId`). Conversa só com BSUID
+  só passa a existir na 2b2, que precisa cuidar da exibição.
+- **Nada configurado fora do código:**
+  - nenhuma migration aplicada no Supabase hospedado;
+  - nenhuma variável na Vercel (inclusive `WHATSAPP_IDENTITY_*`);
+  - nada no Inngest, na YCloud, na Meta ou na Cloudflare;
+  - nenhuma mensagem enviada;
+  - nenhuma mudança no chatbot;
+  - nenhum dado real; nenhuma identidade real cadastrada.
+
+### 21.13 Correção: integridade referencial do ledger (antes do merge)
+
+**Problema** (na revisão de `866afd9`, sem exploração externa possível,
+porque a reserva é privada e o consumidor não a chama):
+- `inbox_id` aceitava `NULL`, e a FK conferia só o id da inbox: nada
+  garantia que inbox, workspace, canal, ambiente, provedor e
+  `provider_event_id` fossem do mesmo evento;
+- `message_id` conferia só o workspace: podia apontar para uma mensagem
+  de outro canal do mesmo workspace;
+- a reserva recebia do chamador os cinco campos que já estão na linha
+  confiável da inbox, e tratava outro efeito na mesma chave como
+  duplicação.
+
+Exatamente a garantia de que a B3.2d-2b2 depende para os efeitos
+atômicos. Corrigido na própria migration
+`20261028120100_b3_2d2b1_whatsapp_domain_model.sql`, ainda não mesclada
+nem aplicada; nenhuma migration corretiva, nenhuma migration da main
+editada. O estado final está no §21.6.
+
+**Testes primeiro.** Commit só de testes `9c63e8f`, sobre `866afd9`.
+Vermelho na PR temporária #125:
+- pgTAP 35: 20 de 101 falham. Nos casos de FK, o banco aceitava a
+  gravação (`have: ok`): ledger sem inbox; inbox de outro workspace,
+  canal, ambiente ou provedor; inbox com outro `provider_event_id`;
+  mensagem de outro canal do mesmo workspace; remoção da inbox de um
+  efeito. As reservas falham porque a assinatura nova não existe.
+- O teste de concorrência do ledger falha.
+- Passam já na base, como esperado: mensagem de outro workspace
+  recusada, os casos positivos (inbox do mesmo contexto, mensagem do
+  mesmo canal, efeito sem mensagem), o formato do evento, mensagem
+  removida zerando só `message_id` e `service_role` sem acesso.
+
+Correção em `209f882`; tipos regenerados para o ledger.
+
+**FKs finais:**
+
+| FK | Colunas | Referência | Na remoção |
+|---|---|---|---|
+| `whatsapp_effect_ledger_inbox_fkey` | `inbox_id, workspace_id, channel_id, environment, provider, provider_event_id` | `whatsapp_webhook_inbox (id, workspace_id, channel_id, environment, provider, provider_event_id)` | `NO ACTION`: a inbox de um efeito não sai |
+| `whatsapp_effect_ledger_message_fkey` | `message_id, workspace_id, channel_id` | `messages (id, workspace_id, channel_id)` | `SET NULL (message_id)` |
+| `whatsapp_effect_ledger_channel_identity_fkey` (já existia) | `workspace_id, channel_id, environment, provider` | `whatsapp_channels` | `RESTRICT` |
+
+Alvos novos: `whatsapp_webhook_inbox_effect_ref_key` e
+`messages_id_workspace_channel_key`, unicidades que só repetem o id com o
+contexto.
+
+**Reserva:** `private.whatsapp_effect_ledger_reserve(p_inbox_id uuid,
+p_effect text, out outcome text, out ledger_id uuid)`. Resultados no
+§21.6. A colisão de inbox (mesma chave, outra inbox) já é impedida pelo
+banco, porque a inbox é única por canal e evento. O pgTAP exercita a
+defesa da função removendo essa unicidade só dentro da transação do
+teste.
+
+**Cobertura nova** (pgTAP 35, seção 8, 27 asserções):
+- FK da inbox: sem inbox; outro workspace, canal, ambiente, provedor ou
+  evento; o mesmo contexto aceito;
+- FK da mensagem: outro canal do mesmo workspace e outro workspace
+  recusados; mesmo canal aceito; efeito sem mensagem;
+- remoções: mensagem zera só `message_id`; inbox recusada;
+- reserva: contexto copiado da inbox; `duplicate` com o mesmo id;
+  `conflict` por efeito e por inbox; outro canal ou workspace não
+  colide; inbox de outro ambiente, inexistente ou nula; autenticado em
+  Production; sem ambiente; efeito fora da lista; falha depois da
+  reserva desfaz a reserva;
+- ledger sem conteúdo (colunas exatas, evento com cara de telefone
+  recusado); nenhuma permissão direta, nem para `service_role`.
+
+**Concorrência real** (`scripts/b3-2d2b1-ledger-concurrency-check.sh`,
+passo novo do CI):
+1. duas reservas do mesmo evento: `reserved` e, depois de esperar a
+   primeira, `duplicate` com o mesmo id; uma linha;
+2. a primeira reserva é desfeita por uma falha depois dela: a segunda,
+   que esperava, `reserved`; uma linha;
+3. o mesmo evento com outro efeito: a segunda espera e vê `conflict`;
+   fica só o efeito da primeira.
+
+**Mutações** (uma por PR temporária, sobre `209f882`):
+
+| Mutação | PR | Detectada por |
+|---|---|---|
+| L1 `inbox_id` volta a aceitar `NULL` | #126 | pgTAP 35: ledger sem inbox (72); comparação de tipos |
+| L2 FK da inbox confere só o id | #127 | pgTAP 35: outro workspace, canal, ambiente, provedor e evento (73 a 77) e FKs compostas (86); tipos |
+| L3 `provider_event_id` fora da relação | #128 | pgTAP 35: outro `provider_event_id` (77) e FKs compostas (86); tipos |
+| L4 `message_id` confere só o workspace | #129 | pgTAP 35: mensagem de outro canal (78) e FKs compostas (86); tipos |
+| L5 reserva confia no ambiente da sessão, não no da inbox | #130 | pgTAP 35: inbox de outro ambiente (91) e autenticado em Production (92) |
+| L6 outro efeito na mesma chave vira `duplicate` | #131 | pgTAP 35: conflict por efeito (89); concorrência, cenário 3 |
+| L7 outra inbox na mesma chave vira `duplicate` | #132 | pgTAP 35: conflict por inbox (97) |
+| L8 ledger guardando telefone (coluna nova) | #133 | pgTAP 35: colunas exatas do ledger (6); tipos |
+| L9 id de evento do ledger aceita telefone | #134 | pgTAP 35: evento com cara de telefone (82) |
+
+Todas reprovadas; o código foi restaurado (cada mutação viveu só na
+própria branch, já apagada).
+
+**Verificação final** (CI de `209f882`, repetida no HEAD com este
+documento): typecheck, lint e unitários (2098); migrations do zero;
+comparação de tipos; pgTAP inteiro (35 com 101); isolamento entre
+workspaces; concorrência (A7, B2, B3.2d-1, B3.2d-2a e o ledger); os
+dois testes de atualização; build; E2E (76); Vercel.
