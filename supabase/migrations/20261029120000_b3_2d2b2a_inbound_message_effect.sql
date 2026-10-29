@@ -99,9 +99,6 @@ begin
   end if;
 
   if v_by_phone.id is not null and v_by_bsuid.id is not null then
-    if v_by_phone.id <> v_by_bsuid.id then
-      raise exception 'identity_conflict';
-    end if;
     return v_by_phone;
   end if;
 
