@@ -40,10 +40,6 @@ stable
 set search_path = ''
 as $body$
   select case
-    when not exists (
-      select 1 from public.whatsapp_internal_identities i
-      where i.channel_id = p_channel_id and i.is_active
-    ) then 'unresolved'::public.whatsapp_sender_classification
     when exists (
       select 1 from public.whatsapp_internal_identities i
       where i.channel_id = p_channel_id and i.is_active
