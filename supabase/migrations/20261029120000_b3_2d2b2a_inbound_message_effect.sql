@@ -349,7 +349,7 @@ begin
             on conflict (workspace_id, provider, external_id) do nothing;
           elsif v_candidate_count > 1 then
             v_needs_review := true;
-          elsif private.whatsapp_may_create_lead('inbound', v_class) then
+          elsif v_class <> 'internal' then
             -- Só inbound + external cria contato (e, abaixo, lead).
             v_contact_created := true;
             insert into public.contacts (workspace_id, type, name, preferred_channel, created_by)
