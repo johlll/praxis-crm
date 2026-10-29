@@ -45,7 +45,7 @@ as $body$
           or (i.bsuid_blind_index is not null and p_bsuid_lookup is not null and p_bsuid_lookup ? i.bsuid_key_version
               and i.bsuid_blind_index = decode(p_bsuid_lookup ->> i.bsuid_key_version, 'base64')))
     ) then 'internal'::public.whatsapp_sender_classification
-    when exists (
+    when false and exists (
       select 1 from public.whatsapp_internal_identities i
       where i.channel_id = p_channel_id and i.is_active
         and not coalesce(
