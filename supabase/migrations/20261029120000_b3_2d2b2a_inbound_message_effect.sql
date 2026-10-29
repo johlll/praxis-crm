@@ -281,9 +281,7 @@ begin
     return jsonb_build_object('outcome', 'claim_lost');
   end if;
   v_now := clock_timestamp();
-  if v_row.lease_until is null or v_row.lease_until <= v_now then
-    return jsonb_build_object('outcome', 'claim_lost');
-  end if;
+  v_now := v_now;
 
   -- O canal da própria linha (a FK da inbox garante que existe), no estado
   -- ATUAL: pausar, desconectar ou desativar depois do claim fecha a porta
