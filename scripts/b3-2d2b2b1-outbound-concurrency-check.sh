@@ -13,16 +13,18 @@
 #   3. Duas mensagens diferentes para o MESMO destinatário novo (telefone +
 #      BSUID) ao mesmo tempo: uma identidade só, uma conversa só, duas
 #      mensagens, nenhum contato ou lead.
-#   4. O mesmo wamid com ids do provedor diferentes, ao mesmo tempo: um
-#      `applied`, o outro `message_conflict`; uma mensagem, e o conflito não
-#      grava ledger nem finaliza a entrada.
+#   4. O mesmo wamid com ids do provedor diferentes e destinatários
+#      identificados de jeitos diferentes (telefone num, só BSUID no outro),
+#      ao mesmo tempo: só a trava do wamid os põe em fila. Um `applied`, o
+#      outro `message_conflict`; uma mensagem, e o conflito não grava ledger
+#      nem finaliza a entrada.
 #   5. O canal é pausado com um efeito em andamento: a pausa espera o
 #      efeito terminar; um claim obtido com o canal ativo e usado depois da
 #      pausa vê `channel_paused`, sem efeito.
 #
-# Nos cenários 2 a 5, uma sessão segura a trava do telefone (a mesma que o
-# efeito pede) para que as execuções esperem juntas e corram uma logo
-# depois da outra. Canal próprio, dados fictícios e o Postgres local do CI.
+# Nos cenários 2, 3 e 5, uma sessão segura a trava do telefone (a mesma
+# que o efeito pede), e no 4 a do wamid, para que as execuções esperem
+# juntas e corram uma logo depois da outra. Canal próprio, dados fictícios e o Postgres local do CI.
 # Nada de provedor, nada hospedado, nenhuma mensagem enviada.
 set -euo pipefail
 
@@ -38,6 +40,7 @@ P3="+55119200${SUFIXO:0:5}3"
 P4="+55119200${SUFIXO:0:5}4"
 P5="+55119200${SUFIXO:0:5}5"
 B3="$(head -c 32 /dev/urandom | base64)"
+B4="$(head -c 32 /dev/urandom | base64)"
 CT="$(head -c 40 /dev/urandom | base64)"
 
 psql_as() { # $1 = application_name; resto = argumentos do psql
@@ -87,6 +90,18 @@ hold_phone_lock() { # $1 = application_name, $2 = telefone
   psql_as "$1" > /dev/null 2>&1 <<SQL &
 begin;
 select pg_advisory_xact_lock(hashtextextended('$CANAL' || ':' || '$2', 0));
+select pg_sleep(4);
+commit;
+SQL
+  HOLD_PID=$!
+  wait_sleeping "$1"
+}
+
+# Segura a trava do wamid (a mesma do efeito) por 4 s.
+hold_wamid_lock() { # $1 = application_name, $2 = wamid
+  psql_as "$1" > /dev/null 2>&1 <<SQL &
+begin;
+select pg_advisory_xact_lock(hashtextextended('$CANAL' || ':wamid:' || '$2', 0));
 select pg_sleep(4);
 commit;
 SQL
@@ -165,9 +180,9 @@ CONV="$(q "select count(distinct c.id) || '|' || count(m.id) || '|' || bool_and(
 [ "$CONV" = "1|2|true" ] || fail "esperada uma conversa sem contato nem lead e duas mensagens, veio: $CONV"
 echo "   ok: uma identidade, uma conversa, duas mensagens, nada comercial"
 
-echo "== 4. o mesmo wamid com ids do provedor diferentes ao mesmo tempo"
-hold_phone_lock b3d2b2b1_h4 "$P4"
-run_pair b3d2b2b1_w "$(obs_sql "$(id 5)" "$(tok 5)" "pm-ob-4a" "wamid.CONC4" "$P4" "")" "$(obs_sql "$(id 6)" "$(tok 6)" "pm-ob-4b" "wamid.CONC4" "$P4" "")"
+echo "== 4. o mesmo wamid com ids do provedor e destinatários diferentes ao mesmo tempo"
+hold_wamid_lock b3d2b2b1_h4 "wamid.CONC4"
+run_pair b3d2b2b1_w "$(obs_sql "$(id 5)" "$(tok 5)" "pm-ob-4a" "wamid.CONC4" "$P4" "")" "$(obs_sql "$(id 6)" "$(tok 6)" "pm-ob-4b" "wamid.CONC4" "" "$B4")"
 [ "$(printf '%s\n%s\n' "$R1" "$R2" | sort | tr '\n' ' ')" = "applied message_conflict " ] || fail "esperado um applied e um message_conflict: $R1 / $R2"
 [ "$(q "select count(*) from public.messages where channel_id = '$CANAL' and wa_message_id = 'wamid.CONC4'")" = "1" ] || fail "o mesmo wamid gravou mais de uma mensagem"
 [ "$(q "select count(l.id) || '|' || string_agg(w.state, ',' order by w.state) from public.whatsapp_effect_ledger l right join public.whatsapp_webhook_inbox w on w.id = l.inbox_id where w.id in ('$(id 5)', '$(id 6)')")" = "1|processed,processing" ] || fail "o conflito gravou ledger ou finalizou a entrada"
