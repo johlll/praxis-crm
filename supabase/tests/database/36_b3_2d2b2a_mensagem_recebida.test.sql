@@ -540,7 +540,7 @@ select pg_temp.txt($$select conversation_id::text from public.messages where pro
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
 select is(
-  pg_temp.txt(format($$select (get_conversation(%L::uuid) ->> 'wa_id') || '|' || (select count(*) from list_conversation_messages(%L::uuid, null, 30, null))
+  pg_temp.txt(format($$select (get_conversation(%L::uuid) ->> 'wa_id') || '|' || (select jsonb_array_length(items) from list_conversation_messages(%L::uuid, null, 30, null))
     || '|' || (select count(*) from list_conversations(%L::uuid, 1, 100) lc, jsonb_array_elements(lc.items) e where e ->> 'id' = %L)$$,
     :'r1'::jsonb ->> 'conversation_id', :'r1'::jsonb ->> 'conversation_id', :'ws_um', :'r1'::jsonb ->> 'conversation_id')),
   '+5511900006001|4|1', 'leituras da A7 mostram a conversa e as mensagens aplicadas'
