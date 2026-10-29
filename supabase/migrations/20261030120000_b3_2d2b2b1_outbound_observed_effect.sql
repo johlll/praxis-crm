@@ -217,9 +217,6 @@ begin
     if v_blind is not null then
       v_locks := v_locks || hashtextextended(v_row.channel_id::text || ':bsuid:' || encode(v_blind, 'hex'), 0);
     end if;
-    for v_lock in select l from unnest(v_locks) l order by l loop
-      perform pg_advisory_xact_lock(v_lock);
-    end loop;
 
     -- A mesma mensagem por outro evento (reentrega, ou echoes + created):
     -- converge para a mensagem existente, se for do mesmo destinatário.
