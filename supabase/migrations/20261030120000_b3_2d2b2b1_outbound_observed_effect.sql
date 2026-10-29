@@ -241,7 +241,7 @@ begin
       return jsonb_build_object('outcome', 'duplicate');
     end if;
 
-    v_identity := private.whatsapp_resolve_inbound_identity(v_row, p_phone_e164, p_bsuid_lookup, v_blind, v_cipher, p_bsuid_key_version);
+    v_identity := private.whatsapp_resolve_inbound_identity(v_row, p_phone_e164, case when p_phone_e164 is null then p_bsuid_lookup end, case when p_phone_e164 is null then v_blind end, case when p_phone_e164 is null then v_cipher end, case when p_phone_e164 is null then p_bsuid_key_version end);
 
     select c.* into v_conversation from public.conversations c where c.identity_id = v_identity.id;
 
