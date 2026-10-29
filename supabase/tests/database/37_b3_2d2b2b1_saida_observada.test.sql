@@ -353,19 +353,19 @@ insert into public.opportunities (id, workspace_id, lead_id, pipeline_id, stage_
   ('3f200000-0000-0000-0000-000000000052', :'ws_um'::uuid, '3f100000-0000-0000-0000-000000000005', :'pipe'::uuid, :'etapa'::uuid, :'ana'::uuid);
 select pg_temp.com() as com_k \gset
 
-select pg_temp.ob(pg_temp.eo('evt-k1'), 'pm-k1', null, '+5511900021001') ->> 'conversation_id' as conv_k1 \gset
+select coalesce(pg_temp.ob(pg_temp.eo('evt-k1'), 'pm-k1', null, '+5511900021001') ->> 'conversation_id', '00000000-0000-0000-0000-000000000000') as conv_k1 \gset
 select is(pg_temp.vinc(:'conv_k1'),
   '3f000000-0000-0000-0000-000000000001|3f100000-0000-0000-0000-000000000001|3f200000-0000-0000-0000-000000000001|false|1',
   'contato conhecido pelo identificador whatsapp, lead e oportunidade únicos: vinculados, sem revisão');
-select pg_temp.ob(pg_temp.eo('evt-k2'), 'pm-k2', null, '+5511900021002') ->> 'conversation_id' as conv_k2 \gset
+select coalesce(pg_temp.ob(pg_temp.eo('evt-k2'), 'pm-k2', null, '+5511900021002') ->> 'conversation_id', '00000000-0000-0000-0000-000000000000') as conv_k2 \gset
 select is(pg_temp.vinc(:'conv_k2'),
   '3f000000-0000-0000-0000-000000000002|3f100000-0000-0000-0000-000000000002|3f200000-0000-0000-0000-000000000002|false|2',
   'contato conhecido pelo telefone único: vinculado, com lead e oportunidade únicos');
-select pg_temp.ob(pg_temp.eo('evt-k3'), 'pm-k3', null, '+5511900021003') ->> 'conversation_id' as conv_k3 \gset
+select coalesce(pg_temp.ob(pg_temp.eo('evt-k3'), 'pm-k3', null, '+5511900021003') ->> 'conversation_id', '00000000-0000-0000-0000-000000000000') as conv_k3 \gset
 select is(pg_temp.vinc(:'conv_k3'), '-|-|-|true|2', 'dois contatos com o mesmo telefone: nenhum vínculo, revisão com os candidatos');
-select pg_temp.ob(pg_temp.eo('evt-k4'), 'pm-k4', null, '+5511900021004') ->> 'conversation_id' as conv_k4 \gset
+select coalesce(pg_temp.ob(pg_temp.eo('evt-k4'), 'pm-k4', null, '+5511900021004') ->> 'conversation_id', '00000000-0000-0000-0000-000000000000') as conv_k4 \gset
 select is(pg_temp.vinc(:'conv_k4'), '3f000000-0000-0000-0000-000000000004|-|-|true|2', 'contato único com dois leads ativos: só o contato, revisão do lead');
-select pg_temp.ob(pg_temp.eo('evt-k5'), 'pm-k5', null, '+5511900021005') ->> 'conversation_id' as conv_k5 \gset
+select coalesce(pg_temp.ob(pg_temp.eo('evt-k5'), 'pm-k5', null, '+5511900021005') ->> 'conversation_id', '00000000-0000-0000-0000-000000000000') as conv_k5 \gset
 select is(pg_temp.vinc(:'conv_k5'), '3f000000-0000-0000-0000-000000000005|3f100000-0000-0000-0000-000000000005|-|true|1',
   'lead único com duas oportunidades abertas: nenhuma oportunidade, revisão');
 select is((pg_temp.com() = :'com_k')::text, 'true',
@@ -472,7 +472,7 @@ select pg_temp.eo('evt-m3') as e_m3 \gset
 select pg_temp.eo('evt-m4') as e_m4 \gset
 select pg_temp.eo('evt-m5') as e_m5 \gset
 select pg_temp.dom() as domm \gset
-select md5(string_agg(m::text, ',' order by m.id)) as msgs_m from public.messages m where m.channel_id = :'ch_o'::uuid \gset
+select coalesce(md5(string_agg(m::text, ',' order by m.id)), '-') as msgs_m from public.messages m where m.channel_id = :'ch_o'::uuid \gset
 select is(
   pg_temp.ob(:'e_m3', 'pm-m1', 'wamid.FICTICIOM2', '+5511900020001')::text,
   '{"outcome": "message_conflict"}', 'id do provedor de uma mensagem e wamid de outra: message_conflict'
@@ -484,7 +484,7 @@ select is(
   'wamid de uma mensagem que já tem outro id do provedor, ou id de uma mensagem RECEBIDA: message_conflict'
 );
 select is(
-  pg_temp.dom() || ' ' || (select md5(string_agg(m::text, ',' order by m.id)) from public.messages m where m.channel_id = :'ch_o'::uuid)
+  pg_temp.dom() || ' ' || (select coalesce(md5(string_agg(m::text, ',' order by m.id)), '-') from public.messages m where m.channel_id = :'ch_o'::uuid)
   || ' ' || pg_temp.res(:'e_m3') || ' ' || pg_temp.res(:'e_m4') || ' ' || pg_temp.res(:'e_m5'),
   :'domm' || ' ' || :'msgs_m' || ' processing|' || split_part(:'e_m3', '|', 2) || ' processing|' || split_part(:'e_m4', '|', 2) || ' processing|' || split_part(:'e_m5', '|', 2),
   'message_conflict: nenhum ledger, mensagem alterada ou acrescentada; claim intacto'
