@@ -127,6 +127,8 @@ select is(
      and p.proname <> 'whatsapp_resolve_webhook_route'
      -- As três de identidade interna (B3.2d-2b1) têm teste próprio (35).
      and p.proname not like 'whatsapp\_%internal\_identit%'
+     -- Os efeitos no domínio (B3.2d-2b2) têm teste próprio (36).
+     and p.proname not like 'whatsapp\_effect\_%'
      and has_function_privilege('service_role', p.oid, 'execute')),
   10,
   'as 10 funções public.whatsapp_* da B3.1 são executáveis por service_role'

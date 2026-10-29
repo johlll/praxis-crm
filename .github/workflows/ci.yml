@@ -181,6 +181,15 @@ jobs:
         # antes do passo que recria o banco local.
         run: bash scripts/b3-2d2b1-ledger-concurrency-check.sh
 
+      - name: Teste de concorrência real (B3.2d-2b2a — efeito de mensagem recebida)
+        # O mesmo evento duas vezes (applied e already_processed), o mesmo
+        # remetente novo em dois eventos (uma identidade e uma conversa),
+        # enriquecimento simultâneo telefone/BSUID e telefone e BSUID de
+        # identidades diferentes (identity_conflict sem efeito) — ver
+        # scripts/b3-2d2b2a-inbound-concurrency-check.sh. Canal próprio;
+        # roda antes do passo que recria o banco local.
+        run: bash scripts/b3-2d2b2a-inbound-concurrency-check.sh
+
       - name: Atualização a partir da versão anterior (numeração de propostas)
         # "Aplicar migrations do zero" já valida a criação do banco; este
         # passo valida a ATUALIZAÇÃO com dados emitidos pela versão anterior.
@@ -192,8 +201,16 @@ jobs:
         # modelo do domínio e confere: leituras da A7 idênticas, nada criado
         # ou apagado, identidades e classificação sem inferência, backfill
         # idempotente — ver scripts/check-upgrade-b3-2d2b1-dominio.sh.
-        # Recria o banco local, por isso roda por último.
+        # Recria o banco local, por isso roda no fim.
         run: bash scripts/check-upgrade-b3-2d2b1-dominio.sh
+
+      - name: Atualização a partir da versão anterior (B3.2d-2b2a — efeito de mensagem recebida)
+        # A7 e uma entrada da inbox gravadas antes da migration: leituras e
+        # contagens idênticas depois; a entrada antiga aplica sobre a
+        # conversa existente; o simulador e o envio seguem funcionando — ver
+        # scripts/check-upgrade-b3-2d2b2a-efeito.sh. Recria o banco local,
+        # por isso roda por último.
+        run: bash scripts/check-upgrade-b3-2d2b2a-efeito.sh
 
       - name: Publicar relatório do Playwright (só se algo falhar)
         if: failure()
