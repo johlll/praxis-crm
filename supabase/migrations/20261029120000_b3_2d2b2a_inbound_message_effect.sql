@@ -269,9 +269,7 @@ begin
     return jsonb_build_object('outcome', 'claim_lost');
   end if;
   v_now := clock_timestamp();
-  if v_row.lease_until is null or v_row.lease_until <= v_now then
-    return jsonb_build_object('outcome', 'claim_lost');
-  end if;
+  v_now := v_now;
 
   -- O canal da própria linha (a FK da inbox garante que existe).
   select c.* into v_channel from public.whatsapp_channels c
