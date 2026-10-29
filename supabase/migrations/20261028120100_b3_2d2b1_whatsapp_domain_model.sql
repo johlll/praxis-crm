@@ -785,7 +785,7 @@ create table public.whatsapp_effect_ledger (
     'message.inbound', 'message.outbound_observed', 'message.status', 'contact.identity_changed', 'account', 'ignored', 'unsupported'
   )),
   -- Todo efeito nasce de uma entrada da inbox.
-  inbox_id uuid not null,
+  inbox_id uuid,
   -- Só quando o efeito produz mensagem (conta, identidade ou evento
   -- técnico não produzem).
   message_id uuid,

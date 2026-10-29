@@ -3742,10 +3742,41 @@ estável do evento)**.
   do evento tem formato restrito (um telefone com `+` é recusado).
 - O ambiente, o workspace e o provedor têm de ser os do canal (FK
   composta): nenhum efeito cruza canal, workspace ou ambiente.
-- Só `private.whatsapp_effect_ledger_reserve` grava. Ela devolve o id na
-  primeira vez e `NULL` quando o mesmo evento já produziu efeito, para a
-  B3.2d-2b2 usar na mesma transação do efeito. Ninguém, nem
-  `service_role`, alcança a tabela ou a função diretamente.
+- **Todo efeito tem uma inbox** (`inbox_id NOT NULL`), e ela é a do
+  mesmo evento. FK composta
+  `(inbox_id, workspace_id, channel_id, environment, provider, provider_event_id)`
+  → `whatsapp_webhook_inbox (id, workspace_id, channel_id, environment, provider, provider_event_id)`,
+  sobre uma unicidade nova da inbox com essas seis colunas.
+  - Sem ação na remoção (`NO ACTION`): a inbox de um efeito não pode ser
+    apagada. O expurgo já preserva a inbox como tombstone; a cascata do
+    workspace apaga os dois no mesmo comando.
+- **A mensagem, quando há, é do mesmo workspace e do mesmo canal.** FK
+  composta `(message_id, workspace_id, channel_id)` →
+  `messages (id, workspace_id, channel_id)`, sobre uma unicidade nova de
+  `messages`. Se a mensagem for removida, só `message_id` zera
+  (`ON DELETE SET NULL (message_id)`); workspace, canal, inbox e evento
+  ficam. `message_id` é nulo para efeitos que não produzem mensagem
+  (conta, identidade, evento técnico).
+- Só `private.whatsapp_effect_ledger_reserve(p_inbox_id, p_effect)`
+  grava. O chamador informa só a entrada e o efeito; ambiente,
+  workspace, canal, provedor e `provider_event_id` vêm da linha da inbox,
+  buscada no **ambiente autenticado** pelo cabeçalho assinado. Devolve
+  `(outcome, ledger_id)`:
+
+  | `outcome` | Quando | `ledger_id` |
+  |---|---|---|
+  | `reserved` | primeira vez | a linha nova |
+  | `duplicate` | a mesma inbox já reservou o mesmo efeito | a linha existente |
+  | `conflict` | a chave já foi reservada com outro efeito ou por outra inbox | nulo |
+
+  - `conflict` é integridade quebrada, nunca duplicação silenciosa.
+  - Inbox inexistente, nula ou de outro ambiente: `ledger_inbox_not_found`.
+    Sem ambiente autenticado: `whatsapp_environment_required`.
+  - Na B3.2d-2b2, a RPC do efeito trava a inbox, confere token e lease
+    vigente e chama a reserva na mesma transação; se algo falhar depois,
+    a reserva é desfeita junto.
+  - Ninguém, nem `service_role`, alcança a tabela ou a função
+    diretamente.
 
 ### 21.7 Migrations e backfill
 
@@ -3764,9 +3795,13 @@ estável do evento)**.
 - É **determinístico** e **idempotente**: rodar de novo devolve zero em
   tudo.
 - Não muda o `updated_at` das linhas antigas.
-- Nenhuma linha vira `chatbot`, nada é classificado pelo texto, e nenhum
-  contato, lead, oportunidade ou atividade é criado. As restrições novas
-  recusariam um backfill que marcasse mensagem antiga como chatbot.
+- Nenhuma linha vira `chatbot` e nada é classificado pelo texto.
+- O backfill **cria identidades técnicas** em `whatsapp_identities`. Não
+  cria nem apaga contatos, leads, oportunidades, atividades, conversas ou
+  mensagens, e não altera o conteúdo nem as datas de atualização desses
+  registros.
+- As restrições novas recusariam um backfill que marcasse mensagem
+  antiga como chatbot.
 
 **Reversão:** apagar as três tabelas e as colunas novas, e voltar `wa_id`,
 `body_text` e `wa_message_id` a `NOT NULL`. Toda linha antiga ainda tem os
@@ -3919,10 +3954,12 @@ defeito, foi fechada e refeita sobre a base corrigida.
   - casamento interno;
   - auditoria sem valores;
   - `authenticated` sem acesso;
-- ledger: reserva, duplicado, o mesmo evento em outro canal, workspace
-  ou ambiente; ambiente, workspace ou provedor que não são os do canal;
-  evento malformado (inclusive um telefone); `service_role` sem acesso;
-- backfill idempotente, nenhum chatbot, nada criado além do simulador.
+- ledger (ampliado no §21.13): FKs da inbox e da mensagem, remoções,
+  reserva com `reserved`, `duplicate` e `conflict`, outro ambiente
+  autenticado, reserva desfeita, evento malformado (inclusive um
+  telefone); `service_role` sem acesso;
+- backfill idempotente, nenhum chatbot; nenhum contato ou lead além do
+  que o simulador da A7 sempre cria.
 
 O teste de atualização está no §21.8. O pgTAP 12 (A7), o 14 (A9) e o E2E
 continuam passando.
@@ -3992,6 +4029,7 @@ no Windows.
 | PII em texto puro | Só o telefone, como já existia na A3/A7. O BSUID só com índice cego e cifra; nenhum telefone ou BSUID em auditoria, listagem segura, ledger ou erro |
 | Índices cegos | HMAC com subchave própria (HKDF) e escopo de ambiente, workspace e canal; sem correlação entre canais |
 | Colisão entre ambientes | Ledger único por ambiente + canal + provedor + evento, com FK para o canal; identidades únicas por canal |
+| Integridade do ledger | Todo efeito preso, pelo banco, à inbox do mesmo evento (seis colunas) e à mensagem do mesmo canal; a reserva não aceita contexto do chamador e separa duplicação de conflito (§21.13) |
 | Enumeração de identidades | Só owner/admin do workspace, no ambiente e canal certos, listam. Outro workspace, ambiente ou canal legado respondem `channel_not_found` sem distinguir. O casamento interno é função privada |
 | Erros sanitizados | O banco levanta só códigos fixos (violação de unicidade ou check vira código). O servidor reduz mensagem crua a `unknown`, e o serviço devolve só a mensagem do produto |
 | `service_role` | Executa só as três RPCs; não lê tabela nem função privada |
