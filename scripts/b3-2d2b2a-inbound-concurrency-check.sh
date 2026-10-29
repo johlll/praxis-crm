@@ -16,8 +16,11 @@
 #   4. Telefone de uma identidade e BSUID de outra, em dois eventos ao
 #      mesmo tempo: os dois `identity_conflict`, nenhum efeito, as
 #      identidades intactas e as entradas ainda em processing.
+#   5. O canal é pausado com um efeito em andamento: a pausa espera o
+#      efeito (que já leu o canal ativo) terminar; um claim obtido com o
+#      canal ativo e usado depois da pausa vê `channel_paused`, sem efeito.
 #
-# Nos cenários 2 a 4, uma sessão segura a trava do telefone (a mesma que o
+# Nos cenários 2 a 5, uma sessão segura a trava do telefone (a mesma que o
 # efeito pede) para que as duas execuções esperem juntas e corram uma logo
 # depois da outra. Canal próprio, dados fictícios e o Postgres local do CI.
 # Nada de provedor, nada hospedado.
@@ -121,13 +124,13 @@ set role service_role;
 with e as (
   select n, public.whatsapp_inbox_store('$CANAL'::uuid, '$WS'::uuid, 'simulated', '$ROUTING', 'evt-ef-' || n, 'whatsapp.inbound_message.received',
     repeat('a', 64), '1', 'AAAAAAAAAAAAAAAA', 'Q29ycG8gZmljdGljaW8gMQ==', 'AAAAAAAAAAAAAAAAAAAAAA==', 3600) ->> 'inbox_id' as id
-  from generate_series(1, 10) n
+  from generate_series(1, 12) n
 )
 select string_agg(e.id || ',' || (public.whatsapp_inbox_claim(e.id::uuid, 600) ->> 'claim_token'), ' ' order by n) from e;
 SQL
 )"
 read -r -a ENTRIES <<<"$(echo "$SETUP" | tail -1)"
-[ "${#ENTRIES[@]}" = "10" ] || fail "preparo sem resultado: $SETUP"
+[ "${#ENTRIES[@]}" = "12" ] || fail "preparo sem resultado: $SETUP"
 id() { echo "${ENTRIES[$1]%%,*}"; }
 tok() { echo "${ENTRIES[$1]##*,}"; }
 
@@ -177,5 +180,31 @@ run_pair b3d2b2a_c "$(apply_sql "$(id 8)" "$(tok 8)" "pm-ef-4c" "$P4" "$B4")" "$
 [ "$(q "select count(*) from public.whatsapp_effect_ledger where inbox_id in ('$(id 8)', '$(id 9)')")" = "0" ] || fail "o conflito gravou ledger"
 [ "$(q "select string_agg(state, ',') from public.whatsapp_webhook_inbox where id in ('$(id 8)', '$(id 9)')")" = "processing,processing" ] || fail "o conflito finalizou a inbox"
 echo "   ok: dois identity_conflict; identidades intactas; nenhum ledger, mensagem ou finalização"
+
+echo "== 5. o canal é pausado enquanto o efeito roda, e depois de um claim"
+P5="+55119100${SUFIXO:0:5}5"
+hold_phone_lock b3d2b2a_h5 "$P5"
+OUT_5="$(mktemp)"; OUT_P="$(mktemp)"
+echo "$(apply_sql "$(id 10)" "$(tok 10)" "pm-ef-5" "$P5" "")" | psql_as b3d2b2a_p5e > "$OUT_5" 2>&1 &
+P_EF=$!
+wait_lock_waiters 1 b3d2b2a_p5e
+psql_as b3d2b2a_p5p -c "update public.whatsapp_channels set status = 'paused', send_enabled = false, status_changed_at = now() where id = '$CANAL'" > "$OUT_P" 2>&1 &
+P_PAUSE=$!
+# O efeito já leu o canal ativo e o segura: a pausa espera ele terminar.
+for _ in $(seq 1 30); do
+  [ "$(q "select count(*) from pg_stat_activity where application_name = 'b3d2b2a_p5p' and wait_event_type = 'Lock'")" = "1" ] && break
+  kill -0 "$P_PAUSE" 2> /dev/null || fail "a pausa terminou sem esperar o efeito em andamento"
+  sleep 0.1
+done
+[ "$(q "select count(*) from pg_stat_activity where application_name = 'b3d2b2a_p5p' and wait_event_type = 'Lock'")" = "1" ] || fail "a pausa não esperou o efeito em andamento"
+wait "$HOLD_PID" || fail "a sessão que segura a trava falhou"
+wait $P_EF || fail "o efeito falhou: $(cat "$OUT_5")"
+wait $P_PAUSE || fail "a pausa falhou: $(cat "$OUT_P")"
+[ "$(tail -1 "$OUT_5")" = "applied" ] || fail "o efeito que leu o canal ativo deveria aplicar: $(tail -1 "$OUT_5")"
+[ "$(q "select status from public.whatsapp_channels where id = '$CANAL'")" = "paused" ] || fail "a pausa não ficou gravada"
+# Claim obtido com o canal ativo, efeito chamado depois da pausa.
+[ "$(echo "$(apply_sql "$(id 11)" "$(tok 11)" "pm-ef-5b" "+55119100${SUFIXO:0:5}6" "")" | psql_as b3d2b2a_main | tail -1)" = "channel_paused" ] || fail "o claim antigo deveria ver o canal pausado"
+[ "$(q "select count(*) from public.messages where channel_id = '$CANAL' and provider_message_id = 'pm-ef-5b'")|$(q "select count(*) from public.whatsapp_effect_ledger where inbox_id = '$(id 11)'")|$(q "select state from public.whatsapp_webhook_inbox where id = '$(id 11)'")" = "0|0|processing" ] || fail "o canal pausado deixou efeito ou finalizou a entrada"
+echo "   ok: a pausa esperou o efeito em andamento; o claim antigo viu channel_paused, sem efeito, entrada em processing"
 
 echo "== efeito de mensagem recebida sob concorrência real: OK"

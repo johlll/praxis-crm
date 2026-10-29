@@ -16,12 +16,15 @@
 --    contato, lead, oportunidade e atividade pelas regras da A7;
 --  - marca a inbox como processed; qualquer falha desfaz tudo.
 --
+-- Seções 12 e 13 (só external vincula registros comerciais; status do
+-- canal reconferido no efeito): escritas antes da correção, contra 5125812.
+--
 -- Escrito ANTES da implementação, contra a main 5ba35c4. Tudo fictício:
 -- nenhum telefone, BSUID ou identidade real. As chamadas passam por
 -- funções que capturam o erro: contra a main, o arquivo roda até o fim.
 
 begin;
-select plan(61);
+select plan(69);
 
 \set ana    '20000000-0000-0000-0000-000000000001'
 \set ws_um   '10000000-0000-0000-0000-000000000001'
@@ -618,6 +621,145 @@ select is(
   true, 'authenticated não executa o efeito, nem como owner'
 );
 reset role;
+
+-- ---------------------------------------------------------------------
+-- 12) Só external procura ou vincula contato, lead e oportunidade
+-- ---------------------------------------------------------------------
+
+-- Canal Y, sem nenhuma identidade interna (configurado pela Ana).
+\set ch_y '39000000-0000-0000-0000-000000000006'
+set local role service_role;
+select whatsapp_create_simulated_channel(:'ch_y'::uuid, :'ws_um'::uuid, :'ana'::uuid, 'Y', 'b3d2b2a-y', '1', :'cifra', '1') is not null as ok \gset
+reset role;
+
+-- Três clientes já cadastrados, cada um com lead ativo e oportunidade
+-- aberta: o primeiro com o identificador whatsapp, os outros só com o
+-- telefone.
+select p.id as pipe, (select s.id from public.pipeline_stages s where s.pipeline_id = p.id order by s.position limit 1) as etapa
+from public.pipelines p where p.workspace_id = :'ws_um'::uuid and p.is_default \gset
+insert into public.contacts (id, workspace_id, type, name, created_by) values
+  ('3a000000-0000-0000-0000-000000000001', :'ws_um'::uuid, 'pf', 'Cliente Fictício Y', :'ana'::uuid),
+  ('3a000000-0000-0000-0000-000000000002', :'ws_um'::uuid, 'pf', 'Cliente Fictício I', :'ana'::uuid),
+  ('3a000000-0000-0000-0000-000000000003', :'ws_um'::uuid, 'pf', 'Cliente Fictício A', :'ana'::uuid);
+insert into public.contact_phones (workspace_id, contact_id, value_normalized, is_primary) values
+  (:'ws_um'::uuid, '3a000000-0000-0000-0000-000000000001', '+5511900012001', true),
+  (:'ws_um'::uuid, '3a000000-0000-0000-0000-000000000002', '+5511900012002', true),
+  (:'ws_um'::uuid, '3a000000-0000-0000-0000-000000000003', '+5511900012003', true);
+insert into public.contact_identifiers (workspace_id, contact_id, provider, external_id) values
+  (:'ws_um'::uuid, '3a000000-0000-0000-0000-000000000001', 'whatsapp', '5511900012001');
+insert into public.leads (id, workspace_id, contact_id, legal_area, created_by) values
+  ('3b000000-0000-0000-0000-000000000001', :'ws_um'::uuid, '3a000000-0000-0000-0000-000000000001', 'Trabalhista', :'ana'::uuid),
+  ('3b000000-0000-0000-0000-000000000002', :'ws_um'::uuid, '3a000000-0000-0000-0000-000000000002', 'Trabalhista', :'ana'::uuid),
+  ('3b000000-0000-0000-0000-000000000003', :'ws_um'::uuid, '3a000000-0000-0000-0000-000000000003', 'Trabalhista', :'ana'::uuid);
+insert into public.opportunities (id, workspace_id, lead_id, pipeline_id, stage_id, created_by) values
+  ('3c000000-0000-0000-0000-000000000001', :'ws_um'::uuid, '3b000000-0000-0000-0000-000000000001', :'pipe'::uuid, :'etapa'::uuid, :'ana'::uuid),
+  ('3c000000-0000-0000-0000-000000000002', :'ws_um'::uuid, '3b000000-0000-0000-0000-000000000002', :'pipe'::uuid, :'etapa'::uuid, :'ana'::uuid),
+  ('3c000000-0000-0000-0000-000000000003', :'ws_um'::uuid, '3b000000-0000-0000-0000-000000000003', :'pipe'::uuid, :'etapa'::uuid, :'ana'::uuid);
+
+-- Retrato de todos os registros comerciais do Escritório Um (linhas
+-- inteiras): prova que nada foi criado nem alterado.
+create function pg_temp.com() returns text language sql as $f$
+  select md5(concat_ws('#',
+    (select string_agg(x::text, ',' order by x::text) from public.contacts x where x.workspace_id = '10000000-0000-0000-0000-000000000001'),
+    (select string_agg(x::text, ',' order by x::text) from public.contact_phones x where x.workspace_id = '10000000-0000-0000-0000-000000000001'),
+    (select string_agg(x::text, ',' order by x::text) from public.contact_identifiers x where x.workspace_id = '10000000-0000-0000-0000-000000000001'),
+    (select string_agg(x::text, ',' order by x::text) from public.leads x where x.workspace_id = '10000000-0000-0000-0000-000000000001'),
+    (select string_agg(x::text, ',' order by x::text) from public.opportunities x where x.workspace_id = '10000000-0000-0000-0000-000000000001'),
+    (select string_agg(x::text, ',' order by x::text) from public.activities x where x.workspace_id = '10000000-0000-0000-0000-000000000001')))
+$f$;
+
+-- Resultado e vínculos da conversa: outcome|classe|contato criado|lead
+-- criado, e contato|lead|oportunidade|revisão|candidatos.
+create function pg_temp.vinc(p jsonb) returns text language sql as $f$
+  select concat_ws('|', coalesce(p ->> 'outcome', p ->> 'erro'), p ->> 'sender_classification', p ->> 'contact_created', p ->> 'lead_created') || ' '
+    || coalesce((select concat_ws('|', coalesce(c.contact_id::text, '-'), coalesce(c.lead_id::text, '-'), coalesce(c.opportunity_id::text, '-'),
+         c.needs_link_review, cardinality(c.link_candidate_contact_ids) + cardinality(c.link_candidate_lead_ids))
+       from public.conversations c where c.id = (p ->> 'conversation_id')::uuid), 'NULL')
+$f$;
+
+select pg_temp.com() as com_y \gset
+select pg_temp.entrada(:'ch_y', :'ws_um', 'b3d2b2a-y', 'evt-y1') as e_y1 \gset
+select is(
+  pg_temp.vinc(pg_temp.ap(:'e_y1', 'pm-y1', '+5511900012001')) || ' ' || (pg_temp.com() = :'com_y')::text,
+  'applied|unresolved|false|false -|-|-|true|0 true',
+  'sem identidade interna ativa e cliente com contato, lead e oportunidade para o telefone: unresolved, para revisão, nenhum vínculo automático, nada comercial criado ou alterado'
+);
+
+select pg_temp.com() as com_i \gset
+select pg_temp.entrada(:'ch_i', :'ws_um', 'b3d2b2a-i', 'evt-y2') as e_y2 \gset
+select is(
+  pg_temp.vinc(pg_temp.ap(:'e_y2', 'pm-y2', '+5511900012002')) || ' ' || (pg_temp.com() = :'com_i')::text,
+  'applied|unresolved|false|false -|-|-|true|0 true',
+  'identidade interna ativa incomparável e cliente cadastrado só pelo telefone: unresolved, nenhum vínculo, nenhum identificador acrescentado'
+);
+
+select (select count(*) from public.contacts) || '|' || (select count(*) from public.leads) || '|' || (select count(*) from public.opportunities) as cnt_a \gset
+select pg_temp.entrada(:'ch_a', :'ws_um', 'b3d2b2a-a', 'evt-y3') as e_y3 \gset
+select is(
+  pg_temp.vinc(pg_temp.ap(:'e_y3', 'pm-y3', '+5511900012003'))
+  || ' ' || ((select count(*) from public.contacts) || '|' || (select count(*) from public.leads) || '|' || (select count(*) from public.opportunities) = :'cnt_a')::text
+  || ' ' || pg_temp.txt($$select string_agg(provider || ':' || external_id, ',') from public.contact_identifiers where contact_id = '3a000000-0000-0000-0000-000000000003'$$),
+  'applied|external|false|false 3a000000-0000-0000-0000-000000000003|3b000000-0000-0000-0000-000000000003|3c000000-0000-0000-0000-000000000003|false|2 true whatsapp:5511900012003',
+  'controle: external comparável e sem casamento reutiliza contato, lead e oportunidade pela A7, sem criar nada novo'
+);
+
+-- ---------------------------------------------------------------------
+-- 13) Status ATUAL do canal, reconferido no efeito
+-- ---------------------------------------------------------------------
+
+-- Canal S, com uma identidade interna ativa: um telefone novo seria
+-- external e criaria contato e lead se o efeito seguisse.
+\set ch_s '39000000-0000-0000-0000-000000000007'
+set local role service_role;
+select whatsapp_create_simulated_channel(:'ch_s'::uuid, :'ws_um'::uuid, :'ana'::uuid, 'S', 'b3d2b2a-s', '1', :'cifra', '1') is not null as ok \gset
+reset role;
+insert into public.whatsapp_internal_identities (workspace_id, channel_id, environment, provider, label, phone_e164, is_active, created_by)
+values (:'ws_um'::uuid, :'ch_s'::uuid, 'preview', 'simulated', 'Recepção (fictícia)', '+5511900013999', true, :'ana'::uuid);
+
+-- Claim com o canal ativo; o canal muda de estado antes do efeito.
+-- Devolve o resultado, "nada mudou" (domínio e auditoria) e "claim
+-- intacto".
+create function pg_temp.st(p_status text, p_evt text, p_pmid text) returns text language plpgsql as $f$
+declare
+  v_entry text;
+  v_dom text;
+  v_audit bigint;
+  v jsonb;
+begin
+  update public.whatsapp_channels set status = 'active', status_changed_at = now() where id = '39000000-0000-0000-0000-000000000007';
+  v_entry := pg_temp.entrada('39000000-0000-0000-0000-000000000007', '10000000-0000-0000-0000-000000000001', 'b3d2b2a-s', p_evt);
+  update public.whatsapp_channels set status = p_status, send_enabled = false, status_changed_at = now()
+  where id = '39000000-0000-0000-0000-000000000007';
+  v_dom := pg_temp.dom();
+  v_audit := (select count(*) from public.audit_logs);
+  v := pg_temp.ap(v_entry, p_pmid, '+5511900013001');
+  return coalesce(v::text, 'NULL') || ' ' || (pg_temp.dom() = v_dom and (select count(*) from public.audit_logs) = v_audit)::text
+    || ' ' || (pg_temp.res(v_entry) = 'processing|' || split_part(v_entry, '|', 2))::text;
+end
+$f$;
+
+select is(pg_temp.st('paused', 'evt-s1', 'pm-s1'), '{"outcome": "channel_paused"} true true',
+  'canal pausado depois do claim: channel_paused; nenhum ledger, identidade, conversa, mensagem ou registro comercial; claim intacto');
+select is(pg_temp.st('disconnected', 'evt-s2', 'pm-s2'), '{"outcome": "channel_disconnected"} true true',
+  'canal desconectado depois do claim: channel_disconnected; nada gravado; claim intacto');
+select is(pg_temp.st('disabled', 'evt-s3', 'pm-s3'), '{"outcome": "channel_disabled"} true true',
+  'canal desativado depois do claim: channel_disabled; nada gravado; claim intacto');
+
+select id::text || '|' || coalesce(claim_token::text, '00000000-0000-0000-0000-000000000000') as e_s3 from public.whatsapp_webhook_inbox where provider_event_id = 'evt-s3' and channel_id = :'ch_s'::uuid \gset
+set local role service_role;
+select is(
+  (public.whatsapp_inbox_release(split_part(:'e_s3', '|', 1)::uuid, split_part(:'e_s3', '|', 2)::uuid, 'channel_disabled') ->> 'outcome')
+  || ' ' || pg_temp.txt(format($$select state || '|' || coalesce(claim_token::text, '-') || '|' || last_release_code from public.whatsapp_webhook_inbox where id = %L::uuid$$, split_part(:'e_s3', '|', 1))),
+  'released pending|-|channel_disabled', 'o claim recusado pelo estado do canal ainda pode ser liberado'
+);
+reset role;
+
+update public.whatsapp_channels set status = 'active', status_changed_at = now() where id = :'ch_s'::uuid;
+select pg_temp.entrada(:'ch_s', :'ws_um', 'b3d2b2a-s', 'evt-s4') as e_s4 \gset
+select is(
+  pg_temp.vinc(pg_temp.ap(:'e_s4', 'pm-s4', '+5511900013001')) like 'applied|external|true|true %|false|0', true,
+  'controle: canal ativo no momento do efeito aplica normalmente'
+);
 
 select * from finish();
 rollback;

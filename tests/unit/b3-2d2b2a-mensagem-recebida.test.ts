@@ -326,7 +326,8 @@ describe("4. resultado", () => {
     });
   });
 
-  for (const outcome of ["duplicate", "already_processed", "terminal_failed", "claim_lost", "not_found", "identity_conflict", "effect_conflict"]) {
+  for (const outcome of ["duplicate", "already_processed", "terminal_failed", "claim_lost", "not_found", "identity_conflict", "effect_conflict",
+    "channel_paused", "channel_disconnected", "channel_disabled"]) {
     it(`${outcome}: repassado como veio`, async () => {
       handlers.whatsapp_effect_inbound_message = () => ({ data: { outcome }, error: null });
       const claim = await claimed();
@@ -334,6 +335,13 @@ describe("4. resultado", () => {
       await expect(applyWhatsAppInboundMessage(claim, input())).resolves.toEqual({ outcome });
     });
   }
+
+  it("canal não ativo no momento do efeito: os mesmos códigos que o consumidor libera (B3.2d-2b3)", async () => {
+    const { WHATSAPP_CONSUMER_RECOVERABLE_CODES } = await import("@/server/whatsapp/consumer");
+    for (const outcome of ["channel_paused", "channel_disconnected", "channel_disabled"]) {
+      expect(WHATSAPP_CONSUMER_RECOVERABLE_CODES).toContain(outcome);
+    }
+  });
 
   const bad: [string, unknown][] = [
     ["campo a mais", { ...applied, phone_e164: PHONE }],
