@@ -17,7 +17,8 @@
 #        conversa já existentes, grava a mensagem como outbound /
 #        business_app / internal, sem autor, sem criar contato ou lead, e
 #        finaliza a inbox;
-#      - o simulador e o envio da A7 continuam funcionando depois.
+#      - o simulador e o envio da A7 continuam funcionando depois, com
+#        os ids antigos e com um wamid de 129 caracteres (limite novo: 518).
 #
 # Roda por último no CI: termina com o banco local na versão atual. Tudo
 # fictício.
@@ -184,6 +185,8 @@ begin;
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', '$ANA', 'role', 'authenticated')::text, true);
 select simulate_inbound_whatsapp_message('b3d2b2b1-up', '5511900009102', '+5511900009102', 'wamid.up3.2', now(), 'Depois da atualização', 'Pessoa Nova') ->> 'message_id' as r2 \gset
+-- O limite novo do wamid (518) também vale para a A7: um id de 129 caracteres.
+select simulate_inbound_whatsapp_message('b3d2b2b1-up', '5511900009103', '+5511900009103', 'wamid.' || repeat('L', 123), now(), 'Id longo depois da atualização', 'Pessoa Longa') ->> 'message_id' as r3 \gset
 select send_message(:'conv_a7'::uuid, 'Envio depois da atualização', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaac'::uuid) ->> 'message_id' as env2 \gset
 reset role;
 commit;

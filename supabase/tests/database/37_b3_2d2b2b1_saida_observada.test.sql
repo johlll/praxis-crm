@@ -17,12 +17,15 @@
 --  - mensagem outbound / business_app / internal, sem autor;
 --  - inbox processed junto com o efeito; qualquer falha desfaz tudo.
 --
+-- Seções 8b e 8c (destinatário conferido na convergência; limite do wamid
+-- igual ao do normalizador): escritas antes da correção, contra 650b48a.
+--
 -- Escrito ANTES da implementação, contra a main 740f0f8. Tudo fictício:
 -- nenhum telefone, BSUID ou identidade real. As chamadas passam por
 -- funções que capturam o erro: contra a main, o arquivo roda até o fim.
 
 begin;
-select plan(54);
+select plan(62);
 
 \set ana     '20000000-0000-0000-0000-000000000001'
 \set ws_um   '10000000-0000-0000-0000-000000000001'
@@ -251,11 +254,11 @@ select is(
 select is(
   concat_ws(' ',
     pg_temp.ob(:'e_tok', 'pm-v6', 'HBgNsemprefixo', '+5511900020001') ->> 'erro',
-    pg_temp.ob(:'e_tok', 'pm-v7', 'wamid.' || repeat('A', 123), '+5511900020001') ->> 'erro',
+    pg_temp.ob(:'e_tok', 'pm-v7', 'wamid.' || repeat('A', 513), '+5511900020001') ->> 'erro',
     pg_temp.ob(:'e_tok', 'pm-v8', null, null, '{"1": "AQID"}') ->> 'erro',
     pg_temp.ob(:'e_tok', 'pm-v9', null, null, format('{"2": "%s"}', :'bi1')) ->> 'erro'),
   'invalid_outbound_message invalid_outbound_message invalid_outbound_message invalid_outbound_message',
-  'wamid sem prefixo ou acima do limite da coluna, índice cego fora de 32 bytes, sem a versão ativa: invalid_outbound_message'
+  'wamid sem prefixo ou com mais de 518 caracteres, índice cego fora de 32 bytes, sem a versão ativa: invalid_outbound_message'
 );
 select is(pg_temp.dom() || ' ' || pg_temp.res(:'e_tok'), :'dom0' || ' processing|' || split_part(:'e_tok', '|', 2), 'entrada inválida: nada escrito, claim intacto');
 
@@ -509,6 +512,106 @@ select is(
   'duplicate ' || :'domf' || ' processed|-',
   'o mesmo efeito já reservado para a entrada: duplicate, nada repetido, entrada finalizada'
 );
+
+-- ---------------------------------------------------------------------
+-- 8b) Convergência: o destinatário tem de ser a mesma identidade
+-- ---------------------------------------------------------------------
+
+-- Linha da mensagem e da conversa (para provar que nada mudou).
+create function pg_temp.mc(p_msg text) returns text language sql as $f$
+  select coalesce((select md5(m::text || '#' || c::text) from public.messages m join public.conversations c on c.id = m.conversation_id
+    where m.id = p_msg::uuid), 'NULL')
+$f$;
+
+select pg_temp.mc(:'r1'::jsonb ->> 'message_id') as mc_r1 \gset
+select pg_temp.eo('evt-x1') as e_x1 \gset
+select pg_temp.dom() as domx1 \gset
+select is(
+  (pg_temp.ob(:'e_x1', 'pm-1', null, '+5511900024001') ->> 'outcome') || ' ' || pg_temp.dom() || ' ' || pg_temp.res(:'e_x1')
+  || ' ' || pg_temp.txt($$select count(*)::text from public.whatsapp_identities where phone_e164 = '+5511900024001'$$)
+  || ' ' || pg_temp.mc(:'r1'::jsonb ->> 'message_id'),
+  'message_conflict ' || :'domx1' || ' processing|' || split_part(:'e_x1', '|', 2) || ' 0 ' || :'mc_r1',
+  'mesmo id do provedor com outro telefone: message_conflict; nenhuma identidade, conversa, mensagem ou ledger; mensagem e conversa intactas; claim intacto'
+);
+
+-- Mensagem só com wamid (sem id do provedor): a busca é só pelo wamid.
+insert into public.messages (id, workspace_id, conversation_id, channel_id, direction, origin, sender_classification, content_kind, body_text, wa_message_id, status)
+values ('3f300000-0000-0000-0000-000000000002', :'ws_um'::uuid,
+  coalesce((:'r1'::jsonb ->> 'conversation_id')::uuid, (:'rin'::jsonb ->> 'conversation_id')::uuid), :'ch_o'::uuid, 'outbound', 'business_app', 'internal',
+  'text', 'Mensagem fictícia só com wamid (2)', 'wamid.FICTICIOSOWAMID2', 'sent');
+select pg_temp.mc('3f300000-0000-0000-0000-000000000002') as mc_w2 \gset
+select pg_temp.eo('evt-x2') as e_x2 \gset
+select pg_temp.dom() as domx2 \gset
+select is(
+  (pg_temp.ob(:'e_x2', 'pm-x2', 'wamid.FICTICIOSOWAMID2', '+5511900024002') ->> 'outcome') || ' ' || pg_temp.dom() || ' ' || pg_temp.res(:'e_x2')
+  || ' ' || pg_temp.txt($$select count(*)::text from public.whatsapp_identities where phone_e164 = '+5511900024002'$$)
+  || ' ' || pg_temp.mc('3f300000-0000-0000-0000-000000000002'),
+  'message_conflict ' || :'domx2' || ' processing|' || split_part(:'e_x2', '|', 2) || ' 0 ' || :'mc_w2',
+  'mesmo wamid com outro telefone: message_conflict; o id do provedor não é acrescentado; nada gravado; claim intacto'
+);
+
+select pg_temp.mc(:'rb2'::jsonb ->> 'message_id') as mc_b2 \gset
+select pg_temp.eo('evt-x3') as e_x3 \gset
+select pg_temp.eo('evt-x4') as e_x4 \gset
+select pg_temp.dom() as domx3 \gset
+select is(
+  (pg_temp.ob(:'e_x3', 'pm-b2', null, null, format('{"1": "%s"}', 'BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=')) ->> 'outcome') || ' '
+  || (pg_temp.ob(:'e_x4', 'pm-b2', null, null, format('{"1": "%s"}', :'bi1')) ->> 'outcome') || ' ' || pg_temp.dom()
+  || ' ' || pg_temp.txt($$select count(*)::text from public.whatsapp_identities where bsuid_blind_index = decode('BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=', 'base64')$$)
+  || ' ' || pg_temp.mc(:'rb2'::jsonb ->> 'message_id') || ' ' || pg_temp.res(:'e_x3') || ' ' || pg_temp.res(:'e_x4'),
+  'message_conflict message_conflict ' || :'domx3' || ' 0 ' || :'mc_b2' || ' processing|' || split_part(:'e_x3', '|', 2) || ' processing|' || split_part(:'e_x4', '|', 2),
+  'mesmo id com outro BSUID (nunca visto, ou de outra identidade): message_conflict; a identidade divergente não fica criada'
+);
+
+-- A mesma identidade, apresentada de jeitos diferentes, converge.
+select pg_temp.ob(pg_temp.eo('evt-y1'), 'pm-cv1', null, '+5511900024004') as ry1 \gset
+select pg_temp.ob(pg_temp.eo('evt-y2'), 'pm-cv1', null, '+5511900024004', format('{"1": "%s"}', 'BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY=')) as ry2 \gset
+select is(
+  (:'ry1'::jsonb ->> 'outcome') || ' ' || (:'ry2'::jsonb ->> 'outcome')
+  || ' ' || pg_temp.ident(format('channel_id = %L and phone_e164 = ''+5511900024004''', :'ch_o'))
+  || ' ' || pg_temp.txt($$select count(*)::text from public.messages where provider_message_id = 'pm-cv1'$$),
+  'applied duplicate +5511900024004|BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY=|1 1',
+  'primeiro por telefone, depois por telefone + BSUID: converge; a identidade ganha o BSUID; uma mensagem'
+);
+select pg_temp.ob(pg_temp.eo('evt-y3'), 'pm-cv1', null, null, format('{"1": "%s"}', 'BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY=')) as ry3 \gset
+select pg_temp.ob(pg_temp.eo('evt-y4'), 'pm-cv1', null, '+5511900024004', format('{"1": "%s"}', :'bi1')) as ry4 \gset
+select is(
+  (:'ry3'::jsonb ->> 'outcome') || ' ' || (:'ry4'::jsonb ->> 'outcome')
+  || ' ' || pg_temp.txt($$select count(*)::text from public.whatsapp_identities where phone_e164 = '+5511900024004' or bsuid_blind_index = decode('BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY=', 'base64')$$)
+  || ' ' || pg_temp.txt($$select count(*)::text from public.messages where provider_message_id = 'pm-cv1'$$),
+  'duplicate identity_conflict 1 1',
+  'só o BSUID já ligado à mesma identidade: converge; telefone e BSUID de identidades diferentes continuam identity_conflict; uma identidade, uma mensagem'
+);
+
+-- ---------------------------------------------------------------------
+-- 8c) Limite do wamid: o mesmo do normalizador (wamid. + até 512)
+-- ---------------------------------------------------------------------
+
+select is(
+  concat_ws(' ',
+    pg_temp.ob(pg_temp.eo('evt-w1'), 'pm-w128', 'wamid.' || repeat('A', 122), '+5511900020001') ->> 'outcome',
+    pg_temp.ob(pg_temp.eo('evt-w2'), 'pm-w129', 'wamid.' || repeat('B', 123), '+5511900020001') ->> 'outcome',
+    pg_temp.ob(pg_temp.eo('evt-w3'), 'pm-w518', 'wamid.' || repeat('C', 512), '+5511900020001') ->> 'outcome')
+  || ' ' || pg_temp.txt($$select string_agg(char_length(wa_message_id)::text, ',' order by char_length(wa_message_id)) from public.messages where provider_message_id in ('pm-w128', 'pm-w129', 'pm-w518')$$),
+  'applied applied applied 128,129,518', 'wamid com 128, 129 e 518 caracteres: aceito e gravado inteiro'
+);
+select pg_temp.eo('evt-w4') as e_w4 \gset
+select pg_temp.dom() as domw \gset
+select is(
+  (pg_temp.ob(:'e_w4', 'pm-w519', 'wamid.' || repeat('D', 513), '+5511900020001') ->> 'erro') || ' ' || pg_temp.dom() || ' ' || pg_temp.res(:'e_w4'),
+  'invalid_outbound_message ' || :'domw' || ' processing|' || split_part(:'e_w4', '|', 2),
+  'wamid com 519 caracteres: recusado antes de qualquer escrita'
+);
+select is(
+  pg_temp.txt(format($$with x as (insert into public.messages (workspace_id, conversation_id, channel_id, direction, origin, sender_classification, content_kind, body_text, wa_message_id, status)
+      values (%L, %L, %L, 'outbound', 'business_app', 'internal', 'text', 'Coluna (fictícia)', 'sim-' || repeat('E', 514), 'sent') returning 1) select count(*)::text from x$$,
+    :'ws_um', coalesce(:'r1'::jsonb ->> 'conversation_id', :'rin'::jsonb ->> 'conversation_id'), :'ch_o'))
+  || ' ' || (pg_temp.txt(format($$with x as (insert into public.messages (workspace_id, conversation_id, channel_id, direction, origin, sender_classification, content_kind, body_text, wa_message_id, status)
+      values (%L, %L, %L, 'outbound', 'business_app', 'internal', 'text', 'Coluna (fictícia)', 'sim-' || repeat('F', 515), 'sent') returning 1) select count(*)::text from x$$,
+    :'ws_um', coalesce(:'r1'::jsonb ->> 'conversation_id', :'rin'::jsonb ->> 'conversation_id'), :'ch_o')) like 'ERRO:23514:%')::text,
+  '1 true', 'a coluna aceita qualquer id de 518 caracteres (os da A7 também) e recusa 519'
+);
+delete from public.messages where body_text = 'Coluna (fictícia)';
 
 -- ---------------------------------------------------------------------
 -- 9) Mídia sem texto (nada baixado)

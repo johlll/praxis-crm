@@ -193,6 +193,17 @@ describe("1. o banco recebe a inbox, o token e só os dados do eco", () => {
     }
   });
 
+  for (const size of [128, 129, 518]) {
+    it(`wamid com ${size} caracteres: aceito e repassado inteiro`, async () => {
+      const claim = await claimed();
+      const { applyWhatsAppOutboundObserved } = await loadEffect();
+      const waMessageId = `wamid.${"A".repeat(size - 6)}`;
+      await applyWhatsAppOutboundObserved(claim, input({ waMessageId }));
+      expect(effectCalls()[0]![1].p_wa_message_id).toBe(waMessageId);
+      expect(waMessageId).toHaveLength(size);
+    });
+  }
+
   it("sem wamid: nulo", async () => {
     const claim = await claimed();
     const { applyWhatsAppOutboundObserved } = await loadEffect();
@@ -292,7 +303,7 @@ describe("3. entrada inválida", () => {
     ["id do provedor com espaço", { providerMessageId: "id com espaço" }],
     ["id do provedor vazio", { providerMessageId: "" }],
     ["wamid sem o prefixo", { waMessageId: "HBgNNTUxMTk4ODg4NjY2NhUCABEYEj" }],
-    ["wamid acima do limite da coluna", { waMessageId: `wamid.${"A".repeat(123)}` }],
+    ["wamid com 519 caracteres (acima do limite do normalizador)", { waMessageId: `wamid.${"A".repeat(513)}` }],
     ["data inválida", { occurredAt: "ontem" }],
     ["campo extra (autor do chamador)", { sentBy: "20000000-0000-0000-0000-000000000001" }],
     ["campo extra (origem do chamador)", { origin: "chatbot" }],
@@ -420,6 +431,15 @@ describe("6. estático", () => {
     expect(src).not.toMatch(/["'](business_app|chatbot|automation)["']/);
     expect(src).not.toMatch(/\.(text|waMessageId|providerMessageId)\s*\.\s*(match|test|includes|startsWith|search)\(/);
     expect(src).not.toMatch(/console\./);
+  });
+
+  it("o limite do wamid é o mesmo no normalizador da YCloud, no servidor e na RPC", () => {
+    const normalizer = read("src/server/whatsapp/provider/ycloud.ts").match(/const WAMID = (\/.*\/);/)?.[1];
+    expect(normalizer).toBe(String.raw`/^wamid\.[A-Za-z0-9._:=+/-]{1,512}$/`);
+    expect(read("src/server/whatsapp/effects/outbound-observed.ts")).toContain(`.regex(${normalizer})`);
+    const migration = read("supabase/migrations/20261030120000_b3_2d2b2b1_outbound_observed_effect.sql");
+    expect(migration).toContain(String.raw`p_wa_message_id !~ '^wamid\.[A-Za-z0-9._:=+/-]{1,512}$'`);
+    expect(migration).toMatch(/char_length\(btrim\(wa_message_id\)\) between 1 and 518/);
   });
 
   it("a criptografia do destinatário é a mesma da 2b2a, sem cópia", () => {
