@@ -438,8 +438,10 @@ select is(
 );
 
 -- Mesmo wamid; a mensagem existente só tinha o wamid: ganha o id do provedor.
+-- (Sem a função, a conversa do r1 não existe: usa a da mensagem recebida.)
 insert into public.messages (id, workspace_id, conversation_id, channel_id, direction, origin, sender_classification, content_kind, body_text, wa_message_id, status)
-values ('3f300000-0000-0000-0000-000000000001', :'ws_um'::uuid, (:'r1'::jsonb ->> 'conversation_id')::uuid, :'ch_o'::uuid, 'outbound', 'business_app', 'internal',
+values ('3f300000-0000-0000-0000-000000000001', :'ws_um'::uuid,
+  coalesce((:'r1'::jsonb ->> 'conversation_id')::uuid, (:'rin'::jsonb ->> 'conversation_id')::uuid), :'ch_o'::uuid, 'outbound', 'business_app', 'internal',
   'text', 'Mensagem fictícia só com wamid', 'wamid.FICTICIOSOWAMID', 'sent');
 select pg_temp.dom() as domd2 \gset
 select pg_temp.ob(pg_temp.eo('evt-d2'), 'pm-so-wamid', 'wamid.FICTICIOSOWAMID', '+5511900020001') as rd2 \gset
