@@ -284,6 +284,8 @@ describe("3. entrada inválida", () => {
     ["sem telefone nem BSUID", { recipient: { phoneE164: null, bsuid: null } }],
     ["telefone fora do E.164", { recipient: { phoneE164: "11988886666", bsuid: null } }],
     ["BSUID malformado", { recipient: { phoneE164: null, bsuid: "bsuid com espaço" } }],
+    ["telefone válido e BSUID malformado (o BSUID não é descartado)", { recipient: { phoneE164: PHONE, bsuid: "bsuid com espaço" } }],
+    ["BSUID válido e telefone malformado (o telefone não é descartado)", { recipient: { phoneE164: "11988886666", bsuid: BSUID } }],
     ["texto sem corpo", { contentKind: "text", text: "  " }],
     ["tipo desconhecido", { contentKind: "holograma" }],
     ["texto longo demais", { text: "x".repeat(4097) }],
