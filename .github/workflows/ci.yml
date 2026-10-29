@@ -190,6 +190,16 @@ jobs:
         # roda antes do passo que recria o banco local.
         run: bash scripts/b3-2d2b2a-inbound-concurrency-check.sh
 
+      - name: Teste de concorrência real (B3.2d-2b2b1 — efeito de saída observada)
+        # O mesmo evento duas vezes (applied e already_processed), echoes e
+        # created da mesma mensagem (uma mensagem), o mesmo destinatário novo
+        # em duas mensagens (uma identidade e uma conversa), o mesmo wamid
+        # com ids diferentes (message_conflict sem efeito) e a pausa do
+        # canal durante o efeito — ver
+        # scripts/b3-2d2b2b1-outbound-concurrency-check.sh. Canal próprio;
+        # roda antes do passo que recria o banco local.
+        run: bash scripts/b3-2d2b2b1-outbound-concurrency-check.sh
+
       - name: Atualização a partir da versão anterior (numeração de propostas)
         # "Aplicar migrations do zero" já valida a criação do banco; este
         # passo valida a ATUALIZAÇÃO com dados emitidos pela versão anterior.
@@ -209,8 +219,17 @@ jobs:
         # contagens idênticas depois; a entrada antiga aplica sobre a
         # conversa existente; o simulador e o envio seguem funcionando — ver
         # scripts/check-upgrade-b3-2d2b2a-efeito.sh. Recria o banco local,
-        # por isso roda por último.
+        # por isso roda depois do e2e.
         run: bash scripts/check-upgrade-b3-2d2b2a-efeito.sh
+
+      - name: Atualização a partir da versão anterior (B3.2d-2b2b1 — efeito de saída observada)
+        # A7 e uma entrada de eco gravadas antes da migration: leituras e
+        # contagens idênticas depois; o eco antigo aplica sobre a conversa
+        # existente como outbound/business_app/internal, sem nada comercial;
+        # o simulador e o envio seguem funcionando — ver
+        # scripts/check-upgrade-b3-2d2b2b1-saida-observada.sh. Recria o
+        # banco local, por isso roda por último.
+        run: bash scripts/check-upgrade-b3-2d2b2b1-saida-observada.sh
 
       - name: Publicar relatório do Playwright (só se algo falhar)
         if: failure()
