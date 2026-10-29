@@ -162,7 +162,7 @@ run_pair b3d2b2b1_n "$(obs_sql "$(id 3)" "$(tok 3)" "pm-ob-3a" "" "$P3" "$B3")" 
 IDENT="$(q "select count(*) || '|' || count(*) filter (where bsuid_blind_index = decode('$B3', 'base64')) from public.whatsapp_identities where channel_id = '$CANAL' and (phone_e164 = '$P3' or bsuid_blind_index = decode('$B3', 'base64'))")"
 [ "$IDENT" = "1|1" ] || fail "esperada uma identidade com telefone e BSUID, veio: $IDENT"
 CONV="$(q "select count(distinct c.id) || '|' || count(m.id) || '|' || bool_and(c.contact_id is null and c.lead_id is null) from public.conversations c join public.whatsapp_identities i on i.id = c.identity_id left join public.messages m on m.conversation_id = c.id where i.channel_id = '$CANAL' and i.phone_e164 = '$P3'")"
-[ "$CONV" = "1|2|t" ] || fail "esperada uma conversa sem contato nem lead e duas mensagens, veio: $CONV"
+[ "$CONV" = "1|2|true" ] || fail "esperada uma conversa sem contato nem lead e duas mensagens, veio: $CONV"
 echo "   ok: uma identidade, uma conversa, duas mensagens, nada comercial"
 
 echo "== 4. o mesmo wamid com ids do provedor diferentes ao mesmo tempo"
