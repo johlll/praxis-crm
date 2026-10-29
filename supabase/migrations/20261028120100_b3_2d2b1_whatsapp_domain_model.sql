@@ -850,13 +850,13 @@ declare
 begin
   select i.* into v_inbox
   from public.whatsapp_webhook_inbox i
-  where i.id = p_inbox_id and i.environment = v_env;
+  where i.id = p_inbox_id;
   if not found then
     raise exception 'ledger_inbox_not_found';
   end if;
 
   insert into public.whatsapp_effect_ledger (environment, workspace_id, channel_id, provider, provider_event_id, effect, inbox_id)
-  values (v_inbox.environment, v_inbox.workspace_id, v_inbox.channel_id, v_inbox.provider, v_inbox.provider_event_id, p_effect, v_inbox.id)
+  values (v_env, v_inbox.workspace_id, v_inbox.channel_id, v_inbox.provider, v_inbox.provider_event_id, p_effect, v_inbox.id)
   on conflict (environment, channel_id, provider, provider_event_id) do nothing
   returning id into ledger_id;
   if ledger_id is not null then
@@ -868,7 +868,7 @@ begin
   -- transação concorrente pela qual o INSERT esperou).
   select l.* into v_existing
   from public.whatsapp_effect_ledger l
-  where l.environment = v_inbox.environment and l.channel_id = v_inbox.channel_id
+  where l.environment = v_env and l.channel_id = v_inbox.channel_id
     and l.provider = v_inbox.provider and l.provider_event_id = v_inbox.provider_event_id;
   if not found then
     raise exception 'ledger_reserve_inconsistent';
