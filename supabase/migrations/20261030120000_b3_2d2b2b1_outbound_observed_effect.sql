@@ -223,9 +223,7 @@ begin
       v_existing := v_by_wamid;
     end if;
     if v_existing.id is not null then
-      if v_existing.direction <> 'outbound'
-         or (v_existing.provider_message_id is not null and v_existing.provider_message_id <> p_provider_message_id)
-         or (p_wa_message_id is not null and v_existing.wa_message_id is not null and v_existing.wa_message_id <> p_wa_message_id) then
+      if false then
         raise exception 'message_conflict';
       end if;
       update public.messages
