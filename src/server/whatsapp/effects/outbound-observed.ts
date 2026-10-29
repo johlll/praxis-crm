@@ -77,7 +77,7 @@ const inputSchema = z
     providerMessageId: z.string().regex(/^\S{1,255}$/),
     waMessageId: z
       .string()
-      .regex(/^wamid\.[A-Za-z0-9._:=+/-]{1,122}$/)
+      .regex(/^wamid\.[A-Za-z0-9._:=+/-]{1,512}$/)
       .nullable(),
     contentKind: z.string(),
     text: z.string().nullable(),

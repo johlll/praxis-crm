@@ -11,12 +11,13 @@
 --      a lease vigente; o canal da linha ainda ativo (status ATUAL, lido
 --      for share, como na B3.2d-2b2a);
 --   2. reserva message.outbound_observed no ledger (contexto lido da inbox);
---   3. a mesma mensagem já gravada (pelo id do provedor ou pelo wamid)
---      converge: nada repetido, o identificador que faltava é acrescentado;
---      os dois identificadores apontando para mensagens diferentes:
---      message_conflict, nada alterado;
---   4. identidade do destinatário por telefone e BSUID, com as garantias da
+--   3. identidade do destinatário por telefone e BSUID, com as garantias da
 --      2b2a (sem auto-merge; identity_conflict);
+--   4. a mesma mensagem já gravada (pelo id do provedor ou pelo wamid)
+--      converge só se o destinatário for a MESMA identidade da conversa
+--      dela: nada repetido, o identificador que faltava é acrescentado;
+--      identificadores de mensagens diferentes, ou outro destinatário:
+--      message_conflict, nada alterado;
 --   5. conversa (reutilizada ou criada; numa conversa nova, vínculo só com
 --      contato, lead e oportunidade exatos e únicos, como a A7; ambiguidade
 --      ou desconhecido → revisão humana) e mensagem outbound/business_app/
@@ -30,15 +31,28 @@
 -- Fica de fora: status e custo (B3.2d-2b2b2), identidade alterada e
 -- eventos de conta (B3.2d-2b2b3), mídia (nenhum arquivo é baixado), saída
 -- iniciada pelo CRM (B3.3) e a ligação do consumidor (B3.2d-2b3). Esta
--- migration não edita as anteriores e não altera dados.
+-- migration não edita as anteriores e não altera dados: só troca a regra de
+-- tamanho do wa_message_id e cria a função.
+
+-- ---------------------------------------------------------------------
+-- wa_message_id: o limite da A7 (128) passa a ser o do normalizador
+-- ---------------------------------------------------------------------
+
+-- O normalizador da YCloud aceita `wamid.` + até 512 caracteres (518 no
+-- total); a regra da coluna, herdada da A7, parava em 128. Os ids da A7
+-- continuam válidos: só o limite máximo sobe. O formato `wamid.` é do
+-- efeito da YCloud (abaixo), não da coluna.
+alter table public.messages drop constraint messages_wa_message_id_check;
+alter table public.messages
+  add constraint messages_wa_message_id_length check (wa_message_id is null or char_length(btrim(wa_message_id)) between 1 and 518);
 
 -- Resultados:
 --   applied           — mensagem gravada e inbox processed;
 --   duplicate         — o mesmo efeito já estava no ledger para esta
 --                       entrada, ou a mensagem já existe no canal (pelo id
---                       do provedor ou pelo wamid): nada repetido, o
---                       identificador que faltava é acrescentado, inbox
---                       processed;
+--                       do provedor ou pelo wamid) para a MESMA identidade
+--                       do destinatário: nada repetido, o identificador que
+--                       faltava é acrescentado, inbox processed;
 --   already_processed, terminal_failed, claim_lost, not_found — como na
 --                       finalização da B3.2d-1, sem mudar nada;
 --   channel_paused, channel_disconnected, channel_disabled — o canal
@@ -46,7 +60,8 @@
 --   identity_conflict — telefone e BSUID não batem com uma identidade só;
 --   message_conflict  — o id do provedor e o wamid apontam para mensagens
 --                       diferentes, a mensagem existente tem outro valor
---                       para o mesmo identificador, ou ela não é uma saída;
+--                       para o mesmo identificador, não é uma saída, ou é de
+--                       outro destinatário (outra identidade);
 --   effect_conflict   — a chave estável já tem outro efeito ou outra
 --                       entrada.
 -- Nos conflitos e nos três estados do canal nada fica gravado e o claim
@@ -98,10 +113,10 @@ declare
   v_locks bigint[];
   v_lock bigint;
 begin
-  -- Entrada: falha fechada antes de qualquer trava ou escrita. O wamid
-  -- respeita o limite da coluna da A7 (128).
+  -- Entrada: falha fechada antes de qualquer trava ou escrita. O wamid tem
+  -- o formato e o limite do normalizador da YCloud (`wamid.` + até 512).
   if p_provider_message_id is null or p_provider_message_id !~ '^\S{1,255}$'
-     or (p_wa_message_id is not null and p_wa_message_id !~ '^wamid\.[A-Za-z0-9._:=+/-]{1,122}$')
+     or (p_wa_message_id is not null and p_wa_message_id !~ '^wamid\.[A-Za-z0-9._:=+/-]{1,512}$')
      or p_content_kind is null or p_content_kind not in (
        'text', 'image', 'video', 'audio', 'document', 'sticker', 'location', 'contacts',
        'interactive', 'button', 'reaction', 'order', 'request_welcome', 'template', 'unsupported', 'other')
@@ -207,7 +222,7 @@ begin
     end loop;
 
     -- A mesma mensagem por outro evento (reentrega, ou echoes + created):
-    -- converge para a mensagem existente.
+    -- converge para a mensagem existente, se for do mesmo destinatário.
     select m.* into v_by_provider from public.messages m
     where m.channel_id = v_row.channel_id and m.provider_message_id = p_provider_message_id;
     if p_wa_message_id is not null then
@@ -222,10 +237,21 @@ begin
     else
       v_existing := v_by_wamid;
     end if;
-    if v_existing.id is not null then
-      if v_existing.direction <> 'outbound'
+    if v_existing.id is not null
+       and (v_existing.direction <> 'outbound'
          or (v_existing.provider_message_id is not null and v_existing.provider_message_id <> p_provider_message_id)
-         or (p_wa_message_id is not null and v_existing.wa_message_id is not null and v_existing.wa_message_id <> p_wa_message_id) then
+         or (p_wa_message_id is not null and v_existing.wa_message_id is not null and v_existing.wa_message_id <> p_wa_message_id)) then
+      raise exception 'message_conflict';
+    end if;
+
+    v_identity := private.whatsapp_resolve_inbound_identity(v_row, p_phone_e164, p_bsuid_lookup, v_blind, v_cipher, p_bsuid_key_version);
+
+    if v_existing.id is not null then
+      -- O destinatário tem de ser a identidade da conversa da mensagem
+      -- existente (telefone e BSUID complementares dela convergem). Outro
+      -- destinatário: conflito, e o bloco desfaz a identidade que a
+      -- resolução acima tenha criado ou enriquecido.
+      if v_identity.id is distinct from (select c.identity_id from public.conversations c where c.id = v_existing.conversation_id) then
         raise exception 'message_conflict';
       end if;
       update public.messages
@@ -240,8 +266,6 @@ begin
       where id = v_row.id;
       return jsonb_build_object('outcome', 'duplicate');
     end if;
-
-    v_identity := private.whatsapp_resolve_inbound_identity(v_row, p_phone_e164, p_bsuid_lookup, v_blind, v_cipher, p_bsuid_key_version);
 
     select c.* into v_conversation from public.conversations c where c.identity_id = v_identity.id;
 
