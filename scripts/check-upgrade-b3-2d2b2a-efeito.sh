@@ -12,8 +12,9 @@
 #      - nenhum contato, lead, oportunidade, atividade, conversa, mensagem,
 #        identidade ou ledger foi criado ou apagado pela migration;
 #      - a entrada gravada antes aplica: reutiliza a identidade e a
-#        conversa já existentes, sem criar contato ou lead (a conversa já
-#        existia) e finaliza a inbox;
+#        conversa já existentes, sem criar contato ou lead, como
+#        unresolved (o canal não tem identidade interna ativa) e finaliza
+#        a inbox;
 #      - o simulador e o envio da A7 continuam funcionando depois.
 #
 # Roda por último no CI: termina com o banco local na versão atual. Tudo
@@ -169,7 +170,7 @@ begin
     raise exception 'o efeito criou identidade ou conversa a mais';
   end if;
   if (select origin || '/' || sender_classification || '/' || state from public.messages m, public.whatsapp_webhook_inbox w
-      where m.provider_message_id = 'pm-up-1' and w.id = current_setting('upgrade_check.entrada')::uuid) <> 'inbound/external/processed' then
+      where m.provider_message_id = 'pm-up-1' and w.id = current_setting('upgrade_check.entrada')::uuid) <> 'inbound/unresolved/processed' then
     raise exception 'mensagem ou inbox com estado inesperado depois do efeito';
   end if;
 end;

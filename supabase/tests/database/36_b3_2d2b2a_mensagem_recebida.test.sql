@@ -21,7 +21,7 @@
 -- funções que capturam o erro: contra a main, o arquivo roda até o fim.
 
 begin;
-select plan(54);
+select plan(61);
 
 \set ana    '20000000-0000-0000-0000-000000000001'
 \set ws_um   '10000000-0000-0000-0000-000000000001'
@@ -82,6 +82,24 @@ select set_config('request.headers', :'h_prod', true);
 select whatsapp_create_simulated_channel(:'ch_prod'::uuid, :'ws_um'::uuid, :'ana'::uuid, 'Prod', 'b3d2b2a-prod', '1', :'cifra', '1') is not null as ok \gset
 select set_config('request.headers', :'h_prev', true);
 reset role;
+
+-- Canal Z, sem nenhuma identidade interna, configurado pelo Bruno (admin
+-- só nesta transação): cobre a regra "sem identidade interna ativa" e a
+-- autoria técnica.
+\set bruno '20000000-0000-0000-0000-000000000002'
+\set ch_z  '39000000-0000-0000-0000-000000000005'
+insert into public.memberships (workspace_id, user_id, role, status) values (:'ws_um'::uuid, :'bruno'::uuid, 'admin', 'active')
+on conflict (workspace_id, user_id) do update set role = excluded.role, status = 'active';
+set local role service_role;
+select whatsapp_create_simulated_channel(:'ch_z'::uuid, :'ws_um'::uuid, :'bruno'::uuid, 'Z', 'b3d2b2a-z', '1', :'cifra', '1') is not null as ok \gset
+reset role;
+
+-- A e B têm uma identidade interna ativa com telefone e BSUID (versão 1):
+-- todo remetente é comparável, e quem não casa é external.
+\set bi9 'CgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgo='
+insert into public.whatsapp_internal_identities (workspace_id, channel_id, environment, provider, label, phone_e164, bsuid_blind_index, bsuid_ciphertext, bsuid_key_version, is_active, created_by) values
+  (:'ws_um'::uuid, :'ch_a'::uuid, 'preview', 'simulated', 'Recepção (fictícia)', '+5511900009999', decode(:'bi9', 'base64'), decode(:'ct', 'base64'), '1', true, :'ana'::uuid),
+  (:'ws_dois'::uuid, :'ch_b'::uuid, 'preview', 'simulated', 'Recepção (fictícia)', '+5511900009999', decode(:'bi9', 'base64'), decode(:'ct', 'base64'), '1', true, :'bruno'::uuid);
 
 -- Entrada da inbox (cifra fictícia) e claim, como service_role: devolve
 -- 'id|token'.
@@ -438,6 +456,52 @@ select is(
   pg_temp.txt($$select count(*)::text from public.messages m join public.conversations c on c.id = m.conversation_id
     where m.sender_classification in ('internal', 'unresolved') and m.provider = 'simulated' and (c.lead_id is not null or c.contact_id is not null)$$),
   '0', 'nenhuma mensagem internal ou unresolved deu origem a contato ou lead'
+);
+
+-- ---------------------------------------------------------------------
+-- 6b) Canal sem identidade interna ativa: nunca vira cliente sozinho
+-- ---------------------------------------------------------------------
+
+select pg_temp.dom() as domz \gset
+select is(
+  pg_temp.cls('evt-z1', 'pm-z1', '+5511900010001', null, 'Mensagem fictícia', null, :'ch_z', 'b3d2b2a-z')
+  || ' ' || ((split_part(pg_temp.dom(), '|', 2)::int - split_part(:'domz', '|', 2)::int) || ',' || (split_part(pg_temp.dom(), '|', 3)::int - split_part(:'domz', '|', 3)::int))
+  || ' ' || (split_part(pg_temp.dom(), '|', 4) || split_part(pg_temp.dom(), '|', 5) || split_part(pg_temp.dom(), '|', 6) || split_part(pg_temp.dom(), '|', 7)
+             = split_part(:'domz', '|', 4) || split_part(:'domz', '|', 5) || split_part(:'domz', '|', 6) || split_part(:'domz', '|', 7))::text,
+  'applied|unresolved|false|false|0|0|unresolved|true:true 1,1 true',
+  'nenhuma identidade interna ativa: unresolved; conversa e mensagem gravadas, para revisão; nenhum contato, lead, oportunidade ou atividade'
+);
+insert into public.whatsapp_internal_identities (workspace_id, channel_id, environment, provider, label, phone_e164, is_active, created_by)
+values (:'ws_um'::uuid, :'ch_z'::uuid, 'preview', 'simulated', 'Antigo (fictício)', '+5511900010098', false, :'bruno'::uuid);
+select is(pg_temp.cls('evt-z2', 'pm-z2', '+5511900010002', null, 'Mensagem fictícia', null, :'ch_z', 'b3d2b2a-z'),
+  'applied|unresolved|false|false|0|0|unresolved|true:true', 'só identidade interna desativada: não conta como configuração; continua unresolved');
+insert into public.whatsapp_internal_identities (workspace_id, channel_id, environment, provider, label, phone_e164, is_active, created_by)
+values (:'ws_um'::uuid, :'ch_z'::uuid, 'preview', 'simulated', 'Advogado (fictício)', '+5511900010099', true, :'bruno'::uuid);
+select is(pg_temp.cls('evt-z3', 'pm-z3', '+5511900010003', null, 'Mensagem fictícia', null, :'ch_z', 'b3d2b2a-z'),
+  'applied|external|true|true|1|1|external|false:false', 'primeira identidade interna ativa + outro telefone comparável: external, com criação comercial');
+select is(pg_temp.cls('evt-z4', 'pm-z4', '+5511900010099', null, 'Mensagem fictícia', null, :'ch_z', 'b3d2b2a-z'),
+  'applied|internal|false|false|0|0|internal|true:false', 'telefone da identidade interna: internal, sem criação comercial');
+select is(pg_temp.cls('evt-z5', 'pm-z5', null, format('{"1": "%s"}', :'bi4'), 'Mensagem fictícia', null, :'ch_z', 'b3d2b2a-z'),
+  'applied|unresolved|false|false|0|0|unresolved|true:true', 'identidade interna ativa só com telefone, remetente só com BSUID: unresolved');
+
+-- Autoria técnica: o responsável que configurou o canal, nunca um ator.
+select pg_temp.txt($$select conversation_id::text from public.messages where provider_message_id = 'pm-z3'$$) as conv_z3 \gset
+select is(
+  pg_temp.txt(format($$select (ct.created_by = %L::uuid) || '|' || (l.created_by = %L::uuid) || '|' || (o.created_by = %L::uuid) || '|' || (a.created_by = %L::uuid) || '|' || (ct.created_by <> %L::uuid)
+    from public.conversations c join public.contacts ct on ct.id = c.contact_id join public.leads l on l.id = c.lead_id
+    join public.opportunities o on o.id = c.opportunity_id join public.activities a on a.opportunity_id = o.id and a.source = 'whatsapp_inbound'
+    where c.id = %L::uuid$$, :'bruno', :'bruno', :'bruno', :'bruno', :'ana', :'conv_z3')),
+  'true|true|true|true|true', 'contato, lead, oportunidade e atividade com o created_by do canal (Bruno), não de outro usuário'
+);
+select is(
+  pg_temp.txt(format($$select string_agg(action || ':' || (actor_user_id is null) || ':' || coalesce(metadata ->> 'source', '-'), ',' order by action)
+    from public.audit_logs where resource_id in (
+      select contact_id from public.conversations where id = %L::uuid union select lead_id from public.conversations where id = %L::uuid
+      union select opportunity_id from public.conversations where id = %L::uuid
+      union select a.id from public.activities a join public.conversations c on c.opportunity_id = a.opportunity_id where c.id = %L::uuid)$$,
+    :'conv_z3', :'conv_z3', :'conv_z3', :'conv_z3')),
+  'activity.auto_created:true:whatsapp_inbound,contact.created:true:whatsapp_inbound,lead.created:true:whatsapp_inbound,opportunity.created:true:whatsapp_inbound',
+  'auditoria sem ator humano e com a origem automática whatsapp_inbound'
 );
 
 -- ---------------------------------------------------------------------

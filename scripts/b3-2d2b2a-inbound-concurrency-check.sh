@@ -112,6 +112,12 @@ on conflict do nothing;
 $SERVICE_SQL
 select public.whatsapp_create_simulated_channel('$CANAL'::uuid, '$WS'::uuid, '$DONO'::uuid, 'Concorrência B3.2d-2b2a', '$ROUTING', '1',
   'QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB', '1') is not null as ok \gset
+reset role;
+-- Uma identidade interna ativa (telefone e BSUID): todo remetente é
+-- comparável, e quem não casa é external (cria um lead).
+insert into public.whatsapp_internal_identities (workspace_id, channel_id, environment, provider, label, phone_e164, bsuid_blind_index, bsuid_ciphertext, bsuid_key_version, created_by)
+values ('$WS'::uuid, '$CANAL'::uuid, 'preview', 'simulated', 'Recepção (fictícia)', '+5511910009999', decode('$(head -c 32 /dev/urandom | base64)', 'base64'), decode('$CT', 'base64'), '1', '$DONO'::uuid);
+set role service_role;
 with e as (
   select n, public.whatsapp_inbox_store('$CANAL'::uuid, '$WS'::uuid, 'simulated', '$ROUTING', 'evt-ef-' || n, 'whatsapp.inbound_message.received',
     repeat('a', 64), '1', 'AAAAAAAAAAAAAAAA', 'Q29ycG8gZmljdGljaW8gMQ==', 'AAAAAAAAAAAAAAAAAAAAAA==', 3600) ->> 'inbox_id' as id
