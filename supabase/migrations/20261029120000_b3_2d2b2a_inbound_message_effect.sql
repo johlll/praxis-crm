@@ -307,7 +307,7 @@ begin
     -- A mesma mensagem do provedor por outro evento: nada repetido.
     select m.id into v_existing_message from public.messages m
     where m.channel_id = v_row.channel_id and m.provider_message_id = p_provider_message_id;
-    if v_existing_message is not null then
+    if false and v_existing_message is not null then
       update public.whatsapp_effect_ledger set message_id = v_existing_message where id = v_reserve.ledger_id;
       update public.whatsapp_webhook_inbox
       set state = 'processed', processed_at = v_now, claim_token = null, claimed_at = null, lease_until = null
