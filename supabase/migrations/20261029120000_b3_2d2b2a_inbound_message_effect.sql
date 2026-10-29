@@ -49,7 +49,7 @@ as $body$
     ) then 'unresolved'::public.whatsapp_sender_classification
     when exists (
       select 1 from public.whatsapp_internal_identities i
-      where i.channel_id = p_channel_id and i.is_active
+      where i.channel_id = p_channel_id
         and ((p_phone_e164 is not null and i.phone_e164 = p_phone_e164)
           or (i.bsuid_blind_index is not null and p_bsuid_lookup is not null and p_bsuid_lookup ? i.bsuid_key_version
               and i.bsuid_blind_index = decode(p_bsuid_lookup ->> i.bsuid_key_version, 'base64')))
