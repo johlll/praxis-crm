@@ -500,6 +500,22 @@ export async function disposeWhatsAppInboxClaim(
   return finish("whatsapp_inbox_dispose", entry, disposition);
 }
 
+/** Efeito no domínio com este claim (B3.2d-2b2): a RPC do efeito recebe o
+ * id da entrada e o token DESTE claim, que não saem daqui; os demais
+ * argumentos são só do efeito. O banco confere estado, token e lease sob a
+ * trava da linha. A resposta volta crua para o módulo do efeito conferir. */
+export async function runWhatsAppInboxClaimEffect(
+  claim: WhatsAppInboxClaim,
+  rpc: "whatsapp_effect_inbound_message",
+  args: Readonly<Record<string, unknown>>,
+): Promise<{ data: unknown; error: { message?: string } | null }> {
+  const entry = requireClaim(claim);
+  if ("p_inbox_id" in args || "p_claim_token" in args) throw new WhatsAppInboxError("inbox_claim_invalid");
+  const admin = createWhatsAppAdminSupabaseClient();
+  const { data, error } = await admin.rpc(rpc, { ...args, p_inbox_id: entry.inboxId, p_claim_token: entry.token } as never);
+  return { data, error };
+}
+
 // ---------------------------------------------------------------------
 // Listagem e expurgo — só metadado
 // ---------------------------------------------------------------------
