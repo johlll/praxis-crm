@@ -348,7 +348,7 @@ begin
       -- telefone: o contato é casado pelo telefone, como na A7. internal e
       -- unresolved não procuram, não vinculam e não criam nada comercial,
       -- mesmo que um contato do workspace tenha o mesmo telefone.
-      if v_class = 'external' and v_identity.phone_e164 is not null then
+      if v_class <> 'internal' and v_identity.phone_e164 is not null then
         select ct.id into v_contact_id
         from public.contacts ct
         where ct.workspace_id = v_row.workspace_id and ct.merged_into_contact_id is null
