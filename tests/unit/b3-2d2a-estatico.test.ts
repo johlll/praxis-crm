@@ -109,11 +109,16 @@ describe("4. o claim não atravessa o step.run", () => {
     expect(src).not.toMatch(/claimWhatsAppInboxEntry|WhatsAppInboxClaim\b|step\.sendEvent|\.send\(/);
   });
 
-  it("só a inbox e o consumidor tocam no claim", () => {
+  it("só a inbox, o consumidor e os efeitos no domínio tocam no claim", () => {
+    // Os efeitos da B3.2d-2b2 recebem o claim para a RPC conferir token e
+    // lease (§19.9); o token continua só na inbox.
     const offenders = files(join(ROOT, "src"))
       .filter((f) => /claimWhatsAppInboxEntry|WhatsAppInboxClaim\b/.test(code(f)))
       .map(rel)
-      .filter((f) => f !== "src/server/whatsapp/inbox.ts" && f !== "src/server/whatsapp/consumer.ts");
+      .filter(
+        (f) =>
+          f !== "src/server/whatsapp/inbox.ts" && f !== "src/server/whatsapp/consumer.ts" && !f.startsWith("src/server/whatsapp/effects/"),
+      );
     expect(offenders).toEqual([]);
   });
 
