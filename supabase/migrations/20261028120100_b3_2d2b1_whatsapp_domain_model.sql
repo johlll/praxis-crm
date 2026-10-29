@@ -780,7 +780,7 @@ create table public.whatsapp_effect_ledger (
   workspace_id uuid not null references public.workspaces (id) on delete cascade,
   channel_id uuid not null,
   provider public.whatsapp_provider not null,
-  provider_event_id text not null check (provider_event_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
+  provider_event_id text not null check (provider_event_id ~ '^[A-Za-z0-9+][A-Za-z0-9._:+-]{0,127}$'),
   effect text not null check (effect in (
     'message.inbound', 'message.outbound_observed', 'message.status', 'contact.identity_changed', 'account', 'ignored', 'unsupported'
   )),
