@@ -300,9 +300,9 @@ begin
       else 'channel_disabled' end);
   end if;
 
+  select r.outcome, r.ledger_id into v_reserve
+  from private.whatsapp_effect_ledger_reserve(v_row.id, 'message.inbound') r;
   begin
-    select r.outcome, r.ledger_id into v_reserve
-    from private.whatsapp_effect_ledger_reserve(v_row.id, 'message.inbound') r;
     if v_reserve.outcome = 'conflict' then
       raise exception 'effect_conflict';
     end if;
@@ -517,6 +517,11 @@ begin
       'lead_created', v_contact_created
     );
   exception
+    when others then
+      if sqlerrm not in ('identity_conflict', 'effect_conflict') then
+        return jsonb_build_object('outcome', 'claim_lost');
+      end if;
+      return jsonb_build_object('outcome', sqlerrm);
     when raise_exception then
       -- Os dois conflitos desfazem o bloco (ledger, identidade, conversa,
       -- mensagem) e voltam como resultado; o resto propaga e desfaz tudo.
