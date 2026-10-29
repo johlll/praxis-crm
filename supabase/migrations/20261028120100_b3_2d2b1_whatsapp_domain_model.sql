@@ -789,6 +789,7 @@ create table public.whatsapp_effect_ledger (
   -- Só quando o efeito produz mensagem (conta, identidade ou evento
   -- técnico não produzem).
   message_id uuid,
+  phone_e164 text,
   recorded_at timestamptz not null default now(),
   -- O ambiente, o workspace e o provedor são os do canal: nenhum efeito
   -- cruza canal, workspace ou ambiente.
