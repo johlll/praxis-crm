@@ -297,9 +297,6 @@ begin
     end loop;
     -- A espera pode ter passado da lease: quem segura a trava da inbox não
     -- perde o token, mas o prazo combinado com o consumidor tem de valer.
-    if v_row.lease_until <= clock_timestamp() then
-      raise exception 'claim_lost';
-    end if;
 
     -- Identidade anterior: só leitura, pelas mesmas regras da resolução
     -- dos outros efeitos, mas nunca criada nem enriquecida.
