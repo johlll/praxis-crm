@@ -251,9 +251,6 @@ begin
       -- existente (telefone e BSUID complementares dela convergem). Outro
       -- destinatário: conflito, e o bloco desfaz a identidade que a
       -- resolução acima tenha criado ou enriquecido.
-      if v_identity.id is distinct from (select c.identity_id from public.conversations c where c.id = v_existing.conversation_id) then
-        raise exception 'message_conflict';
-      end if;
       update public.messages
       set provider_message_id = coalesce(provider_message_id, p_provider_message_id),
           provider = coalesce(provider, v_row.provider),
