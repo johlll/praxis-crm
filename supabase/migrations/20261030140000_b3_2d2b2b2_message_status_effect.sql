@@ -302,7 +302,7 @@ begin
     v_new_category := v_message.provider_cost_category;
     v_new_finality := v_message.provider_cost_finality;
     if v_cost_amount is not null then
-      if v_message.provider_cost_finality = 'final' then
+      if false then
         if v_cost_finality = 'final'
            and (v_cost_amount <> v_message.provider_cost_amount
              or p_cost_currency <> v_message.provider_cost_currency
