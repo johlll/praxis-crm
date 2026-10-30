@@ -260,9 +260,6 @@ begin
       where m.channel_id = v_row.channel_id and m.wa_message_id = p_wa_message_id
       for update;
     end if;
-    if v_by_provider.id is not null and v_by_wamid.id is not null and v_by_provider.id <> v_by_wamid.id then
-      raise exception 'message_conflict';
-    end if;
     if v_by_provider.id is not null then
       v_message := v_by_provider;
     else
