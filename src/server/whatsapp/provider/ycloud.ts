@@ -7,6 +7,7 @@ import {
   unsupported,
   VerifiedWebhookBody,
   whatsappContactIdentity,
+  WHATSAPP_PROVIDER_MESSAGE_ID_PATTERN,
   type FetchMediaRequest,
   type FetchMediaResult,
   type InspectEnvelopeResult,
@@ -89,7 +90,6 @@ const WABA_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 /** Id do evento: 6 a 128 caracteres (especificação oficial). */
 const EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{5,127}$/;
 const EVENT_TYPE = /^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/;
-const MESSAGE_ID = /^[A-Za-z0-9][A-Za-z0-9._:=+/-]{0,255}$/;
 const WAMID = /^wamid\.[A-Za-z0-9._:=+/-]{1,512}$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
 const CURRENCY = /^[A-Z]{3}$/;
@@ -267,7 +267,7 @@ function normalizeInbound(env: Envelope): NormalizedWhatsAppEvent {
     return ignored(env, "group_message", routingOrNull(m.wabaId, m.to));
   }
   const routingKey = routing(m.wabaId, m.to);
-  const providerMessageId = req(m.id, MESSAGE_ID);
+  const providerMessageId = req(m.id, WHATSAPP_PROVIDER_MESSAGE_ID_PATTERN);
   const waMessageId = opt(m.wamid, WAMID);
   const occurredAt = optTime(m.sendTime) ?? env.createdAt;
   const sender = identity(m.from, m.fromUserId) ?? fail();
@@ -315,7 +315,7 @@ function normalizeOutboundObserved(env: Envelope): NormalizedWhatsAppEvent {
     providerType: env.type,
     providerEventId: env.id,
     routingKey,
-    providerMessageId: req(m.id, MESSAGE_ID),
+    providerMessageId: req(m.id, WHATSAPP_PROVIDER_MESSAGE_ID_PATTERN),
     waMessageId: opt(m.wamid, WAMID),
     occurredAt: optTime(m.sendTime) ?? optTime(m.createTime) ?? env.createdAt,
     recipient: identity(m.to, recipientBsuid(m)) ?? fail(),
@@ -338,7 +338,7 @@ function normalizeStatus(env: Envelope): NormalizedWhatsAppEvent {
     originCandidate: "external_api",
     providerEventId: env.id,
     routingKey,
-    providerMessageId: req(m.id, MESSAGE_ID),
+    providerMessageId: req(m.id, WHATSAPP_PROVIDER_MESSAGE_ID_PATTERN),
     waMessageId: opt(m.wamid, WAMID),
     externalId: optOpaque(m.externalId, 512),
     occurredAt: env.createdAt,
