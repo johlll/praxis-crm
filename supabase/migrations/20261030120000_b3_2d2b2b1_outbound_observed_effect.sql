@@ -302,7 +302,7 @@ begin
           select array_agg(l.id) into v_candidate_lead_ids
           from public.leads l where l.workspace_id = v_row.workspace_id and l.contact_id = v_contact_id and l.status = 'ativo';
           v_lead_count := coalesce(array_length(v_candidate_lead_ids, 1), 0);
-          if v_lead_count = 1 then
+          if v_lead_count >= 1 then
             v_lead_id := v_candidate_lead_ids[1];
             select count(*) into v_open_opp_count from public.opportunities o where o.lead_id = v_lead_id and o.status = 'open';
             if v_open_opp_count = 1 then
