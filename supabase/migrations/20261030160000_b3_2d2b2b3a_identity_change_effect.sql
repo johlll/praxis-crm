@@ -366,9 +366,6 @@ begin
     -- identidade, e um BSUID existente nunca é substituído.
     select i.* into v_next_by_phone from public.whatsapp_identities i
     where i.channel_id = v_row.channel_id and i.phone_e164 = p_next_phone_e164;
-    if v_next_by_phone.id is not null and v_next_by_phone.id <> v_prev.id then
-      raise exception 'identity_conflict';
-    end if;
     if v_next_blind is not null then
       select i.* into v_next_by_bsuid from public.whatsapp_identities i
       where i.channel_id = v_row.channel_id
