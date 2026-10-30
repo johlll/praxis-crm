@@ -561,7 +561,7 @@ from public.whatsapp_webhook_inbox where provider_event_id = 'evt-s3' and channe
 set local role service_role;
 select coalesce(public.whatsapp_inbox_release(split_part(:'e_s3', '|', 1)::uuid, split_part(:'e_s3', '|', 2)::uuid, 'channel_disabled') ->> 'outcome', 'NULL') as rel_s3 \gset
 reset role;
-select is(:'rel_s3', 'released', 'o claim recusado pelo estado do canal ainda pode ser liberado');
+select is(:'rel_s3'::text, 'released', 'o claim recusado pelo estado do canal ainda pode ser liberado');
 update public.whatsapp_channels set status = 'active', status_changed_at = now() where id = :'ch_s'::uuid;
 select is(
   (pg_temp.ic(pg_temp.entrada(:'ch_s', :'ws_um', 'b3d2b2b3a-s', 'evt-s4'), 'phone_number', '+5511900043001', null, '+5511900043002', null) ->> 'outcome')
