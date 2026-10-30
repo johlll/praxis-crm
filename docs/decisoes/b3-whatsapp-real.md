@@ -4487,19 +4487,26 @@ EXECUTE só para `service_role`.
   `src/server/whatsapp/effects/identity-args.ts`): índices cegos de todas
   as versões de chave e a cifra da ativa, no escopo do claim. Nenhum
   telefone é derivado do BSUID; nenhuma chave da inbox é usada.
-- **Entrada malformada** (id do provedor, wamid fora de `wamid.` ou acima
-  de 128 caracteres — o limite da coluna da A7 —, tipo, texto, telefone,
-  índices, cifra, nenhum identificador): `invalid_outbound_message`, antes
-  de qualquer trava ou escrita.
+- **Entrada malformada** (id do provedor, wamid fora de `wamid.` ou com
+  mais de 518 caracteres, tipo, texto, telefone, índices, cifra, nenhum
+  identificador): `invalid_outbound_message`, antes de qualquer trava ou
+  escrita.
+- **Limite do wamid, o mesmo em todo o caminho:** o normalizador da YCloud
+  aceita `wamid.` + até 512 caracteres (518 no total). A regra de tamanho
+  da coluna `wa_message_id`, herdada da A7 (128), é trocada nesta
+  migration por uma de 1 a 518 (`messages_wa_message_id_length`), sem
+  editar a migration da A7; os ids antigos da A7 continuam válidos. O
+  formato `wamid.` é do efeito, não da coluna. Na RPC, formato e tamanho
+  são duas regras: no Postgres a repetição `{m,n}` vai só até 255.
 
 | Resultado | Quando | Efeito |
 |---|---|---|
 | `applied` | mensagem nova gravada | tudo gravado; inbox `processed` |
-| `duplicate` | o mesmo efeito já está no ledger para a entrada, ou a mensagem já existe no canal pelo id do provedor ou pelo wamid | nada repetido; o identificador que faltava é acrescentado; inbox `processed` |
+| `duplicate` | o mesmo efeito já está no ledger para a entrada, ou a mensagem já existe no canal pelo id do provedor ou pelo wamid **para a mesma identidade do destinatário** | nada repetido; o identificador que faltava é acrescentado; inbox `processed` |
 | `already_processed`, `terminal_failed`, `claim_lost`, `not_found` | como na finalização da B3.2d-1 | nada muda |
 | `channel_paused`, `channel_disconnected`, `channel_disabled` | o canal deixou de estar ativo depois do claim | nada gravado; claim continua |
 | `identity_conflict` | telefone e BSUID não batem com uma identidade só | nada gravado; claim continua |
-| `message_conflict` | o id do provedor e o wamid apontam para mensagens diferentes; a mensagem existente tem outro valor para o mesmo identificador; ou ela não é uma saída | nada gravado nem alterado; claim continua |
+| `message_conflict` | o id do provedor e o wamid apontam para mensagens diferentes; a mensagem existente tem outro valor para o mesmo identificador; ela não é uma saída; ou ela é de **outro destinatário** | nada gravado nem alterado; claim continua |
 | `effect_conflict` | a chave estável já tem outro efeito | nada gravado; claim continua |
 
 `applied` devolve só `message_id` e `conversation_id`. Os três estados do
@@ -4513,9 +4520,11 @@ canal e os conflitos ficam para a B3.2d-2b3 liberar ou decidir.
 2. `private.whatsapp_effect_ledger_reserve(inbox, 'message.outbound_observed')`;
 3. travas consultivas em ordem fixa: o id do provedor (a mesma chave da
    2b2a), o wamid, o telefone e o BSUID;
-4. a mesma mensagem já gravada → converge (§23.3);
+4. identificadores da mensagem: mensagens diferentes, outro valor ou
+   mensagem recebida → `message_conflict` (§23.3);
 5. identidade do destinatário (`private.whatsapp_resolve_inbound_identity`,
-   a mesma matriz do §22.3: sem auto-merge, `identity_conflict`);
+   a mesma matriz do §22.3: sem auto-merge, `identity_conflict`); a mesma
+   mensagem já gravada converge só para a mesma identidade (§23.3);
 6. conversa da identidade (reutilizada; ou criada, com o vínculo do §23.5);
 7. mensagem; auditoria `message.observed` sem ator e sem telefone ou
    texto; ledger aponta para a mensagem; inbox `processed`.
@@ -4537,7 +4546,16 @@ Grava `provider_message_id` e, quando vier, `wa_message_id`.
   recebida → `message_conflict`, nada alterado;
 - `smb.message.echoes` e `smb.message.created` da mesma mensagem (eventos
   diferentes, o mesmo id do provedor) convergem para uma mensagem só; a
-  trava do id e a do wamid fazem os dois esperarem um pelo outro.
+  trava do id e a do wamid fazem os dois esperarem um pelo outro;
+- **o destinatário é conferido antes de concluir `duplicate`:** a
+  identidade do evento novo é resolvida e comparada com a da conversa da
+  mensagem existente. Outra identidade (outro telefone, outro BSUID, ou um
+  BSUID nunca visto, que sozinho não prova nada) → `message_conflict`, e o
+  bloco desfaz a identidade criada ou enriquecida: nenhuma identidade,
+  conversa, mensagem ou ledger fica. Telefone e BSUID complementares da
+  mesma identidade convergem (e o identificador que faltava fica na
+  identidade); telefone e BSUID de identidades diferentes continuam
+  `identity_conflict`. Nunca pelo texto, nome, `externalId` ou formato.
 
 ### 23.4 Origem e autoria
 
@@ -4571,16 +4589,17 @@ baixada.
 
 ### 23.7 Compatibilidade com a A7
 
-- nenhuma função da A7 nem da 2b2a mudou no banco; a migration só cria a
-  função e não altera dados. No servidor, a 2b2a passou a usar o módulo
-  comum de identidade, sem mudar os argumentos nem os códigos de erro;
+- nenhuma função da A7 nem da 2b2a mudou no banco; a migration troca a
+  regra de tamanho do `wa_message_id` (128 → 518), cria a função e não
+  altera dados. No servidor, a 2b2a passou a usar o módulo comum de
+  identidade, sem mudar os argumentos nem os códigos de erro;
 - as leituras da A7 mostram a conversa com a mensagem recebida e a enviada
   pelo aplicativo, inclusive conversa só com BSUID;
 - **teste de atualização** (`scripts/check-upgrade-b3-2d2b2b1-saida-observada.sh`):
   A7 e uma entrada de eco gravadas antes da migration; leituras e contagens
   idênticas depois; o eco antigo aplica sobre a conversa existente como
   outbound/business_app/internal, sem nada comercial; o simulador e o envio
-  seguem funcionando.
+  seguem funcionando, com os ids antigos e com um wamid de 129 caracteres.
 
 ### 23.8 Testes
 
@@ -4610,15 +4629,32 @@ Commit só de testes `2230425`, contra a main `740f0f8`.
 Implementação: `feb165d` (módulo comum de identidade, sem mudar a 2b2a) e
 `d704aaa` (RPC, servidor e tipos).
 
+**Rodada do destinatário e do wamid.** Testes primeiro em `81d6e85`, sobre
+`650b48a`; correção do próprio teste em `1ac0172` (o estático exigia na
+RPC a regex `{1,512}`, impossível no Postgres). Vermelho na PR temporária
+#213 (os testes corrigidos sobre o código anterior):
+- pgTAP 37: 7 de 62 falham — 41 a 43 (o mesmo id ou wamid com outro
+  telefone ou outro BSUID virava `duplicate`), 44 e 45 (a identidade não
+  ganhava o BSUID na convergência, e telefone + BSUID de identidades
+  diferentes virava `duplicate`), 46 (129 e 518 recusados) e 48 (a coluna
+  recusava 518);
+- unitários: 3 de 53 falham (129, 518 e o mesmo limite do normalizador);
+- atualização: a A7 não gravava um wamid de 129 caracteres.
+
+Correção na própria migration em `6d4ca59`; a primeira versão usava
+`{1,512}` na regex da RPC, que o Postgres recusa e fazia todo o efeito
+falhar no CI — trocada por formato + tamanho em `49f5f29`.
+
 **Cobertura:**
-- `tests/unit/b3-2d2b2b1-saida-observada.test.ts` (49): argumentos exatos
-  (nenhum contexto, origem, classificação ou autor), wamid opcional, mídia
+- `tests/unit/b3-2d2b2b1-saida-observada.test.ts` (53): argumentos exatos
+  (nenhum contexto, origem, classificação ou autor), wamid opcional e de
+  128, 129 e 518 caracteres, o mesmo limite do normalizador, mídia
   sem texto, destinatário por telefone, BSUID ou os dois (mesmos argumentos
   da 2b2a), chaves ausentes, 16 entradas inválidas antes do banco, claim
   não confiável, resultados conferidos, erros sanitizados, estáticos (não
   envia, não chama o provedor, criptografia sem cópia, consumidor não
   ligado);
-- `supabase/tests/database/37_b3_2d2b2b1_saida_observada.test.sql` (54):
+- `supabase/tests/database/37_b3_2d2b2b1_saida_observada.test.sql` (62):
   estrutura e permissões; claim (pending, token, lease, ambiente, sem
   ambiente, inexistente); entrada inválida (inclusive wamid); primeira
   mensagem com destinatário desconhecido (origem, autoria, ledger,
@@ -4628,8 +4664,12 @@ Implementação: `feb165d` (módulo comum de identidade, sem mudar a 2b2a) e
   criado ou alterado; só BSUID, os dois, enriquecimento e
   `identity_conflict`; duplicação por id do provedor e por wamid; echoes +
   created; `message_conflict` (ids de mensagens diferentes, outro id,
-  mensagem recebida) sem alterar nada; `effect_conflict` e efeito já
-  reservado; mídia; canal pausado, desconectado e desativado depois do
+  mensagem recebida) sem alterar nada; destinatário conferido na
+  convergência (outro telefone, outro BSUID, BSUID nunca visto →
+  `message_conflict` sem identidade divergente; complementares da mesma
+  identidade convergem); limite do wamid (128, 129 e 518 aceitos, 519
+  recusado, a coluna com 518); `effect_conflict` e efeito já reservado;
+  mídia; canal pausado, desconectado e desativado depois do
   claim, liberação e controle; rollback integral depois da reserva; outro
   workspace e Production; nenhuma atividade ou criação comercial; leituras
   da A7;
@@ -4643,8 +4683,10 @@ Implementação: `feb165d` (módulo comum de identidade, sem mudar a 2b2a) e
 
 ### 23.9 Mutações
 
-Banco: uma PR temporária por mutação sobre `322089b` (#175 a #191; a N8
-refeita em #192 sobre `3670ab0`), todas reprovadas e fechadas:
+Banco: as 19 rodadas sobre a correção final `49f5f29`, uma PR temporária
+por mutação (#214 a #232), todas reprovadas e fechadas. A rodada anterior
+(N1 a N17 em #175 a #192) também tinha sido reprovada; a de #194 a #212
+foi descartada, porque rodou sobre a versão com a regex inválida.
 
 | Mutação | Detectada por |
 |---|---|
@@ -4665,12 +4707,15 @@ refeita em #192 sobre `3670ab0`), todas reprovadas e fechadas:
 | N15 lead ambíguo vinculado ao primeiro | pgTAP 37 (dois leads ativos) |
 | N16 destinatário desconhecido sem revisão | pgTAP 37 (desconhecido; só BSUID) |
 | N17 origem external_api/unresolved | pgTAP 37 (mensagem campo a campo) |
+| N18 destinatário não conferido na convergência | pgTAP 37 (41 a 43: outro telefone, outro BSUID) |
+| N19 limite antigo de 128 caracteres no wamid | pgTAP 37 (46 e 48: 129 e 518; a coluna) |
 
-Na primeira execução, a N4, a N5 e a N17 não chegaram aos testes: o
-Supabase local não subiu no CI ("Rate exceeded" no registro de imagens).
-Reexecutadas, foram reprovadas. A N8 sobreviveu à primeira versão do
-cenário 4 (a trava do telefone serializava os dois eventos); com o cenário
-corrigido em `3670ab0`, foi reprovada.
+Na rodada anterior, a N4, a N5 e a N17 não chegaram aos testes na
+primeira execução (o Supabase local não subiu no CI, "Rate exceeded") e
+foram reprovadas na reexecução; a N8 sobreviveu à primeira versão do
+cenário 4 (a trava do telefone serializava os dois eventos) e foi
+reprovada com o cenário corrigido em `3670ab0`. Na rodada final, em dois
+lotes, todas chegaram aos testes.
 
 Servidor, localmente, uma de cada vez e restauradas, todas detectadas
 pelos unitários: BSUID em claro nos argumentos; erro cru do banco
@@ -4686,14 +4731,13 @@ efeito falha fechado do mesmo jeito.
 - ligação do consumidor (B3.2d-2b3); status e custo (2b2b2); identidade
   alterada e eventos de conta (2b2b3); envio iniciado pelo CRM (B3.3);
   download de mídia; telas;
-- wamid acima de 128 caracteres é recusado (`invalid_outbound_message`): o
-  normalizador aceita até 518, mas a coluna da A7 limita a 128;
-- a convergência por id exige o **mesmo** id do provedor ou o mesmo wamid:
-  se o provedor mandar echoes e created com ids diferentes **e** o mesmo
-  wamid, o segundo dá `message_conflict` (fica para a 2b3 decidir), nunca
-  uma segunda mensagem;
-- na convergência, o destinatário do evento novo não é comparado com o da
-  mensagem existente: os identificadores da mensagem decidem;
+- **decisão aceita:** ids do provedor diferentes com o mesmo wamid →
+  `message_conflict` (fica para a 2b3 decidir), nunca uma segunda
+  mensagem, até o webhook real comprovar outro comportamento;
+- **decisão aceita:** a saída observada não acrescenta identificador
+  comercial ao contato;
+- um BSUID nunca visto, sozinho, para uma mensagem já gravada dá
+  `message_conflict`: ligar os dois seria auto-merge;
 - `identity_conflict` e `message_conflict` não são resolvidos aqui.
 
 Nada configurado fora do código: nenhuma migration no Supabase hospedado,
