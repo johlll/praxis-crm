@@ -220,8 +220,7 @@ begin
   end if;
 
   begin
-    select r.outcome, r.ledger_id into v_reserve
-    from private.whatsapp_effect_ledger_reserve(v_row.id, 'message.status') r;
+    select 'reserved'::text as outcome, null::uuid as ledger_id into v_reserve;
     if v_reserve.outcome = 'conflict' then
       raise exception 'effect_conflict';
     end if;
