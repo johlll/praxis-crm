@@ -340,7 +340,7 @@ begin
       content_kind, body_text, provider, provider_message_id, wa_message_id, status, status_updated_at
     )
     values (
-      v_row.workspace_id, v_conversation.id, v_row.channel_id, 'outbound', 'business_app', 'internal',
+      v_row.workspace_id, v_conversation.id, v_row.channel_id, 'outbound', 'external_api', 'unresolved',
       p_content_kind, v_body, v_row.provider, p_provider_message_id, p_wa_message_id, 'sent', p_occurred_at
     )
     returning id into v_message_id;
