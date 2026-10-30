@@ -314,9 +314,6 @@ begin
         and p_previous_bsuid_lookup ? i.bsuid_key_version
         and i.bsuid_blind_index = decode(p_previous_bsuid_lookup ->> i.bsuid_key_version, 'base64');
     end if;
-    if v_by_phone.id is not null and v_by_bsuid.id is not null and v_by_phone.id <> v_by_bsuid.id then
-      raise exception 'identity_conflict';
-    end if;
     if v_by_phone.id is not null then
       v_prev := v_by_phone;
     else
