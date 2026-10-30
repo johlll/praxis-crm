@@ -5429,6 +5429,27 @@ export type Database = {
         }
         Returns: Json
       }
+      whatsapp_effect_message_status: {
+        Args: {
+          p_bsuid_ciphertext: string
+          p_bsuid_key_version: string
+          p_bsuid_lookup: Json
+          p_claim_token: string
+          p_cost_amount: number
+          p_cost_category: string
+          p_cost_currency: string
+          p_cost_finality: string
+          p_error_code: string
+          p_external_id: string
+          p_inbox_id: string
+          p_occurred_at: string
+          p_phone_e164: string
+          p_provider_message_id: string
+          p_status: string
+          p_wa_message_id: string
+        }
+        Returns: Json
+      }
       whatsapp_effect_outbound_observed: {
         Args: {
           p_body_text: string

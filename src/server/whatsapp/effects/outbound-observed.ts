@@ -4,6 +4,7 @@ import { uuidSchema } from "@/lib/uuid";
 import { validateWhatsAppMessageContent } from "@/server/whatsapp/domain-model";
 import { WhatsAppEffectIdentityError, whatsappEffectIdentityArgs } from "@/server/whatsapp/effects/identity-args";
 import { runWhatsAppInboxClaimEffect, WhatsAppInboxError, type WhatsAppInboxClaim } from "@/server/whatsapp/inbox";
+import { WHATSAPP_PROVIDER_MESSAGE_ID_PATTERN } from "@/server/whatsapp/provider/contract";
 
 /**
  * Efeito atômico de mensagem de SAÍDA OBSERVADA (B3.2d-2b2b1,
@@ -74,7 +75,7 @@ export type WhatsAppOutboundObservedResult =
 
 const inputSchema = z
   .object({
-    providerMessageId: z.string().regex(/^\S{1,255}$/),
+    providerMessageId: z.string().regex(WHATSAPP_PROVIDER_MESSAGE_ID_PATTERN),
     waMessageId: z
       .string()
       .regex(/^wamid\.[A-Za-z0-9._:=+/-]{1,512}$/)

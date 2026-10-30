@@ -200,6 +200,15 @@ jobs:
         # roda antes do passo que recria o banco local.
         run: bash scripts/b3-2d2b2b1-outbound-concurrency-check.sh
 
+      - name: Teste de concorrência real (B3.2d-2b2b2 — efeito de status e custo)
+        # Dois status da mesma mensagem com a linha segurada (sem regressão),
+        # failed tardio contra read nas duas ordens, custo final contra
+        # estimativa tardia, o status esperando a saída observada da mesma
+        # mensagem e a pausa do canal durante o efeito — ver
+        # scripts/b3-2d2b2b2-status-concurrency-check.sh. Canal próprio;
+        # roda antes do passo que recria o banco local.
+        run: bash scripts/b3-2d2b2b2-status-concurrency-check.sh
+
       - name: Atualização a partir da versão anterior (numeração de propostas)
         # "Aplicar migrations do zero" já valida a criação do banco; este
         # passo valida a ATUALIZAÇÃO com dados emitidos pela versão anterior.
@@ -228,8 +237,18 @@ jobs:
         # existente como outbound/business_app/internal, sem nada comercial;
         # o simulador e o envio seguem funcionando — ver
         # scripts/check-upgrade-b3-2d2b2b1-saida-observada.sh. Recria o
-        # banco local, por isso roda por último.
+        # banco local, por isso roda depois do e2e.
         run: bash scripts/check-upgrade-b3-2d2b2b1-saida-observada.sh
+
+      - name: Atualização a partir da versão anterior (B3.2d-2b2b2 — efeito de status e custo)
+        # A7, uma saída observada, uma mensagem de API com custo estimado e
+        # uma entrada de status gravadas antes da migration: leituras,
+        # linhas e contagens idênticas depois; o status antigo aplica com o
+        # custo final, sem nada comercial; o simulador, o envio e o status
+        # da A7 seguem funcionando — ver
+        # scripts/check-upgrade-b3-2d2b2b2-status-custo.sh. Recria o banco
+        # local, por isso roda por último.
+        run: bash scripts/check-upgrade-b3-2d2b2b2-status-custo.sh
 
       - name: Publicar relatório do Playwright (só se algo falhar)
         if: failure()

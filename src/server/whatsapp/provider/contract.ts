@@ -177,6 +177,14 @@ export type InspectEnvelopeResult =
 // Eventos normalizados
 // ---------------------------------------------------------------------
 
+/**
+ * Id da mensagem no provedor: o contrato interno desta fase, o mesmo do
+ * adaptador, dos efeitos e da coluna (`provider_message_id`, até 255). De 1
+ * a 255 caracteres, o primeiro alfanumérico. Não é uma garantia do
+ * provedor: o limite pode ser reavaliado com o webhook real.
+ */
+export const WHATSAPP_PROVIDER_MESSAGE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:=+/-]{0,254}$/;
+
 /** `accepted`: aceita pelo provedor, ainda sem `sent` (§1.3). */
 export type NormalizedMessageStatus = "accepted" | "sent" | "delivered" | "read" | "failed";
 
