@@ -379,9 +379,6 @@ begin
         raise exception 'identity_conflict';
       end if;
       if v_next_by_bsuid.id is null then
-        if v_prev.bsuid_blind_index is not null then
-          raise exception 'identity_conflict';
-        end if;
         v_bsuid_added := true;
       end if;
     end if;
