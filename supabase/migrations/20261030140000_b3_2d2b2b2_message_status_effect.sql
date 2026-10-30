@@ -270,6 +270,11 @@ begin
     end if;
     -- Status antes da mensagem: o bloco desfaz a reserva do ledger; nada
     -- fica gravado e o claim continua.
+    if v_message.id is null and p_external_id is not null then
+      select m.* into v_message from public.messages m
+      where m.channel_id = v_row.channel_id and m.provider_external_id = p_external_id
+      for update;
+    end if;
     if v_message.id is null then
       raise exception 'message_not_found';
     end if;
