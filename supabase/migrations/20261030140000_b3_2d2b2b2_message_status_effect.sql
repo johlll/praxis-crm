@@ -286,9 +286,6 @@ begin
     -- tenha criado ou enriquecido.
     if p_phone_e164 is not null or v_blind is not null then
       v_identity := private.whatsapp_resolve_inbound_identity(v_row, p_phone_e164, p_bsuid_lookup, v_blind, v_cipher, p_bsuid_key_version);
-      if v_identity.id is distinct from (select c.identity_id from public.conversations c where c.id = v_message.conversation_id) then
-        raise exception 'message_conflict';
-      end if;
     end if;
 
     -- Status: a regra da B3 (§1.3), a mesma de projectWhatsAppMessageStatus.
