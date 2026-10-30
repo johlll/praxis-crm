@@ -171,7 +171,7 @@ echo "== 3. duas identidades tentando assumir o mesmo BSUID novo"
 hold_lock b3d2b2b3a_h3 "bsuid:$BX"
 run_in_order b3d2b2b3a_c "$(ic_sql "$(id 4)" "$(tok 4)" phone_number "$(tel 04)" "" "$(tel 14)" "$BX")" "$(ic_sql "$(id 5)" "$(tok 5)" phone_number "$(tel 05)" "" "$(tel 15)" "$BX")"
 [ "$R1 $R2" = "applied identity_conflict" ] || fail "esperado applied e identity_conflict: $R1 / $R2"
-[ "$(q "select count(*) || '|' || bool_and(id = '$A3') from public.whatsapp_identities where bsuid_blind_index = decode('$BX', 'base64')")" = "1|t" ] || fail "o BSUID novo não ficou só na primeira identidade"
+[ "$(q "select count(*) || '|' || bool_and(id = '$A3') from public.whatsapp_identities where bsuid_blind_index = decode('$BX', 'base64')")" = "1|true" ] || fail "o BSUID novo não ficou só na primeira identidade"
 [ "$(phone_of "$B3")" = "$(tel 05)|$(tel 05)" ] || fail "a segunda identidade mudou de número"
 echo "   ok: applied e identity_conflict; o BSUID fica só na primeira, a segunda intacta"
 
