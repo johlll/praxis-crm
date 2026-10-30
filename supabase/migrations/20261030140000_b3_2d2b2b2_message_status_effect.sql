@@ -292,7 +292,7 @@ begin
     end if;
 
     -- Status: a regra da B3 (§1.3), a mesma de projectWhatsAppMessageStatus.
-    v_status_changes := private.whatsapp_message_status_should_apply(v_message.status, v_status);
+    v_status_changes := private.whatsapp_message_status_should_apply(v_message.status, v_status) and v_message.status <> 'failed';
     v_new_status := case when v_status_changes then v_status else v_message.status end;
 
     -- Custo: a regra de projectWhatsAppProviderCost. Ausente preserva; o
