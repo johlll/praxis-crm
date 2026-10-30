@@ -19,6 +19,11 @@
 #      aplica.
 #   6. A lease vence enquanto o efeito espera uma trava: ao conseguir a
 #      trava, o efeito reconfere e devolve `claim_lost`, sem escrever.
+#   7. A lease vence enquanto o efeito espera a trava de LINHA da conversa
+#      (outra sessão a segura com SELECT ... FOR UPDATE, fora das travas
+#      consultivas): ao conseguir a linha, o efeito reconfere e devolve
+#      `claim_lost`; identidade, conversa, vínculos, auditoria, ledger e
+#      claim ficam como estavam.
 #
 # Uma sessão segura a trava consultiva (a mesma que o efeito pede: telefone
 # novo ou BSUID novo) para que as execuções esperem juntas, em ordem. Canal
@@ -36,6 +41,8 @@ tel() { echo "+55119400${SUFIXO:0:4}$1"; } # $1 = dois dígitos
 BA="$(head -c 32 /dev/urandom | base64)"
 BX="$(head -c 32 /dev/urandom | base64)"
 CT="$(head -c 40 /dev/urandom | base64)"
+BY="$(head -c 32 /dev/urandom | base64)"
+K7="$(cat /proc/sys/kernel/random/uuid)"; L7="$(cat /proc/sys/kernel/random/uuid)"; O7="$(cat /proc/sys/kernel/random/uuid)"
 
 psql_as() { # $1 = application_name; resto = argumentos do psql
   local app="$1"; shift
@@ -131,7 +138,15 @@ values ('$WS'::uuid, '$CANAL'::uuid, 'preview', 'simulated', '$(tel 01)', decode
 insert into public.conversations (workspace_id, channel_id, identity_id, wa_id)
 select '$WS'::uuid, '$CANAL'::uuid, id, phone_e164 from public.whatsapp_identities where channel_id = '$CANAL'::uuid;
 insert into public.conversations (workspace_id, channel_id, wa_id)
-select '$WS'::uuid, '$CANAL'::uuid, p from unnest(array['$(tel 02)', '$(tel 03)', '$(tel 04)', '$(tel 05)', '$(tel 06)', '$(tel 07)', '$(tel 08)']) p;
+select '$WS'::uuid, '$CANAL'::uuid, p from unnest(array['$(tel 02)', '$(tel 03)', '$(tel 04)', '$(tel 05)', '$(tel 06)', '$(tel 07)', '$(tel 08)', '$(tel 09)']) p;
+-- A conversa de $(tel 09) vinculada a contato, lead e oportunidade fictícios.
+insert into public.contacts (id, workspace_id, type, name, created_by) values ('$K7'::uuid, '$WS'::uuid, 'pf', 'Cliente Fictício Concorrência', '$DONO'::uuid);
+insert into public.leads (id, workspace_id, contact_id, legal_area, created_by) values ('$L7'::uuid, '$WS'::uuid, '$K7'::uuid, 'Trabalhista', '$DONO'::uuid);
+insert into public.opportunities (id, workspace_id, lead_id, pipeline_id, stage_id, created_by)
+select '$O7'::uuid, '$WS'::uuid, '$L7'::uuid, p.id, (select s.id from public.pipeline_stages s where s.pipeline_id = p.id order by s.position limit 1), '$DONO'::uuid
+from public.pipelines p where p.workspace_id = '$WS'::uuid and p.is_default;
+update public.conversations set contact_id = '$K7'::uuid, lead_id = '$L7'::uuid, opportunity_id = '$O7'::uuid
+where channel_id = '$CANAL'::uuid and wa_id = '$(tel 09)';
 $SERVICE_SQL
 with e as (
   select n, public.whatsapp_inbox_store('$CANAL'::uuid, '$WS'::uuid, 'simulated', '$ROUTING', 'evt-ic-' || n, 'whatsapp.inbound_message.received',
@@ -147,7 +162,7 @@ id() { echo "${ENTRIES[$1]%%,*}"; }
 tok() { echo "${ENTRIES[$1]##*,}"; }
 ident() { q "select id from public.whatsapp_identities where channel_id = '$CANAL' and phone_e164 = '$1'"; }
 A1="$(ident "$(tel 01)")"; A2="$(ident "$(tel 02)")"; B2="$(ident "$(tel 03)")"; A3="$(ident "$(tel 04)")"; B3="$(ident "$(tel 05)")"
-A4="$(ident "$(tel 06)")"; A5="$(ident "$(tel 07)")"; A6="$(ident "$(tel 08)")"
+A4="$(ident "$(tel 06)")"; A5="$(ident "$(tel 07)")"; A6="$(ident "$(tel 08)")"; A7="$(ident "$(tel 09)")"
 COMERCIAL_ANTES="$(q "select (select count(*) from public.contacts) || '|' || (select count(*) from public.contact_phones) || '|' || (select count(*) from public.contact_identifiers) || '|' || (select count(*) from public.leads) || '|' || (select count(*) from public.opportunities) || '|' || (select count(*) from public.activities)")"
 IDENT_ANTES="$(q "select count(*) from public.whatsapp_identities where channel_id = '$CANAL'")"
 
@@ -201,6 +216,49 @@ wait $P_L || fail "o efeito falhou: $(cat "$OUT_L")"
 [ "$(tail -1 "$OUT_L")" = "claim_lost" ] || fail "a lease venceu durante a espera: esperado claim_lost, veio $(tail -1 "$OUT_L")"
 [ "$(phone_of "$A6")|$(owners "$(tel 18)")|$(q "select count(*) from public.whatsapp_effect_ledger where inbox_id = '$(id 7)'")" = "$(tel 08)|$(tel 08)|0|0" ] || fail "o claim perdido deixou efeito"
 echo "   ok: claim_lost depois da espera, nada escrito"
+
+echo "== 7. a lease vence enquanto o efeito espera a trava de linha da conversa"
+CONV7="$(q "select id from public.conversations where identity_id = '$A7'")"
+[ "$(q "select concat_ws('|', contact_id, lead_id, opportunity_id) from public.conversations where id = '$CONV7'")" = "$K7|$L7|$O7" ] || fail "a conversa do cenário 7 deveria estar vinculada"
+CONV7_ANTES="$(q "select row_to_json(c)::text from public.conversations c where id = '$CONV7'")"
+IDENT7_ANTES="$(q "select row_to_json(i)::text from public.whatsapp_identities i where id = '$A7'")"
+AUD7_ANTES="$(q "select count(*) from public.audit_logs where resource_id = '$A7' or resource_id = '$CONV7'")"
+# Outra sessão trava a LINHA da conversa (nenhuma trava consultiva).
+psql_as b3d2b2b3a_r7h > /dev/null 2>&1 <<SQL &
+begin;
+select id from public.conversations where id = '$CONV7' for update;
+select pg_sleep(5);
+commit;
+SQL
+HOLD_PID=$!
+wait_sleeping b3d2b2b3a_r7h
+q "update public.whatsapp_webhook_inbox set lease_until = clock_timestamp() + interval '2 seconds' where id = '$(id 10)'" > /dev/null
+INBOX7_ANTES="$(q "select concat_ws('|', state, claim_token, claimed_at, lease_until) from public.whatsapp_webhook_inbox where id = '$(id 10)'")"
+OUT_R="$(mktemp)"
+echo "$(ic_sql "$(id 10)" "$(tok 10)" phone_number "$(tel 09)" "" "$(tel 20)" "$BY")" | psql_as b3d2b2b3a_r7e > "$OUT_R" 2>&1 &
+P_R=$!
+wait_lock_waiters 1 b3d2b2b3a_r7e
+# A espera é pela linha que a outra sessão segura (não por trava consultiva).
+[ "$(q "select count(*) from pg_stat_activity e where e.application_name = 'b3d2b2b3a_r7e' and e.wait_event_type = 'Lock'
+  and e.wait_event in ('transactionid', 'tuple')
+  and exists (select 1 from pg_stat_activity h where h.application_name = 'b3d2b2b3a_r7h' and h.pid = any(pg_blocking_pids(e.pid)))")" = "1" ]   || fail "o efeito não está esperando a trava de linha da conversa"
+for _ in $(seq 1 50); do
+  [ "$(q "select (lease_until <= clock_timestamp())::text from public.whatsapp_webhook_inbox where id = '$(id 10)'")" = "true" ] && break
+  sleep 0.1
+done
+[ "$(q "select (lease_until <= clock_timestamp())::text from public.whatsapp_webhook_inbox where id = '$(id 10)'")" = "true" ] || fail "a lease não venceu durante a espera"
+[ "$(q "select count(*) from pg_stat_activity where application_name = 'b3d2b2b3a_r7e' and wait_event_type = 'Lock'")" = "1" ] || fail "o efeito parou de esperar antes de a lease vencer"
+wait "$HOLD_PID" || fail "a sessão que segura a linha falhou"
+wait $P_R || fail "o efeito falhou: $(cat "$OUT_R")"
+[ "$(tail -1 "$OUT_R")" = "claim_lost" ] || fail "a lease venceu na espera pela linha: esperado claim_lost, veio $(tail -1 "$OUT_R")"
+[ "$(q "select row_to_json(i)::text from public.whatsapp_identities i where id = '$A7'")" = "$IDENT7_ANTES" ] || fail "o claim perdido mudou telefone ou BSUID da identidade"
+[ "$(q "select row_to_json(c)::text from public.conversations c where id = '$CONV7'")" = "$CONV7_ANTES" ] || fail "o claim perdido mudou a conversa ou os vínculos"
+[ "$(q "select count(*) from public.audit_logs where resource_id = '$A7' or resource_id = '$CONV7'")" = "$AUD7_ANTES" ] || fail "o claim perdido gravou auditoria"
+[ "$(q "select count(*) from public.whatsapp_effect_ledger where inbox_id = '$(id 10)'")" = "0" ] || fail "o claim perdido gravou ledger"
+[ "$(q "select concat_ws('|', state, claim_token, claimed_at, lease_until) from public.whatsapp_webhook_inbox where id = '$(id 10)'")" = "$INBOX7_ANTES" ] || fail "o claim perdido mexeu na entrada"
+[ "$(q "select concat_ws('|', state, claim_token) from public.whatsapp_webhook_inbox where id = '$(id 10)'")" = "processing|$(tok 10)" ] || fail "a entrada deveria seguir em processing com o mesmo claim"
+[ "$(owners "$(tel 20)")|$(q "select count(*) from public.whatsapp_identities where bsuid_blind_index = decode('$BY', 'base64')")" = "0|0" ] || fail "o telefone ou o BSUID novos ficaram gravados"
+echo "   ok: o efeito esperou a linha da conversa, a lease venceu e veio claim_lost; nada mudou"
 
 echo "== 4. o canal é pausado enquanto o efeito roda, e depois de um claim"
 hold_lock b3d2b2b3a_h4 "$(tel 16)"

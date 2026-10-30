@@ -26,7 +26,7 @@
 -- funções que capturam o erro: contra a main, o arquivo roda até o fim.
 
 begin;
-select plan(46);
+select plan(47);
 
 \set ana     '20000000-0000-0000-0000-000000000001'
 \set ws_um   '10000000-0000-0000-0000-000000000001'
@@ -672,6 +672,48 @@ select is(
   true, 'authenticated não executa o efeito'
 );
 reset role;
+
+-- ---------------------------------------------------------------------
+-- 16) Lease conferida depois das travas de LINHA
+-- ---------------------------------------------------------------------
+
+-- As travas de linha da identidade e da conversa podem esperar transações
+-- que não passam pelas travas consultivas, e a lease pode vencer nessa
+-- espera (o cenário 7 da concorrência real prova o comportamento). Contrato
+-- no corpo da função, sem comentários e com o espaço normalizado:
+--  a) identidade e conversa são travadas (FOR UPDATE);
+--  b) o comando seguinte à ÚLTIMA aquisição de trava da função é a
+--     conferência da lease com um relógio novo (v_now := clock_timestamp());
+--  c) nenhuma escrita (update, insert, delete, set_config) entre essa
+--     última trava e a conferência, e há escrita depois dela.
+select is(
+  pg_temp.txt($q$
+    with f as (
+      select regexp_replace(lower(regexp_replace(p.prosrc, '--[^\n]*', '', 'g')), '\s+', ' ', 'g') as s
+      from pg_proc p where p.oid = 'public.whatsapp_effect_identity_change'::regproc
+    ), l as (
+      select s, regexp_instr(s, '\m(for (update|share|key share|no key update)|pg_advisory_xact_lock)\M', 1,
+                             regexp_count(s, '\m(for (update|share|key share|no key update)|pg_advisory_xact_lock)\M')) as last_lock
+      from f
+    ), r as (
+      select s, substr(s, last_lock) as rest from l
+    ), c as (
+      select s, rest,
+        strpos(rest, 'v_now := clock_timestamp(); if v_row.lease_until is null or v_row.lease_until <= v_now then raise exception ''claim_lost''; end if;') as chk,
+        strpos(rest, ';') as end_lock,
+        regexp_instr(rest, '\m(update public\.|insert into|delete from|set_config\()') as first_write
+      from r
+    )
+    select concat_ws(' ',
+      (strpos(s, 'from public.whatsapp_identities i where i.id = v_prev.id for update') > 0
+        and strpos(s, 'from public.conversations c where c.identity_id = v_prev.id for update') > 0)::text,
+      (chk > 0 and btrim(substr(rest, end_lock + 1, chk - end_lock - 1)) = '')::text,
+      (chk > 0 and first_write > chk)::text)
+    from c
+  $q$),
+  'true true true',
+  'a lease é conferida de novo, com relógio novo, logo depois da última trava (identidade e conversa) e antes da primeira escrita'
+);
 
 select * from finish();
 rollback;
