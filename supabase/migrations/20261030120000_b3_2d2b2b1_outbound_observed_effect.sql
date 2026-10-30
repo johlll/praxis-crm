@@ -172,7 +172,7 @@ begin
   if v_row.state = 'failed' then
     return jsonb_build_object('outcome', 'terminal_failed');
   end if;
-  if v_row.state <> 'processing' or p_claim_token is null or v_row.claim_token is distinct from p_claim_token then
+  if v_row.state <> 'processing' then
     return jsonb_build_object('outcome', 'claim_lost');
   end if;
   v_now := clock_timestamp();
