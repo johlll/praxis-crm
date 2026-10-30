@@ -375,9 +375,6 @@ begin
         and i.bsuid_blind_index is not null
         and p_next_bsuid_lookup ? i.bsuid_key_version
         and i.bsuid_blind_index = decode(p_next_bsuid_lookup ->> i.bsuid_key_version, 'base64');
-      if v_next_by_bsuid.id is not null and v_next_by_bsuid.id <> v_prev.id then
-        raise exception 'identity_conflict';
-      end if;
       if v_next_by_bsuid.id is null then
         if v_prev.bsuid_blind_index is not null then
           raise exception 'identity_conflict';
