@@ -212,12 +212,6 @@ begin
   where c.id = v_row.channel_id and c.workspace_id = v_row.workspace_id
     and c.environment = v_row.environment and c.provider = v_row.provider
   for share;
-  if v_channel.status is distinct from 'active' then
-    return jsonb_build_object('outcome', case v_channel.status
-      when 'paused' then 'channel_paused'
-      when 'disconnected' then 'channel_disconnected'
-      else 'channel_disabled' end);
-  end if;
 
   begin
     select r.outcome, r.ledger_id into v_reserve
