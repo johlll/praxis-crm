@@ -5108,7 +5108,7 @@ DEFINER, `search_path` vazio, EXECUTE só para `service_role`.
 | `identity_not_found` | nenhuma identidade anterior no canal | **nada gravado** (nenhum ledger nem identidade); inbox em `processing`; claim continua; reaplicável |
 | `identity_conflict` | §25.3 | nada gravado nem alterado; claim continua |
 | `effect_conflict` | a chave estável já tem outro efeito | nada gravado; claim continua |
-| `already_processed`, `terminal_failed`, `claim_lost`, `not_found` | como na finalização da B3.2d-1 (`claim_lost` também quando a lease vence durante a espera por uma trava) | nada muda |
+| `already_processed`, `terminal_failed`, `claim_lost`, `not_found` | como na finalização da B3.2d-1 (`claim_lost` também quando a lease vence durante a espera por uma trava, consultiva ou de linha; §25.9) | nada muda |
 | `channel_paused`, `channel_disconnected`, `channel_disabled` | o canal deixou de estar ativo depois do claim | nada gravado; claim continua |
 
 `applied` e `review_required` devolvem só `identity_id`.
@@ -5123,8 +5123,12 @@ DEFINER, `search_path` vazio, EXECUTE só para `service_role`.
    efeitos: telefone anterior, BSUID anterior, telefone novo e BSUID novo;
    depois da espera, a lease é reconferida;
 4. identidade anterior, só lida (§25.3), e travada (`for update`) com a
-   conversa dela;
-5. telefone e BSUID novos (§25.3); identidade e conversa atualizadas;
+   conversa dela; a chave do workspace (que a auditoria referencia) travada
+   `for key share`;
+5. **a lease é conferida de novo**, com um relógio novo, logo depois dessas
+   travas de linha e antes da primeira escrita, nos dois caminhos
+   (`phone_number` e `identity`); esse horário é o `processed_at` (§25.9);
+6. telefone e BSUID novos (§25.3); identidade e conversa atualizadas;
    auditoria; inbox `processed`.
 
 `identity_not_found`, os conflitos e a lease vencida na espera voltam como
@@ -5183,7 +5187,7 @@ Reentrega e `duplicate` não auditam de novo.
 ### 25.6 Testes
 
 - `supabase/tests/database/39_b3_2d2b2b3a_identidade_alterada.test.sql`
-  (pgTAP, 46): estrutura e permissões; claim (token, lease, ambiente,
+  (pgTAP, 47): estrutura e permissões; claim (token, lease, ambiente,
   estados); validação fechada; troca simples e auditoria; idempotência;
   conflitos (telefone novo, BSUID novo, BSUID substituído, anterior
   dividida); variantes da anterior e `identity_not_found` recuperável;
@@ -5191,12 +5195,13 @@ Reentrega e `duplicate` não auditam de novo.
   `review_required`; status do canal; ledger; rollback (falha simulada na
   conversa depois do ledger, do telefone e do BSUID); a guarda ainda
   bloqueia fora do efeito; isolamento; nada comercial e auditoria sem dado
-  pessoal; `authenticated` sem EXECUTE.
+  pessoal; `authenticated` sem EXECUTE; a lease conferida logo depois da
+  última trava e antes da primeira escrita (47, §25.9).
 - `tests/unit/b3-2d2b2b3a-identidade-alterada.test.ts` (47): validação do
   servidor, materiais separados (anterior sem cifra), AAD no escopo do
   claim, nenhum BSUID em claro nos argumentos, mapeamento de resultados e
   erros, resposta inesperada.
-- `scripts/b3-2d2b2b3a-identity-concurrency-check.sh`: seis cenários com
+- `scripts/b3-2d2b2b3a-identity-concurrency-check.sh`: sete cenários com
   sessões Postgres reais — (1) duas trocas da mesma identidade para o mesmo
   telefone: `applied` + `duplicate`; (2) duas identidades para o mesmo
   telefone: `applied` + `identity_conflict`; (3) duas identidades para o
@@ -5204,7 +5209,9 @@ Reentrega e `duplicate` não auditam de novo.
   `identity_conflict`; (4) pausa do canal durante o efeito: a pausa espera,
   e o claim usado depois vê `channel_paused`; (5) falha depois do ledger e
   antes da conversa: nada sobrevive; (6) lease vencida durante a espera
-  por uma trava: `claim_lost`, nada escrito.
+  por uma trava consultiva: `claim_lost`, nada escrito; (7) lease vencida
+  durante a espera pela trava de linha da conversa: `claim_lost`, nada
+  mudou (§25.9).
 - `scripts/check-upgrade-b3-2d2b2b3a-identidade.sh`: atualização a partir
   da `20261030140000`.
 
@@ -5225,8 +5232,8 @@ merge.
 | Mutação | Pega por |
 |---|---|
 | M1 token do claim não conferido | pgTAP 5, 10, 14–16 |
-| M2 lease não conferida (só a primeira) | sobreviveu: equivalente — a reconferência depois das travas devolve o mesmo `claim_lost`; substituída pela M2b |
-| M2b lease ignorada antes e depois das travas | pgTAP 6, 10, 14–16, 18; concorrência 6 |
+| M2 lease não conferida (só a primeira) | sobreviveu: equivalente — a reconferência depois das travas devolve o mesmo `claim_lost`; substituída pela M2b (depois da §25.9, de novo equivalente; ver M24) |
+| M2b lease ignorada antes e depois das travas consultivas | antes da §25.9: pgTAP 6, 10, 14–16, 18; concorrência 6. Depois: sobrevive — a conferência tardia devolve o mesmo `claim_lost` |
 | M3 inbox de qualquer ambiente | pgTAP 7, 43 |
 | M4 status do canal não reconferido | pgTAP 34, 36; concorrência 4 |
 | M5 canal sem `FOR SHARE` | concorrência 4 (a pausa não esperou) |
@@ -5245,8 +5252,10 @@ merge.
 | M18 `identity` aceita com a nova | pgTAP 11, 14–17, 19, 21, 22 |
 | M19 `phone_number` aceito sem a nova | pgTAP 11 |
 | M20 conflito de efeito ignorado | pgTAP 37–40 |
-| M21 lease não reconferida depois da espera | concorrência 6 |
+| M21 lease não reconferida depois das travas consultivas | antes da §25.9: concorrência 6. Depois: sobrevive — a conferência tardia devolve o mesmo `claim_lost`; **não** prova a proteção das travas de linha |
 | M22 sem as travas consultivas | concorrência (as sessões não esperaram) |
+| M23 lease não reconferida depois das travas de linha (as duas anteriores mantidas) | pgTAP 47; concorrência 7 (veio `applied`) |
+| M24 nenhuma das três conferências da lease | pgTAP 6, 10, 14–16, 18, 47; concorrência 6 |
 
 ### 25.8 Fora do escopo, decisões e riscos
 
@@ -5278,3 +5287,67 @@ Riscos e divergências:
 - **a mesma troca por outro evento** só é reconhecida como `duplicate`
   quando o BSUID anterior identifica a identidade; só pelo telefone antigo
   (que já saiu), ela vira `identity_not_found`.
+
+### 25.9 Revisão: lease vencida na espera por uma trava de linha
+
+**Janela encontrada na revisão da PR #262.** A lease era conferida antes e
+depois das travas consultivas, mas depois disso ainda vinham os `FOR
+UPDATE` da identidade anterior e da conversa. Essas travas de linha podem
+esperar uma transação que não passa pelas travas consultivas (qualquer
+outra escrita na conversa, por exemplo), e a lease pode vencer nessa
+espera. Ao receber as linhas, o efeito alterava identidade, conversa,
+auditoria e inbox com a lease já vencida. A M21 e o cenário 6 só provavam
+a espera na trava consultiva.
+
+**Teste primeiro (`a58deaa`), vermelho na PR temporária #287:**
+- concorrência, cenário 7: uma sessão segura a linha da conversa com
+  `SELECT id FROM public.conversations WHERE id = <conversa> FOR UPDATE`
+  e dorme 5 s, sem trava consultiva; a lease da entrada passa a vencer em
+  2 s; o efeito (`phone_number` para um telefone e um BSUID novos, numa
+  conversa vinculada a contato, lead e oportunidade fictícios) começa e o
+  script confirma que ele espera uma trava de linha (`wait_event_type =
+  Lock`, `transactionid` ou `tuple`) bloqueado justamente por essa sessão
+  (`pg_blocking_pids`), e que a lease vence enquanto ele ainda espera; só
+  então a linha é solta. Sem a correção veio `applied`;
+- pgTAP 47 (estrutural, sobre o corpo da função sem comentários): a
+  identidade e a conversa são travadas; o comando logo depois da **última**
+  aquisição de trava da função é `v_now := clock_timestamp()` seguido da
+  conferência da lease; nenhuma escrita entre essa trava e a conferência,
+  e há escrita depois. Uma comparação com `lease_until` em qualquer outro
+  ponto não basta. Sem a correção: `true false false`.
+
+**Correção (`5d6eb5f`), na própria migration nova:** depois de travar a
+identidade e a conversa, a chave do workspace é travada `for key share` (a
+auditoria a referencia, e assim nenhuma escrita abaixo espera depois da
+conferência); em seguida, um ponto comum aos dois caminhos (`phone_number`
+e `identity`) faz `v_now := clock_timestamp()` e, com a lease nula ou
+vencida, `claim_lost`. O resultado desfaz o bloco (reserva do ledger e
+qualquer alteração intermediária); a lease não é renovada, nenhum claim
+novo é obtido e a entrada não é finalizada nem liberada. O `processed_at`
+das execuções válidas passa a usar esse horário, e não o de antes de uma
+espera longa.
+
+**Depois do `claim_lost` do cenário 7, nada ficou:** a linha da
+identidade e a da conversa (com contato, lead, oportunidade e revisão)
+iguais às de antes, byte a byte (`row_to_json`); nenhuma auditoria da
+identidade ou da conversa; nenhum ledger da entrada; a entrada em
+`processing` com o mesmo token, `claimed_at` e `lease_until`; o telefone e
+o BSUID novos em nenhuma identidade; o cadastro comercial com as mesmas
+contagens.
+
+**Mutação específica:** a M23 tira só a conferência tardia e mantém a
+inicial e a de depois das travas consultivas: o pgTAP 47 e o cenário 7
+(`applied`) a pegam. Com a conferência tardia, a M2, a M2b e a M21
+passaram a sobreviver (ela devolve o mesmo `claim_lost`); a M24, que tira
+as três, é pega pelo pgTAP 6, 10, 14–16, 18 e 47 e pelo cenário 6.
+
+**Verde (`5d6eb5f`):** CI completo — typecheck, lint, 2335 unitários,
+pgTAP inteiro (o 39 com 47), isolamento, e2e, todas as concorrências
+(cenários 1 a 7) e todas as atualizações. As regressões continuam
+cobertas pelos mesmos testes: a anterior nunca é criada (pgTAP 25, 26),
+nenhuma fusão (27, 28), o telefone novo na mesma identidade (15),
+conflitos atômicos (21; concorrência 2 e 3), o telefone do contato
+intacto (31, 44), a conversa vinculada em revisão (30), `identity` só
+marcando revisão (32, 33), auditoria sem dado pessoal (17, 44), a pausa
+esperando o efeito (concorrência 4) e a falha depois do ledger desfazendo
+tudo (39, 40; concorrência 5).
