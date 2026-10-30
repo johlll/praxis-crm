@@ -4897,6 +4897,19 @@ custo final que ele traz é aplicado.
   `message_conflict`, sem auto-merge. A identidade criada ou enriquecida
   numa tentativa conflitante é desfeita. Sem destinatário, a aplicação
   segue.
+- **Id do provedor, o mesmo contrato em todo o caminho (255):** o
+  adaptador YCloud aceitava de 1 a 256 caracteres no id da mensagem, e o
+  domínio (os efeitos, as RPCs e a coluna `provider_message_id`) recusa
+  256 — um evento podia ser normalizado só para falhar no efeito. O
+  contrato interno desta fase ficou alinhado em 255: um padrão só,
+  `WHATSAPP_PROVIDER_MESSAGE_ID_PATTERN` em `provider/contract.ts` (módulo
+  neutro; os efeitos não dependem do adaptador), de 1 a 255 caracteres, o
+  primeiro alfanumérico e os demais em `A-Za-z0-9._:=+/-`. O adaptador e
+  os efeitos de mensagem recebida, saída observada e status usam esse
+  padrão: 255 é aceito; 256 termina como `invalid_payload` já na
+  normalização e nunca chega ao banco. Nenhum SQL mudou (a coluna e as
+  RPCs já paravam em 255). É o contrato interno atual, não uma garantia
+  da YCloud: o limite pode ser reavaliado com o webhook real.
 
 ### 24.8 Compatibilidade com a A7 e com os dados anteriores
 
@@ -4952,7 +4965,14 @@ do psql indefinida e o arquivo parava no teste 26).
   contra read nas duas ordens; final contra estimativa tardia; o status
   esperando a saída observada em gravação; a pausa do canal);
 - `scripts/check-upgrade-b3-2d2b2b2-status-custo.sh`: a atualização a
-  partir da 2b2b1 (§24.8).
+  partir da 2b2b1 (§24.8);
+- `tests/unit/b3-2d2b2b2-provider-message-id.test.ts` (15) e a seção 20
+  do pgTAP 38: o id do provedor com 255 caracteres é aceito pelo
+  adaptador (recebida, eco e status), pelos três efeitos, pelas três RPCs
+  e pela coluna; com 256, o adaptador devolve `invalid_payload`, sem
+  evento para o domínio, e os efeitos, as RPCs e a coluna recusam; o
+  adaptador e os três efeitos importam o mesmo padrão do contrato, e os
+  efeitos não importam o adaptador.
 
 **Vermelho** (PR temporária #236, os testes corrigidos sobre o código sem
 a RPC): pgTAP 38 com 60 de 64 falhando (passam só as quatro provas de
@@ -4961,8 +4981,15 @@ typecheck falha (o módulo não existe); a concorrência e a atualização
 falham porque a função não existe. As rodadas #233 e #234 foram
 substituídas pelos reforços acima.
 
-**Verde** (`1fe9b70`, e de novo no HEAD com a documentação): typecheck,
-lint e unitários (2272); tipos em dia; pgTAP inteiro (38 com 64);
+**Vermelho do id do provedor** (testes em `f7545f1`, sobre `7eb4be6`, na
+PR temporária #260): falham 5 dos 15 testes novos — o adaptador
+normaliza um id de 256 caracteres em mensagem recebida, eco e status, o
+contrato compartilhado não existe e o adaptador e os efeitos não o usam;
+os outros 10 (255 aceito em todo o caminho, 256 recusado pelos efeitos,
+os efeitos sem depender do adaptador) já passavam. Correção em `06304ca`.
+
+**Verde** (no HEAD, depois da correção do id do provedor): typecheck,
+lint e unitários (2287); tipos em dia; pgTAP inteiro (38 com 66);
 isolamento; todas as concorrências; as cinco atualizações; build; E2E
 (76); Vercel.
 
@@ -5002,6 +5029,13 @@ reexecução.
 Na N16, a proteção do banco (`provider_cost_final_immutable`, B3.2d-2b1)
 também barrou a escrita: o efeito falhou em vez de sobrescrever.
 
+As 23 mutações do banco valem sem alteração: a correção do id do
+provedor não muda SQL. Mutação nova, no servidor: o normalizador de volta
+a aceitar 256 caracteres reprova 4 testes de
+`b3-2d2b2b2-provider-message-id.test.ts` (o id de 256 normalizado em
+mensagem recebida, eco e status, e o padrão compartilhado); restaurado o
+código, os 15 passam.
+
 ### 24.11 Fora do escopo, decisões e riscos
 
 Fora desta PR: a ligação do consumidor (B3.2d-2b3); identidade alterada e
@@ -5025,9 +5059,6 @@ Riscos e divergências:
   fica com o claim, para a B3.2d-2b3 decidir);
 - **BSUID nunca visto** num status de uma mensagem já gravada é
   `message_conflict`, como na 2b2b1: ligar os dois seria auto-merge;
-- **id do provedor com 256 caracteres:** o normalizador aceita até 256; a
-  coluna e as RPCs da 2b2a, da 2b2b1 e desta aceitam até 255. Divergência
-  de um caractere, anterior a esta PR, não corrigida aqui;
 - **arredondamento do custo:** valores com mais de 6 casas são
   arredondados para a coluna; dois finais que só diferem depois da 6ª casa
   são o mesmo custo.
