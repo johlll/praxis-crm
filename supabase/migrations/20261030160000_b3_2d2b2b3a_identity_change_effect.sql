@@ -292,9 +292,6 @@ begin
     if v_next_blind is not null then
       v_locks := v_locks || hashtextextended(v_row.channel_id::text || ':bsuid:' || encode(v_next_blind, 'hex'), 0);
     end if;
-    for v_lock in select distinct l from unnest(v_locks) l order by l loop
-      perform pg_advisory_xact_lock(v_lock);
-    end loop;
     -- A espera pode ter passado da lease: quem segura a trava da inbox não
     -- perde o token, mas o prazo combinado com o consumidor tem de valer.
     if v_row.lease_until <= clock_timestamp() then
