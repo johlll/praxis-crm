@@ -331,7 +331,7 @@ begin
       update public.messages
       set status = v_new_status,
           status_updated_at = case when v_status_changes then greatest(status_updated_at, p_occurred_at) else status_updated_at end,
-          error_reason = case when v_status_changes then (case when v_new_status = 'failed' then p_error_code end) else error_reason end,
+          error_reason = case when v_new_status = 'failed' then coalesce(p_error_code, error_reason) end,
           provider_cost_amount = v_new_amount,
           provider_cost_currency = v_new_currency,
           provider_cost_category = v_new_category,
