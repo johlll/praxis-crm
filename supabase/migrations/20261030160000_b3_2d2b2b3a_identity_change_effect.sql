@@ -267,9 +267,6 @@ begin
   begin
     select r.outcome, r.ledger_id into v_reserve
     from private.whatsapp_effect_ledger_reserve(v_row.id, 'contact.identity_changed') r;
-    if v_reserve.outcome = 'conflict' then
-      raise exception 'effect_conflict';
-    end if;
     if v_reserve.outcome = 'duplicate' then
       update public.whatsapp_webhook_inbox
       set state = 'processed', processed_at = v_now, claim_token = null, claimed_at = null, lease_until = null
