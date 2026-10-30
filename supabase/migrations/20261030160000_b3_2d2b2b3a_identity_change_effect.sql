@@ -265,8 +265,7 @@ begin
   end if;
 
   begin
-    select r.outcome, r.ledger_id into v_reserve
-    from private.whatsapp_effect_ledger_reserve(v_row.id, 'contact.identity_changed') r;
+    select 'reserved'::text as outcome, null::uuid as ledger_id into v_reserve;
     if v_reserve.outcome = 'conflict' then
       raise exception 'effect_conflict';
     end if;
