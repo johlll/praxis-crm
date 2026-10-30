@@ -323,7 +323,9 @@ begin
       v_prev := v_by_bsuid;
     end if;
     if v_prev.id is null then
-      raise exception 'identity_not_found';
+      insert into public.whatsapp_identities (workspace_id, channel_id, environment, provider, phone_e164)
+      values (v_row.workspace_id, v_row.channel_id, v_row.environment, v_row.provider, p_previous_phone_e164)
+      returning * into v_prev;
     end if;
     -- O telefone da anterior, quando veio, é o da identidade — ou já é o
     -- novo (a mesma troca, aplicada por outro evento). O BSUID da anterior,
