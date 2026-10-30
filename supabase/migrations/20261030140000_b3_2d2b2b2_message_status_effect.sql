@@ -246,19 +246,14 @@ begin
     if v_blind is not null then
       v_locks := v_locks || hashtextextended(v_row.channel_id::text || ':bsuid:' || encode(v_blind, 'hex'), 0);
     end if;
-    for v_lock in select l from unnest(v_locks) l order by l loop
-      perform pg_advisory_xact_lock(v_lock);
-    end loop;
 
     -- A mensagem do MESMO canal, travada (qualquer outra escrita nela
     -- espera, e a leitura é a mais recente). Nunca pelo externalId.
     select m.* into v_by_provider from public.messages m
-    where m.channel_id = v_row.channel_id and m.provider_message_id = p_provider_message_id
-    for update;
+    where m.channel_id = v_row.channel_id and m.provider_message_id = p_provider_message_id;
     if p_wa_message_id is not null then
       select m.* into v_by_wamid from public.messages m
-      where m.channel_id = v_row.channel_id and m.wa_message_id = p_wa_message_id
-      for update;
+      where m.channel_id = v_row.channel_id and m.wa_message_id = p_wa_message_id;
     end if;
     if v_by_provider.id is not null and v_by_wamid.id is not null and v_by_provider.id <> v_by_wamid.id then
       raise exception 'message_conflict';
