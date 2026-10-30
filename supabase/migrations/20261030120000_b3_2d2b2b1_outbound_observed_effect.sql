@@ -291,7 +291,7 @@ begin
           where ct.workspace_id = v_row.workspace_id and ct.merged_into_contact_id is null
             and cp.workspace_id = v_row.workspace_id and cp.value_normalized = v_identity.phone_e164;
           v_candidate_count := coalesce(array_length(v_candidate_contact_ids, 1), 0);
-          if v_candidate_count = 1 then
+          if v_candidate_count >= 1 then
             v_contact_id := v_candidate_contact_ids[1];
           elsif v_candidate_count > 1 then
             v_needs_review := true;
