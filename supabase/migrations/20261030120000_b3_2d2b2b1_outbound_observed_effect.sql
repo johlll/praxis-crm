@@ -317,9 +317,6 @@ begin
       end if;
 
       -- Destinatário desconhecido (ou só BSUID): revisão humana.
-      if v_contact_id is null then
-        v_needs_review := true;
-      end if;
 
       insert into public.conversations (
         workspace_id, channel_id, identity_id, wa_id, contact_id, lead_id, opportunity_id,
