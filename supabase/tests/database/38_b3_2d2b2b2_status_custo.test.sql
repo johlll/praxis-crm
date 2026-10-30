@@ -483,7 +483,7 @@ select is(
 -- ---------------------------------------------------------------------
 
 select pg_temp.mk(:'conv1', 'pm-old', null, 'sent') as m_old \gset
-select (pg_temp.st(pg_temp.eo('evt-o1'), 'pm-old', null, 'delivered', '2026-10-30 09:00:00+00') ->> 'outcome') || ' ' || pg_temp.mat(:'m_old') as ro1 \gset
+select coalesce(pg_temp.st(pg_temp.eo('evt-o1'), 'pm-old', null, 'delivered', '2026-10-30 09:00:00+00') ->> 'outcome', 'erro') || ' ' || pg_temp.mat(:'m_old') as ro1 \gset
 select is(
   :'ro1' || ' ' || pg_temp.ms(:'m_old') || ' ' || (pg_temp.st(pg_temp.eo('evt-o2'), 'pm-old', null, 'read', '2026-10-30 11:00:00+00') ->> 'outcome') || ' ' || pg_temp.mat(:'m_old'),
   'applied 10:00 delivered|-|-|-|-|-|- applied 11:00',
