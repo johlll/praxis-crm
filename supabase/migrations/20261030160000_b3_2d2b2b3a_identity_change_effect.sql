@@ -17,7 +17,8 @@
 --   4. identidade ANTERIOR só lida, nunca criada: telefone e BSUID dela
 --      apontam para a mesma identidade (senão identity_conflict); nenhuma →
 --      identity_not_found, recuperável; a identidade e a conversa dela são
---      travadas;
+--      travadas, e a lease é reconferida de novo (as travas de linha podem
+--      esperar quem não passa pelas consultivas) antes da primeira escrita;
 --   5. phone_number: o telefone novo substitui o antigo na MESMA
 --      identidade; o BSUID novo só enriquece uma identidade sem BSUID;
 --      telefone ou BSUID de outra identidade, ou outro BSUID na mesma →
@@ -149,7 +150,7 @@ revoke all on function private.whatsapp_identity_change_blind(jsonb, text) from 
 --   already_processed, terminal_failed, claim_lost, not_found — como na
 --                        finalização da B3.2d-1, sem mudar nada (claim_lost
 --                        também quando a lease vence durante a espera por
---                        uma trava);
+--                        uma trava, consultiva ou de linha);
 --   channel_paused, channel_disconnected, channel_disabled — o canal
 --                        deixou de estar ativo depois do claim.
 -- Em identity_not_found, nos conflitos e nos três estados do canal nada fica
@@ -339,6 +340,17 @@ begin
 
     select i.* into v_prev from public.whatsapp_identities i where i.id = v_prev.id for update;
     select c.* into v_conversation from public.conversations c where c.identity_id = v_prev.id for update;
+    -- A auditoria referencia o workspace: a trava da chave vem aqui, para
+    -- que nenhuma escrita abaixo espere depois da conferência seguinte.
+    perform 1 from public.workspaces w where w.id = v_row.workspace_id for key share;
+    -- As travas de linha podem esperar transações que não passam pelas
+    -- travas consultivas, e a lease pode vencer nessa espera. Conferida de
+    -- novo, com o relógio de agora, antes da primeira escrita, nos dois
+    -- caminhos; o processed_at das execuções válidas usa este horário.
+    v_now := clock_timestamp();
+    if v_row.lease_until is null or v_row.lease_until <= v_now then
+      raise exception 'claim_lost';
+    end if;
     v_linked := v_conversation.contact_id is not null or v_conversation.lead_id is not null or v_conversation.opportunity_id is not null;
 
     if p_change = 'identity' then
