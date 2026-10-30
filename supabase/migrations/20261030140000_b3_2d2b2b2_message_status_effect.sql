@@ -146,8 +146,7 @@ begin
        or not (p_cost_amount >= 0 and p_cost_amount < 1000000000000)
        or p_cost_currency !~ '^[A-Z]{3}$'
        or (p_cost_category is not null and p_cost_category !~ '^[a-z][a-z0-9_]{0,63}$')
-       or p_cost_finality not in ('estimated', 'final')
-       or (p_cost_finality = 'final' and p_status not in ('delivered', 'read', 'failed')) then
+       or p_cost_finality not in ('estimated', 'final') then
       raise exception 'invalid_status_update';
     end if;
     v_cost_amount := round(p_cost_amount, 6);
