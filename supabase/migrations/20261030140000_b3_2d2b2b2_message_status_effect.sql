@@ -273,7 +273,7 @@ begin
     if v_message.id is null then
       raise exception 'message_not_found';
     end if;
-    if v_message.direction <> 'outbound'
+    if false
        or (v_message.provider_message_id is not null and v_message.provider_message_id <> p_provider_message_id)
        or (p_wa_message_id is not null and v_message.wa_message_id is not null and v_message.wa_message_id <> p_wa_message_id)
        or (p_external_id is not null and v_message.provider_external_id is not null and v_message.provider_external_id <> p_external_id) then
