@@ -506,7 +506,7 @@ export async function disposeWhatsAppInboxClaim(
  * trava da linha. A resposta volta crua para o módulo do efeito conferir. */
 export async function runWhatsAppInboxClaimEffect(
   claim: WhatsAppInboxClaim,
-  rpc: "whatsapp_effect_inbound_message",
+  rpc: "whatsapp_effect_inbound_message" | "whatsapp_effect_outbound_observed",
   args: Readonly<Record<string, unknown>>,
 ): Promise<{ data: unknown; error: { message?: string } | null }> {
   const entry = requireClaim(claim);

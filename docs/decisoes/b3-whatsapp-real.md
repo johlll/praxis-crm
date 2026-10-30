@@ -1539,8 +1539,10 @@ ou número.
 | B3.2d-2a | **Implementada (§20).** Rota `/api/inngest/whatsapp` e app `praxis-crm-whatsapp` com chaves próprias `WHATSAPP_`; função do consumidor com o ciclo inteiro num único `step.run`; evento estrito `{ inboxId }`; normalização pelo adaptador do canal; `routing_mismatch`; matriz do estado do canal; falhas terminais × recuperáveis; `ignored`/`unsupported` finalizados com disposição cercada pelo claim (`whatsapp_inbox_dispose`); nenhuma escrita no domínio | B3.2d-1 |
 | B3.2d-2b1 | **Implementada (§21).** Modelo do domínio sobre a A7: identidades por telefone, BSUID ou os dois (BSUID só com índice cego e cifra); conversa com identidade obrigatória e telefone opcional; mensagens com texto opcional, tipo de conteúdo, `origin` e `sender_classification` separados, correlação positiva, ids do provedor e custo estimado × final; `accepted`; identidades internas (owner/admin); ledger técnico de efeitos; backfill determinístico; contratos tipados. Nenhuma RPC de efeito | B3.2d-2a |
 | B3.2d-2b2a | **Implementada (§22).** Efeito atômico de mensagem recebida: RPC com a trava da inbox, token, lease e ambiente; ledger `message.inbound`; identidade por telefone e BSUID sem auto-merge; classificação pelas identidades internas ativas (sem nenhuma ativa → `unresolved`); contato, lead, oportunidade e atividade só para `inbound` + `external`; rollback integral; concorrência real | B3.2d-2b1 |
-| B3.2d-2b2b | Demais efeitos: eco, status, identidade alterada, eventos de conta e saída humana, sobre o mesmo padrão da 2b2a | B3.2d-2b2a |
-| B3.2d-2b3 | Ligação do consumidor da B3.2d-2a às RPCs da B3.2d-2b2: o release `domain_effect_not_implemented` dá lugar ao efeito; a decisão por tipo e estado do canal continua a do §20.4 | B3.2d-2b2b |
+| B3.2d-2b2b1 | **Em implementação (§23).** Mensagem de saída **observada**: registra no CRM uma mensagem já enviada pelo WhatsApp Business App (eco `smb.message.echoes`/`smb.message.created`). Não envia mensagem, não chama a YCloud e não altera o chatbot | B3.2d-2b2a |
+| B3.2d-2b2b2 | Atualização de status e custo da mensagem (`message.status`) | B3.2d-2b2b1 |
+| B3.2d-2b2b3 | Identidade alterada (`contact.identity_changed`) e eventos de conta | B3.2d-2b2b2 |
+| B3.2d-2b3 | Ligação do consumidor da B3.2d-2a às RPCs da B3.2d-2b2: o release `domain_effect_not_implemented` dá lugar ao efeito; a decisão por tipo e estado do canal continua a do §20.4; os resultados `channel_*` dos efeitos viram release com o mesmo código | B3.2d-2b2b3 |
 | B3.2e | Reconciliador: republica as entradas `pending` e as `processing` com lease vencida; batimento do canal (`last_event_at`). Portão obrigatório antes de webhook real (§18.3) | B3.2d-2b3 |
 | Fora do Praxis | Contrato do §15.6 no chatbot (rota, tabela de pedidos, testes), em branch/PR própria do chatbot, desligado e sem deploy | Decisão 15; implantação real com nova autorização; necessário antes da B3.3 no número do chatbot |
 | Posterior | Resumo e qualificação estruturados do chatbot (decisão 12) | Entrada real estável |
@@ -4452,6 +4454,291 @@ chamador nos argumentos — as quatro detectadas pelos unitários.
   número;
 - `identity_conflict` não é resolvido: quem decide é o consumidor (2b3),
   e a fusão de identidades fica para uma etapa própria.
+
+Nada configurado fora do código: nenhuma migration no Supabase hospedado,
+nenhuma variável, nada no Inngest, na YCloud, na Meta ou na Cloudflare,
+nenhuma mensagem enviada, nenhuma mudança no chatbot, nenhum dado real.
+
+## 23. B3.2d-2b2b1 — efeito atômico de mensagem de saída observada (30/10/2026)
+
+A B3.2d-2b2b foi dividida (§15.9): **2b2b1**, mensagem de saída observada
+pelo WhatsApp Business App; **2b2b2**, status e custo; **2b2b3**, identidade
+alterada e eventos de conta. O envio real iniciado pelo CRM continua fora
+e pertence à **B3.3**.
+
+Esta etapa só **registra** no CRM uma mensagem que o escritório já enviou
+pelo aplicativo (eco `smb.message.echoes` ou `smb.message.created`). Não
+envia mensagem, não chama a YCloud e não altera o chatbot. O consumidor
+ainda não chama o efeito (B3.2d-2b3).
+
+### 23.1 Contrato da RPC
+
+`public.whatsapp_effect_outbound_observed(p_inbox_id, p_claim_token,
+p_provider_message_id, p_wa_message_id, p_content_kind, p_body_text,
+p_occurred_at, p_phone_e164, p_bsuid_lookup, p_bsuid_ciphertext,
+p_bsuid_key_version) → jsonb`. SECURITY DEFINER, `search_path` vazio,
+EXECUTE só para `service_role`.
+
+- **Nenhum contexto do chamador:** workspace, canal, ambiente, provedor e id
+  do evento vêm da linha da inbox, no ambiente autenticado. Origem,
+  classificação e autor também não são parâmetros.
+- **Destinatário:** telefone, BSUID ou os dois, pelo mesmo caminho da 2b2a
+  (`whatsappEffectIdentityArgs`, extraído para
+  `src/server/whatsapp/effects/identity-args.ts`): índices cegos de todas
+  as versões de chave e a cifra da ativa, no escopo do claim. Nenhum
+  telefone é derivado do BSUID; nenhuma chave da inbox é usada.
+- **Entrada malformada** (id do provedor, wamid fora de `wamid.` ou com
+  mais de 518 caracteres, tipo, texto, telefone, índices, cifra, nenhum
+  identificador): `invalid_outbound_message`, antes de qualquer trava ou
+  escrita.
+- **Limite do wamid, o mesmo em todo o caminho:** o normalizador da YCloud
+  aceita `wamid.` + até 512 caracteres (518 no total). A regra de tamanho
+  da coluna `wa_message_id`, herdada da A7 (128), é trocada nesta
+  migration por uma de 1 a 518 (`messages_wa_message_id_length`), sem
+  editar a migration da A7; os ids antigos da A7 continuam válidos. O
+  formato `wamid.` é do efeito, não da coluna. Na RPC, formato e tamanho
+  são duas regras: no Postgres a repetição `{m,n}` vai só até 255.
+
+| Resultado | Quando | Efeito |
+|---|---|---|
+| `applied` | mensagem nova gravada | tudo gravado; inbox `processed` |
+| `duplicate` | o mesmo efeito já está no ledger para a entrada, ou a mensagem já existe no canal pelo id do provedor ou pelo wamid **para a mesma identidade do destinatário** | nada repetido; o identificador que faltava é acrescentado; inbox `processed` |
+| `already_processed`, `terminal_failed`, `claim_lost`, `not_found` | como na finalização da B3.2d-1 | nada muda |
+| `channel_paused`, `channel_disconnected`, `channel_disabled` | o canal deixou de estar ativo depois do claim | nada gravado; claim continua |
+| `identity_conflict` | telefone e BSUID não batem com uma identidade só | nada gravado; claim continua |
+| `message_conflict` | o id do provedor e o wamid apontam para mensagens diferentes; a mensagem existente tem outro valor para o mesmo identificador; ela não é uma saída; ou ela é de **outro destinatário** | nada gravado nem alterado; claim continua |
+| `effect_conflict` | a chave estável já tem outro efeito | nada gravado; claim continua |
+
+`applied` devolve só `message_id` e `conversation_id`. Os três estados do
+canal e os conflitos ficam para a B3.2d-2b3 liberar ou decidir.
+
+### 23.2 Ordem, numa transação só
+
+1. inbox travada (`for update`) no ambiente autenticado; `processing`,
+   token igual e lease vigente; canal da linha lido `for share` e ainda
+   `active` (a mesma proteção da 2b2a, §22.1);
+2. `private.whatsapp_effect_ledger_reserve(inbox, 'message.outbound_observed')`;
+3. travas consultivas em ordem fixa: o id do provedor (a mesma chave da
+   2b2a), o wamid, o telefone e o BSUID;
+4. identificadores da mensagem: mensagens diferentes, outro valor ou
+   mensagem recebida → `message_conflict` (§23.3);
+5. identidade do destinatário (`private.whatsapp_resolve_inbound_identity`,
+   a mesma matriz do §22.3: sem auto-merge, `identity_conflict`); a mesma
+   mensagem já gravada converge só para a mesma identidade (§23.3);
+6. conversa da identidade (reutilizada; ou criada, com o vínculo do §23.5);
+7. mensagem; auditoria `message.observed` sem ator e sem telefone ou
+   texto; ledger aponta para a mensagem; inbox `processed`.
+
+Os conflitos voltam como resultado depois de desfazer o bloco (ledger,
+identidade, conversa, mensagem); qualquer outra falha propaga e desfaz
+tudo, inclusive a reserva e a finalização.
+
+### 23.3 Identificadores da mensagem
+
+Grava `provider_message_id` e, quando vier, `wa_message_id`.
+- o mesmo id do provedor, ou o mesmo wamid, no canal → a mensagem
+  existente; nada repetido (`duplicate`), e o ledger desta entrada aponta
+  para ela;
+- a existente sem um dos identificadores ganha o que falta, só quando não
+  há conflito;
+- os dois identificadores em mensagens diferentes, a existente com outro
+  valor para o mesmo identificador, ou a existente sendo uma mensagem
+  recebida → `message_conflict`, nada alterado;
+- `smb.message.echoes` e `smb.message.created` da mesma mensagem (eventos
+  diferentes, o mesmo id do provedor) convergem para uma mensagem só; a
+  trava do id e a do wamid fazem os dois esperarem um pelo outro;
+- **o destinatário é conferido antes de concluir `duplicate`:** a
+  identidade do evento novo é resolvida e comparada com a da conversa da
+  mensagem existente. Outra identidade (outro telefone, outro BSUID, ou um
+  BSUID nunca visto, que sozinho não prova nada) → `message_conflict`, e o
+  bloco desfaz a identidade criada ou enriquecida: nenhuma identidade,
+  conversa, mensagem ou ledger fica. Telefone e BSUID complementares da
+  mesma identidade convergem (e o identificador que faltava fica na
+  identidade); telefone e BSUID de identidades diferentes continuam
+  `identity_conflict`. Nunca pelo texto, nome, `externalId` ou formato.
+
+### 23.4 Origem e autoria
+
+`direction = outbound`, `origin = business_app`, `sender_classification =
+internal`, `sent_by = NULL` (o CRM não sabe quem operou o aplicativo),
+`status = sent`, sem chave de reenvio nem correlação. Nada é inferido do
+texto, do nome, do `externalId` ou do formato de um identificador. Nunca
+`chatbot`: essa origem continua exigindo correlação positiva e confiável.
+
+### 23.5 Conversa e registros comerciais
+
+- conversa existente para a identidade → reutilizada (ganha o telefone
+  quando a identidade ganha);
+- conversa nova → vínculo **só exato e único**, pelas regras da A7: contato
+  pelo identificador `whatsapp` ou por telefone único; lead ativo único;
+  oportunidade aberta única;
+- dois contatos com o telefone, dois leads ativos ou duas oportunidades
+  abertas → o que for único fica, o resto não, e a conversa vai para
+  revisão humana, com os candidatos;
+- destinatário desconhecido ou só com BSUID → conversa para revisão, sem
+  contato;
+- **nunca** cria contato, lead, oportunidade ou atividade, nem acrescenta
+  identificador ao contato: mensagem enviada pelo aplicativo não prova que
+  o destinatário seja um lead novo.
+
+### 23.6 Conteúdo
+
+Os tipos já normalizados; texto obrigatório só para `text`; imagem, áudio,
+documento e as demais mídias podem ficar sem texto. Nenhuma mídia é
+baixada.
+
+### 23.7 Compatibilidade com a A7
+
+- nenhuma função da A7 nem da 2b2a mudou no banco; a migration troca a
+  regra de tamanho do `wa_message_id` (128 → 518), cria a função e não
+  altera dados. No servidor, a 2b2a passou a usar o módulo comum de
+  identidade, sem mudar os argumentos nem os códigos de erro;
+- as leituras da A7 mostram a conversa com a mensagem recebida e a enviada
+  pelo aplicativo, inclusive conversa só com BSUID;
+- **teste de atualização** (`scripts/check-upgrade-b3-2d2b2b1-saida-observada.sh`):
+  A7 e uma entrada de eco gravadas antes da migration; leituras e contagens
+  idênticas depois; o eco antigo aplica sobre a conversa existente como
+  outbound/business_app/internal, sem nada comercial; o simulador e o envio
+  seguem funcionando, com os ids antigos e com um wamid de 129 caracteres.
+
+### 23.8 Testes
+
+Commit só de testes `2230425`, contra a main `740f0f8`.
+
+**Correções nos testes**, em commits próprios:
+- `ba13bc8`: sem a função, um `\gset` de valor nulo deixava a variável
+  indefinida e o pgTAP 37 parava no meio; no cenário 3 da concorrência, o
+  booleano concatenado sai `true`, não `t`;
+- `322089b`: a mensagem inserida à mão no §8 do pgTAP usava uma conversa
+  que, sem a função, não existe;
+- `ad2ff7f`: telefone válido com BSUID malformado (e o inverso) recusados
+  antes do banco — acrescentado depois de uma mutação do servidor;
+- `3670ab0`: no cenário 4 da concorrência, a trava do telefone mascarava a
+  falta da trava do wamid (a mutação N8 sobrevivia); agora os dois eventos
+  têm destinatários identificados de jeitos diferentes e só a trava do
+  wamid os põe em fila.
+
+**Vermelho** (os testes corrigidos sobre a main, PR temporária #174):
+- typecheck: o módulo do efeito não existe;
+- unitários: 46 de 47 falham (passa o estático de que o consumidor não
+  chama o efeito);
+- pgTAP 37: 45 de 54 falham (passam as conferências de "nada mudou",
+  verdadeiras sem a função);
+- concorrência e atualização da 2b2b1: falham (a função não existe).
+
+Implementação: `feb165d` (módulo comum de identidade, sem mudar a 2b2a) e
+`d704aaa` (RPC, servidor e tipos).
+
+**Rodada do destinatário e do wamid.** Testes primeiro em `81d6e85`, sobre
+`650b48a`; correção do próprio teste em `1ac0172` (o estático exigia na
+RPC a regex `{1,512}`, impossível no Postgres). Vermelho na PR temporária
+#213 (os testes corrigidos sobre o código anterior):
+- pgTAP 37: 7 de 62 falham — 41 a 43 (o mesmo id ou wamid com outro
+  telefone ou outro BSUID virava `duplicate`), 44 e 45 (a identidade não
+  ganhava o BSUID na convergência, e telefone + BSUID de identidades
+  diferentes virava `duplicate`), 46 (129 e 518 recusados) e 48 (a coluna
+  recusava 518);
+- unitários: 3 de 53 falham (129, 518 e o mesmo limite do normalizador);
+- atualização: a A7 não gravava um wamid de 129 caracteres.
+
+Correção na própria migration em `6d4ca59`; a primeira versão usava
+`{1,512}` na regex da RPC, que o Postgres recusa e fazia todo o efeito
+falhar no CI — trocada por formato + tamanho em `49f5f29`.
+
+**Cobertura:**
+- `tests/unit/b3-2d2b2b1-saida-observada.test.ts` (53): argumentos exatos
+  (nenhum contexto, origem, classificação ou autor), wamid opcional e de
+  128, 129 e 518 caracteres, o mesmo limite do normalizador, mídia
+  sem texto, destinatário por telefone, BSUID ou os dois (mesmos argumentos
+  da 2b2a), chaves ausentes, 16 entradas inválidas antes do banco, claim
+  não confiável, resultados conferidos, erros sanitizados, estáticos (não
+  envia, não chama o provedor, criptografia sem cópia, consumidor não
+  ligado);
+- `supabase/tests/database/37_b3_2d2b2b1_saida_observada.test.sql` (62):
+  estrutura e permissões; claim (pending, token, lease, ambiente, sem
+  ambiente, inexistente); entrada inválida (inclusive wamid); primeira
+  mensagem com destinatário desconhecido (origem, autoria, ledger,
+  revisão, nada comercial, auditoria); reentrega; conversa já existente
+  (criada pela 2b2a); vínculo exato pelo identificador e pelo telefone
+  único; contato, lead e oportunidade ambíguos → revisão; nada comercial
+  criado ou alterado; só BSUID, os dois, enriquecimento e
+  `identity_conflict`; duplicação por id do provedor e por wamid; echoes +
+  created; `message_conflict` (ids de mensagens diferentes, outro id,
+  mensagem recebida) sem alterar nada; destinatário conferido na
+  convergência (outro telefone, outro BSUID, BSUID nunca visto →
+  `message_conflict` sem identidade divergente; complementares da mesma
+  identidade convergem); limite do wamid (128, 129 e 518 aceitos, 519
+  recusado, a coluna com 518); `effect_conflict` e efeito já reservado;
+  mídia; canal pausado, desconectado e desativado depois do
+  claim, liberação e controle; rollback integral depois da reserva; outro
+  workspace e Production; nenhuma atividade ou criação comercial; leituras
+  da A7;
+- concorrência real (`scripts/b3-2d2b2b1-outbound-concurrency-check.sh`):
+  o mesmo evento duas vezes; echoes e created da mesma mensagem (uma
+  mensagem, com o wamid); o mesmo destinatário novo em duas mensagens (uma
+  identidade, uma conversa); o mesmo wamid com ids e destinatários
+  diferentes (`message_conflict` sem efeito); a pausa do canal durante o
+  efeito;
+- teste de atualização (§23.7).
+
+### 23.9 Mutações
+
+Banco: as 19 rodadas sobre a correção final `49f5f29`, uma PR temporária
+por mutação (#214 a #232), todas reprovadas e fechadas. A rodada anterior
+(N1 a N17 em #175 a #192) também tinha sido reprovada; a de #194 a #212
+foi descartada, porque rodou sobre a versão com a regex inválida.
+
+| Mutação | Detectada por |
+|---|---|
+| N1 token do claim não conferido | pgTAP 37 (recusas, aplicação, ledger, A7) |
+| N2 lease não conferida | pgTAP 37 (lease vencida e "nada escrito") |
+| N3 inbox de qualquer ambiente | pgTAP 37 (outro ambiente; Production a partir de Preview) |
+| N4 status atual do canal não reconferido | pgTAP 37 (três estados e liberação) e concorrência, cenário 5 |
+| N5 conflito de efeito ignorado | pgTAP 37 (effect_conflict, efeito já reservado) |
+| N6 falha depois da reserva não desfaz o ledger | pgTAP 37 (rollback integral; conflitos sem ledger) e concorrência, cenário 4 |
+| N7 sem as travas consultivas | concorrência, cenário 2 |
+| N8 sem a trava do wamid | concorrência, cenário 4 |
+| N9 id do provedor e wamid de mensagens diferentes não conferidos | pgTAP 37 (message_conflict) |
+| N10 mensagem com outro id, ou recebida, converge | pgTAP 37 (message_conflict sem alterar nada) e concorrência, cenário 4 |
+| N11 a mesma mensagem não é procurada pelo wamid | pgTAP 37 (duplicação por wamid, conflitos) e concorrência, cenário 2 |
+| N12 a mesma mensagem não é procurada pelo id do provedor | pgTAP 37 (duplicação por id, echoes + created) e concorrência, cenário 2 |
+| N13 com telefone, o BSUID é ignorado na identidade | pgTAP 37 (os dois identificadores, enriquecimento, identity_conflict) e concorrência, cenário 3 |
+| N14 contato ambíguo vinculado ao primeiro | pgTAP 37 (dois contatos com o telefone) |
+| N15 lead ambíguo vinculado ao primeiro | pgTAP 37 (dois leads ativos) |
+| N16 destinatário desconhecido sem revisão | pgTAP 37 (desconhecido; só BSUID) |
+| N17 origem external_api/unresolved | pgTAP 37 (mensagem campo a campo) |
+| N18 destinatário não conferido na convergência | pgTAP 37 (41 a 43: outro telefone, outro BSUID) |
+| N19 limite antigo de 128 caracteres no wamid | pgTAP 37 (46 e 48: 129 e 518; a coluna) |
+
+Na rodada anterior, a N4, a N5 e a N17 não chegaram aos testes na
+primeira execução (o Supabase local não subiu no CI, "Rate exceeded") e
+foram reprovadas na reexecução; a N8 sobreviveu à primeira versão do
+cenário 4 (a trava do telefone serializava os dois eventos) e foi
+reprovada com o cenário corrigido em `3670ab0`. Na rodada final, em dois
+lotes, todas chegaram aos testes.
+
+Servidor, localmente, uma de cada vez e restauradas, todas detectadas
+pelos unitários: BSUID em claro nos argumentos; erro cru do banco
+repassado; campo extra aceito (origem ou autor do chamador); workspace e
+origem do chamador nos argumentos; destinatário inválido passado ao banco
+como veio; wamid fora do formato. Uma primeira versão desta última
+mutação de identidade (só tirar a conferência) era equivalente: o
+`whatsappContactIdentity` já recusa qualquer identificador malformado e o
+efeito falha fechado do mesmo jeito.
+
+### 23.10 Fora do escopo e riscos
+
+- ligação do consumidor (B3.2d-2b3); status e custo (2b2b2); identidade
+  alterada e eventos de conta (2b2b3); envio iniciado pelo CRM (B3.3);
+  download de mídia; telas;
+- **decisão aceita:** ids do provedor diferentes com o mesmo wamid →
+  `message_conflict` (fica para a 2b3 decidir), nunca uma segunda
+  mensagem, até o webhook real comprovar outro comportamento;
+- **decisão aceita:** a saída observada não acrescenta identificador
+  comercial ao contato;
+- um BSUID nunca visto, sozinho, para uma mensagem já gravada dá
+  `message_conflict`: ligar os dois seria auto-merge;
+- `identity_conflict` e `message_conflict` não são resolvidos aqui.
 
 Nada configurado fora do código: nenhuma migration no Supabase hospedado,
 nenhuma variável, nada no Inngest, na YCloud, na Meta ou na Cloudflare,

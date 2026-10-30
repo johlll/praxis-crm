@@ -2,9 +2,8 @@ import { z } from "zod";
 
 import { uuidSchema } from "@/lib/uuid";
 import { validateWhatsAppMessageContent } from "@/server/whatsapp/domain-model";
-import { encryptWhatsAppBsuid, whatsappBsuidBlindIndexes, WhatsAppIdentityCryptoError } from "@/server/whatsapp/identity-crypto";
+import { WhatsAppEffectIdentityError, whatsappEffectIdentityArgs } from "@/server/whatsapp/effects/identity-args";
 import { runWhatsAppInboxClaimEffect, WhatsAppInboxError, type WhatsAppInboxClaim } from "@/server/whatsapp/inbox";
-import { whatsappContactIdentity } from "@/server/whatsapp/provider/contract";
 
 /**
  * Efeito atômico de mensagem RECEBIDA (B3.2d-2b2a,
@@ -15,9 +14,8 @@ import { whatsappContactIdentity } from "@/server/whatsapp/provider/contract";
  * claim (pela inbox) e os dados do efeito; workspace, canal, ambiente,
  * provedor e id do evento o banco lê da própria linha da inbox.
  *
- * O BSUID vai só como índice cego em cada versão de chave conhecida (para
- * achar a identidade mesmo gravada numa versão anterior) e texto cifrado na
- * versão ativa, no escopo do claim (ambiente, workspace e canal).
+ * O BSUID vai só como índices cegos e cifra, no escopo do claim
+ * (`whatsappEffectIdentityArgs`, comum aos efeitos).
  *
  * Nada aqui classifica o remetente ou decide criar contato e lead: isso é
  * do banco, pelo casamento com as identidades internas ativas — nunca pelo
@@ -112,22 +110,6 @@ const otherSchema = z
   })
   .strict();
 
-function bsuidArgs(claim: WhatsAppInboxClaim, bsuid: string | null) {
-  if (bsuid === null) return { p_bsuid_lookup: null, p_bsuid_ciphertext: null, p_bsuid_key_version: null };
-  const scope = { environment: claim.environment, workspaceId: claim.workspaceId, channelId: claim.channelId };
-  try {
-    const encrypted = encryptWhatsAppBsuid(scope, bsuid);
-    const lookup = Object.fromEntries(whatsappBsuidBlindIndexes(scope, bsuid).map((i) => [i.keyVersion, i.blindIndexBase64]));
-    if (lookup[encrypted.keyVersion] !== encrypted.blindIndexBase64) throw new WhatsAppInboundEffectError("identity_keys_not_configured");
-    return { p_bsuid_lookup: lookup, p_bsuid_ciphertext: encrypted.ciphertextBase64, p_bsuid_key_version: encrypted.keyVersion };
-  } catch (error) {
-    if (error instanceof WhatsAppIdentityCryptoError && error.code !== "not_configured" && error.code !== "unknown_key_version") {
-      throw new WhatsAppInboundEffectError("invalid_inbound_message");
-    }
-    throw new WhatsAppInboundEffectError("identity_keys_not_configured");
-  }
-}
-
 /** Aplica a mensagem recebida ao domínio numa transação só. Os resultados
  * do banco voltam como vieram; nos conflitos e com o canal não ativo nada
  * foi gravado e o claim continua com quem chamou. */
@@ -142,12 +124,13 @@ export async function applyWhatsAppInboundMessage(
   const content = validateWhatsAppMessageContent({ contentKind: message.contentKind, text: message.text });
   if (!content.ok) throw new WhatsAppInboundEffectError("invalid_inbound_message");
   // Falha fechada: um identificador presente e malformado invalida tudo.
-  const identity = whatsappContactIdentity(message.sender);
-  if (
-    !identity ||
-    (message.sender.phoneE164 !== null && identity.phoneE164 === null) ||
-    (message.sender.bsuid !== null && identity.bsuid === null)
-  ) {
+  let identityArgs: ReturnType<typeof whatsappEffectIdentityArgs>;
+  try {
+    identityArgs = whatsappEffectIdentityArgs(claim, message.sender);
+  } catch (error) {
+    if (error instanceof WhatsAppEffectIdentityError && error.code === "identity_keys_not_configured") {
+      throw new WhatsAppInboundEffectError("identity_keys_not_configured");
+    }
     throw new WhatsAppInboundEffectError("invalid_inbound_message");
   }
   const profileName = typeof message.profileName === "string" && message.profileName.trim() !== "" ? message.profileName : null;
@@ -157,8 +140,7 @@ export async function applyWhatsAppInboundMessage(
     p_content_kind: content.contentKind,
     p_body_text: content.text,
     p_occurred_at: message.occurredAt,
-    p_phone_e164: identity.phoneE164,
-    ...bsuidArgs(claim, identity.bsuid),
+    ...identityArgs,
     p_profile_name: profileName,
   };
 
