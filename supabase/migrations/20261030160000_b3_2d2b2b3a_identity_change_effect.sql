@@ -347,10 +347,6 @@ begin
     -- travas consultivas, e a lease pode vencer nessa espera. Conferida de
     -- novo, com o relógio de agora, antes da primeira escrita, nos dois
     -- caminhos; o processed_at das execuções válidas usa este horário.
-    v_now := clock_timestamp();
-    if v_row.lease_until is null or v_row.lease_until <= v_now then
-      raise exception 'claim_lost';
-    end if;
     v_linked := v_conversation.contact_id is not null or v_conversation.lead_id is not null or v_conversation.opportunity_id is not null;
 
     if p_change = 'identity' then
