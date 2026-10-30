@@ -264,9 +264,9 @@ begin
       else 'channel_disabled' end);
   end if;
 
+  select r.outcome, r.ledger_id into v_reserve
+  from private.whatsapp_effect_ledger_reserve(v_row.id, 'contact.identity_changed') r;
   begin
-    select r.outcome, r.ledger_id into v_reserve
-    from private.whatsapp_effect_ledger_reserve(v_row.id, 'contact.identity_changed') r;
     if v_reserve.outcome = 'conflict' then
       raise exception 'effect_conflict';
     end if;
@@ -426,6 +426,11 @@ begin
     where id = v_row.id;
     return jsonb_build_object('outcome', 'duplicate');
   exception
+    when others then
+      if sqlerrm not in ('identity_not_found', 'identity_conflict', 'effect_conflict', 'claim_lost') then
+        return jsonb_build_object('outcome', 'claim_lost');
+      end if;
+      return jsonb_build_object('outcome', sqlerrm);
     when raise_exception then
       -- Conflitos, identidade ausente e lease vencida na espera desfazem o
       -- bloco (ledger, identidade, conversa, auditoria) e voltam como
