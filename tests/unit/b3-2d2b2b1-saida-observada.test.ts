@@ -438,7 +438,8 @@ describe("6. estático", () => {
     expect(normalizer).toBe(String.raw`/^wamid\.[A-Za-z0-9._:=+/-]{1,512}$/`);
     expect(read("src/server/whatsapp/effects/outbound-observed.ts")).toContain(`.regex(${normalizer})`);
     const migration = read("supabase/migrations/20261030120000_b3_2d2b2b1_outbound_observed_effect.sql");
-    expect(migration).toContain(String.raw`p_wa_message_id !~ '^wamid\.[A-Za-z0-9._:=+/-]{1,512}$'`);
+    // No Postgres, {m,n} vai só até 255: o formato e o tamanho são duas regras.
+    expect(migration).toContain(String.raw`p_wa_message_id !~ '^wamid\.[A-Za-z0-9._:=+/-]+$' or char_length(p_wa_message_id) > 518`);
     expect(migration).toMatch(/char_length\(btrim\(wa_message_id\)\) between 1 and 518/);
   });
 
