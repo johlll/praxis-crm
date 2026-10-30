@@ -403,7 +403,7 @@ begin
       if v_phone_changes and v_conversation.id is not null then
         update public.conversations
         set wa_id = p_next_phone_e164,
-            needs_link_review = needs_link_review or v_linked
+            needs_link_review = needs_link_review or v_linked, contact_id = null, lead_id = null, opportunity_id = null
         where id = v_conversation.id;
         v_review_marked := v_linked and not v_conversation.needs_link_review;
       end if;
