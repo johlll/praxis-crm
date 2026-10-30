@@ -201,9 +201,7 @@ begin
      or (p_previous_phone_e164 is null and p_previous_bsuid_lookup is null)
      or (p_previous_phone_e164 is not null and p_previous_phone_e164 !~ '^\+[1-9][0-9]{7,14}$')
      or (p_next_phone_e164 is not null and p_next_phone_e164 !~ '^\+[1-9][0-9]{7,14}$')
-     or (p_change = 'phone_number' and p_next_phone_e164 is null)
-     or (p_change = 'identity' and (p_next_phone_e164 is not null or p_next_bsuid_lookup is not null
-         or p_next_bsuid_ciphertext is not null or p_next_bsuid_key_version is not null)) then
+     or (p_change = 'phone_number' and p_next_phone_e164 is null) then
     raise exception 'invalid_identity_change';
   end if;
   if p_previous_bsuid_lookup is not null or p_previous_bsuid_key_version is not null then
