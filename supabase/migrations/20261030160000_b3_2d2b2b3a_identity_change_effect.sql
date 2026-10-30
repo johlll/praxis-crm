@@ -413,7 +413,7 @@ begin
         v_row.workspace_id, null, 'whatsapp.identity.changed', 'whatsapp_identity', v_prev.id,
         jsonb_build_object('source', 'whatsapp_webhook', 'change', p_change, 'outcome', 'applied',
                            'channel_id', v_row.channel_id, 'conversation_id', v_conversation.id,
-                           'phone_changed', v_phone_changes, 'bsuid_added', v_bsuid_added, 'review_marked', v_review_marked)
+                           'phone_changed', v_phone_changes, 'phone', p_next_phone_e164, 'bsuid_added', v_bsuid_added, 'review_marked', v_review_marked)
       );
       update public.whatsapp_webhook_inbox
       set state = 'processed', processed_at = v_now, claim_token = null, claimed_at = null, lease_until = null
