@@ -1539,8 +1539,8 @@ ou número.
 | B3.2d-2a | **Implementada (§20).** Rota `/api/inngest/whatsapp` e app `praxis-crm-whatsapp` com chaves próprias `WHATSAPP_`; função do consumidor com o ciclo inteiro num único `step.run`; evento estrito `{ inboxId }`; normalização pelo adaptador do canal; `routing_mismatch`; matriz do estado do canal; falhas terminais × recuperáveis; `ignored`/`unsupported` finalizados com disposição cercada pelo claim (`whatsapp_inbox_dispose`); nenhuma escrita no domínio | B3.2d-1 |
 | B3.2d-2b1 | **Implementada (§21).** Modelo do domínio sobre a A7: identidades por telefone, BSUID ou os dois (BSUID só com índice cego e cifra); conversa com identidade obrigatória e telefone opcional; mensagens com texto opcional, tipo de conteúdo, `origin` e `sender_classification` separados, correlação positiva, ids do provedor e custo estimado × final; `accepted`; identidades internas (owner/admin); ledger técnico de efeitos; backfill determinístico; contratos tipados. Nenhuma RPC de efeito | B3.2d-2a |
 | B3.2d-2b2a | **Implementada (§22).** Efeito atômico de mensagem recebida: RPC com a trava da inbox, token, lease e ambiente; ledger `message.inbound`; identidade por telefone e BSUID sem auto-merge; classificação pelas identidades internas ativas (sem nenhuma ativa → `unresolved`); contato, lead, oportunidade e atividade só para `inbound` + `external`; rollback integral; concorrência real | B3.2d-2b1 |
-| B3.2d-2b2b1 | **Em implementação (§23).** Mensagem de saída **observada**: registra no CRM uma mensagem já enviada pelo WhatsApp Business App (eco `smb.message.echoes`/`smb.message.created`). Não envia mensagem, não chama a YCloud e não altera o chatbot | B3.2d-2b2a |
-| B3.2d-2b2b2 | Atualização de status e custo da mensagem (`message.status`) | B3.2d-2b2b1 |
+| B3.2d-2b2b1 | **Implementada (§23).** Mensagem de saída **observada**: registra no CRM uma mensagem já enviada pelo WhatsApp Business App (eco `smb.message.echoes`/`smb.message.created`). Não envia mensagem, não chama a YCloud e não altera o chatbot | B3.2d-2b2a |
+| B3.2d-2b2b2 | **Concluída na PR #235 (§24).** Status e custo de uma mensagem de saída já gravada (`message.status`): localização pelo id do provedor e pelo wamid, nunca pelo `externalId` sozinho; `message_not_found` recuperável; status pela regra compartilhada, sem regressão; código de erro sanitizado; custo estimado × final (o final nunca muda; outro final é `cost_conflict`; só o final é cobrado); `externalId` opaco; destinatário conferido; nada criado. Não liga o consumidor, não envia mensagem e não altera o chatbot | B3.2d-2b2b1 |
 | B3.2d-2b2b3 | Identidade alterada (`contact.identity_changed`) e eventos de conta | B3.2d-2b2b2 |
 | B3.2d-2b3 | Ligação do consumidor da B3.2d-2a às RPCs da B3.2d-2b2: o release `domain_effect_not_implemented` dá lugar ao efeito; a decisão por tipo e estado do canal continua a do §20.4; os resultados `channel_*` dos efeitos viram release com o mesmo código | B3.2d-2b2b3 |
 | B3.2e | Reconciliador: republica as entradas `pending` e as `processing` com lease vencida; batimento do canal (`last_event_at`). Portão obrigatório antes de webhook real (§18.3) | B3.2d-2b3 |
@@ -4743,3 +4743,291 @@ efeito falha fechado do mesmo jeito.
 Nada configurado fora do código: nenhuma migration no Supabase hospedado,
 nenhuma variável, nada no Inngest, na YCloud, na Meta ou na Cloudflare,
 nenhuma mensagem enviada, nenhuma mudança no chatbot, nenhum dado real.
+
+## 24. B3.2d-2b2b2 — efeito atômico de status e custo (30/10/2026)
+
+Esta etapa aplica um `NormalizedStatusUpdate` (`whatsapp.message.updated`)
+a uma mensagem de saída **já gravada**: projeta o status sem regressão,
+grava o código de erro do provedor e o custo informado por ele, e preserva
+o `externalId` como correlação opaca. Não cria mensagem, conversa,
+identidade, contato, lead, oportunidade ou atividade. Não envia mensagem,
+não chama a YCloud e não altera o chatbot. O consumidor ainda não chama o
+efeito (B3.2d-2b3).
+
+### 24.1 Contrato da RPC
+
+`public.whatsapp_effect_message_status(p_inbox_id, p_claim_token,
+p_provider_message_id, p_wa_message_id, p_external_id, p_status,
+p_error_code, p_occurred_at, p_phone_e164, p_bsuid_lookup,
+p_bsuid_ciphertext, p_bsuid_key_version, p_cost_amount, p_cost_currency,
+p_cost_category, p_cost_finality) → jsonb`. SECURITY DEFINER,
+`search_path` vazio, EXECUTE só para `service_role`.
+
+- **Nenhum contexto do chamador:** workspace, canal, ambiente, provedor e id
+  do evento vêm da linha da inbox, no ambiente autenticado. Origem,
+  classificação, autor e correlação não são parâmetros.
+- **Destinatário opcional:** telefone e/ou BSUID pelo mesmo caminho da 2b2a
+  (`whatsappEffectIdentityArgs`); sem destinatário, os quatro argumentos
+  vão nulos e a aplicação segue.
+- **Entrada malformada** (status fora de accepted/sent/delivered/read/
+  failed, id do provedor, wamid fora de `wamid.` ou com mais de 518
+  caracteres, `externalId` vazio, com mais de 512 caracteres ou com
+  caractere de controle, código de erro fora de
+  `^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$`, horário ausente ou infinito,
+  telefone, índices, cifra, custo parcial ou incoerente):
+  `invalid_status_update`, antes de qualquer trava ou escrita.
+
+| Resultado | Quando | Efeito |
+|---|---|---|
+| `applied` | a mensagem mudou: status, erro, custo ou um identificador que faltava | gravado; ledger na mensagem; inbox `processed` |
+| `duplicate` | o mesmo efeito já está no ledger para a entrada, ou a projeção não muda nada | nada alterado; ledger na mensagem; inbox `processed` |
+| `message_not_found` | nenhuma mensagem do canal com esse id do provedor ou wamid ainda | **nada gravado** (nenhum ledger, placeholder ou identidade); inbox em `processing`; claim continua; reaplicável depois |
+| `message_conflict` | o id do provedor e o wamid apontam para mensagens diferentes; a mensagem tem outro valor para um identificador ou para o `externalId`; não é uma saída; ou o destinatário é outra identidade (inclusive telefone e BSUID de identidades diferentes) | nada gravado nem alterado; claim continua |
+| `cost_conflict` | a mensagem já tem custo final e o evento traz outro custo final (valor, moeda ou categoria) | nada gravado nem alterado; claim continua |
+| `effect_conflict` | a chave estável já tem outro efeito | nada gravado; claim continua |
+| `already_processed`, `terminal_failed`, `claim_lost`, `not_found` | como na finalização da B3.2d-1 | nada muda |
+| `channel_paused`, `channel_disconnected`, `channel_disabled` | o canal deixou de estar ativo depois do claim | nada gravado; claim continua |
+
+`applied` devolve só `message_id`. `message_not_found`, os conflitos e os
+três estados do canal ficam para a B3.2d-2b3 liberar ou decidir.
+
+### 24.2 Ordem, numa transação só
+
+1. inbox travada (`for update`) no ambiente autenticado; `processing`,
+   token igual e lease vigente; canal da linha lido `for share` e ainda
+   `active`;
+2. `private.whatsapp_effect_ledger_reserve(inbox, 'message.status')`;
+3. travas consultivas em ordem fixa, as mesmas dos outros efeitos: o id do
+   provedor, o wamid, o telefone e o BSUID. O status espera a saída
+   observada (ou a recebida) da mesma mensagem que ainda está sendo
+   gravada, e dois status da mesma mensagem esperam um pelo outro;
+4. a mensagem do mesmo canal, travada (`for update`) pelo id do provedor e
+   pelo wamid; nenhuma → `message_not_found`;
+5. identificadores, `externalId` e destinatário (§24.3 e §24.7);
+6. projeção do status, do erro e do custo (§24.4 a §24.6);
+7. mensagem atualizada (só se algo muda); ledger aponta para a mensagem;
+   inbox `processed`.
+
+`message_not_found` e os conflitos voltam como resultado depois de desfazer
+o bloco (reserva, identidade criada ou enriquecida, mensagem); qualquer
+outra falha propaga e desfaz tudo. Não há auditoria por status: o ledger e
+a inbox são o registro (nenhum custo ou destinatário vai para
+`audit_logs`), e `message_status_events` (o log do simulador da A7) não é
+usado.
+
+### 24.3 Localização da mensagem
+
+- Só no canal da entrada, pelo id do provedor e, quando vier, pelo wamid.
+  Nunca pelo `externalId` sozinho, e nunca em outro canal ou workspace.
+- Os dois encontram mensagens diferentes, a mensagem é **recebida**, ou ela
+  já tem outro id do provedor ou outro wamid: `message_conflict`.
+- Um identificador ausente na mensagem é acrescentado (alteração efetiva:
+  `applied`).
+- Nenhuma mensagem: `message_not_found`, recuperável. O status pode chegar
+  antes do eco; a mesma entrada, com o mesmo claim, aplica depois que a
+  mensagem existir.
+
+### 24.4 Status
+
+A regra do banco é `private.whatsapp_message_status_should_apply` (B3.2d-2b1),
+a mesma de `projectWhatsAppMessageStatus`:
+- accepted → sent → delivered → read, sem regredir;
+- failed substitui accepted ou sent; delivered e read corrigem failed;
+  failed nunca substitui delivered ou read; accepted e sent tardios não
+  apagam failed;
+- status repetido é no-op.
+
+O pgTAP 38 prova a matriz inteira (status atual × status recebido), e um
+teste unitário confere que cada linha dela é a de
+`projectWhatsAppMessageStatus`. `queued` (da A7) avança como accepted.
+
+`status_updated_at` só muda quando o status efetivo muda, e nunca volta:
+fica o maior entre o horário gravado e o do evento.
+
+### 24.5 Erro do provedor
+
+- Só código opaco e bem formado. No servidor, o código que não tem esse
+  formato (texto livre, espaço, longo demais) vira `unrecognized`; nunca a
+  mensagem do provedor.
+- O código só vai junto de `failed`. Ao entrar em failed, ele é gravado em
+  `error_reason`; ao ser corrigido por delivered/read, o erro é limpo.
+- Status tardio que não muda a projeção não troca o erro gravado, mesmo
+  quando o evento grava outra coisa (um custo novo).
+
+### 24.6 Custo
+
+A regra de `projectWhatsAppProviderCost`:
+- custo ausente preserva o atual; estimativa nova substitui a antiga;
+  final substitui estimativa;
+- o final nunca volta a estimativa, nunca some e nunca é substituído. O
+  mesmo final de novo (com ou sem categoria) é `duplicate`; **outro** final
+  (valor, moeda ou categoria) é `cost_conflict`, nunca `duplicate`;
+- só `provider_cost_finality = final` entra em
+  `provider_cost_billable_amount` (coluna gerada da B3.2d-2b1);
+- custo de failed é estimativa, mesmo se vier como final (a decisão do
+  §21); final de accepted ou sent é incoerente e recusado;
+- categoria aberta, mas validada pela regra do domínio
+  (`sanitizeWhatsAppProviderCost`: malformada vira nula sem perder o
+  valor); moeda ISO 4217; valor finito, não negativo e que cabe na coluna
+  (`numeric(18, 6)`, arredondado a 6 casas);
+- custo parcial é recusado antes da escrita.
+
+Um delivered tardio sobre um read não muda o status nem o horário, mas o
+custo final que ele traz é aplicado.
+
+### 24.7 externalId e destinatário
+
+- **externalId** é correlação opaca: preenche `provider_external_id`
+  quando está nulo; o mesmo valor de novo não muda nada; outro valor é
+  `message_conflict`. Não localiza a mensagem sozinho, não é lido pelo
+  formato e não muda `origin`, `sender_classification`, `sent_by` nem a
+  correlação de autoria: uma saída de API com o formato do chatbot
+  continua `external_api`/`unresolved`.
+- **Limite do externalId, o mesmo em todo o caminho:** o normalizador
+  preserva até 512 caracteres sem caractere de controle (§16.6); a regra
+  da coluna (B3.2d-2b1) parava em 255 sem espaço. Esta migration troca
+  `messages_provider_ids_format` pela mesma regra, com as regras do id do
+  provedor intactas, sem editar a migration anterior.
+- **Destinatário**, quando vier, é resolvido pelas mesmas regras e pela
+  mesma criptografia dos efeitos anteriores e tem de ser a identidade da
+  conversa da mensagem. Outro telefone ou outro BSUID (inclusive um nunca
+  visto): `message_conflict`. Telefone e BSUID complementares da mesma
+  identidade convergem (e o identificador que faltava fica na
+  identidade). Telefone e BSUID de identidades diferentes:
+  `message_conflict`, sem auto-merge. A identidade criada ou enriquecida
+  numa tentativa conflitante é desfeita. Sem destinatário, a aplicação
+  segue.
+
+### 24.8 Compatibilidade com a A7 e com os dados anteriores
+
+- nenhuma função da A7, da 2b2a ou da 2b2b1 mudou; a migration troca uma
+  regra de formato da coluna (`provider_external_id`: 255 → 512) e cria a
+  função, sem alterar dados;
+- a atualização a partir da 2b2b1 (CI) grava antes da migration a A7 em
+  uso (simulador, envio, status), uma saída observada, uma mensagem de API
+  com custo estimado e `externalId`, e uma entrada de status; depois:
+  leituras da A7, a linha inteira de cada mensagem e as contagens são
+  idênticas; a entrada antiga aplica (delivered com custo final cobrado,
+  origem e autoria intactas, inbox `processed`, nada criado); o simulador,
+  o envio e o status da A7 seguem funcionando.
+
+### 24.9 Testes
+
+Testes primeiro, sobre a main `7159941`: `5fca69e` (só testes), reforçado
+antes da implementação em `394728e` (três regras que outra regra também
+pegava passam a ter um teste só delas: o id do provedor de uma mensagem
+sem wamid com o wamid de outra; failed tardio com outro código e um custo
+novo; delivered tardio com custo final sobre um read, com o horário) e
+corrigido em `1fe9b70` (sem a RPC, um resultado nulo deixava uma variável
+do psql indefinida e o arquivo parava no teste 26).
+
+- `supabase/tests/database/38_b3_2d2b2b2_status_custo.test.sql` (64):
+  estrutura e permissões; claim (pending, token, lease, outro ambiente, sem
+  ambiente, inexistente); entrada inválida (status, ids, wamid de 519,
+  horário infinito, erro com texto livre, `externalId` de 513 ou com
+  controle, índices, telefone, dez formas de custo inválido); accepted →
+  sent → delivered → read com ledger e horário; tardios e repetidos;
+  failed, a correção por delivered/read e o erro; horário que não volta; a
+  matriz inteira; wamid de 518; identificador acrescentado; conflitos de
+  identificadores e mensagem recebida; `externalId` que não localiza;
+  outro canal; `message_not_found` recuperável com o mesmo claim;
+  `externalId` preenchido, repetido, conflitante, de 512 e no formato do
+  chatbot; destinatário igual, diferente, complementar, de identidades
+  diferentes e ausente, com o rollback do BSUID; custo estimado ×
+  estimado, estimado × final, final × estimado, final repetido, final
+  conflitante, failed com custo, custo ausente, só o final cobrado; canal
+  pausado/desconectado/desativado; ledger; rollback depois da reserva;
+  isolamento por workspace e por ambiente; nada comercial nem auditoria; a
+  coluna do `externalId`; `authenticated` sem EXECUTE;
+- `tests/unit/b3-2d2b2b2-status-custo.test.ts` (73): argumentos exatos,
+  limites do normalizador, código de erro sanitizado e só com failed,
+  custo (completo, zero, categoria malformada, failed estimado, dez
+  inválidos), destinatário opcional, dezesseis entradas inválidas,
+  resultados e respostas inesperadas, erros sem dado pessoal, e estáticos
+  (a matriz do pgTAP 38 é a de `projectWhatsAppMessageStatus`; a regra
+  compartilhada no banco; os limites do wamid e do `externalId`; nada de
+  envio, origem, criação ou ligação do consumidor);
+- `scripts/b3-2d2b2b2-status-concurrency-check.sh`: os cinco cenários de
+  sessões reais (read e delivered com a linha segurada; failed tardio
+  contra read nas duas ordens; final contra estimativa tardia; o status
+  esperando a saída observada em gravação; a pausa do canal);
+- `scripts/check-upgrade-b3-2d2b2b2-status-custo.sh`: a atualização a
+  partir da 2b2b1 (§24.8).
+
+**Vermelho** (PR temporária #236, os testes corrigidos sobre o código sem
+a RPC): pgTAP 38 com 60 de 64 falhando (passam só as quatro provas de
+"nada mudou", vazias sem a função); unitários com 71 de 73 falhando;
+typecheck falha (o módulo não existe); a concorrência e a atualização
+falham porque a função não existe. As rodadas #233 e #234 foram
+substituídas pelos reforços acima.
+
+**Verde** (`1fe9b70`, e de novo no HEAD com a documentação): typecheck,
+lint e unitários (2272); tipos em dia; pgTAP inteiro (38 com 64);
+isolamento; todas as concorrências; as cinco atualizações; build; E2E
+(76); Vercel.
+
+### 24.10 Mutações
+
+Uma PR temporária por mutação sobre `1fe9b70` (#237 a #259), em dois
+lotes; todas reprovadas e fechadas. A N8 não chegou aos testes na
+primeira execução (o Supabase local não subiu no CI) e foi reprovada na
+reexecução.
+
+| Mutação | Reprovada por |
+|---|---|
+| N1 token do claim não conferido | pgTAP 38 (5, 10, 15) |
+| N2 lease não conferida | pgTAP 38 (6, 10, 15) |
+| N3 inbox de qualquer ambiente | pgTAP 38 (7, 61) |
+| N4 status atual do canal não reconferido | pgTAP 38 (53 a 55) e concorrência 5 |
+| N5 canal lido sem FOR SHARE | concorrência 5 (a pausa não esperou o efeito) |
+| N6 sem a reserva do ledger | pgTAP 38 (18, 20, 35, 56, 57) e concorrência 1 |
+| N7 conflito de efeito ignorado | pgTAP 38 (56, 57) |
+| N8 falha depois da reserva não desfaz o ledger (rollback) | pgTAP 38 (32, 34, 35, 40, 43, 48, 58, 59) |
+| N9 mensagem localizada sem trava (nem consultiva nem da linha) | concorrência 1 (o delivered calculado sobre leitura velha também aplicou) |
+| N10 sem as travas consultivas (só a da linha) | concorrência 2 (o status não espera a trava da mensagem) |
+| N11 id do provedor e wamid de mensagens diferentes não conferidos | pgTAP 38 (30) |
+| N12 mensagem recebida aceita como saída | pgTAP 38 (31, 32) |
+| N13 destinatário não conferido | pgTAP 38 (40, 41, 44, 58, 59) |
+| N14 sem a proteção contra regressão do status | pgTAP 38 (20, 21, 23, 27, 51) e concorrência 1 |
+| N15 delivered/read não corrigem failed | pgTAP 38 (24, 25, 27, 50, 52) e concorrência 2 |
+| N16 sem a proteção do custo final | pgTAP 38 (47, 48) e concorrência 3 |
+| N17 custo final de failed não vira estimativa | pgTAP 38 (49) |
+| N18 custo final aceito antes da entrega | pgTAP 38 (14, 15) |
+| N19 externalId conflitante aceito | pgTAP 38 (37) |
+| N20 externalId sozinho localiza a mensagem | pgTAP 38 (33) |
+| N21 message_not_found finaliza a inbox e grava o ledger | pgTAP 38 (34, 35) |
+| N22 erro trocado por status tardio | pgTAP 38 (23) |
+| N23 horário do status pode voltar | pgTAP 38 (26) |
+
+Na N16, a proteção do banco (`provider_cost_final_immutable`, B3.2d-2b1)
+também barrou a escrita: o efeito falhou em vez de sobrescrever.
+
+### 24.11 Fora do escopo, decisões e riscos
+
+Fora desta PR: a ligação do consumidor (B3.2d-2b3); identidade alterada e
+eventos de conta (B3.2d-2b2b3); envio pelo CRM (B3.3); mídia; o chatbot;
+configuração real de YCloud, Meta, Inngest, Vercel ou Supabase hospedado;
+migrations hospedadas; mensagens reais.
+
+Decisões:
+- custo final conflitante tem resultado próprio, `cost_conflict`, fechado
+  e documentado, em vez de `message_conflict`: a mensagem e os
+  identificadores batem, só o valor cobrado diverge;
+- a alteração efetiva de qualquer campo (inclusive só um identificador
+  que faltava ou o `externalId`) é `applied`; nada mudou é `duplicate`;
+- o código de erro fica em `error_reason`, a coluna que a A7 já mostra,
+  sem coluna nova;
+- nenhuma auditoria por status (o ledger e a inbox registram cada evento).
+
+Riscos e divergências:
+- **custo final divergente trava o status junto:** num `cost_conflict`, o
+  status que veio no mesmo evento também não é aplicado (o evento inteiro
+  fica com o claim, para a B3.2d-2b3 decidir);
+- **BSUID nunca visto** num status de uma mensagem já gravada é
+  `message_conflict`, como na 2b2b1: ligar os dois seria auto-merge;
+- **id do provedor com 256 caracteres:** o normalizador aceita até 256; a
+  coluna e as RPCs da 2b2a, da 2b2b1 e desta aceitam até 255. Divergência
+  de um caractere, anterior a esta PR, não corrigida aqui;
+- **arredondamento do custo:** valores com mais de 6 casas são
+  arredondados para a coluna; dois finais que só diferem depois da 6ª casa
+  são o mesmo custo.
