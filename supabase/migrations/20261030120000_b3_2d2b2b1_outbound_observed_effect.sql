@@ -114,9 +114,11 @@ declare
   v_lock bigint;
 begin
   -- Entrada: falha fechada antes de qualquer trava ou escrita. O wamid tem
-  -- o formato e o limite do normalizador da YCloud (`wamid.` + até 512).
+  -- o formato e o limite do normalizador da YCloud (`wamid.` + até 512):
+  -- no Postgres a repetição {m,n} vai só até 255, então formato e tamanho
+  -- são duas regras.
   if p_provider_message_id is null or p_provider_message_id !~ '^\S{1,255}$'
-     or (p_wa_message_id is not null and p_wa_message_id !~ '^wamid\.[A-Za-z0-9._:=+/-]{1,512}$')
+     or (p_wa_message_id is not null and (p_wa_message_id !~ '^wamid\.[A-Za-z0-9._:=+/-]+$' or char_length(p_wa_message_id) > 518))
      or p_content_kind is null or p_content_kind not in (
        'text', 'image', 'video', 'audio', 'document', 'sticker', 'location', 'contacts',
        'interactive', 'button', 'reaction', 'order', 'request_welcome', 'template', 'unsupported', 'other')
