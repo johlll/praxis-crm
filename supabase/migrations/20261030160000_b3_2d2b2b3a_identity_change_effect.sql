@@ -406,6 +406,8 @@ begin
             needs_link_review = needs_link_review or v_linked
         where id = v_conversation.id;
         v_review_marked := v_linked and not v_conversation.needs_link_review;
+        update public.contact_phones set value_normalized = p_next_phone_e164
+        where contact_id = v_conversation.contact_id and value_normalized = v_prev.phone_e164;
       end if;
 
       insert into public.audit_logs (workspace_id, actor_user_id, action, resource_type, resource_id, metadata)
