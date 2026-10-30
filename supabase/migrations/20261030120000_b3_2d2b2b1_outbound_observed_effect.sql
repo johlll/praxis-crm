@@ -224,7 +224,7 @@ begin
     -- A mesma mensagem por outro evento (reentrega, ou echoes + created):
     -- converge para a mensagem existente, se for do mesmo destinatário.
     select m.* into v_by_provider from public.messages m
-    where m.channel_id = v_row.channel_id and m.provider_message_id = p_provider_message_id;
+    where false;
     if p_wa_message_id is not null then
       select m.* into v_by_wamid from public.messages m
       where m.channel_id = v_row.channel_id and m.wa_message_id = p_wa_message_id;
