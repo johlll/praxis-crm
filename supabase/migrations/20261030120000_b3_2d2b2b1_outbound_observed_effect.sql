@@ -44,7 +44,7 @@
 -- efeito da YCloud (abaixo), não da coluna.
 alter table public.messages drop constraint messages_wa_message_id_check;
 alter table public.messages
-  add constraint messages_wa_message_id_length check (wa_message_id is null or char_length(btrim(wa_message_id)) between 1 and 518);
+  add constraint messages_wa_message_id_length check (wa_message_id is null or char_length(btrim(wa_message_id)) between 1 and 128);
 
 -- Resultados:
 --   applied           — mensagem gravada e inbox processed;
@@ -118,7 +118,7 @@ begin
   -- no Postgres a repetição {m,n} vai só até 255, então formato e tamanho
   -- são duas regras.
   if p_provider_message_id is null or p_provider_message_id !~ '^\S{1,255}$'
-     or (p_wa_message_id is not null and (p_wa_message_id !~ '^wamid\.[A-Za-z0-9._:=+/-]+$' or char_length(p_wa_message_id) > 518))
+     or (p_wa_message_id is not null and (p_wa_message_id !~ '^wamid\.[A-Za-z0-9._:=+/-]+$' or char_length(p_wa_message_id) > 128))
      or p_content_kind is null or p_content_kind not in (
        'text', 'image', 'video', 'audio', 'document', 'sticker', 'location', 'contacts',
        'interactive', 'button', 'reaction', 'order', 'request_welcome', 'template', 'unsupported', 'other')
