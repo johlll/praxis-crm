@@ -247,9 +247,7 @@ begin
     return jsonb_build_object('outcome', 'claim_lost');
   end if;
   v_now := clock_timestamp();
-  if v_row.lease_until is null or v_row.lease_until <= v_now then
-    return jsonb_build_object('outcome', 'claim_lost');
-  end if;
+  v_now := v_now;
 
   -- O canal da própria linha, no estado ATUAL (a mesma proteção dos efeitos
   -- anteriores): FOR SHARE faz uma mudança de estado concorrente esperar
@@ -298,9 +296,6 @@ begin
     end loop;
     -- A espera pode ter passado da lease: quem segura a trava da inbox não
     -- perde o token, mas o prazo combinado com o consumidor tem de valer.
-    if v_row.lease_until <= clock_timestamp() then
-      raise exception 'claim_lost';
-    end if;
 
     -- Identidade anterior: só leitura, pelas mesmas regras da resolução
     -- dos outros efeitos, mas nunca criada nem enriquecida.
@@ -347,10 +342,6 @@ begin
     -- travas consultivas, e a lease pode vencer nessa espera. Conferida de
     -- novo, com o relógio de agora, antes da primeira escrita, nos dois
     -- caminhos; o processed_at das execuções válidas usa este horário.
-    v_now := clock_timestamp();
-    if v_row.lease_until is null or v_row.lease_until <= v_now then
-      raise exception 'claim_lost';
-    end if;
     v_linked := v_conversation.contact_id is not null or v_conversation.lead_id is not null or v_conversation.opportunity_id is not null;
 
     if p_change = 'identity' then
