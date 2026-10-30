@@ -458,15 +458,16 @@ select is(
   concat_ws(' ',
     pg_temp.st(pg_temp.eo('evt-f2'), 'pm-fail', null, 'accepted', '2026-10-30 10:11:00+00') ->> 'outcome',
     pg_temp.st(pg_temp.eo('evt-f3'), 'pm-fail', null, 'sent', '2026-10-30 10:11:00+00') ->> 'outcome',
-    pg_temp.st(pg_temp.eo('evt-f4'), 'pm-fail', null, 'failed', '2026-10-30 10:11:00+00', p_err => '131049') ->> 'outcome',
+    pg_temp.st(pg_temp.eo('evt-f4'), 'pm-fail', null, 'failed', '2026-10-30 10:11:00+00', p_err => '131049',
+      p_amount => '0.0100', p_cur => 'BRL', p_fin => 'estimated') ->> 'outcome',
     pg_temp.ms(:'m_fail'), pg_temp.mat(:'m_fail')),
-  'duplicate duplicate duplicate failed|131026|-|-|-|-|- 10:10',
-  'accepted e sent tardios não apagam o failed; failed repetido com outro código não troca o erro gravado'
+  'duplicate duplicate applied failed|131026|0.010000|BRL|-|estimated|- 10:10',
+  'accepted e sent tardios não apagam o failed; failed repetido com outro código e um custo novo grava só o custo: não troca o erro nem o horário'
 );
 select is(
   (pg_temp.st(pg_temp.eo('evt-f5'), 'pm-fail', null, 'delivered', '2026-10-30 10:12:00+00') ->> 'outcome')
   || ' ' || pg_temp.ms(:'m_fail') || ' ' || pg_temp.mat(:'m_fail'),
-  'applied delivered|-|-|-|-|-|- 10:12', 'delivered corrige o failed e limpa o erro'
+  'applied delivered|-|0.010000|BRL|-|estimated|- 10:12', 'delivered corrige o failed e limpa o erro; o custo fica'
 );
 select pg_temp.mk(:'conv1', 'pm-fail2', null, 'failed', p_err => '131026') as m_fail2 \gset
 select pg_temp.mk(:'conv1', 'pm-err', null, 'sent') as m_err \gset
@@ -543,8 +544,10 @@ select is(
 );
 
 select pg_temp.mk(:'conv1', 'pm-ca', 'wamid.CA', 'sent') as m_ca \gset
+select pg_temp.mk(:'conv1', 'pm-cn', null, 'sent') as m_cn \gset
 select pg_temp.mk(:'conv1', 'pm-cb', 'wamid.CB', 'sent') as m_cb \gset
 select pg_temp.mrow(:'m_ca') as row_ca \gset
+select pg_temp.mrow(:'m_cn') as row_cn \gset
 select pg_temp.mrow(:'m_cb') as row_cb \gset
 select pg_temp.mrow(:'m_in') as row_in \gset
 select pg_temp.eo('evt-k1') as e_k1 \gset
@@ -553,10 +556,10 @@ select pg_temp.eo('evt-k3') as e_k3 \gset
 select pg_temp.eo('evt-k4') as e_k4 \gset
 select pg_temp.dom() as dom_k \gset
 select is(
-  (pg_temp.st(:'e_k1', 'pm-ca', 'wamid.CB', 'delivered') ->> 'outcome') || ' ' || pg_temp.mrow(:'m_ca') || ' ' || pg_temp.mrow(:'m_cb')
+  (pg_temp.st(:'e_k1', 'pm-cn', 'wamid.CB', 'delivered') ->> 'outcome') || ' ' || pg_temp.mrow(:'m_cn') || ' ' || pg_temp.mrow(:'m_cb')
   || ' ' || pg_temp.res(:'e_k1'),
-  'message_conflict ' || :'row_ca' || ' ' || :'row_cb' || ' processing|' || split_part(:'e_k1', '|', 2),
-  'id do provedor e wamid de mensagens diferentes: message_conflict; nenhuma das duas muda; claim intacto'
+  'message_conflict ' || :'row_cn' || ' ' || :'row_cb' || ' processing|' || split_part(:'e_k1', '|', 2),
+  'id do provedor de uma mensagem (sem wamid) e wamid de outra: message_conflict; o wamid não é acrescentado; nenhuma das duas muda; claim intacto'
 );
 select is(
   (pg_temp.st(:'e_k2', 'pm-in-1', null, 'read') ->> 'outcome') || ' ' || pg_temp.mrow(:'m_in') || ' ' || pg_temp.res(:'e_k2'),
@@ -761,8 +764,8 @@ select is(
 select pg_temp.mk(:'conv1', 'pm-c4', null, 'read', p_amount => '0.0200', p_cur => 'BRL', p_fin => 'estimated') as m_c4 \gset
 select is(
   (pg_temp.st(pg_temp.eo('evt-c16'), 'pm-c4', null, 'delivered', p_amount => '0.0315', p_cur => 'BRL', p_fin => 'final') ->> 'outcome')
-  || ' ' || pg_temp.ms(:'m_c4'),
-  'applied read|-|0.031500|BRL|-|final|0.031500', 'delivered tardio não regride o read, mas o custo final que ele traz é aplicado'
+  || ' ' || pg_temp.ms(:'m_c4') || ' ' || pg_temp.mat(:'m_c4'),
+  'applied read|-|0.031500|BRL|-|final|0.031500 10:00', 'delivered tardio não regride o read nem o horário, mas o custo final que ele traz é aplicado'
 );
 select is(
   pg_temp.txt($$select count(*)::text from public.messages
