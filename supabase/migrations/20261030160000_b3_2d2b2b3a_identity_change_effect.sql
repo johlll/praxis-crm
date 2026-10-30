@@ -231,7 +231,7 @@ begin
   -- Trava da entrada: uma execução de cada vez; a outra relê o estado final.
   select i.* into v_row
   from public.whatsapp_webhook_inbox i
-  where i.id = p_inbox_id and i.environment = v_env
+  where i.id = p_inbox_id
   for update;
   if not found then
     return jsonb_build_object('outcome', 'not_found');
