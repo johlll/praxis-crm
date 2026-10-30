@@ -151,7 +151,7 @@ begin
       raise exception 'invalid_status_update';
     end if;
     v_cost_amount := round(p_cost_amount, 6);
-    v_cost_finality := case when p_status = 'failed' then 'estimated' else p_cost_finality end;
+    v_cost_finality := p_cost_finality;
   end if;
   if p_bsuid_lookup is not null or p_bsuid_ciphertext is not null or p_bsuid_key_version is not null then
     if p_bsuid_lookup is null or jsonb_typeof(p_bsuid_lookup) <> 'object'
