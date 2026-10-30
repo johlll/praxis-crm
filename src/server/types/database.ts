@@ -5413,6 +5413,22 @@ export type Database = {
         }
         Returns: Json
       }
+      whatsapp_effect_identity_change: {
+        Args: {
+          p_change: string
+          p_claim_token: string
+          p_inbox_id: string
+          p_next_bsuid_ciphertext: string
+          p_next_bsuid_key_version: string
+          p_next_bsuid_lookup: Json
+          p_next_phone_e164: string
+          p_occurred_at: string
+          p_previous_bsuid_key_version: string
+          p_previous_bsuid_lookup: Json
+          p_previous_phone_e164: string
+        }
+        Returns: Json
+      }
       whatsapp_effect_inbound_message: {
         Args: {
           p_body_text: string
