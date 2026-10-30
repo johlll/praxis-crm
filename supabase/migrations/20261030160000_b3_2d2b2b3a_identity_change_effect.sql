@@ -389,12 +389,10 @@ begin
 
     if v_phone_changes or v_bsuid_added then
       perform set_config('praxis.whatsapp_identity_phone_change', v_prev.id::text, true);
-      update public.whatsapp_identities
-      set phone_e164 = p_next_phone_e164,
-          bsuid_blind_index = case when v_bsuid_added then v_next_blind else bsuid_blind_index end,
-          bsuid_ciphertext = case when v_bsuid_added then v_next_cipher else bsuid_ciphertext end,
-          bsuid_key_version = case when v_bsuid_added then p_next_bsuid_key_version else bsuid_key_version end
-      where id = v_prev.id;
+      insert into public.whatsapp_identities (workspace_id, channel_id, environment, provider, phone_e164, bsuid_blind_index, bsuid_ciphertext, bsuid_key_version)
+      values (v_row.workspace_id, v_row.channel_id, v_row.environment, v_row.provider, p_next_phone_e164,
+        case when v_bsuid_added then v_next_blind end, case when v_bsuid_added then v_next_cipher end, case when v_bsuid_added then p_next_bsuid_key_version end)
+      returning * into v_next_by_phone;
       perform set_config('praxis.whatsapp_identity_phone_change', '', true);
 
       -- A conversa continua a mesma e acompanha o número. Vinculada a
@@ -402,7 +400,7 @@ begin
       -- o telefone antigo, e ele não é trocado aqui.
       if v_phone_changes and v_conversation.id is not null then
         update public.conversations
-        set wa_id = p_next_phone_e164,
+        set wa_id = p_next_phone_e164, identity_id = v_next_by_phone.id,
             needs_link_review = needs_link_review or v_linked
         where id = v_conversation.id;
         v_review_marked := v_linked and not v_conversation.needs_link_review;
