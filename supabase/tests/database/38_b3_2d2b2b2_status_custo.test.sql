@@ -21,12 +21,15 @@
 --    ou atividade; inbox processed junto com o efeito; qualquer falha
 --    desfaz tudo.
 --
+-- Seção 20 (id do provedor de até 255 caracteres, o contrato interno):
+-- escrita antes da correção do adaptador, sobre 7eb4be6.
+--
 -- Escrito ANTES da implementação, contra a main 7159941. Tudo fictício:
 -- nenhum telefone, BSUID, custo ou identidade real. As chamadas passam por
 -- funções que capturam o erro: contra a main, o arquivo roda até o fim.
 
 begin;
-select plan(64);
+select plan(66);
 
 \set ana     '20000000-0000-0000-0000-000000000001'
 \set ws_um   '10000000-0000-0000-0000-000000000001'
@@ -926,6 +929,42 @@ select is(
   'a coluna do externalId aceita até 512 caracteres sem caractere de controle (o normalizador), e recusa o resto'
 );
 delete from public.messages where body_text = 'Coluna (fictícia)';
+
+-- ---------------------------------------------------------------------
+-- 20) Id do provedor: o contrato interno é de até 255 caracteres
+-- ---------------------------------------------------------------------
+
+create function pg_temp.ins_pm(p_pm text) returns text language plpgsql as $f$
+begin
+  insert into public.messages (workspace_id, conversation_id, channel_id, direction, origin, sender_classification, content_kind, body_text,
+    provider, provider_message_id, status)
+  select c.workspace_id, c.id, c.channel_id, 'outbound', 'business_app', 'internal', 'text', 'Coluna (fictícia)', 'simulated', p_pm, 'sent'
+  from public.conversations c where c.id = (select conversation_id from public.messages where provider_message_id = 'pm-base1');
+  return 'ok';
+exception when others then
+  return sqlstate;
+end
+$f$;
+select is(
+  pg_temp.ins_pm('C' || repeat('c', 254)) || ' ' || pg_temp.ins_pm('C' || repeat('d', 255)),
+  'ok 23514', 'a coluna aceita o id do provedor com 255 caracteres e recusa 256'
+);
+delete from public.messages where body_text = 'Coluna (fictícia)';
+select pg_temp.eo('evt-pm-in255', 'whatsapp.inbound_message.received') as e_pi \gset
+select pg_temp.eo('evt-pm-in256', 'whatsapp.inbound_message.received') as e_pj \gset
+select is(
+  concat_ws(' ',
+    pg_temp.txt(format($$select public.whatsapp_effect_inbound_message(%L::uuid, %L::uuid, %L, 'text', 'Mensagem fictícia recebida', now(), '+5511900030011', null, null, null, null) ->> 'outcome'$$,
+      split_part(:'e_pi', '|', 1), split_part(:'e_pi', '|', 2), 'I' || repeat('i', 254))),
+    pg_temp.txt(format($$select public.whatsapp_effect_inbound_message(%L::uuid, %L::uuid, %L, 'text', 'Mensagem fictícia recebida', now(), '+5511900030011', null, null, null, null) ->> 'outcome'$$,
+      split_part(:'e_pj', '|', 1), split_part(:'e_pj', '|', 2), 'I' || repeat('j', 255))) like 'ERRO:%invalid_inbound_message',
+    pg_temp.ob(pg_temp.eo('evt-pm-ob255', 'whatsapp.smb.message.echoes'), 'O' || repeat('o', 254), null, :'p1') ->> 'outcome',
+    pg_temp.ob(pg_temp.eo('evt-pm-ob256', 'whatsapp.smb.message.echoes'), 'O' || repeat('p', 255), null, :'p1') ->> 'erro',
+    pg_temp.st(pg_temp.eo('evt-pm-st255'), 'O' || repeat('o', 254), null, 'delivered') ->> 'outcome',
+    pg_temp.st(pg_temp.eo('evt-pm-st256'), 'O' || repeat('p', 255), null, 'delivered') ->> 'erro'),
+  'applied true applied invalid_outbound_message applied invalid_status_update',
+  'as três RPCs (recebida, saída observada, status) aceitam o id do provedor com 255 caracteres e recusam 256'
+);
 
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', :'ana', 'role', 'authenticated')::text, true);
