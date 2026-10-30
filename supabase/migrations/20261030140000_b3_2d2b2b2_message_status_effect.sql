@@ -271,7 +271,10 @@ begin
     -- Status antes da mensagem: o bloco desfaz a reserva do ledger; nada
     -- fica gravado e o claim continua.
     if v_message.id is null then
-      raise exception 'message_not_found';
+      update public.whatsapp_webhook_inbox
+      set state = 'processed', processed_at = v_now, claim_token = null, claimed_at = null, lease_until = null
+      where id = v_row.id;
+      return jsonb_build_object('outcome', 'message_not_found');
     end if;
     if v_message.direction <> 'outbound'
        or (v_message.provider_message_id is not null and v_message.provider_message_id <> p_provider_message_id)
