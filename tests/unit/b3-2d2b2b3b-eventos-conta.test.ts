@@ -249,7 +249,9 @@ describe("2. eventos reais normalizados pelo adaptador YCloud passam pelo contra
     const result = provider.normalizeEvents(verified.verified);
     if (!result.ok) throw new Error(result.reason);
     expect(result.events).toHaveLength(1);
-    return result.events[0];
+    const event = result.events[0];
+    if (!event || event.kind !== "account") throw new Error("evento de conta esperado no teste");
+    return event;
   }
 
   for (const [label, fixture] of [
@@ -269,7 +271,7 @@ describe("2. eventos reais normalizados pelo adaptador YCloud passam pelo contra
       // O telefone do escritório só aparece dentro da routing key, que vai inteira.
       const others = Object.entries(args).filter(([k]) => k !== "p_routing_key");
       expect(JSON.stringify(others)).not.toContain(FICT.businessPhone.slice(1));
-      if (event.kind === "account" && event.scope === "phone_number") {
+      if (event.scope === "phone_number") {
         expect(args.p_routing_key).toBe(`${FICT.wabaId}:${FICT.businessPhone}`);
       } else {
         expect(args.p_routing_key).toBeNull();

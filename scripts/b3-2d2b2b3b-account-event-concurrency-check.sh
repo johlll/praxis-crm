@@ -103,7 +103,7 @@ SQL
 hold_channel() { hold_row "$1" "select id from public.whatsapp_channels where id = '${CH[$2]}' for update" "${3:-6}"; }
 
 # Estado do canal: status|send_enabled|provider_status_event_at|last_event_at (UTC, sem fração).
-chs() { q "select concat_ws('|', status, send_enabled, coalesce(to_char(provider_status_event_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS'), '-'), coalesce(to_char(last_event_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS'), '-')) from public.whatsapp_channels where id = '${CH[$1]}'"; }
+chs() { q "select concat_ws('|', status, send_enabled::text, coalesce(to_char(provider_status_event_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS'), '-'), coalesce(to_char(last_event_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS'), '-')) from public.whatsapp_channels where id = '${CH[$1]}'"; }
 evs() { q "select coalesce(string_agg(result, ',' order by occurred_at, provider_event_id), '-') from public.whatsapp_channel_events where channel_id = '${CH[$1]}'"; }
 lgr() { q "select count(*) from public.whatsapp_effect_ledger where channel_id = '${CH[$1]}'"; }
 aud() { q "select count(*) from public.audit_logs where resource_id = '${CH[$1]}' and action = 'whatsapp.channel.disconnected'"; }

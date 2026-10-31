@@ -264,7 +264,7 @@ create function pg_temp.ie(p_inbox text, p_over jsonb default '{}') returns text
 declare
   i public.whatsapp_webhook_inbox;
 begin
-  select * into i from public.whatsapp_webhook_inbox where id = p_inbox::uuid;
+  select * into i from public.whatsapp_webhook_inbox where id = split_part(p_inbox, '|', 1)::uuid;
   insert into public.whatsapp_channel_events (inbox_id, workspace_id, channel_id, environment, provider, provider_event_id,
     provider_type, scope, code, occurred_at, result)
   values (i.id,
@@ -523,6 +523,8 @@ select is(
 -- 3) Validação fechada, antes de qualquer trava ou escrita
 -- ---------------------------------------------------------------------
 
+select pg_temp.dom() || ' ' || pg_temp.nev() as snap0b \gset
+
 select is(
   (select string_agg(pg_temp.oc(pg_temp.ac(:'e_tok', v.scope, v.typ, v.ref, v.rk, v.at, v.code)), ',' order by v.n)
    from (values
@@ -562,7 +564,7 @@ select is(
 );
 select is(
   pg_temp.dom() || ' ' || pg_temp.nev() || ' ' || pg_temp.chrow(pg_temp.cid(10)) || ' ' || pg_temp.inb(:'e_tok'),
-  :'snap0' || ' ' || :'row10' || ' processing|' || split_part(:'e_tok', '|', 2),
+  :'snap0b' || ' ' || :'row10' || ' processing|' || split_part(:'e_tok', '|', 2),
   'entrada inválida: nada escrito, claim intacto'
 );
 
