@@ -4465,8 +4465,11 @@ export type Database = {
           id: string
           is_simulator: boolean
           label: string
+          last_event_at: string | null
           phone_number_id: string | null
           provider: Database["public"]["Enums"]["whatsapp_provider"]
+          provider_account_ref: string | null
+          provider_status_event_at: string | null
           routing_key: string
           send_enabled: boolean
           status: string
