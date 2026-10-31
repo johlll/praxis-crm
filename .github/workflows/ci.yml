@@ -217,6 +217,15 @@ jobs:
         # Canal próprio; roda antes do passo que recria o banco local.
         run: bash scripts/b3-2d2b2b3a-identity-concurrency-check.sh
 
+      - name: Teste de concorrência real (B3.2d-2b2b3b — eventos operacionais da conta e do número)
+        # O mesmo evento duas vezes, duas exclusões simultâneas, um evento
+        # antigo depois de um mais novo, a pausa do canal concorrente com a
+        # exclusão (nas duas ordens), lease vencida durante a espera pela
+        # linha do canal e do workspace, e falha depois do ledger e do
+        # evento — ver scripts/b3-2d2b2b3b-account-event-concurrency-check.sh.
+        # Canais próprios; roda antes do passo que recria o banco local.
+        run: bash scripts/b3-2d2b2b3b-account-event-concurrency-check.sh
+
       - name: Atualização a partir da versão anterior (numeração de propostas)
         # "Aplicar migrations do zero" já valida a criação do banco; este
         # passo valida a ATUALIZAÇÃO com dados emitidos pela versão anterior.
@@ -265,8 +274,20 @@ jobs:
         # nada comercial; a guarda das identidades continua; o simulador, o
         # envio e o status da A7 seguem funcionando — ver
         # scripts/check-upgrade-b3-2d2b2b3a-identidade.sh. Recria o banco
-        # local, por isso roda por último.
+        # local, por isso roda depois do e2e.
         run: bash scripts/check-upgrade-b3-2d2b2b3a-identidade.sh
+
+      - name: Atualização a partir da versão anterior (B3.2d-2b2b3b — eventos operacionais da conta e do número)
+        # A7, uma saída observada, um status e uma entrada de evento da
+        # conta gravados antes da migration: leituras, linhas e contagens
+        # idênticas depois (canais antigos sem referência nem datas); a
+        # entrada antiga é recusada por canal sem referência, sem gravar
+        # nada; um canal novo com a referência da conta desconecta só ele; a
+        # guarda do canal continua; o simulador, o envio e o status da A7
+        # seguem funcionando — ver
+        # scripts/check-upgrade-b3-2d2b2b3b-eventos-conta.sh. Recria o banco
+        # local, por isso roda por último.
+        run: bash scripts/check-upgrade-b3-2d2b2b3b-eventos-conta.sh
 
       - name: Publicar relatório do Playwright (só se algo falhar)
         if: failure()
