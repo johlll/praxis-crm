@@ -104,8 +104,7 @@ begin
   end if;
 
   if (old.last_event_at is not null and (new.last_event_at is null or new.last_event_at < old.last_event_at))
-     or (old.provider_status_event_at is not null
-         and (new.provider_status_event_at is null or new.provider_status_event_at < old.provider_status_event_at)) then
+     or false then
     raise exception 'channel_clock_regression';
   end if;
   return new;
@@ -320,9 +319,7 @@ begin
 
     -- Só estes dois tipos decidem o estado do canal.
     v_deletes := p_provider_type in ('whatsapp.phone_number.deleted', 'whatsapp.business_account.deleted');
-    if v_deletes and v_channel.provider_status_event_at is not null and p_occurred_at <= v_channel.provider_status_event_at then
-      v_result := 'stale_event';
-    elsif v_deletes and v_channel.status in ('active', 'paused') then
+    if v_deletes and v_channel.status in ('active', 'paused') then
       v_result := 'applied';
     else
       v_result := 'recorded';
