@@ -27,7 +27,7 @@
 -- que capturam o erro: contra a main, o arquivo roda até o fim.
 
 begin;
-select plan(64);
+select plan(65);
 
 \set ana     '20000000-0000-0000-0000-000000000001'
 \set ws_um   '10000000-0000-0000-0000-000000000001'
@@ -566,6 +566,21 @@ select is(
   pg_temp.dom() || ' ' || pg_temp.nev() || ' ' || pg_temp.chrow(pg_temp.cid(10)) || ' ' || pg_temp.inb(:'e_tok'),
   :'snap0b' || ' ' || :'row10' || ' processing|' || split_part(:'e_tok', '|', 2),
   'entrada inválida: nada escrito, claim intacto'
+);
+
+-- Tipo e escopo de lados trocados, com o MESMO tipo gravado na inbox: só o
+-- prefixo do tipo barra. Sem ele, a exclusão do NÚMERO com o escopo da conta
+-- passaria só pela conferência da conta (sem routing key) e desconectaria o
+-- canal; e a exclusão da CONTA com o escopo do número, idem.
+select pg_temp.ent(pg_temp.cid(10), 'evt-x1', 'whatsapp.phone_number.deleted') as e_x1 \gset
+select pg_temp.ent(pg_temp.cid(10), 'evt-x2', 'whatsapp.business_account.deleted') as e_x2 \gset
+select pg_temp.dom() || ' ' || pg_temp.nev() as snap0c \gset
+select pg_temp.oc(pg_temp.ac(:'e_x1', 'business_account', 'whatsapp.phone_number.deleted', 'WABA-A1', null, :'t1200', null)) as ox1 \gset
+select pg_temp.oc(pg_temp.ac(:'e_x2', 'phone_number', 'whatsapp.business_account.deleted', 'WABA-A1', :'rk10', :'t1200', null)) as ox2 \gset
+select is(
+  :'ox1' || ' ' || :'ox2' || ' ' || (pg_temp.dom() || ' ' || pg_temp.nev() = :'snap0c')::text || ' ' || pg_temp.chs(pg_temp.cid(10)),
+  'ERRO:invalid_account_event ERRO:invalid_account_event true active|true|-|-|antigo',
+  'exclusão do número com o escopo da conta (ou a da conta com o escopo do número): invalid_account_event, o canal não é desconectado'
 );
 
 -- ---------------------------------------------------------------------
