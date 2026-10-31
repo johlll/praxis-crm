@@ -374,4 +374,4 @@ $body$;
 revoke all on function public.whatsapp_effect_account_event(uuid, uuid, text, text, text, text, timestamptz, text)
   from public, anon, authenticated;
 grant execute on function public.whatsapp_effect_account_event(uuid, uuid, text, text, text, text, timestamptz, text)
-  to service_role;
+  to service_role, authenticated;
