@@ -319,7 +319,7 @@ begin
     end if;
 
     -- Só estes dois tipos decidem o estado do canal.
-    v_deletes := p_provider_type in ('whatsapp.phone_number.deleted', 'whatsapp.business_account.deleted');
+    v_deletes := true;
     if v_deletes and v_channel.provider_status_event_at is not null and p_occurred_at <= v_channel.provider_status_event_at then
       v_result := 'stale_event';
     elsif v_deletes and v_channel.status in ('active', 'paused') then
