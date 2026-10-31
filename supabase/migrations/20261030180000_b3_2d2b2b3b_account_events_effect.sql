@@ -309,13 +309,13 @@ begin
     -- canal; a conta, com a referência igual à do canal. Canal sem referência
     -- confiável nunca é comparado.
     if p_scope = 'phone_number' and p_routing_key is distinct from v_channel.routing_key then
-      raise exception 'routing_mismatch';
+      return jsonb_build_object('outcome', 'routing_mismatch');
     end if;
     if v_channel.provider_account_ref is null then
-      raise exception 'account_reference_unverified';
+      return jsonb_build_object('outcome', 'account_reference_unverified');
     end if;
     if p_provider_account_ref is distinct from v_channel.provider_account_ref then
-      raise exception 'account_reference_mismatch';
+      return jsonb_build_object('outcome', 'account_reference_mismatch');
     end if;
 
     -- Só estes dois tipos decidem o estado do canal.
