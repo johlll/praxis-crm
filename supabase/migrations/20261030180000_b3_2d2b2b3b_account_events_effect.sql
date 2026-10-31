@@ -264,9 +264,6 @@ begin
 
   -- O tipo vem do chamador, mas só vale o gravado na entrada: é ele que
   -- decide se o canal é desconectado.
-  if p_provider_type is distinct from v_row.provider_event_type then
-    raise exception 'invalid_account_event';
-  end if;
 
   -- O canal da própria linha, em QUALQUER estado atual, travado para
   -- escrita: duas exclusões, ou uma pausa e uma exclusão, esperam uma pela
