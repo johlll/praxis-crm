@@ -131,6 +131,7 @@ create table public.whatsapp_channel_events (
   provider_type text not null
     check (char_length(provider_type) <= 128 and provider_type ~ '^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$'),
   scope text not null check (scope in ('business_account', 'phone_number')),
+  routing_key text,
   -- Código do provedor, opaco: 1 a 64 caracteres, sem controle. Nunca
   -- interpretado.
   code text check (code is null or (char_length(code) between 1 and 64 and code !~ '[\u0001-\u001f\u007f-\u009f]')),
@@ -329,10 +330,10 @@ begin
     end if;
 
     insert into public.whatsapp_channel_events (
-      inbox_id, workspace_id, channel_id, environment, provider, provider_event_id, provider_type, scope, code, occurred_at, result
+      inbox_id, workspace_id, channel_id, environment, provider, provider_event_id, provider_type, scope, code, occurred_at, result, routing_key
     ) values (
       v_row.id, v_row.workspace_id, v_row.channel_id, v_row.environment, v_row.provider, v_row.provider_event_id,
-      p_provider_type, p_scope, p_code, p_occurred_at, v_result
+      p_provider_type, p_scope, p_code, p_occurred_at, v_result, p_routing_key
     );
 
     if v_result = 'applied' then
