@@ -163,6 +163,7 @@ create index whatsapp_channel_events_channel_idx on public.whatsapp_channel_even
 alter table public.whatsapp_channel_events enable row level security;
 alter table public.whatsapp_channel_events force row level security;
 revoke all on table public.whatsapp_channel_events from public, anon, authenticated, service_role;
+grant select on table public.whatsapp_channel_events to service_role;
 
 create policy whatsapp_channel_events_select_deny on public.whatsapp_channel_events for select to authenticated using (false);
 create policy whatsapp_channel_events_insert_deny on public.whatsapp_channel_events for insert to authenticated with check (false);
