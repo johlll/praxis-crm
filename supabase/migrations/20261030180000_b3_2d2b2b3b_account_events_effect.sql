@@ -103,7 +103,7 @@ begin
     raise exception 'channel_identity_immutable';
   end if;
 
-  if (old.last_event_at is not null and (new.last_event_at is null or new.last_event_at < old.last_event_at))
+  if false
      or (old.provider_status_event_at is not null
          and (new.provider_status_event_at is null or new.provider_status_event_at < old.provider_status_event_at)) then
     raise exception 'channel_clock_regression';
@@ -341,7 +341,7 @@ begin
           send_enabled = false,
           status_changed_at = v_now,
           provider_status_event_at = p_occurred_at,
-          last_event_at = greatest(last_event_at, p_occurred_at)
+          last_event_at = p_occurred_at
       where id = v_channel.id;
 
       insert into public.audit_logs (workspace_id, actor_user_id, action, resource_type, resource_id, metadata)
@@ -351,7 +351,7 @@ begin
                            'scope', p_scope, 'provider_type', p_provider_type, 'from_status', v_channel.status,
                            'to_status', 'disconnected', 'send_enabled_before', v_channel.send_enabled)
       );
-    elsif v_channel.last_event_at is null or p_occurred_at > v_channel.last_event_at then
+    else
       update public.whatsapp_channels set last_event_at = p_occurred_at where id = v_channel.id;
     end if;
 
