@@ -1540,9 +1540,10 @@ ou número.
 | B3.2d-2b1 | **Implementada (§21).** Modelo do domínio sobre a A7: identidades por telefone, BSUID ou os dois (BSUID só com índice cego e cifra); conversa com identidade obrigatória e telefone opcional; mensagens com texto opcional, tipo de conteúdo, `origin` e `sender_classification` separados, correlação positiva, ids do provedor e custo estimado × final; `accepted`; identidades internas (owner/admin); ledger técnico de efeitos; backfill determinístico; contratos tipados. Nenhuma RPC de efeito | B3.2d-2a |
 | B3.2d-2b2a | **Implementada (§22).** Efeito atômico de mensagem recebida: RPC com a trava da inbox, token, lease e ambiente; ledger `message.inbound`; identidade por telefone e BSUID sem auto-merge; classificação pelas identidades internas ativas (sem nenhuma ativa → `unresolved`); contato, lead, oportunidade e atividade só para `inbound` + `external`; rollback integral; concorrência real | B3.2d-2b1 |
 | B3.2d-2b2b1 | **Implementada (§23).** Mensagem de saída **observada**: registra no CRM uma mensagem já enviada pelo WhatsApp Business App (eco `smb.message.echoes`/`smb.message.created`). Não envia mensagem, não chama a YCloud e não altera o chatbot | B3.2d-2b2a |
-| B3.2d-2b2b2 | **Concluída na PR #235 (§24).** Status e custo de uma mensagem de saída já gravada (`message.status`): localização pelo id do provedor e pelo wamid, nunca pelo `externalId` sozinho; `message_not_found` recuperável; status pela regra compartilhada, sem regressão; código de erro sanitizado; custo estimado × final (o final nunca muda; outro final é `cost_conflict`; só o final é cobrado); `externalId` opaco; destinatário conferido; nada criado. Não liga o consumidor, não envia mensagem e não altera o chatbot | B3.2d-2b2b1 |
-| B3.2d-2b2b3 | Identidade alterada (`contact.identity_changed`) e eventos de conta | B3.2d-2b2b2 |
-| B3.2d-2b3 | Ligação do consumidor da B3.2d-2a às RPCs da B3.2d-2b2: o release `domain_effect_not_implemented` dá lugar ao efeito; a decisão por tipo e estado do canal continua a do §20.4; os resultados `channel_*` dos efeitos viram release com o mesmo código | B3.2d-2b2b3 |
+| B3.2d-2b2b2 | **Implementada (§24, PR #235).** Status e custo de uma mensagem de saída já gravada (`message.status`): localização pelo id do provedor e pelo wamid, nunca pelo `externalId` sozinho; `message_not_found` recuperável; status pela regra compartilhada, sem regressão; código de erro sanitizado; custo estimado × final (o final nunca muda; outro final é `cost_conflict`; só o final é cobrado); `externalId` opaco; destinatário conferido; nada criado. Não liga o consumidor, não envia mensagem e não altera o chatbot | B3.2d-2b2b1 |
+| B3.2d-2b2b3a | **Concluída na PR #262 (§25).** Identidade alterada e troca de número (`contact.identity_changed`): identidade anterior só lida, nunca criada (`identity_not_found` recuperável); o telefone novo substitui o antigo na MESMA identidade; telefone ou BSUID de outra identidade, ou outro BSUID na mesma → `identity_conflict`; sem auto-merge; a conversa acompanha o número, com os vínculos comerciais preservados e marcados para revisão; `identity` sem a nova → `review_required`; contato e telefones do contato intactos. Não liga o consumidor | B3.2d-2b2b2 |
+| B3.2d-2b2b3b | Eventos operacionais da conta e do número (`account`) | B3.2d-2b2b3a |
+| B3.2d-2b3 | Ligação do consumidor da B3.2d-2a às RPCs da B3.2d-2b2: o release `domain_effect_not_implemented` dá lugar ao efeito; a decisão por tipo e estado do canal continua a do §20.4; os resultados `channel_*` dos efeitos viram release com o mesmo código | B3.2d-2b2b3b |
 | B3.2e | Reconciliador: republica as entradas `pending` e as `processing` com lease vencida; batimento do canal (`last_event_at`). Portão obrigatório antes de webhook real (§18.3) | B3.2d-2b3 |
 | Fora do Praxis | Contrato do §15.6 no chatbot (rota, tabela de pedidos, testes), em branch/PR própria do chatbot, desligado e sem deploy | Decisão 15; implantação real com nova autorização; necessário antes da B3.3 no número do chatbot |
 | Posterior | Resumo e qualificação estruturados do chatbot (decisão 12) | Entrada real estável |
@@ -5062,3 +5063,291 @@ Riscos e divergências:
 - **arredondamento do custo:** valores com mais de 6 casas são
   arredondados para a coluna; dois finais que só diferem depois da 6ª casa
   são o mesmo custo.
+
+## 25. B3.2d-2b2b3a — efeito atômico de identidade alterada e troca de número (30/10/2026)
+
+A antiga B3.2d-2b2b3 foi dividida (§15.9): **2b2b3a**, identidade alterada
+e troca de número; **2b2b3b**, eventos operacionais da conta e do número;
+depois, a **B3.2d-2b3**, ligação do consumidor.
+
+Esta etapa aplica um `NormalizedIdentityChange` (mensagem de sistema
+`user_changed_number` → `phone_number`; `user_identity_changed` →
+`identity`) à identidade que o canal **já conhece**. Não envia mensagem,
+não chama a YCloud e não altera o chatbot. O consumidor ainda não chama o
+efeito (B3.2d-2b3).
+
+### 25.1 Contrato da RPC
+
+`public.whatsapp_effect_identity_change(p_inbox_id, p_claim_token,
+p_change, p_occurred_at, p_previous_phone_e164, p_previous_bsuid_lookup,
+p_previous_bsuid_key_version, p_next_phone_e164, p_next_bsuid_lookup,
+p_next_bsuid_ciphertext, p_next_bsuid_key_version) → jsonb`. SECURITY
+DEFINER, `search_path` vazio, EXECUTE só para `service_role`.
+
+- **Nenhum contexto do chamador:** workspace, canal, ambiente, provedor e id
+  do evento vêm da linha da inbox. Contato, lead, usuário e origem não são
+  parâmetros.
+- **Materiais separados, pelo módulo comum** (`whatsappEffectIdentityArgs`):
+  a identidade anterior vai só com telefone e índices cegos de cada versão
+  de chave (o banco só a procura, nunca a grava, então não recebe cifra);
+  a nova vai com telefone, índices e a cifra da versão ativa, no escopo do
+  claim (ambiente, workspace e canal). Nenhum BSUID em claro; nenhuma chave
+  da inbox ou da agenda.
+- **Validação fechada** (`invalid_identity_change`, antes de qualquer trava
+  ou escrita): mudança desconhecida; `phone_number` sem a nova ou sem
+  telefone novo; `identity` com a nova (o normalizador nunca a informa);
+  anterior vazia; telefone fora do E.164; índice cego, versão ou cifra
+  incompletos ou malformados; horário ausente ou infinito; no servidor,
+  campos extras.
+
+| Resultado | Quando | Efeito |
+|---|---|---|
+| `applied` | o telefone (e o BSUID que faltava) da mesma identidade mudou | identidade e conversa atualizadas; auditoria; ledger; inbox `processed` |
+| `review_required` | `identity` sem a nova | conversa marcada para revisão (auditoria só se a marca mudou); identidade intacta; ledger; inbox `processed` |
+| `duplicate` | o mesmo efeito já está no ledger para a entrada, ou nada precisa mudar (inclusive a mesma troca já aplicada por outro evento) | nada alterado; ledger; inbox `processed` |
+| `identity_not_found` | nenhuma identidade anterior no canal | **nada gravado** (nenhum ledger nem identidade); inbox em `processing`; claim continua; reaplicável |
+| `identity_conflict` | §25.3 | nada gravado nem alterado; claim continua |
+| `effect_conflict` | a chave estável já tem outro efeito | nada gravado; claim continua |
+| `already_processed`, `terminal_failed`, `claim_lost`, `not_found` | como na finalização da B3.2d-1 (`claim_lost` também quando a lease vence durante a espera por uma trava, consultiva ou de linha; §25.9) | nada muda |
+| `channel_paused`, `channel_disconnected`, `channel_disabled` | o canal deixou de estar ativo depois do claim | nada gravado; claim continua |
+
+`applied` e `review_required` devolvem só `identity_id`.
+
+### 25.2 Ordem, numa transação só
+
+1. inbox travada (`for update`) no ambiente autenticado; `processing`,
+   token igual e lease vigente; canal da linha lido `for share` e ainda
+   `active`;
+2. `private.whatsapp_effect_ledger_reserve(inbox, 'contact.identity_changed')`;
+3. travas consultivas em ordem fixa, com as mesmas chaves dos outros
+   efeitos: telefone anterior, BSUID anterior, telefone novo e BSUID novo;
+   depois da espera, a lease é reconferida;
+4. identidade anterior, só lida (§25.3), e travada (`for update`) com a
+   conversa dela; a chave do workspace (que a auditoria referencia) travada
+   `for key share`;
+5. **a lease é conferida de novo**, com um relógio novo, logo depois dessas
+   travas de linha e antes da primeira escrita, nos dois caminhos
+   (`phone_number` e `identity`); esse horário é o `processed_at` (§25.9);
+6. telefone e BSUID novos (§25.3); identidade e conversa atualizadas;
+   auditoria; inbox `processed`.
+
+`identity_not_found`, os conflitos e a lease vencida na espera voltam como
+resultado depois de desfazer o bloco (reserva, identidade, conversa,
+auditoria); qualquer outra falha propaga e desfaz tudo.
+
+### 25.3 Identidades
+
+- **Anterior:** uma resolução própria, só de leitura (não reaproveita a
+  função que cria ou enriquece identidade). Telefone e BSUID, quando
+  vierem, apontam para a mesma identidade; senão `identity_conflict`. Um
+  BSUID que não é o da identidade do telefone também é `identity_conflict`.
+  Nenhuma: `identity_not_found`. Se o telefone anterior já não existe mas o
+  BSUID reconhece a identidade e ela já está com o telefone novo, a troca
+  já foi aplicada por outro evento: `duplicate`.
+- **Telefone novo** (obrigatório em `phone_number`): livre → substitui o
+  telefone **na mesma identidade**; já é dela → idempotente; de outra
+  identidade → `identity_conflict`. Nunca uma segunda identidade; nunca
+  telefone derivado do BSUID.
+- **BSUID novo:** livre e a identidade sem BSUID → enriquece; o mesmo →
+  idempotente; de outra identidade → `identity_conflict`; a identidade já
+  tem **outro** BSUID → `identity_conflict`, nunca substituído.
+- **Nunca auto-merge:** telefone e BSUID de identidades diferentes, antes
+  ou depois, são sempre `identity_conflict`.
+- **A guarda das identidades** (B3.2d-2b1) continua proibindo trocar
+  telefone ou BSUID. Esta migration a substitui por uma versão com uma
+  única exceção: o telefone trocado por este efeito, que marca a própria
+  identidade na transação (`praxis.whatsapp_identity_phone_change`, local
+  à transação e limpa logo depois). Telefone nunca é apagado. Nenhum papel
+  escreve direto na tabela.
+
+### 25.4 Conversa e cadastro comercial
+
+- A identidade continua ligada à **mesma conversa**. Quando o telefone
+  muda, `conversations.wa_id` passa a ser o novo.
+- `contact_id`, `lead_id`, `opportunity_id` e os candidatos de revisão são
+  preservados. Se a conversa está vinculada a algum registro comercial,
+  `needs_link_review = true`: o cadastro pode continuar com o telefone
+  antigo.
+- Nada comercial é criado, apagado ou alterado: nem contato, nem telefone
+  do contato, nem `contact_identifiers`, lead, oportunidade ou atividade. O
+  telefone do contato **não** é atualizado automaticamente.
+- `identity` sem a nova: nada é inventado nem apagado; a conversa vai para
+  revisão; os vínculos ficam.
+
+### 25.5 Auditoria
+
+Só numa alteração efetiva: `whatsapp.identity.changed` (troca) ou
+`whatsapp.identity.review_required` (identity, quando a marca de revisão
+muda), `actor_user_id` nulo, recurso `whatsapp_identity`, metadados
+`source = whatsapp_webhook`, o tipo da mudança, o resultado, ids técnicos
+(canal, conversa) e indicadores (telefone trocado, BSUID acrescentado,
+revisão marcada). Nunca telefone, BSUID, payload ou material cifrado.
+Reentrega e `duplicate` não auditam de novo.
+
+### 25.6 Testes
+
+- `supabase/tests/database/39_b3_2d2b2b3a_identidade_alterada.test.sql`
+  (pgTAP, 47): estrutura e permissões; claim (token, lease, ambiente,
+  estados); validação fechada; troca simples e auditoria; idempotência;
+  conflitos (telefone novo, BSUID novo, BSUID substituído, anterior
+  dividida); variantes da anterior e `identity_not_found` recuperável;
+  vínculos comerciais preservados com revisão; `identity` →
+  `review_required`; status do canal; ledger; rollback (falha simulada na
+  conversa depois do ledger, do telefone e do BSUID); a guarda ainda
+  bloqueia fora do efeito; isolamento; nada comercial e auditoria sem dado
+  pessoal; `authenticated` sem EXECUTE; a lease conferida logo depois da
+  última trava e antes da primeira escrita (47, §25.9).
+- `tests/unit/b3-2d2b2b3a-identidade-alterada.test.ts` (47): validação do
+  servidor, materiais separados (anterior sem cifra), AAD no escopo do
+  claim, nenhum BSUID em claro nos argumentos, mapeamento de resultados e
+  erros, resposta inesperada.
+- `scripts/b3-2d2b2b3a-identity-concurrency-check.sh`: sete cenários com
+  sessões Postgres reais — (1) duas trocas da mesma identidade para o mesmo
+  telefone: `applied` + `duplicate`; (2) duas identidades para o mesmo
+  telefone: `applied` + `identity_conflict`; (3) duas identidades para o
+  mesmo BSUID novo: telefone e BSUID de identidades diferentes →
+  `identity_conflict`; (4) pausa do canal durante o efeito: a pausa espera,
+  e o claim usado depois vê `channel_paused`; (5) falha depois do ledger e
+  antes da conversa: nada sobrevive; (6) lease vencida durante a espera
+  por uma trava consultiva: `claim_lost`, nada escrito; (7) lease vencida
+  durante a espera pela trava de linha da conversa: `claim_lost`, nada
+  mudou (§25.9).
+- `scripts/check-upgrade-b3-2d2b2b3a-identidade.sh`: atualização a partir
+  da `20261030140000`.
+
+Vermelho (PR temporária #263, só os testes sobre a main + a correção do
+pgTAP): pgTAP 39 falhou 38 de 46; unitários, 46 dos 47 novos;
+concorrência e atualização falharam porque a função não existia. Duas correções só de
+teste vieram depois: o pgTAP comparava a liberação do claim sem tipo
+(`f900218`) e o cenário 3 comparava o booleano como `t` em vez de `true`
+(`2758413`). Verde: todo o CI na `2758413` (typecheck, lint, 2335
+unitários, pgTAP inteiro, isolamento, e2e, as concorrências e as
+atualizações).
+
+### 25.7 Mutações
+
+Cada mutação numa PR temporária, com o CI completo; todas fechadas sem
+merge.
+
+| Mutação | Pega por |
+|---|---|
+| M1 token do claim não conferido | pgTAP 5, 10, 14–16 |
+| M2 lease não conferida (só a primeira) | sobreviveu: equivalente — a reconferência depois das travas devolve o mesmo `claim_lost`; substituída pela M2b (depois da §25.9, de novo equivalente; ver M24) |
+| M2b lease ignorada antes e depois das travas consultivas | antes da §25.9: pgTAP 6, 10, 14–16, 18; concorrência 6. Depois: sobrevive — a conferência tardia devolve o mesmo `claim_lost` |
+| M3 inbox de qualquer ambiente | pgTAP 7, 43 |
+| M4 status do canal não reconferido | pgTAP 34, 36; concorrência 4 |
+| M5 canal sem `FOR SHARE` | concorrência 4 (a pausa não esperou) |
+| M6 sem a reserva do ledger | pgTAP 16, 32, 37–40 |
+| M7 anterior inexistente criada | pgTAP 25, 26 |
+| M8 telefone novo cria outra identidade | pgTAP (vários); concorrência 1 |
+| M9 telefone de outra identidade aceito | pgTAP 21; concorrência (violação de unicidade) |
+| M10 BSUID de outra identidade aceito | pgTAP 21, 22; concorrência 3 |
+| M11 BSUID existente substituído | pgTAP 21 |
+| M12 auto-merge (anterior dividida) | pgTAP 27, 28 |
+| M13 vínculos comerciais apagados | pgTAP 30 |
+| M14 telefone do contato atualizado | pgTAP 31, 44 |
+| M15 conversa vinculada sem revisão | pgTAP 30 |
+| M16 falha depois da reserva não desfaz | pgTAP 21, 25, 26, 39, 40; concorrência 5 |
+| M17 telefone na auditoria | pgTAP 17, 44 |
+| M18 `identity` aceita com a nova | pgTAP 11, 14–17, 19, 21, 22 |
+| M19 `phone_number` aceito sem a nova | pgTAP 11 |
+| M20 conflito de efeito ignorado | pgTAP 37–40 |
+| M21 lease não reconferida depois das travas consultivas | antes da §25.9: concorrência 6. Depois: sobrevive — a conferência tardia devolve o mesmo `claim_lost`; **não** prova a proteção das travas de linha |
+| M22 sem as travas consultivas | concorrência (as sessões não esperaram) |
+| M23 lease não reconferida depois das travas de linha (as duas anteriores mantidas) | pgTAP 47; concorrência 7 (veio `applied`) |
+| M24 nenhuma das três conferências da lease | pgTAP 6, 10, 14–16, 18, 47; concorrência 6 |
+
+### 25.8 Fora do escopo, decisões e riscos
+
+Fora desta PR: eventos de conta e a mudança automática do status do canal
+por eles (B3.2d-2b2b3b); a ligação do consumidor (B3.2d-2b3); o
+reconciliador; envio; mídia; interface; configuração externa; o chatbot;
+migrations hospedadas.
+
+Decisões:
+- a guarda das identidades ganha uma exceção controlada, em vez de uma
+  segunda identidade para o telefone novo;
+- a identidade anterior não recebe cifra (só é procurada);
+- `review_required` é resultado próprio e grava o ledger: o provedor
+  confirmou uma mudança, mas sem informação para uma alteração segura;
+- auditoria só quando algo muda.
+
+Riscos e divergências:
+- **o telefone do contato comercial não é atualizado automaticamente:**
+  a conversa vai para revisão, e um humano decide;
+- **evento `identity` sem a nova** exige revisão humana;
+- **`identity_not_found`** fica para reconciliação (B3.2e): o claim é
+  liberado pela B3.2d-2b3 e a entrada volta a ser tentada;
+- **não existe fusão automática de identidades;**
+- **formatos reais da YCloud ainda a confirmar:** em especial, se o
+  `user_changed_number` sempre traz o telefone novo. O normalizador hoje
+  pode produzir um `phone_number` cuja nova identidade só tem BSUID (sem
+  `wa_id`/`new_wa_id`); o efeito recusa esse caso (`invalid_identity_change`),
+  e o alinhamento fica para quando o webhook real mostrar o formato;
+- **a mesma troca por outro evento** só é reconhecida como `duplicate`
+  quando o BSUID anterior identifica a identidade; só pelo telefone antigo
+  (que já saiu), ela vira `identity_not_found`.
+
+### 25.9 Revisão: lease vencida na espera por uma trava de linha
+
+**Janela encontrada na revisão da PR #262.** A lease era conferida antes e
+depois das travas consultivas, mas depois disso ainda vinham os `FOR
+UPDATE` da identidade anterior e da conversa. Essas travas de linha podem
+esperar uma transação que não passa pelas travas consultivas (qualquer
+outra escrita na conversa, por exemplo), e a lease pode vencer nessa
+espera. Ao receber as linhas, o efeito alterava identidade, conversa,
+auditoria e inbox com a lease já vencida. A M21 e o cenário 6 só provavam
+a espera na trava consultiva.
+
+**Teste primeiro (`a58deaa`), vermelho na PR temporária #287:**
+- concorrência, cenário 7: uma sessão segura a linha da conversa com
+  `SELECT id FROM public.conversations WHERE id = <conversa> FOR UPDATE`
+  e dorme 5 s, sem trava consultiva; a lease da entrada passa a vencer em
+  2 s; o efeito (`phone_number` para um telefone e um BSUID novos, numa
+  conversa vinculada a contato, lead e oportunidade fictícios) começa e o
+  script confirma que ele espera uma trava de linha (`wait_event_type =
+  Lock`, `transactionid` ou `tuple`) bloqueado justamente por essa sessão
+  (`pg_blocking_pids`), e que a lease vence enquanto ele ainda espera; só
+  então a linha é solta. Sem a correção veio `applied`;
+- pgTAP 47 (estrutural, sobre o corpo da função sem comentários): a
+  identidade e a conversa são travadas; o comando logo depois da **última**
+  aquisição de trava da função é `v_now := clock_timestamp()` seguido da
+  conferência da lease; nenhuma escrita entre essa trava e a conferência,
+  e há escrita depois. Uma comparação com `lease_until` em qualquer outro
+  ponto não basta. Sem a correção: `true false false`.
+
+**Correção (`5d6eb5f`), na própria migration nova:** depois de travar a
+identidade e a conversa, a chave do workspace é travada `for key share` (a
+auditoria a referencia, e assim nenhuma escrita abaixo espera depois da
+conferência); em seguida, um ponto comum aos dois caminhos (`phone_number`
+e `identity`) faz `v_now := clock_timestamp()` e, com a lease nula ou
+vencida, `claim_lost`. O resultado desfaz o bloco (reserva do ledger e
+qualquer alteração intermediária); a lease não é renovada, nenhum claim
+novo é obtido e a entrada não é finalizada nem liberada. O `processed_at`
+das execuções válidas passa a usar esse horário, e não o de antes de uma
+espera longa.
+
+**Depois do `claim_lost` do cenário 7, nada ficou:** a linha da
+identidade e a da conversa (com contato, lead, oportunidade e revisão)
+iguais às de antes, byte a byte (`row_to_json`); nenhuma auditoria da
+identidade ou da conversa; nenhum ledger da entrada; a entrada em
+`processing` com o mesmo token, `claimed_at` e `lease_until`; o telefone e
+o BSUID novos em nenhuma identidade; o cadastro comercial com as mesmas
+contagens.
+
+**Mutação específica:** a M23 tira só a conferência tardia e mantém a
+inicial e a de depois das travas consultivas: o pgTAP 47 e o cenário 7
+(`applied`) a pegam. Com a conferência tardia, a M2, a M2b e a M21
+passaram a sobreviver (ela devolve o mesmo `claim_lost`); a M24, que tira
+as três, é pega pelo pgTAP 6, 10, 14–16, 18 e 47 e pelo cenário 6.
+
+**Verde (`5d6eb5f`):** CI completo — typecheck, lint, 2335 unitários,
+pgTAP inteiro (o 39 com 47), isolamento, e2e, todas as concorrências
+(cenários 1 a 7) e todas as atualizações. As regressões continuam
+cobertas pelos mesmos testes: a anterior nunca é criada (pgTAP 25, 26),
+nenhuma fusão (27, 28), o telefone novo na mesma identidade (15),
+conflitos atômicos (21; concorrência 2 e 3), o telefone do contato
+intacto (31, 44), a conversa vinculada em revisão (30), `identity` só
+marcando revisão (32, 33), auditoria sem dado pessoal (17, 44), a pausa
+esperando o efeito (concorrência 4) e a falha depois do ledger desfazendo
+tudo (39, 40; concorrência 5).

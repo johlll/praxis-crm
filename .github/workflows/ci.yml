@@ -209,6 +209,14 @@ jobs:
         # roda antes do passo que recria o banco local.
         run: bash scripts/b3-2d2b2b2-status-concurrency-check.sh
 
+      - name: Teste de concorrência real (B3.2d-2b2b3a — identidade alterada e troca de número)
+        # Duas trocas da mesma identidade para o mesmo número, duas
+        # identidades disputando um número e um BSUID, falha depois do
+        # ledger, lease vencida durante a espera e a pausa do canal durante
+        # o efeito — ver scripts/b3-2d2b2b3a-identity-concurrency-check.sh.
+        # Canal próprio; roda antes do passo que recria o banco local.
+        run: bash scripts/b3-2d2b2b3a-identity-concurrency-check.sh
+
       - name: Atualização a partir da versão anterior (numeração de propostas)
         # "Aplicar migrations do zero" já valida a criação do banco; este
         # passo valida a ATUALIZAÇÃO com dados emitidos pela versão anterior.
@@ -247,8 +255,18 @@ jobs:
         # custo final, sem nada comercial; o simulador, o envio e o status
         # da A7 seguem funcionando — ver
         # scripts/check-upgrade-b3-2d2b2b2-status-custo.sh. Recria o banco
-        # local, por isso roda por último.
+        # local, por isso roda depois do e2e.
         run: bash scripts/check-upgrade-b3-2d2b2b2-status-custo.sh
+
+      - name: Atualização a partir da versão anterior (B3.2d-2b2b3a — identidade alterada e troca de número)
+        # A7, uma saída observada, um status e uma entrada de troca de
+        # número gravados antes da migration: leituras, linhas e contagens
+        # idênticas depois; a troca antiga aplica na mesma identidade, sem
+        # nada comercial; a guarda das identidades continua; o simulador, o
+        # envio e o status da A7 seguem funcionando — ver
+        # scripts/check-upgrade-b3-2d2b2b3a-identidade.sh. Recria o banco
+        # local, por isso roda por último.
+        run: bash scripts/check-upgrade-b3-2d2b2b3a-identidade.sh
 
       - name: Publicar relatório do Playwright (só se algo falhar)
         if: failure()
