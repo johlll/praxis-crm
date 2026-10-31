@@ -314,9 +314,6 @@ begin
     if v_channel.provider_account_ref is null then
       raise exception 'account_reference_unverified';
     end if;
-    if p_provider_account_ref is distinct from v_channel.provider_account_ref then
-      raise exception 'account_reference_mismatch';
-    end if;
 
     -- Só estes dois tipos decidem o estado do canal.
     v_deletes := p_provider_type in ('whatsapp.phone_number.deleted', 'whatsapp.business_account.deleted');
