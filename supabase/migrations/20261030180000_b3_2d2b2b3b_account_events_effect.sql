@@ -226,8 +226,6 @@ begin
   -- mensagem de erro leva valor.
   if p_scope is null or p_scope not in ('business_account', 'phone_number')
      or p_provider_type is null or char_length(p_provider_type) > 128 or p_provider_type !~ '^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$'
-     or (p_scope = 'phone_number' and not starts_with(p_provider_type, 'whatsapp.phone_number.'))
-     or (p_scope = 'business_account' and not starts_with(p_provider_type, 'whatsapp.business_account.'))
      or p_provider_account_ref is null or p_provider_account_ref !~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
      or p_occurred_at is null or not isfinite(p_occurred_at)
      or (p_code is not null and (char_length(p_code) not between 1 and 64 or p_code ~ '[\u0001-\u001f\u007f-\u009f]'))
