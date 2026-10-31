@@ -338,7 +338,6 @@ begin
     if v_result = 'applied' then
       update public.whatsapp_channels
       set status = 'disconnected',
-          send_enabled = false,
           status_changed_at = v_now,
           provider_status_event_at = p_occurred_at,
           last_event_at = greatest(last_event_at, p_occurred_at)
