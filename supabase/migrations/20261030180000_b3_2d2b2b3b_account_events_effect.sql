@@ -311,10 +311,7 @@ begin
     if p_scope = 'phone_number' and p_routing_key is distinct from v_channel.routing_key then
       raise exception 'routing_mismatch';
     end if;
-    if v_channel.provider_account_ref is null then
-      raise exception 'account_reference_unverified';
-    end if;
-    if p_provider_account_ref is distinct from v_channel.provider_account_ref then
+    if p_provider_account_ref is distinct from coalesce(v_channel.provider_account_ref, split_part(v_channel.routing_key, ':', 1)) then
       raise exception 'account_reference_mismatch';
     end if;
 
