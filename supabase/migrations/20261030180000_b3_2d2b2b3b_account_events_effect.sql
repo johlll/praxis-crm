@@ -258,9 +258,6 @@ begin
   if v_row.state <> 'processing' or p_claim_token is null or v_row.claim_token is distinct from p_claim_token then
     return jsonb_build_object('outcome', 'claim_lost');
   end if;
-  if v_row.lease_until is null or v_row.lease_until <= clock_timestamp() then
-    return jsonb_build_object('outcome', 'claim_lost');
-  end if;
 
   -- O tipo vem do chamador, mas só vale o gravado na entrada: é ele que
   -- decide se o canal é desconectado.
@@ -288,9 +285,6 @@ begin
   -- relógio de agora, antes da primeira escrita; o processed_at e o
   -- status_changed_at usam este horário.
   v_now := clock_timestamp();
-  if v_row.lease_until is null or v_row.lease_until <= v_now then
-    return jsonb_build_object('outcome', 'claim_lost');
-  end if;
 
   begin
     select r.outcome, r.ledger_id into v_reserve
