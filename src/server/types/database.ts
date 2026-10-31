@@ -3392,6 +3392,90 @@ export type Database = {
           },
         ]
       }
+      whatsapp_channel_events: {
+        Row: {
+          channel_id: string
+          code: string | null
+          created_at: string
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          id: string
+          inbox_id: string
+          occurred_at: string
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          provider_event_id: string
+          provider_type: string
+          result: string
+          scope: string
+          workspace_id: string
+        }
+        Insert: {
+          channel_id: string
+          code?: string | null
+          created_at?: string
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          id?: string
+          inbox_id: string
+          occurred_at: string
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          provider_event_id: string
+          provider_type: string
+          result: string
+          scope: string
+          workspace_id: string
+        }
+        Update: {
+          channel_id?: string
+          code?: string | null
+          created_at?: string
+          environment?: Database["public"]["Enums"]["whatsapp_environment"]
+          id?: string
+          inbox_id?: string
+          occurred_at?: string
+          provider?: Database["public"]["Enums"]["whatsapp_provider"]
+          provider_event_id?: string
+          provider_type?: string
+          result?: string
+          scope?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_channel_events_channel_identity_fkey"
+            columns: ["workspace_id", "channel_id", "environment", "provider"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_channels"
+            referencedColumns: ["workspace_id", "id", "environment", "provider"]
+          },
+          {
+            foreignKeyName: "whatsapp_channel_events_inbox_fkey"
+            columns: [
+              "inbox_id",
+              "workspace_id",
+              "channel_id",
+              "environment",
+              "provider",
+              "provider_event_id",
+            ]
+            isOneToOne: false
+            referencedRelation: "whatsapp_webhook_inbox"
+            referencedColumns: [
+              "id",
+              "workspace_id",
+              "channel_id",
+              "environment",
+              "provider",
+              "provider_event_id",
+            ]
+          },
+          {
+            foreignKeyName: "whatsapp_channel_events_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       whatsapp_channels: {
         Row: {
           created_at: string
@@ -3403,8 +3487,11 @@ export type Database = {
           id: string
           is_simulator: boolean
           label: string
+          last_event_at: string | null
           phone_number_id: string | null
           provider: Database["public"]["Enums"]["whatsapp_provider"]
+          provider_account_ref: string | null
+          provider_status_event_at: string | null
           routing_key: string
           send_enabled: boolean
           status: string
@@ -3423,8 +3510,11 @@ export type Database = {
           id?: string
           is_simulator?: boolean
           label: string
+          last_event_at?: string | null
           phone_number_id?: string | null
           provider?: Database["public"]["Enums"]["whatsapp_provider"]
+          provider_account_ref?: string | null
+          provider_status_event_at?: string | null
           routing_key: string
           send_enabled?: boolean
           status?: string
@@ -3443,8 +3533,11 @@ export type Database = {
           id?: string
           is_simulator?: boolean
           label?: string
+          last_event_at?: string | null
           phone_number_id?: string | null
           provider?: Database["public"]["Enums"]["whatsapp_provider"]
+          provider_account_ref?: string | null
+          provider_status_event_at?: string | null
           routing_key?: string
           send_enabled?: boolean
           status?: string
@@ -5410,6 +5503,19 @@ export type Database = {
           p_actor_user_id: string
           p_channel_id: string
           p_workspace_id: string
+        }
+        Returns: Json
+      }
+      whatsapp_effect_account_event: {
+        Args: {
+          p_claim_token: string
+          p_code: string
+          p_inbox_id: string
+          p_occurred_at: string
+          p_provider_account_ref: string
+          p_provider_type: string
+          p_routing_key: string
+          p_scope: string
         }
         Returns: Json
       }
