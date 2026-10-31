@@ -281,7 +281,6 @@ begin
   end if;
   -- Os registros gravados abaixo referenciam o workspace: a trava da chave
   -- vem aqui, para que nenhuma escrita espere depois da conferência seguinte.
-  perform 1 from public.workspaces w where w.id = v_row.workspace_id for key share;
 
   -- As travas de linha podem esperar transações que não passam por nenhuma
   -- outra trava, e a lease pode vencer nessa espera. Conferida de novo, com o
