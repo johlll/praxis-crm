@@ -150,8 +150,8 @@ create table public.whatsapp_channel_events (
   -- o expurgo preserva a inbox como tombstone, e nada pode apagar a origem
   -- de um evento operacional.
   constraint whatsapp_channel_events_inbox_fkey
-    foreign key (inbox_id, workspace_id, channel_id, environment, provider, provider_event_id)
-    references public.whatsapp_webhook_inbox (id, workspace_id, channel_id, environment, provider, provider_event_id)
+    foreign key (inbox_id)
+    references public.whatsapp_webhook_inbox (id)
 );
 
 comment on table public.whatsapp_channel_events is
