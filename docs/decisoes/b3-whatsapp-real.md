@@ -1541,8 +1541,8 @@ ou número.
 | B3.2d-2b2a | **Implementada (§22).** Efeito atômico de mensagem recebida: RPC com a trava da inbox, token, lease e ambiente; ledger `message.inbound`; identidade por telefone e BSUID sem auto-merge; classificação pelas identidades internas ativas (sem nenhuma ativa → `unresolved`); contato, lead, oportunidade e atividade só para `inbound` + `external`; rollback integral; concorrência real | B3.2d-2b1 |
 | B3.2d-2b2b1 | **Implementada (§23).** Mensagem de saída **observada**: registra no CRM uma mensagem já enviada pelo WhatsApp Business App (eco `smb.message.echoes`/`smb.message.created`). Não envia mensagem, não chama a YCloud e não altera o chatbot | B3.2d-2b2a |
 | B3.2d-2b2b2 | **Implementada (§24, PR #235).** Status e custo de uma mensagem de saída já gravada (`message.status`): localização pelo id do provedor e pelo wamid, nunca pelo `externalId` sozinho; `message_not_found` recuperável; status pela regra compartilhada, sem regressão; código de erro sanitizado; custo estimado × final (o final nunca muda; outro final é `cost_conflict`; só o final é cobrado); `externalId` opaco; destinatário conferido; nada criado. Não liga o consumidor, não envia mensagem e não altera o chatbot | B3.2d-2b2b1 |
-| B3.2d-2b2b3a | **Concluída na PR #262 (§25).** Identidade alterada e troca de número (`contact.identity_changed`): identidade anterior só lida, nunca criada (`identity_not_found` recuperável); o telefone novo substitui o antigo na MESMA identidade; telefone ou BSUID de outra identidade, ou outro BSUID na mesma → `identity_conflict`; sem auto-merge; a conversa acompanha o número, com os vínculos comerciais preservados e marcados para revisão; `identity` sem a nova → `review_required`; contato e telefones do contato intactos. Não liga o consumidor | B3.2d-2b2b2 |
-| B3.2d-2b2b3b | Eventos operacionais da conta e do número (`account`) | B3.2d-2b2b3a |
+| B3.2d-2b2b3a | **Concluída e mesclada na PR #262 (merge `ff13405`; §25).** Identidade alterada e troca de número (`contact.identity_changed`): identidade anterior só lida, nunca criada (`identity_not_found` recuperável); o telefone novo substitui o antigo na MESMA identidade; telefone ou BSUID de outra identidade, ou outro BSUID na mesma → `identity_conflict`; sem auto-merge; a conversa acompanha o número, com os vínculos comerciais preservados e marcados para revisão; `identity` sem a nova → `review_required`; contato e telefones do contato intactos. Não liga o consumidor | B3.2d-2b2b2 |
+| B3.2d-2b2b3b | **Implementada na PR #293 (§26).** Eventos operacionais da conta e do número (`account`): `provider_account_ref` neutra e imutável no canal, e as datas `last_event_at` e `provider_status_event_at`, que só avançam; `whatsapp_channel_events` deny-all, sem telefone, routing key, conta ou payload; **só** `phone_number.deleted` e `business_account.deleted` desconectam (`active`/`paused` → `disconnected`, sem envio, auditoria sanitizada); evento igual ou anterior ao último de estado é `stale_event`; os demais tipos só são registrados (o `code` é opaco); `disabled` nunca é reativado e não existe reativação automática; canal sem referência confiável → `account_reference_unverified`. Não liga o consumidor nem a YCloud real | B3.2d-2b2b3a |
 | B3.2d-2b3 | Ligação do consumidor da B3.2d-2a às RPCs da B3.2d-2b2: o release `domain_effect_not_implemented` dá lugar ao efeito; a decisão por tipo e estado do canal continua a do §20.4; os resultados `channel_*` dos efeitos viram release com o mesmo código | B3.2d-2b2b3b |
 | B3.2e | Reconciliador: republica as entradas `pending` e as `processing` com lease vencida; batimento do canal (`last_event_at`). Portão obrigatório antes de webhook real (§18.3) | B3.2d-2b3 |
 | Fora do Praxis | Contrato do §15.6 no chatbot (rota, tabela de pedidos, testes), em branch/PR própria do chatbot, desligado e sem deploy | Decisão 15; implantação real com nova autorização; necessário antes da B3.3 no número do chatbot |
@@ -5351,3 +5351,362 @@ intacto (31, 44), a conversa vinculada em revisão (30), `identity` só
 marcando revisão (32, 33), auditoria sem dado pessoal (17, 44), a pausa
 esperando o efeito (concorrência 4) e a falha depois do ledger desfazendo
 tudo (39, 40; concorrência 5).
+
+
+## 26. B3.2d-2b2b3b — eventos operacionais da conta e do número (30/10/2026)
+
+A **B3.2d-2b2b3a** (§25) foi mesclada na PR #262 (merge `ff13405`, pais
+`d8f7357` e `9a73c41`). Esta etapa aplica um `NormalizedAccountEvent`
+(`kind: "account"`, escopo `business_account` ou `phone_number`) ao canal da
+entrada da inbox: **registra** o evento operacional da conta WhatsApp e do
+número e **reflete no estado do canal só as desconexões inequívocas**. Não
+envia mensagem, não configura nem chama a YCloud, não cria canal real, não
+altera o chatbot e **não liga o consumidor** (B3.2d-2b3). Nada desta etapa
+liga a YCloud real.
+
+### 26.1 O que é observado e o que desconecta
+
+| Tipo do provedor | Escopo | Efeito no canal |
+|---|---|---|
+| `whatsapp.phone_number.deleted` | `phone_number` | **desconecta** (§26.7) |
+| `whatsapp.business_account.deleted` | `business_account` | **desconecta** (§26.7) |
+| `whatsapp.business_account.updated` | `business_account` | só observado |
+| `whatsapp.business_account.reviewed` | `business_account` | só observado |
+| `whatsapp.phone_number.name_updated` | `phone_number` | só observado |
+| `whatsapp.phone_number.quality_updated` | `phone_number` | só observado |
+| `whatsapp.phone_number.business_username_updated` | `phone_number` | só observado |
+| qualquer outro tipo com o prefixo do escopo | — | só observado (lista aberta) |
+
+- **Só os dois tipos de exclusão mudam o canal.** O `code` do provedor é um
+  valor **opaco**: nada o interpreta para ativar, reconectar, bloquear envio
+  ou decidir qualidade (um evento de qualidade "vermelha", de nome recusado
+  ou com o código `DISCONNECTED` não muda nada).
+- **Não existe reativação automática** nesta PR: nenhum evento religa o
+  canal, e `disabled` nunca é reativado nem rebaixado.
+- O tipo precisa ter o prefixo do escopo (`whatsapp.phone_number.` para
+  `phone_number`, `whatsapp.business_account.` para `business_account`), e
+  só vale o tipo gravado na entrada da inbox: um tipo de exclusão com o
+  escopo trocado (que passaria só pela conferência da conta, sem routing
+  key) é recusado.
+
+### 26.2 Referência técnica da conta no canal
+
+`whatsapp_channels.provider_account_ref text` (anulável), uma referência
+**neutra** da conta do provedor.
+
+- **Imutável depois da criação:** a guarda do canal passa a barrar qualquer
+  troca (valor → outro, valor → nulo e também nulo → valor). Um canal real
+  deverá gravá-la **quando for criado**; esta etapa não cria canal real nem
+  tela.
+- **Nunca derivada da routing key:** o domínio não divide nem interpreta a
+  routing key da YCloud (`<waba>:<telefone>`); a referência vem à parte.
+- **Formato neutro:** letras, dígitos, ponto, sublinhado e hífen, até 64
+  caracteres, sem espaço nem controle; e só canal da B3 (com ambiente) a
+  tem, de modo que a linha legada da A7, legível por SELECT direto, nunca a
+  carrega.
+- **Canais legados e simulados continuam com `NULL`**; a migration não
+  altera nenhum canal existente.
+- **Nunca exposta** em resposta pública, erro, log ou auditoria: a leitura
+  segura do canal (`whatsapp_channel_safe_row`) continua montada campo a
+  campo e não a inclui.
+- **Necessidade de uma referência confiável:** sem ela o canal não tem como
+  confirmar de qual conta vem o evento; ver `account_reference_unverified`
+  (§26.6).
+
+### 26.3 Datas operacionais do canal
+
+- `last_event_at`: o maior `occurredAt` de qualquer evento operacional
+  **aceito** (registrado, inclusive `stale_event`).
+- `provider_status_event_at`: o horário, no relógio do **provedor**, do
+  último evento que efetivamente **decidiu** o estado do canal (a exclusão
+  que o desconectou).
+- **Nenhuma das duas regride nem volta a nulo:** a RPC só as avança, e a
+  guarda do canal barra (`channel_clock_regression`) até a escrita direta.
+- `status_changed_at` continua sendo o relógio do **CRM**; não ordena evento
+  do provedor.
+
+### 26.4 `whatsapp_channel_events` (modelo final)
+
+Deny-all (RLS ligada e forçada, nenhum privilégio para `anon`,
+`authenticated` nem `service_role`, quatro políticas que negam
+`authenticated`); só a RPC do efeito escreve.
+
+| Coluna | Tipo | Notas |
+|---|---|---|
+| `id` | `uuid` | chave interna |
+| `inbox_id` | `uuid` | única: um evento operacional por entrada |
+| `workspace_id` | `uuid` | `ON DELETE CASCADE` com o workspace |
+| `channel_id` | `uuid` | |
+| `environment` | `whatsapp_environment` | |
+| `provider` | `whatsapp_provider` | |
+| `provider_event_id` | `text` | mesmo formato do ledger |
+| `provider_type` | `text` | tipo bruto, formato conferido, até 128 |
+| `scope` | `text` | `business_account` ou `phone_number` |
+| `code` | `text` nulo | opaco, 1 a 64 caracteres, sem caractere de controle |
+| `occurred_at` | `timestamptz` | horário do provedor, finito |
+| `result` | `text` | `applied`, `recorded` ou `stale_event` |
+| `created_at` | `timestamptz` | |
+
+- **FKs compostas:** `(workspace_id, channel_id, environment, provider)` →
+  canal (`ON DELETE RESTRICT`) e `(inbox_id, workspace_id, channel_id,
+  environment, provider, provider_event_id)` → inbox (sem ação na remoção,
+  como o ledger). Inbox, workspace, canal, ambiente, provedor e id do
+  evento são do **mesmo evento**; a remoção da inbox de um evento
+  preservado é impedida, e o expurgo do corpo cifrado só deixa o tombstone,
+  que continua referenciado.
+- **Não grava:** telefone, routing key, referência da conta, payload,
+  texto, BSUID, segredo, credencial nem cifra da inbox. O telefone do
+  escritório (`businessPhoneE164`) é só validado no servidor e **nem chega
+  ao banco**.
+
+### 26.5 A RPC e a ordem, numa transação só
+
+`public.whatsapp_effect_account_event(p_inbox_id, p_claim_token, p_scope,
+p_provider_type, p_provider_account_ref, p_routing_key, p_occurred_at,
+p_code) → jsonb`. SECURITY DEFINER, `search_path` vazio, EXECUTE só para
+`service_role`. Nenhum usuário, workspace, canal, papel ou ambiente vem do
+chamador; a resposta é só `{"outcome": ...}`.
+
+1. validação fechada (`invalid_account_event`, antes de qualquer trava:
+   escopo, tipo e prefixo, conta, data, `code`, routing key obrigatória no
+   escopo do número e proibida no da conta);
+2. inbox do ambiente autenticado `FOR UPDATE`; `processing`, token e lease
+   vigentes; o tipo informado tem de ser o gravado na entrada;
+3. canal da linha `FOR UPDATE`, em **qualquer** estado (pausado,
+   desconectado e desativado não bloqueiam este efeito);
+4. workspace protegido (`FOR KEY SHARE`), porque as gravações referenciam a
+   chave dele;
+5. **a lease é conferida de novo**, com o relógio de agora, logo depois da
+   última trava e antes da primeira escrita; o `processed_at` e o
+   `status_changed_at` usam este horário (§25.9: a mesma lição da B3.2d-2b2b3a);
+6. reserva do ledger com o efeito estável **`account`**;
+7. validação do destino (§26.6);
+8. gravação do evento operacional e avanço de `last_event_at`;
+9. eventual transição do canal (§26.7);
+10. auditoria **somente se o estado do canal realmente mudou**;
+11. inbox `processed` na mesma transação.
+
+As divergências de destino e o `effect_conflict` voltam como resultado
+depois de desfazer o bloco (ledger incluído); qualquer outra falha propaga e
+desfaz tudo. A lease vencida na espera por uma trava de linha devolve
+`claim_lost` sem ter escrito nada. O ledger usa o efeito `account` (o mesmo
+nome do `kind` do contrato neutro e já presente no vocabulário do ledger
+desde a B3.2d-2b1) em vez de um nome novo: nenhuma constraint existente é
+alterada.
+
+### 26.6 Validação do destino
+
+| Escopo | Regra | Divergência |
+|---|---|---|
+| `phone_number` | `routingKey` obrigatória e **exatamente igual** à `routing_key` do canal (maiúsculas e espaço contam) | `routing_mismatch` |
+| ambos | `providerAccountRef` **igual** à `provider_account_ref` do canal | `account_reference_mismatch` |
+| ambos | canal **sem** `provider_account_ref` confiável | `account_reference_unverified` |
+| `business_account` | `routingKey` e `businessPhoneE164` **nulos**; a conta nunca é deduzida da routing key | — |
+
+A routing key é conferida antes da conta. Nas três divergências nada é
+gravado, nenhum ledger permanece e a inbox continua em `processing` com o
+mesmo claim: a B3.2d-2b3 decide falhar ou liberar. O módulo do servidor **não
+compara** routing key nem conta: repassa ao banco, que decide.
+
+### 26.7 Regras finais de transição do canal
+
+Resultados do evento de **exclusão** (os dois tipos), na ordem em que são
+avaliados:
+
+| # | Condição | Resultado | Canal |
+|---|---|---|---|
+| 1 | `provider_status_event_at` existe e `occurredAt` ≤ ele | `stale_event` | inalterado, sem auditoria |
+| 2 | canal `active` ou `paused` | `applied` | `disconnected`, `send_enabled = false`, `provider_status_event_at = occurredAt`, `status_changed_at` = horário do CRM, auditoria |
+| 3 | canal `disconnected` ou `disabled` | `recorded` | inalterado (`disabled` nunca é reativado nem rebaixado), sem auditoria |
+
+Todo evento aceito grava a linha em `whatsapp_channel_events` e avança
+`last_event_at` (sem regredir). Os tipos só observados dão sempre
+`recorded`, qualquer que seja o estado do canal e o `code`. Um evento
+antigo nunca regride o estado nem as datas, mesmo que o canal tenha sido
+religado depois por outro meio (reconexão futura): o antigo é `stale_event`
+e um mais novo volta a desconectar, com nova transição auditada.
+
+### 26.8 Resultados (contrato fechado)
+
+| Resultado | Quando |
+|---|---|
+| `applied` | exclusão válida: o canal passou para `disconnected` |
+| `recorded` | evento gravado sem mudar o status |
+| `stale_event` | exclusão antiga demais para decidir o estado: gravada |
+| `duplicate` | o efeito já estava no ledger para esta entrada: inbox `processed` |
+| `routing_mismatch`, `account_reference_mismatch`, `account_reference_unverified` | §26.6; nada gravado; claim continua |
+| `effect_conflict` | a chave estável já tem outro efeito ou entrada; nada gravado |
+| `already_processed`, `terminal_failed`, `claim_lost`, `not_found` | como na finalização da B3.2d-1; nada muda |
+
+Não há resultado `channel_*`: o estado do canal não bloqueia este efeito.
+O módulo `src/server/whatsapp/effects/account-event.ts` conhece só o
+contrato neutro (`NormalizedAccountEvent`), valida o evento (e o telefone
+do escritório, que não vai ao banco), confere que o evento é o da entrada do
+claim e devolve o resultado conferido campo a campo; erros saem só como
+código.
+
+### 26.9 Auditoria
+
+Só quando o canal realmente muda: `whatsapp.channel.disconnected`, recurso
+`whatsapp_channel`, `actor_user_id` nulo, metadados `source =
+whatsapp_webhook`, `environment`, `provider`, `scope`, `provider_type`,
+`from_status`, `to_status` e `send_enabled_before`. Nunca a referência da
+conta, a routing key, telefone, `code` ou cifra. Reentrega, `recorded`,
+`stale_event` e `duplicate` não auditam.
+
+### 26.10 Testes
+
+- `supabase/tests/database/40_b3_2d2b2b3b_eventos_conta.test.sql` (pgTAP,
+  65): assinatura, SECURITY DEFINER e EXECUTE só para `service_role`; a
+  tabela de eventos (colunas exatas, deny-all, quatro políticas,
+  `service_role` sem SELECT direto, FKs compostas, unicidade, CHECKs de
+  tipo, escopo, resultado e `code`, remoção da inbox e do canal impedida);
+  a referência imutável, o formato e a leitura segura sem a referência;
+  datas que não regridem; claim (token, lease, ambiente, estados);
+  validação fechada (30 entradas, mais o tipo de um escopo com o escopo do
+  outro); destino (routing key exata, conta, `unverified`, conta nunca
+  deduzida da routing key, nada gravado, entrada reaproveitável); as
+  exclusões (ativo, pausado, já desconectado, desativado, `stale_event`,
+  sequência, canal religado, só o canal da inbox); os tipos só observados e
+  o `code` opaco; o que fica gravado e a auditoria sem dado pessoal; a
+  resposta só com o `outcome`; reentrega, `duplicate` e `effect_conflict`;
+  rollback (falha ao gravar o evento e ao desconectar o canal); nada
+  comercial; ambiente oposto; `authenticated` e `anon` sem EXECUTE; A7
+  intacta; o corpo da função (a lease conferida logo depois da última trava
+  e antes da primeira escrita; a ordem das travas; nada de dividir a routing
+  key, tocar dado comercial ou bloquear por estado do canal).
+- `tests/unit/b3-2d2b2b3b-eventos-conta.test.ts` (78): argumentos exatos
+  (sem workspace, canal, ambiente, provedor, id do evento nem telefone do
+  escritório); eventos reais normalizados pelo adaptador YCloud (só no
+  teste) aceitos pelo contrato neutro; entrada inválida nunca chega ao
+  banco; contrato fechado de resultados; erros sanitizados; o módulo não
+  importa o adaptador, não divide a routing key e não registra log; o
+  consumidor, a rota do webhook e o chatbot não chamam o efeito.
+- `scripts/b3-2d2b2b3b-account-event-concurrency-check.sh`: seis cenários
+  com sessões Postgres reais, uma delas segurando a linha do canal
+  (`SELECT ... FOR UPDATE`) para que as execuções esperem juntas, em ordem
+  de chegada — ver §26.11.
+- `scripts/check-upgrade-b3-2d2b2b3b-eventos-conta.sh`: atualização a partir
+  da `20261030160000`; leituras da A7, linhas e contagens idênticas, canais
+  antigos sem referência nem datas, tabela de eventos vazia; a entrada de
+  conta gravada antes é recusada (`account_reference_unverified`) sem gravar
+  nada; um canal novo, criado com a referência, desconecta só ele; a guarda
+  continua.
+
+**Vermelho** (PR temporária #294, só os testes sobre a main
+`ff13405`): unitários, 76 dos 78 novos falharam; pgTAP 40, 61 de 64
+(função, tabela e colunas inexistentes); concorrência e atualização
+falharam por a coluna e a função não existirem. Depois vieram só ajustes
+dos próprios testes (`b21331f`), a correção dos tipos gerados do CI
+(`0ad3d5e`) e um teste a mais, por causa da mutação X03 (`72bf4cf`).
+**Verde:** CI completo na `72bf4cf` (run 41154398049): typecheck, lint, 2414 unitários
+em 114 arquivos, tipos gerados em dia, pgTAP inteiro (40 arquivos, 2020
+testes; o 40 com 65 de 65), isolamento, e2e (76), todas as concorrências
+(inclusive os nove cenários desta etapa) e todas as atualizações; Vercel
+verde.
+
+### 26.11 Concorrência real
+
+Cada cenário com sessões Postgres separadas; uma segura a linha do canal
+(ou do workspace) para as demais esperarem juntas.
+
+| # | Cenário | Resultado |
+|---|---|---|
+| 1 | o mesmo evento duas vezes | `applied` + `already_processed`; uma linha operacional, um ledger, uma auditoria |
+| 2 | duas exclusões simultâneas (entradas diferentes) | `applied` + `recorded`; `disconnected`, `send_enabled=false`; duas linhas operacionais e **uma** auditoria da transição |
+| 3 | evento antigo depois de um de estado mais novo | `applied` + `stale_event`; estado e datas não regridem; o antigo fica preservado |
+| 4a | pausa administrativa antes da exclusão | a exclusão vê `paused` e desconecta; as duas auditorias existem |
+| 4b | exclusão antes da pausa | a pausa vê `disconnected` e é recusada (`invalid_channel_state`); sem deadlock |
+| 5a | a lease vence na espera pela linha do **canal** | `claim_lost`; nenhum evento, ledger, auditoria ou mudança no canal; a entrada segue em `processing` com o mesmo claim |
+| 5b | a lease vence na espera pela linha do **workspace** | idem |
+| 6a | falha depois do ledger (ao gravar o evento) | nada sobrevive; sem a falha, a mesma entrada aplica |
+| 6b | falha depois do evento (ao desconectar o canal) | nada sobrevive; sem a falha, a mesma entrada aplica |
+
+Nos cenários 5a e 5b o script confirma que o efeito espera uma trava **de
+linha** (`wait_event_type = Lock`, `transactionid` ou `tuple`) bloqueado
+justamente pela sessão que a segura (`pg_blocking_pids`), que a lease vence
+enquanto ele ainda espera, e só então solta a linha. O efeito usado é um
+tipo só observado: sem a conferência tardia ele gravaria o evento
+(`recorded`).
+
+### 26.12 Mutações
+
+Cada mutação altera só a migration, numa execução própria, e é desfeita
+depois. Rodadas **localmente** (Postgres real, o pgTAP 40 e, para as de
+trava e lease, a concorrência) e em **PRs temporárias** com o CI completo
+(#295 a #318), todas fechadas sem merge.
+
+| Mutação | PR temporária | Pega por (CI) |
+|---|---|---|
+| M01 referência da conta não conferida | #295 | pgTAP 29–32, 50 |
+| M02 routing key não conferida | #296 | pgTAP 29–32 |
+| M03 conta deduzida da routing key (`split_part`) | #297 | pgTAP 29–31, 65; atualização |
+| M04 exclusão não desliga `send_enabled` | #298 | pgTAP 32, 33, 35, 40–42, 55, 57, 59; concorrência 1; atualização |
+| M05 evento que não é exclusão desconecta o canal | #299 | pgTAP 43–45 |
+| M06 canal `disabled` vira `disconnected` | #300 | pgTAP 37, 38, 40; concorrência 2 |
+| M07 evento antigo decide o estado (sem `stale_event`) | #301 | pgTAP 39–41; concorrência 3 |
+| M08 `last_event_at` regride (na RPC e na guarda) | #302 | pgTAP 16, 40, 41, 44; concorrência 3 |
+| M09 `provider_status_event_at` regride (sem `stale_event` e sem a guarda) | #303 | pgTAP 16, 39–41; concorrência 3 |
+| M10 status alterado sem auditoria | #304 | pgTAP 33, 35, 36, 40, 41, 48, 49, 51, 57; concorrência 1; atualização |
+| M11 auditoria com conta, routing key e `code` | #305 | pgTAP 48, 49 |
+| M12 tabela operacional guarda a routing key | #306 | pgTAP 4, 47; tipos gerados |
+| M13 FK da inbox confere só `inbox_id` | #307 | pgTAP 8, 11; tipos gerados |
+| M14 token do claim ignorado | #308 | pgTAP 19, 24, 26–28 |
+| M14b lease ignorada (as duas conferências) | #309 | pgTAP 20, 24, 27, 28, 63, 64; concorrência 5 |
+| M15 só a conferência tardia da lease removida (a inicial mantida) | #310 | pgTAP 63, 64; concorrência 5 |
+| M16 canal sem `FOR UPDATE` | #311 | pgTAP 64; concorrência 2 |
+| M17 efeito aplica no ambiente oposto | #312 | pgTAP 21, 59, 64 |
+| M18 divergência de destino deixa o ledger | #313 | pgTAP 29–32; atualização |
+| M19 função liberada para `authenticated` | #314 | pgTAP 3, 60 |
+| M20 tabela liberada para `service_role` (SELECT) | #315 | pgTAP 5, 6 |
+| X01 workspace sem a trava da chave | #316 | pgTAP 63, 64; concorrência 5 |
+| X02 tipo do evento não conferido com a inbox | #317 | pgTAP 26–28 |
+| X03 tipo e escopo sem o prefixo | #318 | pgTAP 28 |
+
+M14b e X01 a X03 são acréscimos às vinte pedidas. Outras seis (X04 a X09: referência mutável na guarda, `code` interpretado, resposta que devolve a conta, ledger com outro efeito, inbox não finalizada, evento só registrado que não avança `last_event_at`) foram rodadas só localmente, no Postgres real, e todas pegas pelo pgTAP 40 (14; 44; 50; 34, 52, 63; 34, 38, 51; 37, 38, 40, 43–45). **Nenhuma mutação sobreviveu.** A conferência tardia da lease e a trava do canal são provadas pelo pgTAP 63 e 64 e pela concorrência (5a, 5b e 2).
+
+### 26.13 Fora do escopo, decisões, riscos e divergências
+
+Fora desta PR: a ligação do consumidor (B3.2d-2b3), o reconciliador e o
+batimento do canal (B3.2e), configuração real da YCloud, criação real de
+canal (e a tela para isso), reconexão automática, alertas, retenção, C1,
+envio, mídia, interface, chatbot e migrations hospedadas.
+
+Decisões:
+- o ledger usa o efeito **`account`**, já existente no vocabulário (igual ao
+  `kind` do contrato neutro), em vez de um nome novo: nenhuma constraint do
+  ledger é alterada;
+- o telefone do escritório (`businessPhoneE164`) é validado no servidor e
+  **não vai ao banco**: o domínio não precisa dele, e ele nunca chega a uma
+  tabela, log ou auditoria;
+- o tipo informado só vale se for o gravado na inbox, e o prefixo do tipo
+  tem de ser o do escopo;
+- a lista de tipos é aberta para o registro (só os dois de exclusão
+  decidem o estado);
+- o canal é travado `FOR UPDATE` (não `FOR SHARE`): é a única forma de duas
+  exclusões, ou de uma pausa e uma exclusão, esperarem uma pela outra e a
+  segunda reler o estado final;
+- uma exclusão que chega com o canal **já desconectado** é só registrada e
+  **não** avança `provider_status_event_at` (ele marca o evento que
+  decidiu o estado).
+
+Riscos e divergências:
+- **canal sem `provider_account_ref`** (todo canal simulado e legado): todo
+  evento volta `account_reference_unverified`, nos **dois** escopos. A
+  especificação só nomeia o escopo da conta; estendi o mesmo resultado ao
+  escopo do número, porque a routing key sozinha não prova de qual conta o
+  evento vem;
+- **a referência é imutável, inclusive de nulo para um valor:** um canal
+  real tem de gravá-la na criação; o canal criado sem ela não pode ganhá-la
+  depois (o criador do canal real da YCloud deve registrá-la desde o
+  início);
+- **`occurredAt` é o relógio do provedor:** um horário muito à frente
+  tornaria atrasadas as exclusões seguintes (viram `stale_event`). O
+  evento chega autenticado pela assinatura e o contrato não define teto;
+  um limite fica como decisão futura;
+- **os testes 63 a 65 do pgTAP 40 leem o texto do corpo da função** (sem
+  comentários e com o espaço normalizado): uma reescrita do corpo exige
+  atualizá-los junto;
+- **a B3.2d-2b3 precisa decidir** o que fazer com `routing_mismatch` e
+  `account_reference_*` (falhar ou liberar) e mapear `stale_event`,
+  `recorded` e `applied` como entrada finalizada.
