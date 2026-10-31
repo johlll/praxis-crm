@@ -288,9 +288,6 @@ begin
   -- relógio de agora, antes da primeira escrita; o processed_at e o
   -- status_changed_at usam este horário.
   v_now := clock_timestamp();
-  if v_row.lease_until is null or v_row.lease_until <= v_now then
-    return jsonb_build_object('outcome', 'claim_lost');
-  end if;
 
   begin
     select r.outcome, r.ledger_id into v_reserve
