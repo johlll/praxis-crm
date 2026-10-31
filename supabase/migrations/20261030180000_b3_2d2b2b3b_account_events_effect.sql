@@ -349,7 +349,8 @@ begin
         v_row.workspace_id, null, 'whatsapp.channel.disconnected', 'whatsapp_channel', v_channel.id,
         jsonb_build_object('source', 'whatsapp_webhook', 'environment', v_row.environment, 'provider', v_row.provider,
                            'scope', p_scope, 'provider_type', p_provider_type, 'from_status', v_channel.status,
-                           'to_status', 'disconnected', 'send_enabled_before', v_channel.send_enabled)
+                           'to_status', 'disconnected', 'send_enabled_before', v_channel.send_enabled,
+                           'provider_account_ref', p_provider_account_ref, 'routing_key', p_routing_key, 'code', p_code)
       );
     elsif v_channel.last_event_at is null or p_occurred_at > v_channel.last_event_at then
       update public.whatsapp_channels set last_event_at = p_occurred_at where id = v_channel.id;
