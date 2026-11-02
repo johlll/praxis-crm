@@ -372,9 +372,11 @@ export async function processWhatsAppInboxEntry(params: { inboxId: string }): Pr
     } catch {
       throw new WhatsAppConsumerRetryableError("effect_unavailable");
     }
-    if (applied.action === "retry") throw new WhatsAppConsumerRetryableError("effect_unavailable");
     // Concluído pelo banco ou sem posse: nada a finalizar.
-    if (applied.action === "done") return { outcome: applied.outcome, code: applied.code };
+    if (applied?.action === "done") return { outcome: applied.outcome, code: applied.code };
+    // Só release e fail deixam o claim com o consumidor; qualquer outra coisa
+    // (nova tentativa, disposição fora do contrato, nada) não finaliza nada.
+    if (applied?.action !== "release" && applied?.action !== "fail") throw new WhatsAppConsumerRetryableError("effect_unavailable");
     finalDecision = applied;
   } else {
     finalDecision = decision;
