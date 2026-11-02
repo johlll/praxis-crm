@@ -382,7 +382,7 @@ begin
       where id = v_channel.id;
     elsif v_result = 'recorded' and (v_channel.last_event_at is null or p_occurred_at > v_channel.last_event_at) then
       -- Só observado (ou exclusão em canal desativado): apenas last_event_at.
-      update public.whatsapp_channels set last_event_at = p_occurred_at where id = v_channel.id;
+      update public.whatsapp_channels set last_event_at = p_occurred_at, provider_status_event_at = greatest(provider_status_event_at, p_occurred_at) where id = v_channel.id;
     end if;
 
     update public.whatsapp_webhook_inbox
