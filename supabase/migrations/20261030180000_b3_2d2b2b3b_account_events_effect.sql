@@ -25,7 +25,10 @@
 --      protegido (a gravação referencia a chave dele);
 --   3. a lease é conferida DE NOVO com o relógio de agora, logo depois da
 --      última trava e antes da primeira escrita (as travas de linha podem
---      esperar quem não passa por nenhuma outra trava, e a lease vencer);
+--      esperar quem não passa por nenhuma outra trava, e a lease vencer). É
+--      o mesmo relógio (clock_timestamp, o do BANCO) que recusa um horário do
+--      provedor mais de 5 minutos à frente dele: invalid_account_event, antes
+--      de qualquer escrita. O horário recebido nunca é corrigido nem truncado;
 --   4. reserva do efeito `account` no ledger (o mesmo nome do `kind` do
 --      contrato neutro, já previsto no vocabulário do ledger);
 --   5. destino: o escopo do número exige a routing key IGUAL à do canal; os
@@ -38,9 +41,14 @@
 --      provider_status_event_at, status_changed_at (relógio do CRM) e uma
 --      auditoria sanitizada (ator nulo, origem whatsapp_webhook). Evento
 --      igual ou anterior a provider_status_event_at é stale_event: registrado,
---      sem mudar o canal nem auditar. disconnected e disabled só registram
---      (disabled nunca é reativado nem rebaixado). Os demais tipos só são
---      registrados, e o `code` é opaco: nada o interpreta;
+--      sem mudar relógio, estado nem auditoria. A exclusão mais NOVA num canal
+--      que já estava disconnected só é registrada, mas avança
+--      provider_status_event_at (e last_event_at): ele é o último evento de
+--      ESTADO do provedor, mesmo quando só confirma o que já era; sem nova
+--      transição, auditoria nem mudança de status_changed_at. disabled só
+--      registra (nunca é reativado nem rebaixado). Os demais tipos só são
+--      registrados, nunca avançam provider_status_event_at, e o `code` é
+--      opaco: nada o interpreta;
 --   8. inbox processed na mesma transação.
 -- Qualquer falha desfaz tudo. Workspace, canal, ambiente, provedor e id do
 -- evento vêm da linha da inbox, nunca do chamador.
@@ -75,7 +83,7 @@ comment on column public.whatsapp_channels.provider_account_ref is
 comment on column public.whatsapp_channels.last_event_at is
   'Maior occurredAt de qualquer evento operacional da conta ou do número aceito para o canal (B3.2d-2b2b3b). Só avança.';
 comment on column public.whatsapp_channels.provider_status_event_at is
-  'Horário, no relógio do PROVEDOR, do último evento que efetivamente decidiu o estado do canal (B3.2d-2b2b3b). Só avança. Não é status_changed_at, que é o relógio do CRM.';
+  'Horário, no relógio do PROVEDOR, do último evento de ESTADO do provedor para o canal (B3.2d-2b2b3b): a exclusão que o desconectou ou a mais nova que só confirmou que ele já estava desconectado. Só avança. Não é status_changed_at, que é o relógio do CRM.';
 
 -- A identidade do canal (workspace, ambiente, provedor, roteamento,
 -- localizador e agora a referência da conta) é imutável depois de criada. As
@@ -178,10 +186,11 @@ create policy whatsapp_channel_events_delete_deny on public.whatsapp_channel_eve
 --                                  disconnected, sem envio; evento gravado;
 --   recorded                     — evento gravado sem mudar o status (os
 --                                  tipos só observados; exclusão em canal já
---                                  desconectado ou desativado);
+--                                  desconectado, que avança
+--                                  provider_status_event_at, ou desativado);
 --   stale_event                  — exclusão igual ou anterior a
 --                                  provider_status_event_at: gravada, sem
---                                  mudar o canal nem auditar;
+--                                  mudar relógio, estado nem auditoria;
 --   duplicate                    — o mesmo efeito já estava no ledger para
 --                                  esta entrada: inbox processed;
 --   routing_mismatch             — escopo do número com routing key diferente
@@ -197,7 +206,8 @@ create policy whatsapp_channel_events_delete_deny on public.whatsapp_channel_eve
 --                                  durante a espera por uma trava de linha).
 -- Nas três divergências e em effect_conflict nada fica gravado (nenhum
 -- ledger, evento ou mudança) e o claim continua: quem chama decide fail ou
--- release (B3.2d-2b3). Entrada malformada: invalid_account_event.
+-- release (B3.2d-2b3). Entrada malformada, ou com horário do provedor mais de
+-- 5 minutos à frente do relógio do banco: invalid_account_event.
 create function public.whatsapp_effect_account_event(
   p_inbox_id uuid,
   p_claim_token uuid,
@@ -291,6 +301,15 @@ begin
   if v_row.lease_until is null or v_row.lease_until <= v_now then
     return jsonb_build_object('outcome', 'claim_lost');
   end if;
+  -- Horário do provedor mais de 5 minutos à frente do relógio do BANCO (o
+  -- mesmo v_now, nunca o da aplicação): falha fechada, antes de qualquer
+  -- escrita. Exatamente no limite é aceito. Sem isso, um horário absurdo
+  -- avançaria last_event_at e provider_status_event_at (que só avançam) e
+  -- faria os eventos legítimos seguintes parecerem antigos. O horário recebido
+  -- nunca é corrigido nem truncado, e a lease vencida continua claim_lost.
+  if p_occurred_at > v_now + interval '5 minutes' then
+    raise exception 'invalid_account_event';
+  end if;
 
   begin
     select r.outcome, r.ledger_id into v_reserve
@@ -335,6 +354,7 @@ begin
       p_provider_type, p_scope, p_code, p_occurred_at, v_result
     );
 
+    -- stale_event não escreve no canal: nem relógio, nem estado.
     if v_result = 'applied' then
       update public.whatsapp_channels
       set status = 'disconnected',
@@ -351,7 +371,17 @@ begin
                            'scope', p_scope, 'provider_type', p_provider_type, 'from_status', v_channel.status,
                            'to_status', 'disconnected', 'send_enabled_before', v_channel.send_enabled)
       );
-    elsif v_channel.last_event_at is null or p_occurred_at > v_channel.last_event_at then
+    elsif v_result = 'recorded' and v_deletes and v_channel.status = 'disconnected' then
+      -- Exclusão mais nova (não é stale) num canal que já estava disconnected:
+      -- confirma o estado e é o último evento de estado do provedor. Avança
+      -- provider_status_event_at e last_event_at; o status, o envio e o
+      -- status_changed_at (relógio do CRM) ficam, e não há nova auditoria.
+      update public.whatsapp_channels
+      set provider_status_event_at = p_occurred_at,
+          last_event_at = greatest(last_event_at, p_occurred_at)
+      where id = v_channel.id;
+    elsif v_result = 'recorded' and (v_channel.last_event_at is null or p_occurred_at > v_channel.last_event_at) then
+      -- Só observado (ou exclusão em canal desativado): apenas last_event_at.
       update public.whatsapp_channels set last_event_at = p_occurred_at where id = v_channel.id;
     end if;
 

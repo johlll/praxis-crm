@@ -24,6 +24,11 @@ import type { NormalizedAccountEvent } from "@/server/whatsapp/provider/contract
  * Só dois tipos mudam o canal (a exclusão do número e a da conta); os demais
  * apenas são registrados, e o `code` do provedor é um valor opaco.
  *
+ * O horário do provedor (`occurredAt`) vai ao banco exatamente como veio, sem
+ * correção nem truncamento, e este módulo não consulta o relógio da
+ * aplicação: quem recusa um horário muito à frente é a RPC, pelo relógio do
+ * BANCO (`invalid_account_event`, que sai daqui só como código fixo).
+ *
  * Ainda não é chamado pelo consumidor da B3.2d-2a (B3.2d-2b3). Nenhum log;
  * erros são códigos fixos.
  */
