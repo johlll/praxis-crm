@@ -1542,7 +1542,7 @@ ou número.
 | B3.2d-2b2b1 | **Implementada (§23).** Mensagem de saída **observada**: registra no CRM uma mensagem já enviada pelo WhatsApp Business App (eco `smb.message.echoes`/`smb.message.created`). Não envia mensagem, não chama a YCloud e não altera o chatbot | B3.2d-2b2a |
 | B3.2d-2b2b2 | **Implementada (§24, PR #235).** Status e custo de uma mensagem de saída já gravada (`message.status`): localização pelo id do provedor e pelo wamid, nunca pelo `externalId` sozinho; `message_not_found` recuperável; status pela regra compartilhada, sem regressão; código de erro sanitizado; custo estimado × final (o final nunca muda; outro final é `cost_conflict`; só o final é cobrado); `externalId` opaco; destinatário conferido; nada criado. Não liga o consumidor, não envia mensagem e não altera o chatbot | B3.2d-2b2b1 |
 | B3.2d-2b2b3a | **Concluída e mesclada na PR #262 (merge `ff13405`; §25).** Identidade alterada e troca de número (`contact.identity_changed`): identidade anterior só lida, nunca criada (`identity_not_found` recuperável); o telefone novo substitui o antigo na MESMA identidade; telefone ou BSUID de outra identidade, ou outro BSUID na mesma → `identity_conflict`; sem auto-merge; a conversa acompanha o número, com os vínculos comerciais preservados e marcados para revisão; `identity` sem a nova → `review_required`; contato e telefones do contato intactos. Não liga o consumidor | B3.2d-2b2b2 |
-| B3.2d-2b2b3b | **Implementada na PR #293 (§26).** Eventos operacionais da conta e do número (`account`): `provider_account_ref` neutra e imutável no canal, e as datas `last_event_at` e `provider_status_event_at`, que só avançam; `whatsapp_channel_events` deny-all, sem telefone, routing key, conta ou payload; **só** `phone_number.deleted` e `business_account.deleted` desconectam (`active`/`paused` → `disconnected`, sem envio, auditoria sanitizada); evento igual ou anterior ao último de estado é `stale_event`; os demais tipos só são registrados (o `code` é opaco); `disabled` nunca é reativado e não existe reativação automática; canal sem referência confiável → `account_reference_unverified`. Não liga o consumidor nem a YCloud real | B3.2d-2b2b3a |
+| B3.2d-2b2b3b | **Implementada na PR #293 (§26).** Eventos operacionais da conta e do número (`account`): `provider_account_ref` neutra e imutável no canal, e as datas `last_event_at` e `provider_status_event_at`, que só avançam; `whatsapp_channel_events` deny-all, sem telefone, routing key, conta ou payload; **só** `phone_number.deleted` e `business_account.deleted` desconectam (`active`/`paused` → `disconnected`, sem envio, auditoria sanitizada); evento igual ou anterior ao último de estado é `stale_event` (e não muda o canal); a exclusão mais nova num canal já `disconnected` só é registrada, mas avança `provider_status_event_at` (o último evento de estado do provedor); horário do provedor mais de 5 minutos à frente do relógio do banco é recusado (`invalid_account_event`); os demais tipos só são registrados (o `code` é opaco); `disabled` nunca é reativado e não existe reativação automática; canal sem referência confiável → `account_reference_unverified`. Não liga o consumidor nem a YCloud real | B3.2d-2b2b3a |
 | B3.2d-2b3 | Ligação do consumidor da B3.2d-2a às RPCs da B3.2d-2b2: o release `domain_effect_not_implemented` dá lugar ao efeito; a decisão por tipo e estado do canal continua a do §20.4; os resultados `channel_*` dos efeitos viram release com o mesmo código | B3.2d-2b2b3b |
 | B3.2e | Reconciliador: republica as entradas `pending` e as `processing` com lease vencida; batimento do canal (`last_event_at`). Portão obrigatório antes de webhook real (§18.3) | B3.2d-2b3 |
 | Fora do Praxis | Contrato do §15.6 no chatbot (rota, tabela de pedidos, testes), em branch/PR própria do chatbot, desligado e sem deploy | Decisão 15; implantação real com nova autorização; necessário antes da B3.3 no número do chatbot |
@@ -5416,14 +5416,37 @@ liga a YCloud real.
 ### 26.3 Datas operacionais do canal
 
 - `last_event_at`: o maior `occurredAt` de qualquer evento operacional
-  **aceito** (registrado, inclusive `stale_event`).
+  **aceito** e registrado (um `stale_event` fica gravado na tabela de
+  eventos, mas não escreve nada no canal).
 - `provider_status_event_at`: o horário, no relógio do **provedor**, do
-  último evento que efetivamente **decidiu** o estado do canal (a exclusão
-  que o desconectou).
+  **último evento de estado do provedor** para o canal: a exclusão que o
+  desconectou **ou** a exclusão mais nova que apenas confirmou que ele já
+  estava `disconnected` (§26.7). Os tipos só observados **nunca** o avançam,
+  um `stale_event` não o muda e um canal `disabled` não o recebe.
 - **Nenhuma das duas regride nem volta a nulo:** a RPC só as avança, e a
   guarda do canal barra (`channel_clock_regression`) até a escrita direta.
 - `status_changed_at` continua sendo o relógio do **CRM**; não ordena evento
-  do provedor.
+  do provedor, e só muda quando o status muda.
+
+**Por que a exclusão mais nova também avança `provider_status_event_at`.**
+Com uma exclusão em T0 (`applied`) e outra, mais nova, em T1 (`recorded`), o
+último evento de estado do provedor é o de T1. Se ele ficasse em T0, uma
+reconexão futura com `occurredAt` entre T0 e T1 pareceria mais nova que
+`provider_status_event_at` e poderia reativar o canal apesar de existir uma
+exclusão posterior. Agora esse evento intermediário é antigo (`stale_event`).
+
+**Horário do provedor no futuro.** `last_event_at` e
+`provider_status_event_at` só avançam; um `occurredAt` absurdo os levaria
+longe demais e faria os eventos legítimos seguintes parecerem antigos por
+muito tempo. Por isso, um `occurredAt` **mais de 5 minutos à frente do
+relógio do banco** (`clock_timestamp()`, o mesmo lido para a conferência
+tardia da lease; nunca o relógio da aplicação) é recusado com
+`invalid_account_event`, antes de qualquer escrita. A comparação é estrita
+(`occurredAt > agora + 5 minutos`): exatamente no limite é aceito. Eventos
+antigos continuam aceitos e tratados como sempre (`recorded` ou
+`stale_event`). O horário recebido nunca é corrigido nem truncado. O
+servidor só valida que é uma `Date` válida e repassa o código do banco; a
+tolerância é decidida **só** pelo banco.
 
 ### 26.4 `whatsapp_channel_events` (modelo final)
 
@@ -5478,7 +5501,10 @@ chamador; a resposta é só `{"outcome": ...}`.
    chave dele;
 5. **a lease é conferida de novo**, com o relógio de agora, logo depois da
    última trava e antes da primeira escrita; o `processed_at` e o
-   `status_changed_at` usam este horário (§25.9: a mesma lição da B3.2d-2b2b3a);
+   `status_changed_at` usam este horário (§25.9: a mesma lição da B3.2d-2b2b3a).
+   Com o **mesmo** relógio (`v_now`) e logo em seguida, um `occurredAt` mais
+   de 5 minutos à frente é recusado (`invalid_account_event`; §26.3): a lease
+   vencida continua `claim_lost`, porque vem primeiro;
 6. reserva do ledger com o efeito estável **`account`**;
 7. validação do destino (§26.6);
 8. gravação do evento operacional e avanço de `last_event_at`;
@@ -5515,30 +5541,38 @@ avaliados:
 
 | # | Condição | Resultado | Canal |
 |---|---|---|---|
-| 1 | `provider_status_event_at` existe e `occurredAt` ≤ ele | `stale_event` | inalterado, sem auditoria |
-| 2 | canal `active` ou `paused` | `applied` | `disconnected`, `send_enabled = false`, `provider_status_event_at = occurredAt`, `status_changed_at` = horário do CRM, auditoria |
-| 3 | canal `disconnected` ou `disabled` | `recorded` | inalterado (`disabled` nunca é reativado nem rebaixado), sem auditoria |
+| 1 | `provider_status_event_at` existe e `occurredAt` ≤ ele | `stale_event` | **inalterado**: nenhum relógio, nem o estado; sem auditoria |
+| 2 | canal `active` ou `paused` | `applied` | `disconnected`, `send_enabled = false`, `provider_status_event_at = occurredAt`, `last_event_at` avança, `status_changed_at` = horário do CRM, auditoria |
+| 3 | canal já `disconnected` | `recorded` | segue `disconnected` e sem envio; `provider_status_event_at` e `last_event_at` passam a `occurredAt` (o último evento de estado do provedor); `status_changed_at` não muda; **sem** nova auditoria |
+| 4 | canal `disabled` | `recorded` | inalterado (nunca reativado nem rebaixado): `provider_status_event_at`, status, envio e `status_changed_at` ficam; só `last_event_at` avança; sem auditoria |
 
-Todo evento aceito grava a linha em `whatsapp_channel_events` e avança
-`last_event_at` (sem regredir). Os tipos só observados dão sempre
-`recorded`, qualquer que seja o estado do canal e o `code`. Um evento
-antigo nunca regride o estado nem as datas, mesmo que o canal tenha sido
-religado depois por outro meio (reconexão futura): o antigo é `stale_event`
-e um mais novo volta a desconectar, com nova transição auditada.
+Todo evento aceito grava a linha em `whatsapp_channel_events`; os que não são
+`stale_event` avançam `last_event_at` (sem regredir). Os tipos só observados
+dão sempre `recorded`, qualquer que seja o estado do canal e o `code`, e
+**nunca** mexem em `provider_status_event_at`. Um evento antigo nunca
+regride o estado nem as datas, mesmo que o canal tenha sido religado depois
+por outro meio (reconexão futura): o antigo é `stale_event` e um mais novo
+volta a desconectar, com nova transição auditada. Uma exclusão mais nova num
+canal já desconectado **não** cria nova auditoria nem muda
+`status_changed_at`: o estado não mudou.
 
 ### 26.8 Resultados (contrato fechado)
 
 | Resultado | Quando |
 |---|---|
 | `applied` | exclusão válida: o canal passou para `disconnected` |
-| `recorded` | evento gravado sem mudar o status |
-| `stale_event` | exclusão antiga demais para decidir o estado: gravada |
+| `recorded` | evento gravado sem mudar o status (inclui a exclusão mais nova em canal já `disconnected`, que avança `provider_status_event_at`, e a exclusão em canal `disabled`) |
+| `stale_event` | exclusão antiga demais para decidir o estado: gravada; o canal não muda |
 | `duplicate` | o efeito já estava no ledger para esta entrada: inbox `processed` |
 | `routing_mismatch`, `account_reference_mismatch`, `account_reference_unverified` | §26.6; nada gravado; claim continua |
 | `effect_conflict` | a chave estável já tem outro efeito ou entrada; nada gravado |
 | `already_processed`, `terminal_failed`, `claim_lost`, `not_found` | como na finalização da B3.2d-1; nada muda |
 
 Não há resultado `channel_*`: o estado do canal não bloqueia este efeito.
+Entrada malformada, tipo diferente do gravado na entrada ou horário do
+provedor mais de 5 minutos à frente do relógio do banco não são resultados:
+são o **erro** `invalid_account_event` (sem valor na mensagem), que desfaz a
+chamada e deixa a entrada em `processing` com o mesmo claim.
 O módulo `src/server/whatsapp/effects/account-event.ts` conhece só o
 contrato neutro (`NormalizedAccountEvent`), valida o evento (e o telefone
 do escritório, que não vai ao banco), confere que o evento é o da entrada do
@@ -5551,13 +5585,14 @@ Só quando o canal realmente muda: `whatsapp.channel.disconnected`, recurso
 `whatsapp_channel`, `actor_user_id` nulo, metadados `source =
 whatsapp_webhook`, `environment`, `provider`, `scope`, `provider_type`,
 `from_status`, `to_status` e `send_enabled_before`. Nunca a referência da
-conta, a routing key, telefone, `code` ou cifra. Reentrega, `recorded`,
-`stale_event` e `duplicate` não auditam.
+conta, a routing key, telefone, `code` ou cifra. Reentrega, `recorded`
+(inclusive a exclusão mais nova em canal já desconectado), `stale_event` e
+`duplicate` não auditam: não há transição.
 
 ### 26.10 Testes
 
 - `supabase/tests/database/40_b3_2d2b2b3b_eventos_conta.test.sql` (pgTAP,
-  65): assinatura, SECURITY DEFINER e EXECUTE só para `service_role`; a
+  79): assinatura, SECURITY DEFINER e EXECUTE só para `service_role`; a
   tabela de eventos (colunas exatas, deny-all, quatro políticas,
   `service_role` sem SELECT direto, FKs compostas, unicidade, CHECKs de
   tipo, escopo, resultado e `code`, remoção da inbox e do canal impedida);
@@ -5573,19 +5608,42 @@ conta, a routing key, telefone, `code` ou cifra. Reentrega, `recorded`,
   rollback (falha ao gravar o evento e ao desconectar o canal); nada
   comercial; ambiente oposto; `authenticated` e `anon` sem EXECUTE; A7
   intacta; o corpo da função (a lease conferida logo depois da última trava
-  e antes da primeira escrita; a ordem das travas; nada de dividir a routing
-  key, tocar dado comercial ou bloquear por estado do canal).
-- `tests/unit/b3-2d2b2b3b-eventos-conta.test.ts` (78): argumentos exatos
+  e antes da primeira escrita, com a tolerância de horário como única coisa
+  entre as duas; a comparação estrita da tolerância; a ordem das travas; nada
+  de dividir a routing key, tocar dado comercial ou bloquear por estado do
+  canal).
+  **Revisão da PR (14 testes novos e 3 ajustados):** a exclusão mais nova
+  em canal já `disconnected` (avança `provider_status_event_at` e
+  `last_event_at`, sem nova auditoria e sem mudar `status_changed_at`); o
+  evento entre a primeira e a última exclusão (agora `stale_event`);
+  `stale_event` sem mexer em nenhum relógio (a linha inteira do canal fica
+  idêntica, mesmo com `last_event_at` atrás); canal `disabled` (só
+  `last_event_at` avança); evento que não é exclusão nunca avança
+  `provider_status_event_at` (canal desconectado, ativo e pausado); horário do
+  provedor 6 minutos, 1 dia e 100 anos à frente recusado
+  (`invalid_account_event`), sem nenhuma escrita e com as entradas intactas
+  (hash da linha inteira) e depois aplicadas com um horário válido; 4 minutos
+  à frente aceito e gravado como veio; horário antigo aceito; a lease vencida
+  continua `claim_lost` mesmo com horário no futuro. Os horários dos testes
+  saem de `clock_timestamp()` com margens de 4 e 6 minutos: nenhum depende de
+  acertar o limite exato, conferido só pelo texto da comparação.
+- `tests/unit/b3-2d2b2b3b-eventos-conta.test.ts` (82): argumentos exatos
   (sem workspace, canal, ambiente, provedor, id do evento nem telefone do
   escritório); eventos reais normalizados pelo adaptador YCloud (só no
   teste) aceitos pelo contrato neutro; entrada inválida nunca chega ao
   banco; contrato fechado de resultados; erros sanitizados; o módulo não
   importa o adaptador, não divide a routing key e não registra log; o
-  consumidor, a rota do webhook e o chatbot não chamam o efeito.
-- `scripts/b3-2d2b2b3b-account-event-concurrency-check.sh`: seis cenários
-  com sessões Postgres reais, uma delas segurando a linha do canal
-  (`SELECT ... FOR UPDATE`) para que as execuções esperem juntas, em ordem
-  de chegada — ver §26.11.
+  consumidor, a rota do webhook e o chatbot não chamam o efeito. **Revisão da
+  PR:** qualquer `Date` válida (antiga, de agora ou de 2099) vai ao banco
+  exatamente como veio; o `invalid_account_event` do banco sai só como código,
+  sem horário, conta, routing key, código ou token no erro nem no log; o
+  módulo não consulta o relógio da aplicação nem define tolerância própria; a
+  migration recusa o horário mais de 5 minutos à frente do relógio do banco
+  logo depois da conferência tardia da lease.
+- `scripts/b3-2d2b2b3b-account-event-concurrency-check.sh`: sete cenários
+  (doze verificações) com sessões Postgres reais, uma delas segurando a linha
+  do canal (`SELECT ... FOR UPDATE`) para que as execuções esperem juntas, em
+  ordem de chegada — ver §26.11.
 - `scripts/check-upgrade-b3-2d2b2b3b-eventos-conta.sh`: atualização a partir
   da `20261030160000`; leituras da A7, linhas e contagens idênticas, canais
   antigos sem referência nem datas, tabela de eventos vazia; a entrada de
@@ -5593,17 +5651,35 @@ conta, a routing key, telefone, `code` ou cifra. Reentrega, `recorded`,
   nada; um canal novo, criado com a referência, desconecta só ele; a guarda
   continua.
 
-**Vermelho** (PR temporária #294, só os testes sobre a main
+**Primeira rodada — vermelho** (PR temporária #294, só os testes sobre a main
 `ff13405`): unitários, 76 dos 78 novos falharam; pgTAP 40, 61 de 64
 (função, tabela e colunas inexistentes); concorrência e atualização
 falharam por a coluna e a função não existirem. Depois vieram só ajustes
 dos próprios testes (`b21331f`), a correção dos tipos gerados do CI
 (`0ad3d5e`) e um teste a mais, por causa da mutação X03 (`72bf4cf`).
-**Verde:** CI completo na `72bf4cf` (run 41154398049): typecheck, lint, 2414 unitários
-em 114 arquivos, tipos gerados em dia, pgTAP inteiro (40 arquivos, 2020
-testes; o 40 com 65 de 65), isolamento, e2e (76), todas as concorrências
-(inclusive os nove cenários desta etapa) e todas as atualizações; Vercel
-verde.
+**Primeira rodada — verde:** CI completo na `72bf4cf` (run 41154398049):
+typecheck, lint, 2414 unitários em 114 arquivos, tipos gerados em dia, pgTAP
+inteiro (40 arquivos, 2020 testes; o 40 com 65 de 65), isolamento, e2e (76),
+todas as concorrências (inclusive os nove cenários desta etapa) e todas as
+atualizações; Vercel verde.
+
+**Revisão da PR (2ª rodada) — vermelho** (PR temporária #319, os testes novos
+sobre a migration da primeira rodada, `089eaf2`): unitário, 1 falha em 2418
+(a migration sem a tolerância); pgTAP 40, **11 de 79** falharam (37, 40, 43,
+44, 46, 69 a 72, 76 e 77); concorrência, o cenário 2 falhou
+(`provider_status_event_at` ficou em T0, as 12:00, e não em T1); atualização e
+tipos gerados sem falha. Os testes novos que já passavam (45, 47, 48 e 73 a
+75) guardam o que a correção não pode quebrar: `stale_event` sem mudar o
+canal, `disabled` intacto, evento que não é exclusão sem tocar
+`provider_status_event_at`, 4 minutos à frente aceito, horário antigo aceito
+e a lease à frente do horário.
+Commits: testes `f0d0b59`, correção `8be77a0` (na própria migration, sem
+migration corretiva), documentação no commit seguinte.
+**Verde:** CI completo na `8be77a0` (run 41504870082): typecheck, lint,
+2418 unitários em 114 arquivos, tipos gerados em dia, pgTAP
+inteiro (40 arquivos, 2034 testes; o 40 com 79 de 79), isolamento,
+e2e (76 passaram), todas as concorrências (inclusive as doze verificações desta
+etapa) e todas as atualizações; Vercel verde.
 
 ### 26.11 Concorrência real
 
@@ -5613,57 +5689,99 @@ Cada cenário com sessões Postgres separadas; uma segura a linha do canal
 | # | Cenário | Resultado |
 |---|---|---|
 | 1 | o mesmo evento duas vezes | `applied` + `already_processed`; uma linha operacional, um ledger, uma auditoria |
-| 2 | duas exclusões simultâneas (entradas diferentes) | `applied` + `recorded`; `disconnected`, `send_enabled=false`; duas linhas operacionais e **uma** auditoria da transição |
+| 2 | duas exclusões simultâneas (entradas diferentes, T0 e depois T1) | `applied` (T0) + `recorded` (T1); `disconnected`, `send_enabled=false`; `provider_status_event_at` e `last_event_at` terminam em **T1**; duas linhas operacionais e **uma** auditoria da transição |
 | 3 | evento antigo depois de um de estado mais novo | `applied` + `stale_event`; estado e datas não regridem; o antigo fica preservado |
 | 4a | pausa administrativa antes da exclusão | a exclusão vê `paused` e desconecta; as duas auditorias existem |
 | 4b | exclusão antes da pausa | a pausa vê `disconnected` e é recusada (`invalid_channel_state`); sem deadlock |
 | 5a | a lease vence na espera pela linha do **canal** | `claim_lost`; nenhum evento, ledger, auditoria ou mudança no canal; a entrada segue em `processing` com o mesmo claim |
 | 5b | a lease vence na espera pela linha do **workspace** | idem |
+| 5c | a lease vence na espera pela linha do canal, com o horário do evento mais de 5 minutos no futuro | `claim_lost` (e não `invalid_account_event`: a lease vem antes do horário); nada muda |
 | 6a | falha depois do ledger (ao gravar o evento) | nada sobrevive; sem a falha, a mesma entrada aplica |
 | 6b | falha depois do evento (ao desconectar o canal) | nada sobrevive; sem a falha, a mesma entrada aplica |
+| 7a | horário do provedor 6 minutos à frente do relógio do banco (a exclusão e um evento só observado), em transações reais | `invalid_account_event`; canal (linha inteira), ledger, eventos, auditoria e entradas exatamente como estavam, com o mesmo claim |
+| 7b | 4 minutos à frente (dentro da tolerância) e as mesmas entradas recusadas antes | `recorded` gravado como veio; a exclusão aplica; nada ficou preso |
 
-Nos cenários 5a e 5b o script confirma que o efeito espera uma trava **de
+Nos cenários 5a, 5b e 5c o script confirma que o efeito espera uma trava **de
 linha** (`wait_event_type = Lock`, `transactionid` ou `tuple`) bloqueado
 justamente pela sessão que a segura (`pg_blocking_pids`), que a lease vence
 enquanto ele ainda espera, e só então solta a linha. O efeito usado é um
 tipo só observado: sem a conferência tardia ele gravaria o evento
-(`recorded`).
+(`recorded`). No 5c o horário do evento está 1 dia à frente: se a tolerância
+fosse conferida **antes** da lease (mutação X10), o resultado seria
+`invalid_account_event` em vez de `claim_lost`. O cenário 7 usa uma instrução
+por conexão (transações reais, sem savepoint de teste): a recusa não deixa
+nada e as mesmas entradas aplicam depois.
 
 ### 26.12 Mutações
 
-Cada mutação altera só a migration, numa execução própria, e é desfeita
-depois. Rodadas **localmente** (Postgres real, o pgTAP 40 e, para as de
-trava e lease, a concorrência) e em **PRs temporárias** com o CI completo
-(#295 a #318), todas fechadas sem merge.
+Cada mutação altera só a migration, numa execução própria: é uma **cópia**
+aplicada num banco descartável ou numa branch temporária, e o arquivo da PR
+nunca é alterado. Duas rodadas:
 
-| Mutação | PR temporária | Pega por (CI) |
+- **1ª rodada** (PRs temporárias #295 a #318, CI completo sobre a `72bf4cf`):
+  as vinte pedidas, mais M14b e X01 a X03; X04 a X09 só localmente. Nenhuma
+  sobreviveu.
+- **Revisão da PR (2ª rodada):** as 41 foram rodadas **de novo**, localmente
+  (Postgres real), contra a migration e os testes atuais — o pgTAP 40 inteiro
+  e, para M07, M14b, M15, M16, M25, M26, X01 e X10, também a concorrência —,
+  porque o trecho do estado do canal e o da lease mudaram. M25, M26, M27
+  (pedidas na revisão) e X10 também rodaram no CI completo (PRs temporárias
+  #320 a #323, fechadas sem merge): o pgTAP 40 pegou no CI exatamente os mesmos
+  testes que no Postgres local, e o CI acrescentou a concorrência 7b para M27 e
+  o teste unitário estático para M26 e X10. M25 a M27 e X10 a X17 são novas.
+  **Nenhuma sobreviveu.**
+
+| Mutação | PR temporária | Pega por (pgTAP 40 atual, concorrência, unitário) |
 |---|---|---|
-| M01 referência da conta não conferida | #295 | pgTAP 29–32, 50 |
-| M02 routing key não conferida | #296 | pgTAP 29–32 |
-| M03 conta deduzida da routing key (`split_part`) | #297 | pgTAP 29–31, 65; atualização |
-| M04 exclusão não desliga `send_enabled` | #298 | pgTAP 32, 33, 35, 40–42, 55, 57, 59; concorrência 1; atualização |
-| M05 evento que não é exclusão desconecta o canal | #299 | pgTAP 43–45 |
-| M06 canal `disabled` vira `disconnected` | #300 | pgTAP 37, 38, 40; concorrência 2 |
-| M07 evento antigo decide o estado (sem `stale_event`) | #301 | pgTAP 39–41; concorrência 3 |
-| M08 `last_event_at` regride (na RPC e na guarda) | #302 | pgTAP 16, 40, 41, 44; concorrência 3 |
-| M09 `provider_status_event_at` regride (sem `stale_event` e sem a guarda) | #303 | pgTAP 16, 39–41; concorrência 3 |
-| M10 status alterado sem auditoria | #304 | pgTAP 33, 35, 36, 40, 41, 48, 49, 51, 57; concorrência 1; atualização |
-| M11 auditoria com conta, routing key e `code` | #305 | pgTAP 48, 49 |
-| M12 tabela operacional guarda a routing key | #306 | pgTAP 4, 47; tipos gerados |
-| M13 FK da inbox confere só `inbox_id` | #307 | pgTAP 8, 11; tipos gerados |
-| M14 token do claim ignorado | #308 | pgTAP 19, 24, 26–28 |
-| M14b lease ignorada (as duas conferências) | #309 | pgTAP 20, 24, 27, 28, 63, 64; concorrência 5 |
-| M15 só a conferência tardia da lease removida (a inicial mantida) | #310 | pgTAP 63, 64; concorrência 5 |
-| M16 canal sem `FOR UPDATE` | #311 | pgTAP 64; concorrência 2 |
-| M17 efeito aplica no ambiente oposto | #312 | pgTAP 21, 59, 64 |
-| M18 divergência de destino deixa o ledger | #313 | pgTAP 29–32; atualização |
-| M19 função liberada para `authenticated` | #314 | pgTAP 3, 60 |
-| M20 tabela liberada para `service_role` (SELECT) | #315 | pgTAP 5, 6 |
-| X01 workspace sem a trava da chave | #316 | pgTAP 63, 64; concorrência 5 |
-| X02 tipo do evento não conferido com a inbox | #317 | pgTAP 26–28 |
-| X03 tipo e escopo sem o prefixo | #318 | pgTAP 28 |
+| M01 referência da conta não conferida | #295 (1ª rodada, CI) e local | pgTAP 29–32, 56 |
+| M02 routing key não conferida | #296 (1ª rodada, CI) e local | pgTAP 29–32 |
+| M03 conta deduzida da routing key (`split_part`) | #297 (1ª rodada, CI) e local | pgTAP 29–31, 79 |
+| M04 exclusão não desliga `send_enabled` | #298 (1ª rodada, CI) e local | pgTAP 32, 33, 35, 40–43, 61, 63, 65, 72 |
+| M05 evento que não é exclusão desconecta o canal | #299 (1ª rodada, CI) e local | pgTAP 48–51, 72–74 |
+| M06 canal `disabled` vira `disconnected` | #300 (1ª rodada, CI) e local | pgTAP 37, 38, 40, 43, 44, 47 |
+| M07 evento antigo decide o estado (sem `stale_event`) | #301 (1ª rodada, CI) e local | pgTAP 39–41, 44–47, 74; concorrência 3 |
+| M08 `last_event_at` regride (na RPC e na guarda) | #302 (1ª rodada, CI) e local | pgTAP 16, 48, 50, 74 |
+| M09 `provider_status_event_at` regride (sem `stale_event` e sem a guarda) | #303 (1ª rodada, CI) e local | pgTAP 16, 39–41, 44–47, 74 |
+| M10 status alterado sem auditoria | #304 (1ª rodada, CI) e local | pgTAP 33, 35, 36, 40, 41, 43, 44, 54, 55, 57, 63 |
+| M11 auditoria com conta, routing key e `code` | #305 (1ª rodada, CI) e local | pgTAP 54, 55 |
+| M12 tabela operacional guarda a routing key | #306 (1ª rodada, CI) e local | pgTAP 4, 53 |
+| M13 FK da inbox confere só `inbox_id` | #307 (1ª rodada, CI) e local | pgTAP 8, 11 |
+| M14 token do claim ignorado | #308 (1ª rodada, CI) e local | pgTAP 19, 24, 26–28 |
+| M14b lease ignorada (as duas conferências) | #309 (1ª rodada, CI) e local | pgTAP 20, 24, 27, 28, 75, 76, 78; concorrência 5a |
+| M15 só a conferência tardia da lease removida (a inicial mantida) | #310 (1ª rodada, CI) e local | pgTAP 76, 78; concorrência 5a |
+| M16 canal sem `FOR UPDATE` | #311 (1ª rodada, CI) e local | pgTAP 78; concorrência 2 |
+| M17 efeito aplica no ambiente oposto | #312 (1ª rodada, CI) e local | pgTAP 21, 65, 78 |
+| M18 divergência de destino deixa o ledger | #313 (1ª rodada, CI) e local | pgTAP 29–32 |
+| M19 função liberada para `authenticated` | #314 (1ª rodada, CI) e local | pgTAP 3, 66 |
+| M20 tabela liberada para `service_role` (SELECT) | #315 (1ª rodada, CI) e local | pgTAP 5, 6 |
+| **M25** exclusão mais nova em canal já `disconnected` deixa `provider_status_event_at` antigo | #320 (CI) e local | pgTAP 37, 40, 43, 44; concorrência 2 |
+| **M26** remove a tolerância contra horário futuro | #321 (CI) e local | pgTAP 69–72, 76, 77; concorrência 7a; unitário (1) |
+| **M27** evento que não é exclusão avança `provider_status_event_at` | #322 (CI) e local | pgTAP 38, 47–51; concorrência 7b |
+| X01 workspace sem a trava da chave | #316 (1ª rodada, CI) e local | pgTAP 76, 78; concorrência 5b |
+| X02 tipo do evento não conferido com a inbox | #317 (1ª rodada, CI) e local | pgTAP 26–28 |
+| X03 tipo e escopo sem o prefixo | #318 (1ª rodada, CI) e local | pgTAP 28 |
+| X04 referência da conta mutável na guarda | só local | pgTAP 14 |
+| X05 código `DISCONNECTED` desconecta | só local | pgTAP 48, 50 |
+| X06 resposta devolve a conta | só local | pgTAP 56 |
+| X07 ledger com outro efeito | só local | pgTAP 34, 58, 76 |
+| X08 inbox não finalizada | só local | pgTAP 34, 38, 47, 57 |
+| X09 evento só registrado não avança `last_event_at` | só local | pgTAP 38, 47–51, 73, 74 |
+| X10 tolerância conferida ANTES da conferência tardia da lease | #323 (CI) e local | pgTAP 76, 78; concorrência 5c; unitário (1) |
+| X11 limite exato recusado (`>=`) | só local | pgTAP 76, 77 |
+| X12 tolerância medida por `now()` (início da transação) | só local | pgTAP 76, 77 |
+| X13 tolerância de 15 minutos | só local | pgTAP 69–72, 76, 77 |
+| X14 horário futuro corrigido para agora em vez de recusado | só local | pgTAP 69–72, 76, 77 |
+| X15 `stale_event` avança `last_event_at` | só local | pgTAP 46 |
+| X16 exclusão em canal já `disconnected` vira nova transição auditada | só local | pgTAP 37, 40, 43, 44 |
+| X17 exclusão em canal `disabled` avança `provider_status_event_at` | só local | pgTAP 38, 47 |
 
-M14b e X01 a X03 são acréscimos às vinte pedidas. Outras seis (X04 a X09: referência mutável na guarda, `code` interpretado, resposta que devolve a conta, ledger com outro efeito, inbox não finalizada, evento só registrado que não avança `last_event_at`) foram rodadas só localmente, no Postgres real, e todas pegas pelo pgTAP 40 (14; 44; 50; 34, 52, 63; 34, 38, 51; 37, 38, 40, 43–45). **Nenhuma mutação sobreviveu.** A conferência tardia da lease e a trava do canal são provadas pelo pgTAP 63 e 64 e pela concorrência (5a, 5b e 2).
+Os números do pgTAP são os do arquivo atual (79 testes). A tolerância de horário
+(M26, X10 a X14) é provada pelo comportamento (6 minutos recusado, 4 aceito,
+nenhuma escrita) e pelo texto da comparação estrita; o limite exato (X11,
+`>=`) e a fonte do relógio (X12, `now()`) só têm como ser pegos pelo texto, e
+são pelos testes 76 e 77. A conferência tardia da lease e a trava do canal
+continuam provadas pelos testes estruturais e pela concorrência (5a, 5b, 5c e
+2); X10 só aparece na concorrência 5c e nos testes estruturais.
 
 ### 26.13 Fora do escopo, decisões, riscos e divergências
 
@@ -5686,9 +5804,19 @@ Decisões:
 - o canal é travado `FOR UPDATE` (não `FOR SHARE`): é a única forma de duas
   exclusões, ou de uma pausa e uma exclusão, esperarem uma pela outra e a
   segunda reler o estado final;
-- uma exclusão que chega com o canal **já desconectado** é só registrada e
-  **não** avança `provider_status_event_at` (ele marca o evento que
-  decidiu o estado).
+- `provider_status_event_at` é o **último evento de estado do provedor**:
+  uma exclusão mais nova que chega com o canal **já desconectado** é só
+  `recorded` (sem nova auditoria nem mudança de `status_changed_at`), mas
+  avança `provider_status_event_at` e `last_event_at`. Foi um achado da
+  revisão da PR: sem isso, uma reconexão futura entre as duas exclusões
+  reativaria o canal apesar de uma exclusão posterior (§26.3);
+- `stale_event` não escreve nada no canal (nem relógio, nem estado), e um
+  canal `disabled` só tem `last_event_at` avançado: `provider_status_event_at`
+  não o acompanha, porque o provedor nunca reativa um canal desativado;
+- o horário do provedor é recusado quando passa de 5 minutos à frente do
+  relógio do banco (§26.3). O limite é uma constante da função: 5 minutos
+  cobrem a diferença normal entre relógios sem deixar um horário absurdo
+  empurrar as datas que só avançam.
 
 Riscos e divergências:
 - **canal sem `provider_account_ref`** (todo canal simulado e legado): todo
@@ -5700,13 +5828,18 @@ Riscos e divergências:
   real tem de gravá-la na criação; o canal criado sem ela não pode ganhá-la
   depois (o criador do canal real da YCloud deve registrá-la desde o
   início);
-- **`occurredAt` é o relógio do provedor:** um horário muito à frente
-  tornaria atrasadas as exclusões seguintes (viram `stale_event`). O
-  evento chega autenticado pela assinatura e o contrato não define teto;
-  um limite fica como decisão futura;
-- **os testes 63 a 65 do pgTAP 40 leem o texto do corpo da função** (sem
-  comentários e com o espaço normalizado): uma reescrita do corpo exige
-  atualizá-los junto;
-- **a B3.2d-2b3 precisa decidir** o que fazer com `routing_mismatch` e
-  `account_reference_*` (falhar ou liberar) e mapear `stale_event`,
-  `recorded` e `applied` como entrada finalizada.
+- **a tolerância de 5 minutos tem um custo conhecido:** uma exclusão aceita
+  com até 5 minutos de adiantamento move `provider_status_event_at` para
+  esse horário, e eventos legítimos nessa janela passam a ser
+  `stale_event`. É o preço de aceitar a diferença normal entre relógios; um
+  provedor com o relógio mais de 5 minutos adiantado teria todos os eventos
+  recusados (`invalid_account_event`, com a entrada em `processing`), o que
+  a B3.2d-2b3 precisa tratar como falha da entrada;
+- **os testes estruturais do pgTAP 40 (76 a 79) leem o texto do corpo da
+  função** (sem comentários e com o espaço normalizado): uma reescrita do
+  corpo exige atualizá-los junto. O limite exato (`occurredAt = agora + 5
+  minutos`, aceito) só é conferido assim, pelo texto da comparação estrita,
+  porque um teste de comportamento exigiria acertar o mesmo microssegundo;
+- **a B3.2d-2b3 precisa decidir** o que fazer com `routing_mismatch`,
+  `account_reference_*` e `invalid_account_event` (falhar ou liberar) e
+  mapear `stale_event`, `recorded` e `applied` como entrada finalizada.
