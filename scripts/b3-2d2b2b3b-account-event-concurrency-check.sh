@@ -7,9 +7,11 @@
 #   1. O MESMO evento duas vezes: uma execução grava, a outra espera a
 #      trava da entrada e vê `already_processed`. Uma linha operacional, um
 #      ledger, uma auditoria.
-#   2. Dois eventos de EXCLUSÃO simultâneos (entradas diferentes): o canal
-#      termina disconnected, sem envio; o primeiro vira `applied`, o segundo
-#      `recorded`; uma única auditoria da transição.
+#   2. Dois eventos de EXCLUSÃO simultâneos (entradas diferentes, T0 e depois
+#      T1): o canal termina disconnected, sem envio; o primeiro vira
+#      `applied`, o segundo `recorded` e provider_status_event_at termina em
+#      T1 (o último evento de estado do provedor, mesmo só confirmando o que
+#      já era); uma única auditoria da transição.
 #   3. Um evento ANTIGO chegando depois de um de estado mais novo (os dois
 #      esperando a trava do canal): `applied` e `stale_event`; o estado e as
 #      datas não regridem; o antigo fica preservado.
@@ -22,9 +24,17 @@
 #      qualquer outra trava): ao conseguir a linha o efeito reconfere e
 #      devolve `claim_lost`; nenhum evento, ledger, auditoria ou mudança no
 #      canal; a entrada segue em processing com o mesmo claim.
+#      5c. Igual à 5a, com o horário do evento mais de 5 minutos no futuro: a
+#      conferência tardia da lease vem ANTES do horário, então o resultado é
+#      `claim_lost` (e não invalid_account_event); nada muda.
 #   6. Falha simulada depois do ledger (ao gravar o evento) e depois do
 #      evento (ao desconectar o canal): nada sobrevive; sem a falha, a
 #      mesma entrada aplica.
+#   7. Horário do provedor mais de 5 minutos à frente do relógio do banco,
+#      em transações reais (a exclusão e um evento só observado): recusado
+#      com invalid_account_event; o canal, o ledger, os eventos, a auditoria
+#      e as entradas ficam exatamente como estavam; as mesmas entradas, com
+#      um horário válido (inclusive 4 minutos à frente), são aplicadas.
 #
 # Uma sessão segura a linha do canal (SELECT ... FOR UPDATE) para que as
 # execuções esperem juntas, em ordem de chegada. Canais próprios, dados
@@ -41,7 +51,7 @@ T0="2026-10-30 12:00:00+00"
 T1="2026-10-30 13:00:00+00"
 T2="2026-10-30 14:00:00+00"
 CH=(); RK=()
-for n in 1 2 3 4 5 6 7 8; do
+for n in 1 2 3 4 5 6 7 8 9; do
   CH[$n]="$(cat /proc/sys/kernel/random/uuid)"
   RK[$n]="$REF:+55119500${SUFIXO:0:4}0$n"
 done
@@ -120,7 +130,8 @@ insert into public.whatsapp_channels (id, workspace_id, label, display_phone_num
 select c.id::uuid, '$WS'::uuid, 'Concorrência B3.2d-2b2b3b', '1', '$DONO'::uuid, 'ycloud', false, 'preview', c.routing, 'active', true, now(), '$REF'
 from (values
   ('${CH[1]}', '${RK[1]}'), ('${CH[2]}', '${RK[2]}'), ('${CH[3]}', '${RK[3]}'), ('${CH[4]}', '${RK[4]}'),
-  ('${CH[5]}', '${RK[5]}'), ('${CH[6]}', '${RK[6]}'), ('${CH[7]}', '${RK[7]}'), ('${CH[8]}', '${RK[8]}')
+  ('${CH[5]}', '${RK[5]}'), ('${CH[6]}', '${RK[6]}'), ('${CH[7]}', '${RK[7]}'), ('${CH[8]}', '${RK[8]}'),
+  ('${CH[9]}', '${RK[9]}')
 ) c(id, routing);
 $SERVICE_SQL
 with e(n, ch, routing, evt, typ) as (values
@@ -134,7 +145,10 @@ with e(n, ch, routing, evt, typ) as (values
   (8, '${CH[6]}', '${RK[6]}', 'evt-ae-8', 'whatsapp.phone_number.quality_updated'),
   (9, '${CH[6]}', '${RK[6]}', 'evt-ae-9', 'whatsapp.phone_number.quality_updated'),
   (10, '${CH[7]}', '${RK[7]}', 'evt-ae-10', 'whatsapp.phone_number.deleted'),
-  (11, '${CH[8]}', '${RK[8]}', 'evt-ae-11', 'whatsapp.phone_number.deleted')
+  (11, '${CH[8]}', '${RK[8]}', 'evt-ae-11', 'whatsapp.phone_number.deleted'),
+  (12, '${CH[6]}', '${RK[6]}', 'evt-ae-12', 'whatsapp.phone_number.quality_updated'),
+  (13, '${CH[9]}', '${RK[9]}', 'evt-ae-13', 'whatsapp.phone_number.deleted'),
+  (14, '${CH[9]}', '${RK[9]}', 'evt-ae-14', 'whatsapp.phone_number.quality_updated')
 ), s as (
   select e.n, public.whatsapp_inbox_store(e.ch::uuid, '$WS'::uuid, 'ycloud', e.routing, e.evt, e.typ,
     repeat('a', 64), '1', 'AAAAAAAAAAAAAAAA', 'Q29ycG8gZmljdGljaW8gMQ==', 'AAAAAAAAAAAAAAAAAAAAAA==', 3600) ->> 'inbox_id' as id
@@ -144,7 +158,7 @@ select string_agg(s.id || ',' || (public.whatsapp_inbox_claim(s.id::uuid, 600) -
 SQL
 )"
 read -r -a ENTRIES <<<"$(echo "$SETUP" | tail -1)"
-[ "${#ENTRIES[@]}" = "11" ] || fail "preparo sem resultado: $SETUP"
+[ "${#ENTRIES[@]}" = "14" ] || fail "preparo sem resultado: $SETUP"
 id() { echo "${ENTRIES[$(($1 - 1))]%%,*}"; }
 tok() { echo "${ENTRIES[$(($1 - 1))]##*,}"; }
 COMERCIAL_ANTES="$(q "select (select count(*) from public.contacts) || '|' || (select count(*) from public.contact_phones) || '|' || (select count(*) from public.contact_identifiers) || '|' || (select count(*) from public.leads) || '|' || (select count(*) from public.opportunities) || '|' || (select count(*) from public.activities) || '|' || (select count(*) from public.conversations) || '|' || (select count(*) from public.messages) || '|' || (select count(*) from public.whatsapp_identities)")"
@@ -177,8 +191,8 @@ wait "$HOLD_PID" || fail "a sessão que segura a linha falhou"
 wait $P1 || fail "execução 1 falhou: $(cat "$OUT_1")"
 wait $P2 || fail "execução 2 falhou: $(cat "$OUT_2")"
 [ "$(tail -1 "$OUT_1") $(tail -1 "$OUT_2")" = "applied recorded" ] || fail "esperado applied e recorded: $(tail -1 "$OUT_1") / $(tail -1 "$OUT_2")"
-[ "$(chs 2)|$(evs 2)|$(lgr 2)|$(aud 2)" = "disconnected|false|2026-10-30T12:00:00|2026-10-30T13:00:00|applied,recorded|2|1" ] || fail "estado final do cenário 2: $(chs 2)|$(evs 2)|$(lgr 2)|$(aud 2)"
-echo "   ok: applied e recorded; disconnected, sem envio, duas linhas operacionais e uma única auditoria da transição"
+[ "$(chs 2)|$(evs 2)|$(lgr 2)|$(aud 2)" = "disconnected|false|2026-10-30T13:00:00|2026-10-30T13:00:00|applied,recorded|2|1" ] || fail "estado final do cenário 2: $(chs 2)|$(evs 2)|$(lgr 2)|$(aud 2)"
+echo "   ok: applied e recorded; disconnected, sem envio, provider_status_event_at e last_event_at no horário da segunda exclusão (T1), duas linhas operacionais e uma única auditoria da transição"
 
 echo "== 3. evento antigo depois de um de estado mais novo"
 hold_channel b3d2b2b3b_h3 3
@@ -287,6 +301,34 @@ wait $PL || fail "o efeito falhou: $(cat "$OUT_L")"
 [ "$(evs 6)|$(lgr 6)|$(aud 6)" = "-|0|0" ] || fail "o claim perdido deixou evento, ledger ou auditoria (workspace): $(evs 6)|$(lgr 6)|$(aud 6)"
 [ "$(inbox_state 9)" = "$INBOX9_ANTES" ] || fail "o claim perdido mexeu na entrada (workspace)"
 echo "   ok: 5b — o efeito esperou a linha do workspace, a lease venceu e veio claim_lost; nada mudou"
+# 5c. A mesma espera pela linha do canal, com o horário do evento mais de 5
+# minutos no futuro: a lease é conferida ANTES do horário, então o resultado é
+# claim_lost (e não invalid_account_event, que também desfaria tudo, mas
+# esconderia que a entrada perdeu o claim).
+hold_channel b3d2b2b3b_h8 6 5
+q "update public.whatsapp_webhook_inbox set lease_until = clock_timestamp() + interval '2 seconds' where id = '$(id 12)'" > /dev/null
+INBOX12_ANTES="$(inbox_state 12)"
+FUTURO="$(q "select (clock_timestamp() + interval '1 day')::text")"
+echo "$(eff_sql "$(id 12)" "$(tok 12)" whatsapp.phone_number.quality_updated phone_number "$REF" "${RK[6]}" "$FUTURO" YELLOW)" | psql_as b3d2b2b3b_l3 > "$OUT_L" 2>&1 &
+PL=$!
+wait_lock_waiters 1 b3d2b2b3b_l3
+[ "$(q "select count(*) from pg_stat_activity e where e.application_name = 'b3d2b2b3b_l3' and e.wait_event_type = 'Lock'
+  and e.wait_event in ('transactionid', 'tuple')
+  and exists (select 1 from pg_stat_activity h where h.application_name = 'b3d2b2b3b_h8' and h.pid = any(pg_blocking_pids(e.pid)))")" = "1" ] \
+  || fail "o efeito não está esperando a trava de linha do canal (horário no futuro)"
+for _ in $(seq 1 50); do
+  [ "$(q "select (lease_until <= clock_timestamp())::text from public.whatsapp_webhook_inbox where id = '$(id 12)'")" = "true" ] && break
+  sleep 0.1
+done
+[ "$(q "select (lease_until <= clock_timestamp())::text from public.whatsapp_webhook_inbox where id = '$(id 12)'")" = "true" ] || fail "a lease não venceu durante a espera (horário no futuro)"
+[ "$(q "select count(*) from pg_stat_activity where application_name = 'b3d2b2b3b_l3' and wait_event_type = 'Lock'")" = "1" ] || fail "o efeito parou de esperar antes de a lease vencer (horário no futuro)"
+wait "$HOLD_PID" || fail "a sessão que segura a linha falhou"
+wait $PL || fail "o efeito falhou (a lease vem antes do horário): $(cat "$OUT_L")"
+[ "$(tail -1 "$OUT_L")" = "claim_lost" ] || fail "lease vencida na espera, com horário no futuro: esperado claim_lost, veio $(tail -1 "$OUT_L")"
+[ "$(chrow 6)" = "$CH6_ANTES" ] || fail "o claim perdido (horário no futuro) mudou o canal"
+[ "$(evs 6)|$(lgr 6)|$(aud 6)" = "-|0|0" ] || fail "o claim perdido (horário no futuro) deixou evento, ledger ou auditoria: $(evs 6)|$(lgr 6)|$(aud 6)"
+[ "$(inbox_state 12)" = "$INBOX12_ANTES" ] || fail "o claim perdido (horário no futuro) mexeu na entrada"
+echo "   ok: 5c — com o horário no futuro e a lease vencida na espera, o resultado é claim_lost (a lease vem antes do horário); nada mudou"
 
 echo "== 6. falha depois do ledger e depois do evento"
 FALHA_FN="create function public.b3d2b2b3b_falha() returns trigger language plpgsql as \$f\$ begin raise exception 'falha_simulada'; end \$f\$;"
@@ -315,6 +357,38 @@ grep -q "falha_simulada" "$OUT_Z" || fail "erro inesperado: $(cat "$OUT_Z")"
 [ "$(evs 8)|$(lgr 8)|$(aud 8)|$(q "select state from public.whatsapp_webhook_inbox where id = '$(id 11)'")" = "-|0|0|processing" ] || fail "a falha ao desconectar deixou ledger, evento, auditoria ou entrada finalizada"
 [ "$(echo "$(del_sql 11 8 "$T0")" | psql_as b3d2b2b3b_main | tail -1)" = "applied" ] || fail "sem a falha, a mesma entrada deveria aplicar"
 echo "   ok: 6b — nada sobreviveu à falha depois do evento; sem ela, a mesma entrada aplicou"
+
+echo "== 7. horário do provedor mais de 5 minutos à frente do relógio do banco"
+# Transações reais (uma instrução por conexão): a recusa não pode deixar nada.
+CH9_ANTES="$(chrow 9)"
+INBOX13_ANTES="$(inbox_state 13)"
+INBOX14_ANTES="$(inbox_state 14)"
+F6="$(q "select (clock_timestamp() + interval '6 minutes')::text")"
+OUT_F="$(mktemp)"
+if echo "$(del_sql 13 9 "$F6")" | psql_as b3d2b2b3b_f1 > "$OUT_F" 2>&1; then
+  fail "a exclusão 6 minutos no futuro deveria ser recusada: $(cat "$OUT_F")"
+fi
+grep -q "invalid_account_event" "$OUT_F" || fail "a exclusão no futuro deveria falhar com invalid_account_event: $(cat "$OUT_F")"
+if echo "$(eff_sql "$(id 14)" "$(tok 14)" whatsapp.phone_number.quality_updated phone_number "$REF" "${RK[9]}" "$F6" YELLOW)" | psql_as b3d2b2b3b_f2 > "$OUT_F" 2>&1; then
+  fail "o evento só observado 6 minutos no futuro deveria ser recusado: $(cat "$OUT_F")"
+fi
+grep -q "invalid_account_event" "$OUT_F" || fail "o evento observado no futuro deveria falhar com invalid_account_event: $(cat "$OUT_F")"
+! grep -q "$REF" "$OUT_F" || fail "a mensagem de erro vazou a referência da conta"
+[ "$(chrow 9)" = "$CH9_ANTES" ] || fail "o evento no futuro mudou o canal (não desconectou nem avançou last_event_at)"
+[ "$(evs 9)|$(lgr 9)|$(aud 9)" = "-|0|0" ] || fail "o evento no futuro deixou evento, ledger ou auditoria: $(evs 9)|$(lgr 9)|$(aud 9)"
+[ "$(inbox_state 13)" = "$INBOX13_ANTES" ] && [ "$(inbox_state 14)" = "$INBOX14_ANTES" ] || fail "o evento no futuro mexeu nas entradas"
+[ "$(q "select concat_ws('|', state, claim_token) from public.whatsapp_webhook_inbox where id = '$(id 13)'")" = "processing|$(tok 13)" ] || fail "a entrada deveria seguir em processing com o mesmo claim"
+echo "   ok: 7a — 6 minutos no futuro: invalid_account_event; canal, ledger, eventos, auditoria e entradas exatamente como estavam"
+# 4 minutos no futuro está dentro da tolerância; as mesmas entradas recusadas
+# antes são aplicadas com um horário válido.
+F4="$(q "select (clock_timestamp() + interval '4 minutes')::text")"
+[ "$(echo "$(eff_sql "$(id 14)" "$(tok 14)" whatsapp.phone_number.quality_updated phone_number "$REF" "${RK[9]}" "$F4" YELLOW)" | psql_as b3d2b2b3b_main | tail -1)" = "recorded" ] \
+  || fail "4 minutos no futuro está dentro da tolerância: esperado recorded"
+[ "$(echo "$(del_sql 13 9 "$T0")" | psql_as b3d2b2b3b_main | tail -1)" = "applied" ] || fail "sem o horário no futuro, a mesma exclusão deveria aplicar"
+[ "$(q "select concat_ws('|', status, send_enabled::text, (provider_status_event_at = '$T0'::timestamptz)::text, (last_event_at = '$F4'::timestamptz)::text) from public.whatsapp_channels where id = '${CH[9]}'")" = "disconnected|false|true|true" ] \
+  || fail "estado final do cenário 7: $(chs 9)"
+[ "$(evs 9)|$(lgr 9)|$(aud 9)" = "applied,recorded|2|1" ] || fail "linhas finais do cenário 7: $(evs 9)|$(lgr 9)|$(aud 9)"
+echo "   ok: 7b — dentro da tolerância (4 minutos) é aceito e gravado como veio; as entradas recusadas antes aplicaram"
 
 [ "$(q "select (select count(*) from public.contacts) || '|' || (select count(*) from public.contact_phones) || '|' || (select count(*) from public.contact_identifiers) || '|' || (select count(*) from public.leads) || '|' || (select count(*) from public.opportunities) || '|' || (select count(*) from public.activities) || '|' || (select count(*) from public.conversations) || '|' || (select count(*) from public.messages) || '|' || (select count(*) from public.whatsapp_identities)")" = "$COMERCIAL_ANTES" ] || fail "um evento da conta mexeu em registro comercial, conversa, mensagem ou identidade"
 echo "== efeito dos eventos da conta e do número sob concorrência real: OK"
