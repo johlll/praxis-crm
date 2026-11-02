@@ -19,6 +19,11 @@
  *
  * Escritos ANTES da implementação, contra a main ff13405. O banco é
  * simulado. Tudo fictício.
+ *
+ * Revisão da PR: o horário do provedor (occurredAt) segue como veio — o
+ * servidor aceita qualquer Date válida e quem recusa horário mais de 5
+ * minutos à frente do relógio do BANCO é a RPC (invalid_account_event). Esses
+ * testes também foram escritos antes da correção.
  */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -461,11 +466,63 @@ describe("5. erros", () => {
 });
 
 // ---------------------------------------------------------------------
+// 5b. Horário do provedor: a tolerância contra horário futuro é do BANCO
+// ---------------------------------------------------------------------
+
+describe("5b. horário do provedor", () => {
+  const readRepo = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
+  const withoutComments = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+  it("qualquer Date válida (antiga, de agora ou muito à frente) é aceita aqui e vai ao banco exatamente como veio: quem julga o futuro é o banco", async () => {
+    const { applyWhatsAppAccountEvent } = await loadEffect();
+    const instants = ["2000-01-01T00:00:00.000Z", "2026-10-30T11:59:58.000Z", "2026-10-30T13:00:00.000Z", "2036-10-30T12:00:00.000Z", "2099-12-31T23:59:59.999Z"];
+    for (const iso of instants) {
+      const claim = await claimed();
+      await applyWhatsAppAccountEvent(claim, phoneEvent({ occurredAt: new Date(iso) }) as never);
+      expect(lastArgs().p_occurred_at).toBe(iso);
+    }
+    expect(effectCalls()).toHaveLength(instants.length);
+  });
+
+  it("horário recusado pelo banco (invalid_account_event): o erro leva só o código — nenhum horário, conta, routing key, código ou token no erro nem no log", async () => {
+    handlers.whatsapp_effect_account_event = () => ({ data: null, error: { message: "invalid_account_event" } });
+    const spies = [vi.spyOn(console, "error"), vi.spyOn(console, "warn"), vi.spyOn(console, "log"), vi.spyOn(console, "info")];
+    for (const spy of spies) spy.mockImplementation(() => {});
+    const future = new Date("2099-12-31T23:59:59.999Z");
+    const claim = await claimed();
+    const { applyWhatsAppAccountEvent } = await loadEffect();
+    const error = await expectCode(applyWhatsAppAccountEvent(claim, phoneEvent({ occurredAt: future }) as never), "invalid_account_event");
+    expect(error.message).toBe("invalid_account_event");
+    const seen = [error.message, String(error.stack), JSON.stringify(error), ...spies.flatMap((s) => s.mock.calls.flat().map(String))].join("\n");
+    for (const leaked of [future.toISOString(), "2099-12-31", WABA, ROUTING, BUSINESS_PHONE, "YELLOW", TOKEN]) expect(seen).not.toContain(leaked);
+    expect(effectCalls()).toHaveLength(1);
+  });
+
+  it("o servidor não consulta o relógio da aplicação nem define tolerância própria", () => {
+    const src = withoutComments(readRepo("src/server/whatsapp/effects/account-event.ts"));
+    expect(src).not.toMatch(/Date\.now\(|new Date\(|performance\.now|getTime\(|setTimeout|setInterval|Intl\./);
+    expect(src).not.toMatch(/minutes|\b300_?000\b|\b5 \* 60\b|tolerance|toler[âa]ncia/i);
+  });
+});
+
+// ---------------------------------------------------------------------
 // 6. Estático
 // ---------------------------------------------------------------------
 
 describe("6. estático", () => {
   const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
+
+  it("a migration recusa horário do provedor mais de 5 minutos à frente do relógio do BANCO (clock_timestamp), logo depois da conferência tardia da lease", () => {
+    const sql = read("supabase/migrations/20261030180000_b3_2d2b2b3b_account_events_effect.sql")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("--"))
+      .join("\n")
+      .replace(/\s+/g, " ");
+    expect(sql).toContain(
+      "v_now := clock_timestamp(); if v_row.lease_until is null or v_row.lease_until <= v_now then return jsonb_build_object('outcome', 'claim_lost'); end if; " +
+        "if p_occurred_at > v_now + interval '5 minutes' then raise exception 'invalid_account_event'; end if;",
+    );
+  });
 
   it("o efeito conhece só o contrato neutro: não importa o adaptador YCloud, não envia, não registra log, não divide a routing key", () => {
     const src = read("src/server/whatsapp/effects/account-event.ts");

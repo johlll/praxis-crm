@@ -17,17 +17,26 @@
 --  - SÓ whatsapp.phone_number.deleted e whatsapp.business_account.deleted
 --    desconectam (active/paused → disconnected, send_enabled=false,
 --    provider_status_event_at, auditoria sanitizada); evento igual ou
---    anterior a provider_status_event_at é stale_event; disabled nunca é
---    reativado nem rebaixado; os demais tipos só são registrados;
+--    anterior a provider_status_event_at é stale_event (não muda relógio
+--    nem estado); a exclusão mais nova num canal JÁ disconnected só é
+--    registrada, mas avança provider_status_event_at (o último evento de
+--    estado do provedor), sem nova auditoria; disabled nunca é reativado nem
+--    rebaixado; os demais tipos só são registrados e nunca avançam
+--    provider_status_event_at;
+--  - horário do provedor mais de 5 minutos à frente do relógio do BANCO
+--    (clock_timestamp, lido junto da conferência tardia da lease) é recusado
+--    com invalid_account_event, antes de qualquer escrita;
 --  - canal paused/disconnected/disabled não bloqueia o efeito;
 --  - qualquer falha desfaz tudo.
 --
--- Escrito ANTES da implementação, contra a main ff13405. Tudo fictício:
--- nenhum telefone, conta ou identidade real. As chamadas passam por funções
--- que capturam o erro: contra a main, o arquivo roda até o fim.
+-- Escrito ANTES da implementação, contra a main ff13405; a revisão da PR
+-- (exclusão mais nova em canal já desconectado e tolerância de horário
+-- futuro) foi escrita antes da correção, contra a migration da revisão
+-- anterior. Tudo fictício: nenhum telefone, conta ou identidade real. As
+-- chamadas passam por funções que capturam o erro: o arquivo roda até o fim.
 
 begin;
-select plan(65);
+select plan(79);
 
 \set ana     '20000000-0000-0000-0000-000000000001'
 \set ws_um   '10000000-0000-0000-0000-000000000001'
@@ -233,6 +242,12 @@ begin
 exception when others then
   return 'ERRO';
 end
+$f$;
+
+-- Linha inteira da entrada da inbox, em hash: prova que o claim (token,
+-- tentativas, lease) e o estado ficaram exatamente como estavam.
+create function pg_temp.inbrow(p_entry text) returns text language sql as $f$
+  select coalesce((select md5(i::text) from public.whatsapp_webhook_inbox i where i.id = split_part(p_entry, '|', 1)::uuid), 'NULL')
 $f$;
 
 create function pg_temp.dom() returns text language sql as $f$
@@ -684,8 +699,8 @@ select is(
 select pg_temp.go(pg_temp.cid(33), 'evt-d', 'whatsapp.phone_number.deleted', 'phone_number', 'WABA-A1', :'t1200') as o_d \gset
 select is(
   :'o_d' || ' ' || pg_temp.chs(pg_temp.cid(33)) || ' ' || pg_temp.evs(pg_temp.cid(33)) || ' ' || pg_temp.aud(pg_temp.cid(33)),
-  'recorded disconnected|false|2026-10-30T10:00:00|2026-10-30T12:00:00|antigo recorded 0',
-  'canal já desconectado: segue disconnected e sem envio, o evento é registrado, nenhuma transição nem auditoria nova (provider_status_event_at fica)'
+  'recorded disconnected|false|2026-10-30T12:00:00|2026-10-30T12:00:00|antigo recorded 0',
+  'canal já desconectado: segue disconnected e sem envio, o evento é registrado, sem transição nem auditoria nova; provider_status_event_at passa para a exclusão mais nova (o último evento de estado do provedor)'
 );
 
 -- Canal desativado (disabled): nunca reativado nem rebaixado.
@@ -713,8 +728,8 @@ select pg_temp.go(pg_temp.cid(36), 'evt-g2', 'whatsapp.phone_number.deleted', 'p
 select pg_temp.go(pg_temp.cid(36), 'evt-g3', 'whatsapp.phone_number.deleted', 'phone_number', 'WABA-A1', :'t1100') as o_g3 \gset
 select is(
   :'o_g1' || ',' || :'o_g2' || ',' || :'o_g3' || ' ' || pg_temp.chs(pg_temp.cid(36)) || ' ' || pg_temp.evs(pg_temp.cid(36)) || ' ' || pg_temp.aud(pg_temp.cid(36)),
-  'applied,recorded,stale_event disconnected|false|2026-10-30T12:00:00|2026-10-30T14:00:00|novo stale_event,applied,recorded 1',
-  'três exclusões: aplicada, mais nova só registrada, mais antiga stale; uma única transição auditada; provider_status_event_at é o da que decidiu'
+  'applied,recorded,stale_event disconnected|false|2026-10-30T14:00:00|2026-10-30T14:00:00|novo stale_event,applied,recorded 1',
+  'três exclusões: aplicada, mais nova só registrada (e provider_status_event_at passa para ela), mais antiga stale; uma única transição auditada'
 );
 
 -- Um evento antigo nunca regride o estado, mesmo depois de o canal voltar a active (reconexão futura).
@@ -735,6 +750,94 @@ select is(
   :'o_i' || ' ' || pg_temp.chs(pg_temp.cid(38)) || ' ' || pg_temp.chs(pg_temp.cid(39)) || ' ' || pg_temp.evs(pg_temp.cid(39)),
   'applied disconnected|false|2026-10-30T12:00:00|2026-10-30T12:00:00|novo active|true|-|-|antigo -',
   'o efeito age no canal da própria inbox: outro canal da mesma conta não é tocado'
+);
+
+-- ---------------------------------------------------------------------
+-- 5b) provider_status_event_at: o último evento de ESTADO do provedor
+-- ---------------------------------------------------------------------
+-- Uma exclusão mais nova que chega com o canal JÁ desconectado confirma o
+-- estado e avança provider_status_event_at (e last_event_at), sem nova
+-- transição, auditoria nem mudança de status_changed_at. Sem isso, uma
+-- reconexão futura com horário entre a primeira e a última exclusão pareceria
+-- mais nova que provider_status_event_at e reativaria o canal apesar de uma
+-- exclusão posterior.
+
+select pg_temp.mk(pg_temp.cid(51), 'WABA-A1', 'WABA-A1:+5511900050051') as r \gset
+select pg_temp.go(pg_temp.cid(51), 'evt-s1', 'whatsapp.phone_number.deleted', 'phone_number', 'WABA-A1', :'t1200') as o_s1 \gset
+select status_changed_at::text as sca_s1 from public.whatsapp_channels where id = pg_temp.cid(51)::uuid \gset
+select pg_temp.go(pg_temp.cid(51), 'evt-s2', 'whatsapp.business_account.deleted', 'business_account', 'WABA-A1', :'t1400') as o_s2 \gset
+select is(
+  :'o_s1' || ',' || :'o_s2' || ' ' || pg_temp.chs(pg_temp.cid(51)) || ' ' || pg_temp.evs(pg_temp.cid(51)) || ' ' || pg_temp.lgr(pg_temp.cid(51))
+  || ' ' || pg_temp.aud(pg_temp.cid(51)) || ' ' || (select (status_changed_at::text = :'sca_s1')::text from public.whatsapp_channels where id = pg_temp.cid(51)::uuid),
+  'applied,recorded disconnected|false|2026-10-30T14:00:00|2026-10-30T14:00:00|novo applied,recorded 2 1 true',
+  'exclusão mais nova em canal já disconnected: recorded; segue disconnected e sem envio; provider_status_event_at e last_event_at passam para ela; sem nova auditoria e sem mudar status_changed_at'
+);
+-- O caso que motivou a regra: um evento entre a primeira (12:00) e a última
+-- (14:00) exclusão já é antigo para o estado do provedor.
+select pg_temp.chrow(pg_temp.cid(51)) as row51 \gset
+select pg_temp.go(pg_temp.cid(51), 'evt-s3', 'whatsapp.phone_number.deleted', 'phone_number', 'WABA-A1', :'t1300') as o_s3 \gset
+select is(
+  :'o_s3' || ' ' || (pg_temp.chrow(pg_temp.cid(51)) = :'row51')::text || ' ' || pg_temp.evs(pg_temp.cid(51)) || ' ' || pg_temp.aud(pg_temp.cid(51)),
+  'stale_event true applied,stale_event,recorded 1',
+  'exclusão entre a primeira e a última: stale_event (o último evento de estado do provedor é o das 14:00); o canal não muda'
+);
+
+-- Igual ou anterior a provider_status_event_at: stale_event, sem mudar
+-- relógio nem estado (a linha inteira do canal fica idêntica).
+select pg_temp.mk(pg_temp.cid(52), 'WABA-A1', 'WABA-A1:+5511900050052', 'disconnected', false, :'t1200', :'t1400') as r \gset
+select pg_temp.chrow(pg_temp.cid(52)) as row52 \gset
+select pg_temp.go(pg_temp.cid(52), 'evt-s4', 'whatsapp.phone_number.deleted', 'phone_number', 'WABA-A1', :'t1200') as o_s4 \gset
+select pg_temp.go(pg_temp.cid(52), 'evt-s5', 'whatsapp.business_account.deleted', 'business_account', 'WABA-A1', :'t1100') as o_s5 \gset
+select is(
+  :'o_s4' || ',' || :'o_s5' || ' ' || (pg_temp.chrow(pg_temp.cid(52)) = :'row52')::text || ' ' || pg_temp.evs(pg_temp.cid(52)) || ' ' || pg_temp.lgr(pg_temp.cid(52))
+  || ' ' || pg_temp.aud(pg_temp.cid(52)),
+  'stale_event,stale_event true stale_event,stale_event 2 0',
+  'exclusão igual ou anterior a provider_status_event_at: stale_event, registrada; relógios e estado do canal idênticos; sem auditoria'
+);
+-- stale_event não mexe nem em last_event_at, mesmo que ele esteja atrás (a
+-- linha inteira do canal fica idêntica).
+select pg_temp.mk(pg_temp.cid(53), 'WABA-A1', 'WABA-A1:+5511900050053', 'disconnected', false, :'t1300', :'t1000') as r \gset
+select pg_temp.chrow(pg_temp.cid(53)) as row53 \gset
+select pg_temp.go(pg_temp.cid(53), 'evt-s6', 'whatsapp.phone_number.deleted', 'phone_number', 'WABA-A1', :'t1200') as o_s6 \gset
+select is(
+  :'o_s6' || ' ' || (pg_temp.chrow(pg_temp.cid(53)) = :'row53')::text || ' ' || pg_temp.chs(pg_temp.cid(53)),
+  'stale_event true disconnected|false|2026-10-30T13:00:00|2026-10-30T10:00:00|antigo',
+  'stale_event não avança nenhum relógio: nem provider_status_event_at nem last_event_at'
+);
+
+-- Canal desativado (disabled): nunca reativado nem rebaixado; a exclusão
+-- mais nova só é registrada (last_event_at avança; o estado, o envio, o
+-- status_changed_at e provider_status_event_at ficam); sem auditoria.
+select pg_temp.mk(pg_temp.cid(54), 'WABA-A1', 'WABA-A1:+5511900050054', 'active', true, :'t1000', :'t1000') as r \gset
+select pg_temp.ent(pg_temp.cid(54), 'evt-s7', 'whatsapp.phone_number.deleted') as e_s7 \gset
+select pg_temp.ent(pg_temp.cid(54), 'evt-s8', 'whatsapp.business_account.deleted') as e_s8 \gset
+update public.whatsapp_channels set status = 'disabled', send_enabled = false where id = pg_temp.cid(54)::uuid;
+select pg_temp.oc(pg_temp.ac(:'e_s7', 'phone_number', 'whatsapp.phone_number.deleted', 'WABA-A1', pg_temp.rk(pg_temp.cid(54)), :'t1200', null)) as o_s7 \gset
+select pg_temp.oc(pg_temp.ac(:'e_s8', 'business_account', 'whatsapp.business_account.deleted', 'WABA-A1', null, :'t1000', null)) as o_s8 \gset
+select is(
+  :'o_s7' || ',' || :'o_s8' || ' ' || pg_temp.chs(pg_temp.cid(54)) || ' ' || pg_temp.evs(pg_temp.cid(54)) || ' ' || pg_temp.aud(pg_temp.cid(54))
+  || ' ' || pg_temp.inb(:'e_s7'),
+  'recorded,stale_event disabled|false|2026-10-30T10:00:00|2026-10-30T12:00:00|antigo stale_event,recorded 0 processed|-',
+  'canal desativado: a exclusão mais nova é só registrada (segue disabled, sem envio, sem auditoria nem mudança de provider_status_event_at); a igual a ele é stale_event'
+);
+
+-- Evento que não é exclusão nunca avança provider_status_event_at, em
+-- qualquer estado do canal (só last_event_at).
+select pg_temp.mk(pg_temp.cid(55), 'WABA-A1', 'WABA-A1:+5511900050055', 'disconnected', false, :'t1000', :'t1000') as r \gset
+select pg_temp.mk(pg_temp.cid(56), 'WABA-A1', 'WABA-A1:+5511900050056', 'active', true, :'t1000', :'t1000') as r \gset
+select pg_temp.mk(pg_temp.cid(57), 'WABA-A1', 'WABA-A1:+5511900050057', 'paused', false) as r \gset
+select concat_ws(',',
+    pg_temp.go(pg_temp.cid(55), 'evt-n1', 'whatsapp.phone_number.quality_updated', 'phone_number', 'WABA-A1', :'t1200', 'RED'),
+    pg_temp.go(pg_temp.cid(55), 'evt-n2', 'whatsapp.business_account.updated', 'business_account', 'WABA-A1', :'t1400', 'VERIFIED_NAME'),
+    pg_temp.go(pg_temp.cid(55), 'evt-n3', 'whatsapp.phone_number.name_updated', 'phone_number', 'WABA-A1', :'t1300', 'DECLINED'),
+    pg_temp.go(pg_temp.cid(56), 'evt-n4', 'whatsapp.phone_number.quality_updated', 'phone_number', 'WABA-A1', :'t1200', 'RED'),
+    pg_temp.go(pg_temp.cid(56), 'evt-n5', 'whatsapp.phone_number.something_new', 'phone_number', 'WABA-A1', :'t1400', 'DISCONNECTED'),
+    pg_temp.go(pg_temp.cid(57), 'evt-n6', 'whatsapp.business_account.reviewed', 'business_account', 'WABA-A1', :'t1400', 'REJECTED')) as o_n \gset
+select is(
+  :'o_n' || ' ' || pg_temp.chs(pg_temp.cid(55)) || ' ' || pg_temp.chs(pg_temp.cid(56)) || ' ' || pg_temp.chs(pg_temp.cid(57)),
+  'recorded,recorded,recorded,recorded,recorded,recorded disconnected|false|2026-10-30T10:00:00|2026-10-30T14:00:00|antigo '
+  || 'active|true|2026-10-30T10:00:00|2026-10-30T14:00:00|antigo paused|false|-|2026-10-30T14:00:00|antigo',
+  'evento que não é exclusão nunca avança provider_status_event_at (desconectado, ativo ou pausado); só last_event_at avança'
 );
 
 -- ---------------------------------------------------------------------
@@ -945,12 +1048,88 @@ select is(
 select isnt(:'msg_legada'::text, null::text, 'o simulador da A7 continua recebendo mensagem');
 
 -- ---------------------------------------------------------------------
+-- 10b) Horário do provedor no futuro: tolerância de 5 minutos
+-- ---------------------------------------------------------------------
+-- O relógio é o do BANCO (clock_timestamp, lido junto da conferência tardia
+-- da lease). Os horários dos testes saem de clock_timestamp() lido na hora e
+-- usam margens de 4 e 6 minutos: nenhum teste depende de acertar o limite
+-- exato (a comparação estrita é conferida na estrutura, adiante).
+
+select pg_temp.mk(pg_temp.cid(58), 'WABA-A1', 'WABA-A1:+5511900050058', 'active', true, null, :'t1200') as r \gset
+select pg_temp.ent(pg_temp.cid(58), 'evt-fu1', 'whatsapp.phone_number.quality_updated') as e_fu1 \gset
+select pg_temp.ent(pg_temp.cid(58), 'evt-fu2', 'whatsapp.phone_number.deleted') as e_fu2 \gset
+select pg_temp.ent(pg_temp.cid(58), 'evt-fu3', 'whatsapp.business_account.deleted') as e_fu3 \gset
+select pg_temp.dom() || ' ' || pg_temp.nev() || ' ' || pg_temp.chrow(pg_temp.cid(58)) || ' ' || pg_temp.inbrow(:'e_fu1')
+  || pg_temp.inbrow(:'e_fu2') || pg_temp.inbrow(:'e_fu3') as snap_fu \gset
+select (clock_timestamp() + interval '6 minutes')::text as f6 \gset
+select (clock_timestamp() + interval '1 day')::text as f1d \gset
+select (clock_timestamp() + interval '100 years')::text as f100y \gset
+select is(
+  concat_ws(',',
+    pg_temp.oc(pg_temp.ac(:'e_fu1', 'phone_number', 'whatsapp.phone_number.quality_updated', 'WABA-A1', pg_temp.rk(pg_temp.cid(58)), :'f6', 'GREEN')),
+    pg_temp.oc(pg_temp.ac(:'e_fu2', 'phone_number', 'whatsapp.phone_number.deleted', 'WABA-A1', pg_temp.rk(pg_temp.cid(58)), :'f6', null)),
+    pg_temp.oc(pg_temp.ac(:'e_fu3', 'business_account', 'whatsapp.business_account.deleted', 'WABA-A1', null, :'f1d', null)),
+    pg_temp.oc(pg_temp.ac(:'e_fu1', 'phone_number', 'whatsapp.phone_number.quality_updated', 'WABA-A1', pg_temp.rk(pg_temp.cid(58)), :'f100y', 'GREEN'))),
+  'ERRO:invalid_account_event,ERRO:invalid_account_event,ERRO:invalid_account_event,ERRO:invalid_account_event',
+  'horário do provedor mais de 5 minutos à frente do relógio do banco (6 minutos, 1 dia, 100 anos): invalid_account_event, sem vazar valor'
+);
+select is(
+  pg_temp.dom() || ' ' || pg_temp.nev() || ' ' || pg_temp.chrow(pg_temp.cid(58)) || ' ' || pg_temp.inbrow(:'e_fu1')
+    || pg_temp.inbrow(:'e_fu2') || pg_temp.inbrow(:'e_fu3'),
+  :'snap_fu',
+  'evento no futuro recusado: nenhum ledger, evento operacional, auditoria ou mudança no canal; as entradas ficam como estavam (processing, mesmo claim e lease)'
+);
+select is(
+  pg_temp.chs(pg_temp.cid(58)) || ' ' || pg_temp.lgr(pg_temp.cid(58)) || ' ' || pg_temp.evs(pg_temp.cid(58)) || ' ' || pg_temp.aud(pg_temp.cid(58)) || ' '
+  || split_part(pg_temp.inb(:'e_fu1'), '|', 1) || ',' || split_part(pg_temp.inb(:'e_fu2'), '|', 1) || ',' || split_part(pg_temp.inb(:'e_fu3'), '|', 1),
+  'active|true|-|2026-10-30T12:00:00|antigo 0 - 0 processing,processing,processing',
+  'a exclusão no futuro não desconecta o canal e o evento só observado no futuro não avança last_event_at'
+);
+select is(
+  pg_temp.oc(pg_temp.ac(:'e_fu1', 'phone_number', 'whatsapp.phone_number.quality_updated', 'WABA-A1', pg_temp.rk(pg_temp.cid(58)), :'t1300', 'GREEN'))
+  || ' ' || pg_temp.oc(pg_temp.ac(:'e_fu2', 'phone_number', 'whatsapp.phone_number.deleted', 'WABA-A1', pg_temp.rk(pg_temp.cid(58)), :'t1400', null))
+  || ' ' || pg_temp.chs(pg_temp.cid(58)),
+  'recorded applied disconnected|false|2026-10-30T14:00:00|2026-10-30T14:00:00|novo',
+  'depois da recusa, as mesmas entradas com um horário válido são aplicadas (nada ficou preso)'
+);
+
+select pg_temp.mk(pg_temp.cid(59), 'WABA-A1', 'WABA-A1:+5511900050059') as r \gset
+select pg_temp.mk(pg_temp.cid(60), 'WABA-A1', 'WABA-A1:+5511900050060') as r \gset
+select (clock_timestamp() + interval '4 minutes')::text as f4 \gset
+select pg_temp.go(pg_temp.cid(59), 'evt-fa1', 'whatsapp.phone_number.quality_updated', 'phone_number', 'WABA-A1', :'f4', 'GREEN') as o_fa1 \gset
+select pg_temp.go(pg_temp.cid(60), 'evt-fa2', 'whatsapp.phone_number.deleted', 'phone_number', 'WABA-A1', :'f4') as o_fa2 \gset
+select is(
+  :'o_fa1' || ',' || :'o_fa2'
+  || ' ' || (select (last_event_at = :'f4'::timestamptz)::text from public.whatsapp_channels where id = pg_temp.cid(59)::uuid)
+  || ' ' || (select (last_event_at = :'f4'::timestamptz and provider_status_event_at = :'f4'::timestamptz and status = 'disconnected')::text
+       from public.whatsapp_channels where id = pg_temp.cid(60)::uuid)
+  || ' ' || (select (count(*) = 2 and bool_and(occurred_at = :'f4'::timestamptz))::text from public.whatsapp_channel_events
+       where channel_id in (pg_temp.cid(59)::uuid, pg_temp.cid(60)::uuid)),
+  'recorded,applied true true true',
+  'cerca de 4 minutos no futuro (dentro da tolerância de 5): aceito e gravado exatamente como veio, sem correção nem truncamento'
+);
+select pg_temp.go(pg_temp.cid(59), 'evt-fa3', 'whatsapp.phone_number.name_updated', 'phone_number', 'WABA-A1', '2000-01-01 00:00:00+00', 'APPROVED') as o_fa3 \gset
+select pg_temp.go(pg_temp.cid(60), 'evt-fa4', 'whatsapp.phone_number.deleted', 'phone_number', 'WABA-A1', '2020-06-01 00:00:00+00') as o_fa4 \gset
+select is(
+  :'o_fa3' || ',' || :'o_fa4'
+  || ' ' || (select (last_event_at = :'f4'::timestamptz)::text from public.whatsapp_channels where id = pg_temp.cid(59)::uuid)
+  || ' ' || (select (provider_status_event_at = :'f4'::timestamptz and status = 'disconnected')::text from public.whatsapp_channels where id = pg_temp.cid(60)::uuid),
+  'recorded,stale_event true true',
+  'horário antigo continua aceito: o só observado vira recorded, a exclusão antiga depois de uma mais nova vira stale_event; nenhum relógio regride'
+);
+select is(
+  pg_temp.oc(pg_temp.ac(:'e_lease', 'phone_number', 'whatsapp.phone_number.quality_updated', 'WABA-A1', :'rk10', :'f1d', 'GREEN')),
+  'claim_lost', 'lease vencida com horário no futuro: claim_lost (a lease vem antes do horário)'
+);
+
+-- ---------------------------------------------------------------------
 -- 11) Contrato no corpo da função
 -- ---------------------------------------------------------------------
 
 -- A lease é conferida de novo, com o relógio de agora, logo depois da ÚLTIMA
 -- trava (inbox, canal e workspace) e antes da primeira escrita (a reserva do
--- ledger). Sem comentários e com o espaço normalizado.
+-- ledger); a tolerância do horário futuro é a única coisa entre as duas.
+-- Sem comentários e com o espaço normalizado.
 select is(
   pg_temp.txt($q$
     with f as (
@@ -958,7 +1137,7 @@ select is(
       from pg_proc p where p.oid = 'public.whatsapp_effect_account_event'::regproc
     ), k as (
       select 'v_now := clock_timestamp(); if v_row.lease_until is null or v_row.lease_until <= v_now then return jsonb_build_object(''outcome'', ''claim_lost''); end if;' as chk_text,
-             'begin select r.outcome, r.ledger_id into v_reserve from private.whatsapp_effect_ledger_reserve(v_row.id, ''account'') r;' as next_text
+             'if p_occurred_at > v_now + interval ''5 minutes'' then raise exception ''invalid_account_event''; end if; begin select r.outcome, r.ledger_id into v_reserve from private.whatsapp_effect_ledger_reserve(v_row.id, ''account'') r;' as next_text
     ), l as (
       select f.s, k.chk_text, k.next_text,
              regexp_instr(f.s, '\m(for (update|share|key share|no key update)|pg_advisory_xact_lock)\M', 1,
@@ -978,7 +1157,31 @@ select is(
     from c
   $q$),
   'true true true',
-  'a lease é conferida de novo, com relógio novo, logo depois da última trava e antes da primeira escrita (a reserva do ledger)'
+  'a lease é conferida de novo, com relógio novo, logo depois da última trava e antes da primeira escrita (a reserva do ledger); só a tolerância do horário futuro vem entre as duas'
+);
+-- A tolerância: uma comparação ESTRITA (o limite exato é aceito), contra o
+-- relógio do banco lido uma única vez (clock_timestamp, o mesmo da lease),
+-- com 5 minutos; nenhuma outra fonte de tempo nem correção do horário
+-- recebido. O limite exato não é testado por comportamento (exigiria acertar
+-- o mesmo microssegundo): aqui se confere o texto da comparação.
+select is(
+  pg_temp.txt($q$
+    with f as (
+      select regexp_replace(lower(regexp_replace(p.prosrc, '--[^\n]*', '', 'g')), '\s+', ' ', 'g') as s
+      from pg_proc p where p.oid = 'public.whatsapp_effect_account_event'::regproc
+    ), k as (
+      select 'if p_occurred_at > v_now + interval ''5 minutes'' then raise exception ''invalid_account_event''; end if;' as fut,
+             'v_now := clock_timestamp();' as clk
+    )
+    select concat_ws(' ',
+      ((length(s) - length(replace(s, fut, ''))) = length(fut))::text,
+      (strpos(s, clk) > 0 and strpos(s, clk) < strpos(s, fut) and (length(s) - length(replace(s, clk, ''))) = length(clk))::text,
+      (s !~ 'p_occurred_at\s*[<>]=?\s*(now\(\)|current_timestamp|transaction_timestamp|statement_timestamp|clock_timestamp|localtimestamp)'
+        and s !~ 'p_occurred_at :=' and s !~ 'p_occurred_at >= v_now')::text)
+    from f, k
+  $q$),
+  'true true true',
+  'a tolerância de horário futuro: uma só comparação estrita com 5 minutos contra o relógio do banco (clock_timestamp), sem outra fonte de tempo nem correção do horário recebido'
 );
 -- Travas: inbox, canal (FOR UPDATE) e workspace (chave protegida), nessa ordem,
 -- todas antes da conferência tardia.
