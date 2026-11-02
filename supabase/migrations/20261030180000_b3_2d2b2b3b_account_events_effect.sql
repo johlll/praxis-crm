@@ -377,8 +377,7 @@ begin
       -- provider_status_event_at e last_event_at; o status, o envio e o
       -- status_changed_at (relógio do CRM) ficam, e não há nova auditoria.
       update public.whatsapp_channels
-      set provider_status_event_at = p_occurred_at,
-          last_event_at = greatest(last_event_at, p_occurred_at)
+      set last_event_at = greatest(last_event_at, p_occurred_at)
       where id = v_channel.id;
     elsif v_result = 'recorded' and (v_channel.last_event_at is null or p_occurred_at > v_channel.last_event_at) then
       -- Só observado (ou exclusão em canal desativado): apenas last_event_at.
