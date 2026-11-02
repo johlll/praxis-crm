@@ -7,12 +7,15 @@
  * Do evento do Inngest só sai o `inboxId`, validado de forma estrita. Todo
  * o ciclo — claim, decifração, conferência do hash, normalização,
  * roteamento, estado do canal, decisão e UMA finalização — acontece dentro
- * de UM `step.run`, que devolve só `{ outcome, code }`. Nada é escrito no
- * domínio: eventos que um dia terão efeito são liberados com
- * `domain_effect_not_implemented`; `ignored` e `unsupported` são
- * finalizados com uma disposição de lista fechada, cercada pelo claim.
+ * de UM `step.run`, que devolve só `{ outcome, code }`. O consumidor em si não
+ * escreve no domínio: os eventos de domínio vão aos efeitos da B3.2d-2b2
+ * (ligação da B3.2d-2b3, testada em `b3-2d2b3-*`; aqui as RPCs dos efeitos
+ * respondem `duplicate`); `ignored` e `unsupported` são finalizados com uma
+ * disposição de lista fechada, cercada pelo claim.
  *
  * Escritos ANTES da implementação, contra a main 10e617f. Tudo fictício.
+ * Revistos na B3.2d-2b3: o marcador provisório `domain_effect_not_implemented`
+ * deixou de existir.
  */
 import { createHash } from "node:crypto";
 
@@ -76,6 +79,9 @@ beforeEach(async () => {
     whatsapp_inbox_fail: () => ({ data: { outcome: "failed" }, error: null }),
     whatsapp_inbox_release: () => ({ data: { outcome: "released" }, error: null }),
     whatsapp_inbox_dispose: () => ({ data: { outcome: "completed" }, error: null }),
+    // B3.2d-2b3: os efeitos do domínio (o banco já finaliza a entrada neles).
+    whatsapp_effect_inbound_message: () => ({ data: { outcome: "duplicate" }, error: null }),
+    whatsapp_effect_message_status: () => ({ data: { outcome: "duplicate" }, error: null }),
   };
   rpcLog = [];
   insideStep = false;
@@ -155,7 +161,8 @@ function claimReturns(...rows: unknown[]) {
 }
 
 const names = () => rpcLog.map((c) => c.name);
-const finalizations = () => rpcLog.filter((c) => c.name !== "whatsapp_inbox_claim");
+const FINALIZERS = ["whatsapp_inbox_complete", "whatsapp_inbox_fail", "whatsapp_inbox_release", "whatsapp_inbox_dispose"];
+const finalizations = () => rpcLog.filter((c) => FINALIZERS.includes(c.name));
 
 async function run(inboxId: string = INBOX_ID) {
   const { processWhatsAppInboxEntry } = await loadConsumer();
@@ -341,14 +348,13 @@ describe("3. resultados do claim", () => {
 
 describe("4. decisão com o adaptador do provedor gravado no canal", () => {
   it.each([
-    ["message.inbound", INBOUND],
-    ["message.status", STATUS],
-  ])("%s com canal ativo: release domain_effect_not_implemented (fica pendente)", async (_name, event) => {
+    ["message.inbound", INBOUND, "whatsapp_effect_inbound_message"],
+    ["message.status", STATUS, "whatsapp_effect_message_status"],
+  ])("%s com canal ativo: vai ao efeito do domínio (B3.2d-2b3), que já finaliza a entrada — nenhuma finalização do consumidor", async (_name, event, effectRpc) => {
     claimReturns(claimRow(event));
-    await expect(run()).resolves.toEqual({ outcome: "released", code: "domain_effect_not_implemented" });
-    expect(finalizations()).toEqual([
-      { name: "whatsapp_inbox_release", args: { p_inbox_id: INBOX_ID, p_claim_token: TOKEN, p_error_code: "domain_effect_not_implemented" }, insideStep: false },
-    ]);
+    await expect(run()).resolves.toEqual({ outcome: "processed", code: "duplicate" });
+    expect(finalizations()).toEqual([]);
+    expect(names()).toEqual(["whatsapp_inbox_claim", effectRpc]);
   });
 
   it("evento não suportado: dispose unsupported_event com id, token e disposição", async () => {
@@ -367,7 +373,7 @@ describe("4. decisão com o adaptador do provedor gravado no canal", () => {
 
   it.each([
     ["dispose", OTHER, "whatsapp_inbox_dispose", "unsupported_event"],
-    ["release", INBOUND, "whatsapp_inbox_release", "domain_effect_not_implemented"],
+    ["fail", { ...INBOUND, routingKey: "sim-outro-canal" }, "whatsapp_inbox_fail", "routing_mismatch"],
   ] as const)("%s com claim_lost (lease vencida antes da finalização): uma única chamada, sem repetir nem trocar de finalização", async (_n, event, rpc, code) => {
     claimReturns(claimRow(event));
     handlers[rpc] = () => ({ data: { outcome: "claim_lost" }, error: null });
@@ -454,12 +460,12 @@ describe("5. matriz do estado do canal", () => {
 
 describe("6. decisão por tipo de evento e roteamento", () => {
   const cases: [string, NormalizedWhatsAppEvent, string, string][] = [
-    ["mensagem recebida", ev(EVENTS.inbound), "release", "domain_effect_not_implemented"],
-    ["eco do aplicativo", ev(EVENTS.outbound), "release", "domain_effect_not_implemented"],
-    ["status", ev(EVENTS.status), "release", "domain_effect_not_implemented"],
-    ["troca de identidade", ev(EVENTS.identity), "release", "domain_effect_not_implemented"],
-    ["evento da conta (WABA, sem routing key)", ev(EVENTS.accountWaba), "release", "domain_effect_not_implemented"],
-    ["evento do número", ev(EVENTS.accountPhone), "release", "domain_effect_not_implemented"],
+    ["mensagem recebida", ev(EVENTS.inbound), "apply", ""],
+    ["eco do aplicativo", ev(EVENTS.outbound), "apply", ""],
+    ["status", ev(EVENTS.status), "apply", ""],
+    ["troca de identidade", ev(EVENTS.identity), "apply", ""],
+    ["evento da conta (WABA, sem routing key)", ev(EVENTS.accountWaba), "apply", ""],
+    ["evento do número", ev(EVENTS.accountPhone), "apply", ""],
     ["evento do número sem routing key", ev(EVENTS.accountPhone, { routingKey: null }), "fail", "event_impossible"],
     ["histórico ignorado", ev(EVENTS.ignoredHistory), "dispose", "ignored_history"],
     ["grupo ignorado, sem routing key", ev(EVENTS.ignoredGroup), "dispose", "ignored_group_message"],
@@ -480,12 +486,16 @@ describe("6. decisão por tipo de evento e roteamento", () => {
 
   it.each(cases)("%s → %s %s", async (_name, event, action, code) => {
     const { decideWhatsAppInboxEvent } = await loadConsumer();
-    expect(decideWhatsAppInboxEvent({ channelRoutingKey: ROUTING, channelStatus: "active", event })).toEqual({ action, code });
+    const decision = decideWhatsAppInboxEvent({ channelRoutingKey: ROUTING, channelStatus: "active", event });
+    // Tipo de domínio: a decisão é aplicar o efeito, com o evento normalizado.
+    if (action === "apply") expect(decision).toEqual({ action, event });
+    else expect(decision).toEqual({ action, code });
   });
 
   it.each(["paused", "disconnected", "disabled"] as const)("canal %s: release com o código do estado para todo tipo válido", async (status) => {
     const { decideWhatsAppInboxEvent } = await loadConsumer();
-    for (const event of [EVENTS.inbound, EVENTS.status, EVENTS.ignoredHistory, EVENTS.unsupported, EVENTS.accountWaba]) {
+    // O evento da conta (account) não é bloqueado pelo estado do canal: ver §3 de b3-2d2b3-consumidor-efeitos.
+    for (const event of [EVENTS.inbound, EVENTS.status, EVENTS.ignoredHistory, EVENTS.unsupported]) {
       expect(decideWhatsAppInboxEvent({ channelRoutingKey: ROUTING, channelStatus: status, event: ev(event) })).toEqual({
         action: "release",
         code: `channel_${status}`,
@@ -493,14 +503,23 @@ describe("6. decisão por tipo de evento e roteamento", () => {
     }
   });
 
-  it("com o adaptador fictício: ignored finaliza com a disposição; account e identidade só liberam", async () => {
-    for (const [event, expected] of [
-      [EVENTS.ignoredHistory, { outcome: "processed", code: "ignored_history" }],
-      [EVENTS.accountWaba, { outcome: "released", code: "domain_effect_not_implemented" }],
-      [EVENTS.identity, { outcome: "released", code: "domain_effect_not_implemented" }],
+  it("com o adaptador fictício: ignored finaliza com a disposição; account e identidade vão aos efeitos (que já finalizam)", async () => {
+    handlers.whatsapp_effect_account_event = () => ({ data: { outcome: "recorded" }, error: null });
+    handlers.whatsapp_effect_identity_change = () => ({ data: { outcome: "identity_not_found" }, error: null });
+    // O tipo bruto da linha tem de ser o do evento de conta (conferido antes do efeito).
+    for (const [event, rawType, expected] of [
+      [EVENTS.ignoredHistory, "message.inbound", { outcome: "processed", code: "ignored_history" }],
+      [{ ...EVENTS.accountWaba, providerType: "whatsapp.business_account.updated" }, "whatsapp.business_account.updated", { outcome: "processed", code: "recorded" }],
+      // O BSUID da identidade anterior exige as chaves de identidade, ausentes neste ambiente de teste.
+      [EVENTS.identity, "message.inbound", { outcome: "released", code: "identity_keys_not_configured" }],
     ] as const) {
-      claimReturns(claimRow(INBOUND));
-      withAdapter(fakeAdapter({ events: [ev(event)] }));
+      claimReturns(claimRow({ ...INBOUND, type: rawType }));
+      withAdapter(
+        fakeAdapter({
+          events: [ev(event)],
+          envelope: { ok: true, envelope: { providerEventId: EVENT_ID, providerEventType: rawType, envelopeVersion: "1", eventCount: 1 } },
+        }),
+      );
       await expect(run()).resolves.toEqual(expected);
     }
   });
@@ -533,7 +552,6 @@ describe("7. classificação das falhas", () => {
     ["normalização indisponível no adaptador", { normalized: { ok: false, reason: "unsupported", capability: "normalizeEvents" } }, "provider_unavailable"],
     ["adaptador falhando na inspeção", { throwOn: "inspect" }, "consumer_transient_error"],
     ["adaptador falhando na normalização", { throwOn: "normalize" }, "consumer_transient_error"],
-    ["efeito no domínio ainda não implementado", {}, "domain_effect_not_implemented"],
   ];
 
   it.each(terminal)("terminal — %s: fail %s, uma vez", async (_name, opts, code) => {
@@ -703,7 +721,10 @@ describe("11. sem domínio, sem log, sem conteúdo", () => {
     const spies = (["log", "info", "warn", "error", "debug"] as const).map((m) => vi.spyOn(console, m).mockImplementation(() => {}));
     setup();
     const result = await run();
-    for (const name of names()) expect(["whatsapp_inbox_claim", "whatsapp_inbox_fail", "whatsapp_inbox_release", "whatsapp_inbox_dispose"]).toContain(name);
+    // O consumidor chama as RPCs da inbox; as dos efeitos, só através dos módulos dos efeitos.
+    for (const name of names()) {
+      expect(["whatsapp_inbox_claim", "whatsapp_inbox_fail", "whatsapp_inbox_release", "whatsapp_inbox_dispose", "whatsapp_effect_inbound_message", "whatsapp_effect_message_status"]).toContain(name);
+    }
     expect(fromMock).not.toHaveBeenCalled();
     for (const spy of spies) expect(spy).not.toHaveBeenCalled();
     for (const call of finalizations()) {

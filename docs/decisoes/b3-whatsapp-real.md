@@ -1543,7 +1543,7 @@ ou número.
 | B3.2d-2b2b2 | **Implementada (§24, PR #235).** Status e custo de uma mensagem de saída já gravada (`message.status`): localização pelo id do provedor e pelo wamid, nunca pelo `externalId` sozinho; `message_not_found` recuperável; status pela regra compartilhada, sem regressão; código de erro sanitizado; custo estimado × final (o final nunca muda; outro final é `cost_conflict`; só o final é cobrado); `externalId` opaco; destinatário conferido; nada criado. Não liga o consumidor, não envia mensagem e não altera o chatbot | B3.2d-2b2b1 |
 | B3.2d-2b2b3a | **Concluída e mesclada na PR #262 (merge `ff13405`; §25).** Identidade alterada e troca de número (`contact.identity_changed`): identidade anterior só lida, nunca criada (`identity_not_found` recuperável); o telefone novo substitui o antigo na MESMA identidade; telefone ou BSUID de outra identidade, ou outro BSUID na mesma → `identity_conflict`; sem auto-merge; a conversa acompanha o número, com os vínculos comerciais preservados e marcados para revisão; `identity` sem a nova → `review_required`; contato e telefones do contato intactos. Não liga o consumidor | B3.2d-2b2b2 |
 | B3.2d-2b2b3b | **Implementada na PR #293 (§26).** Eventos operacionais da conta e do número (`account`): `provider_account_ref` neutra e imutável no canal, e as datas `last_event_at` e `provider_status_event_at`, que só avançam; `whatsapp_channel_events` deny-all, sem telefone, routing key, conta ou payload; **só** `phone_number.deleted` e `business_account.deleted` desconectam (`active`/`paused` → `disconnected`, sem envio, auditoria sanitizada); evento igual ou anterior ao último de estado é `stale_event` (e não muda o canal); a exclusão mais nova num canal já `disconnected` só é registrada, mas avança `provider_status_event_at` (o último evento de estado do provedor); horário do provedor mais de 5 minutos à frente do relógio do banco é recusado (`invalid_account_event`); os demais tipos só são registrados (o `code` é opaco); `disabled` nunca é reativado e não existe reativação automática; canal sem referência confiável → `account_reference_unverified`. Não liga o consumidor nem a YCloud real | B3.2d-2b2b3a |
-| B3.2d-2b3 | Ligação do consumidor da B3.2d-2a às RPCs da B3.2d-2b2: o release `domain_effect_not_implemented` dá lugar ao efeito; a decisão por tipo e estado do canal continua a do §20.4; os resultados `channel_*` dos efeitos viram release com o mesmo código | B3.2d-2b2b3b |
+| B3.2d-2b3 | **Implementada (§27).** Ligação do consumidor da B3.2d-2a aos cinco efeitos da B3.2d-2b2, por um despachante único (`effects/dispatch.ts`) que recebe o **mesmo objeto de claim** e nunca finaliza a entrada: `applied`, `recorded`, `stale_event`, `review_required` e `duplicate` (já concluídos pelo banco) e os resultados sem posse (`already_processed`, `terminal_failed`, `claim_lost`, `not_found`) **não sofrem segunda finalização**; `channel_*`, `identity_not_found`, `message_not_found`, `account_reference_unverified` e `identity_keys_not_configured` viram `release` uma vez; `identity_conflict`, `message_conflict`, `cost_conflict`, `effect_conflict`, `routing_mismatch`, `account_reference_mismatch` e todos os `invalid_*` (inclusive `invalid_account_event`, o horário a mais de 5 minutos no futuro) viram `fail` uma vez; erro `unknown`, `invalid_response`, `whatsapp_environment_required` ou de transporte do efeito vira nova tentativa do Inngest, sem finalizar. O `account` chega ao efeito em **qualquer** estado do canal; mensagem, eco, status e identidade continuam liberados com `channel_*` quando o canal não está `active`. `domain_effect_not_implemented` deixa de existir. Sem migration, sem variável nova, sem adaptador YCloud no resolvedor | B3.2d-2b2b3b |
 | B3.2e | Reconciliador: republica as entradas `pending` e as `processing` com lease vencida; batimento do canal (`last_event_at`). Portão obrigatório antes de webhook real (§18.3) | B3.2d-2b3 |
 | Fora do Praxis | Contrato do §15.6 no chatbot (rota, tabela de pedidos, testes), em branch/PR própria do chatbot, desligado e sem deploy | Decisão 15; implantação real com nova autorização; necessário antes da B3.3 no número do chatbot |
 | Posterior | Resumo e qualificação estruturados do chatbot (decisão 12) | Entrada real estável |
@@ -3274,7 +3274,7 @@ entradas preservadas.
 
 | Tipo | Ação |
 |---|---|
-| `message.inbound`, `message.outbound_observed`, `message.status`, `contact.identity_changed`, `account` | release `domain_effect_not_implemented`; fica pendente para a B3.2d-2b |
+| `message.inbound`, `message.outbound_observed`, `message.status`, `contact.identity_changed`, `account` | *(até a B3.2d-2b2; substituído na B3.2d-2b3, §27)* release `domain_effect_not_implemented`; fica pendente para a B3.2d-2b |
 | `ignored` (`history`, `group_message`, `non_whatsapp_product`) | dispose `ignored_<motivo>` |
 | `unsupported` | dispose `unsupported_event` |
 | tipo ou motivo desconhecido | fail `event_impossible` |
@@ -3297,7 +3297,7 @@ entradas preservadas.
 | adaptador não habilitado ou sem normalização | recuperável | `provider_unavailable` |
 | exceção dentro do adaptador ou da decisão | recuperável | `consumer_transient_error` |
 | canal pausado, desconectado ou desativado | recuperável | `channel_paused`, `channel_disconnected`, `channel_disabled` |
-| efeito no domínio ainda não implementado | recuperável | `domain_effect_not_implemented` |
+| efeito no domínio ainda não implementado *(removido na B3.2d-2b3, §27)* | recuperável | `domain_effect_not_implemented` |
 | banco indisponível no claim ou na finalização | nova tentativa do Inngest (até 3) | `inbox_unavailable`, `inbox_finalize_unavailable` |
 
 - Os dois primeiros e os dois de chave são finalizados pelo próprio claim
@@ -5843,3 +5843,365 @@ Riscos e divergências:
 - **a B3.2d-2b3 precisa decidir** o que fazer com `routing_mismatch`,
   `account_reference_*` e `invalid_account_event` (falhar ou liberar) e
   mapear `stale_event`, `recorded` e `applied` como entrada finalizada.
+
+## 27. B3.2d-2b3 — ligação do consumidor aos efeitos do domínio (02/11/2026)
+
+A **B3.2d-2b2b3b** (§26) foi mesclada na PR #293 (merge `8cd9191`, pais
+`ff13405` e `a78e689`). O CI da `main` nesse merge ficou verde (run
+41527273516, depois de reiniciar um passo de infraestrutura, "Subir Supabase
+local", que falhou no download das imagens), o deploy automático de
+Production terminou com sucesso, e as variáveis do Vercel **não têm nenhuma
+`WHATSAPP_*`** (conferidos só os nomes, sem valores). Esta etapa liga o consumidor da inbox (§20) aos
+**cinco efeitos atômicos** já implementados:
+
+| Tipo normalizado | Efeito |
+|---|---|
+| `message.inbound` | `applyWhatsAppInboundMessage` (§22) |
+| `message.outbound_observed` | `applyWhatsAppOutboundObserved` (§23) |
+| `message.status` | `applyWhatsAppMessageStatus` (§24) |
+| `contact.identity_changed` | `applyWhatsAppIdentityChange` (§25) |
+| `account` | `applyWhatsAppAccountEvent` (§26) |
+
+Não implementa envio, mídia, reconciliador, ativação real da YCloud, chatbot,
+interface nem automação comercial. **Sem migration, sem variável de ambiente
+nova e sem adaptador YCloud no resolvedor** (`ycloud` e `meta` continuam sem
+adaptador): a PR prova só a orquestração segura entre o consumidor e os
+efeitos existentes.
+
+### 27.1 Invariantes
+
+- **Um único `step.run`** para o ciclo inteiro (§20.3, inalterado): claim →
+  decifração e hash → hash conferido de novo → adaptador do canal → envelope
+  → exatamente um evento normalizado → roteamento → estado do canal →
+  decisão → (tipo de domínio) **um** efeito → no máximo **uma** finalização.
+- **O claim nunca sai da memória:** não é retornado, serializado, copiado,
+  enviado a outro step nem à fila. O efeito recebe **o mesmo objeto
+  congelado** que a inbox emitiu (a identidade vem de um `WeakMap`: uma cópia
+  ou um objeto serializado é recusado com `inbox_claim_untrusted` antes de
+  qualquer chamada ao banco).
+- **O consumidor nunca confia no evento do Inngest** (`data` é exatamente
+  `{ inboxId }`): workspace, canal, ambiente, provedor e routing key saem do
+  banco pelo claim, e a routing key do evento só é **comparada** com a do
+  canal (nunca localiza outro canal, nunca deduz conta, workspace ou canal).
+- **A normalização continua só depois do claim, da decifração e da conferência
+  do hash.**
+- **Um evento chama exatamente um efeito**, uma vez por execução.
+- **Nenhum erro bruto, payload, telefone, BSUID, conta, routing key, token,
+  id do domínio ou conteúdo** aparece no resultado, na mensagem do erro de
+  nova tentativa ou em log. O resultado é só `{ outcome, code }`, com código
+  fixo. Nenhum `console` no consumidor nem no despachante.
+
+### 27.2 Onde fica cada coisa
+
+- `src/server/whatsapp/effects/dispatch.ts` (novo): o **despachante**. É o
+  único ponto que chama os cinco efeitos (uma chamada por efeito), converte o
+  evento normalizado para o contrato do efeito e traduz o resultado numa
+  disposição fechada (`done`, `release`, `fail` ou `retry`). **Não finaliza a
+  entrada**, não copia nem serializa o claim, não lê relógio, ambiente nem
+  variável, não fala com o banco (só os efeitos falam) e não registra log.
+- `src/server/whatsapp/consumer.ts`: a decisão pura ganhou a ação `apply`
+  (tipo de domínio) e **é o único lugar que finaliza** a entrada, num único
+  ponto (`finalize`), com `dispose`, `fail` ou `release` — nunca `complete`.
+
+### 27.3 Por que não finalizar de novo
+
+Os efeitos atômicos já marcam a entrada como `processed` dentro da própria
+transação quando concluem. Finalizar outra vez seria, no melhor caso,
+`already_processed`, no pior uma corrida contra a lease. Por isso:
+
+- **Concluído pelo banco** (`applied`, `recorded`, `stale_event`,
+  `review_required`, `duplicate`): resultado `processed` com o código, **sem
+  nenhuma** chamada a `complete`, `dispose`, `fail` ou `release`.
+- **Sem posse ou já terminal** (`already_processed`, `terminal_failed`,
+  `claim_lost`, `not_found`): o resultado equivalente do consumidor, com
+  `code: null`, sem nova finalização (e `claim_lost` não provoca repetição).
+- **O claim continua com o consumidor** (resultados recuperáveis ou
+  conflitos): `release` ou `fail`, **exatamente uma vez**.
+- **Infraestrutura:** nada é finalizado (ver §27.6).
+
+### 27.4 Matriz: tipo → efeito → resultado → finalização
+
+`outcome` e `code` são os do retorno do consumidor. “Nenhuma” significa que o
+consumidor não chama nenhuma RPC `whatsapp_inbox_*` depois do efeito.
+
+**`message.inbound`** → `applyWhatsAppInboundMessage` (canal tem de estar
+`active`; senão o consumidor libera sem chamar o efeito — §27.5)
+
+| Resultado do efeito | Finalização | Retorno |
+|---|---|---|
+| `applied`, `duplicate` | nenhuma | `processed` / o código |
+| `already_processed`, `terminal_failed`, `claim_lost`, `not_found` | nenhuma | o mesmo `outcome` / `null` |
+| `channel_paused`, `channel_disconnected`, `channel_disabled` (o canal mudou depois do claim) | `release` | `released` / o código |
+| `identity_conflict`, `effect_conflict` | `fail` | `failed` / o código |
+| erro `invalid_inbound_message` | `fail` | `failed` / `invalid_inbound_message` |
+| erro `identity_keys_not_configured` | `release` | `released` / `identity_keys_not_configured` |
+
+**`message.outbound_observed`** → `applyWhatsAppOutboundObserved` (canal `active`)
+
+| Resultado do efeito | Finalização | Retorno |
+|---|---|---|
+| `applied`, `duplicate` | nenhuma | `processed` / o código |
+| `already_processed`, `terminal_failed`, `claim_lost`, `not_found` | nenhuma | o mesmo `outcome` / `null` |
+| `channel_*` | `release` | `released` / o código |
+| `identity_conflict`, `message_conflict`, `effect_conflict` | `fail` | `failed` / o código |
+| erro `invalid_outbound_message` | `fail` | `failed` / `invalid_outbound_message` |
+| erro `identity_keys_not_configured` | `release` | `released` / `identity_keys_not_configured` |
+
+**`message.status`** → `applyWhatsAppMessageStatus` (canal `active`)
+
+| Resultado do efeito | Finalização | Retorno |
+|---|---|---|
+| `applied`, `duplicate` | nenhuma | `processed` / o código |
+| `already_processed`, `terminal_failed`, `claim_lost`, `not_found` | nenhuma | o mesmo `outcome` / `null` |
+| `message_not_found`, `channel_*` | `release` | `released` / o código |
+| `message_conflict`, `cost_conflict`, `effect_conflict` | `fail` | `failed` / o código |
+| erro `invalid_status_update` | `fail` | `failed` / `invalid_status_update` |
+| erro `identity_keys_not_configured` | `release` | `released` / `identity_keys_not_configured` |
+
+**`contact.identity_changed`** → `applyWhatsAppIdentityChange` (canal `active`)
+
+| Resultado do efeito | Finalização | Retorno |
+|---|---|---|
+| `applied`, `review_required`, `duplicate` | nenhuma | `processed` / o código |
+| `already_processed`, `terminal_failed`, `claim_lost`, `not_found` | nenhuma | o mesmo `outcome` / `null` |
+| `identity_not_found`, `channel_*` | `release` | `released` / o código |
+| `identity_conflict`, `effect_conflict` | `fail` | `failed` / o código |
+| erro `invalid_identity_change` | `fail` | `failed` / `invalid_identity_change` |
+| erro `identity_keys_not_configured` | `release` | `released` / `identity_keys_not_configured` |
+
+**`account`** → `applyWhatsAppAccountEvent` (**em qualquer estado do canal**)
+
+| Resultado do efeito | Finalização | Retorno |
+|---|---|---|
+| `applied`, `recorded`, `stale_event`, `duplicate` | nenhuma | `processed` / o código |
+| `already_processed`, `terminal_failed`, `claim_lost`, `not_found` | nenhuma | o mesmo `outcome` / `null` |
+| `account_reference_unverified` | `release` | `released` / o código |
+| `routing_mismatch`, `account_reference_mismatch`, `effect_conflict` | `fail` | `failed` / o código |
+| erro `invalid_account_event` (inclui `occurredAt` acima da tolerância de 5 minutos do §26.3) | `fail` | `failed` / `invalid_account_event` |
+
+**Nos cinco tipos**, o que não está na tabela falha fechado:
+
+| Situação | Finalização | Retorno |
+|---|---|---|
+| erro `unknown`, `invalid_response`, `whatsapp_environment_required` ou `inbox_claim_untrusted` do efeito; qualquer outro erro lançado (rede, `TypeError`); resposta fora do contrato ou com um `outcome` que aquele efeito nunca devolve | **nenhuma** | o consumidor lança `WhatsAppConsumerRetryableError("effect_unavailable")` (nova tentativa do Inngest) |
+| evento normalizado malformado antes do efeito (horário inválido, campo ausente) | `fail` | `failed` / o `invalid_*` do tipo |
+
+Os tipos que não são de domínio **não mudam** (§20.4): `ignored` finaliza com
+a disposição (`ignored_history`, `ignored_group_message`,
+`ignored_non_whatsapp_product`), `unsupported` com `unsupported_event`, e
+ambos continuam liberados com `channel_*` quando o canal não está `active`.
+Um `kind` impossível, ou um `account` de escopo desconhecido, falha fechado
+com `event_impossible`, sem chamar efeito algum.
+
+### 27.5 Estado do canal e roteamento
+
+O release genérico “o canal não está `active`” (§20.4) deixou de valer para o
+`account`. Ele precisa chegar ao efeito em `paused`, `disconnected` e
+`disabled` porque:
+
+- a exclusão em `paused` tem de mudar o canal para `disconnected`;
+- a exclusão **mais nova** em `disconnected` tem de avançar
+  `provider_status_event_at` (§26.3);
+- o evento em `disabled` tem de ser registrado sem reativar nem rebaixar o
+  canal.
+
+Mensagem, eco, status e troca de identidade **mantêm** a liberação (`release`
+com `channel_paused`, `channel_disconnected` ou `channel_disabled`, sem
+chamar o efeito). Antes do efeito, nesta ordem (a falha terminal de conteúdo
+prevalece sobre o estado do canal):
+
+1. `providerEventId` do evento normalizado = o do claim (`event_mismatch`);
+2. para o **eco** e o **evento da conta**, que trazem o `providerType` bruto,
+   ele tem de ser o `provider_event_type` gravado na linha (`event_mismatch`;
+   o banco confere de novo dentro do efeito);
+3. routing key presente = a do canal, comparação exata
+   (`routing_mismatch`); mensagem, eco, status, identidade e evento do
+   **número** exigem routing key (`event_impossible` sem ela); o evento da
+   **conta** (WABA) pode vir sem;
+4. as RPCs continuam fazendo a conferência definitiva dentro da transação.
+
+### 27.6 Falhas de infraestrutura e nova tentativa
+
+Qualquer erro do efeito que não seja o conteúdo inválido do próprio tipo nem
+a falta das chaves de identidade é tratado como **infraestrutura**: o
+consumidor não finaliza nada e lança `WhatsAppConsumerRetryableError` com o
+código fixo `effect_unavailable` (sem a mensagem nem a pilha originais). A
+nova execução do Inngest começa de novo **pelo claim**; se o efeito já tinha
+sido confirmado no banco, o claim encontra a entrada `processed`
+(`already_processed`) e nada é repetido.
+
+O erro de um efeito **nunca** vira o `release consumer_transient_error` que
+o consumidor usa para falhas do adaptador: um efeito pode ter sido
+confirmado no banco antes de a resposta se perder, e liberar a entrada nesse
+caso a reaplicaria.
+
+### 27.7 Códigos
+
+- **Terminais** (`fail`): os da §20.5, mais `identity_conflict`,
+  `message_conflict`, `cost_conflict`, `effect_conflict`,
+  `account_reference_mismatch`, `invalid_inbound_message`,
+  `invalid_outbound_message`, `invalid_status_update`,
+  `invalid_identity_change` e `invalid_account_event`
+  (`routing_mismatch` já existia).
+- **Recuperáveis** (`release`): os da §20.5 (sem `domain_effect_not_implemented`,
+  que **deixou de existir**), mais `identity_not_found`, `message_not_found`,
+  `account_reference_unverified` e `identity_keys_not_configured`.
+- **Concluídos pelo banco** (`processed`): `applied`, `recorded`,
+  `stale_event`, `review_required`, `duplicate`.
+- **Infraestrutura:** `effect_unavailable` (junto de `inbox_unavailable` e
+  `inbox_finalize_unavailable`).
+
+### 27.8 Testes
+
+- `tests/unit/b3-2d2b3-consumidor-efeitos.test.ts` (152, **efeitos
+  espiados**): cada um dos cinco tipos chama **só** o seu efeito, uma vez, na
+  ordem claim → normalização → efeito; a conversão exata do evento normalizado
+  para o contrato de cada efeito (horário em ISO, remetente, destinatário,
+  custo, identidade anterior e nova); `account` em `active`, `paused`,
+  `disconnected` e `disabled`; mensagem, eco, status e identidade em canal não
+  ativo liberados sem chamar o efeito; ignorado e não suportado com as
+  disposições de sempre; a matriz inteira resultado → finalização (processado
+  sem finalizar, sem posse sem finalizar, `release` e `fail` exatamente uma
+  vez, nenhum `complete` nem `dispose` depois de um efeito); resultados que o
+  efeito daquele tipo nunca devolve e respostas fora do contrato → nova
+  tentativa; erros do efeito (`invalid_*` → `fail`, `identity_keys_not_configured`
+  → `release`, o resto → nova tentativa sem finalizar e sem nada do erro
+  original); `claim_lost` não repetido; **o objeto que o efeito recebe é o
+  mesmo que a inbox emitiu** (mesma referência, congelado, e só ele
+  finaliza); uma cópia, um clone ou o claim serializado são recusados; o
+  resultado do step é só `{ outcome, code }`; o ciclo inteiro dentro de um
+  único `step.run`; evento do Inngest com workspace, canal, ambiente, provedor
+  ou routing key recusado; `routing_mismatch`, `event_mismatch` (id e tipo
+  bruto) e `event_impossible` antes do efeito; kind impossível e escopo
+  desconhecido falham fechado; dois eventos normalizados → nenhum efeito;
+  hash e claim sem posse não chegam ao adaptador nem ao efeito; nenhum log;
+  listas de códigos disjuntas e sem `domain_effect_not_implemented`.
+- `tests/unit/b3-2d2b3-consumidor-efeitos-integrado.test.ts` (80, **efeitos
+  reais** com o banco simulado): para cada tipo, só o claim e a RPC do
+  próprio efeito (nenhuma finalização), com `p_inbox_id` e `p_claim_token` e
+  sem workspace, canal, ambiente ou id do evento; o horário do provedor chega
+  ao banco exatamente como veio; `account` nos quatro estados do canal; cada
+  resposta possível do banco → finalização; `invalid_*` do banco → `fail`
+  uma vez (inclusive `invalid_account_event` com horário a 10 minutos);
+  `whatsapp_environment_required`, erro desconhecido, resposta fora do
+  contrato e transporte falhando → nova tentativa sem finalizar e sem
+  vazar o erro; BSUID sem chaves → `release`; conteúdo e horário inválidos
+  antes da RPC; os efeitos reais recusam uma cópia do claim (`inbox_claim_untrusted`)
+  sem chamar o banco; token novo a cada aquisição.
+- `tests/unit/b3-2d2b3-consumidor-defesa.test.ts` (6): o despachante
+  substituído por um que lança, devolve nova tentativa, ação desconhecida ou
+  nada → nova tentativa sem finalizar, sem log e sem o erro original.
+- `tests/unit/b3-2d2a-estatico.test.ts` (23, 11 novos): os cinco efeitos são
+  chamados num único ponto do despachante e só por ele; só o consumidor
+  finaliza (um `dispose`, um `fail`, um `release`, nenhum `complete`, uma
+  chamada de `finalize`); o claim não é copiado, espalhado, clonado nem
+  serializado, e a única atribuição a `claim` é a do claim da inbox; o
+  despachante sem relógio, timers, log, variável de ambiente nem cliente do
+  banco; sem importar A11, agenda, adaptador de provedor, chatbot, outbox nem
+  variáveis do Inngest, da YCloud, da Meta ou do Cloudflare; o resolvedor
+  continua sem adaptador YCloud ou Meta; `domain_effect_not_implemented` não
+  existe mais em `src`.
+- `tests/unit/b3-2d2a-consumidor-inbox.test.ts` (122): os testes da B3.2d-2a
+  que esperavam o marcador provisório foram **ajustados** (mensagem e status
+  em canal ativo vão ao efeito; a decisão pura devolve `apply`; `account` não
+  é mais liberado por estado do canal). `tests/support/whatsapp-consumer-harness.ts`
+  reúne os construtores comuns dos novos arquivos.
+
+**Vermelho** (PR temporária #324, só os testes sobre a main `8cd9191`, run
+41528723577, fechada sem merge): 207 testes falhando em 4 arquivos de 116
+(os dois arquivos novos do consumidor, o estático e o dos testes antigos da
+2d-2a, ajustados; o harness entra no mesmo commit de teste `76413aa`). O teste de defesa teve o
+seu próprio vermelho (commit `c51e5f8`): 2 de 6 falhando antes da correção.
+
+**Verde:** CI completo na `7bfdc04` (run 41530431570):
+typecheck, lint, **2667 unitários em 117 arquivos** (eram 2418 em 114),
+tipos gerados em dia, pgTAP inteiro (40 arquivos, 2034 testes, **sem
+mudança**: não há migration), isolamento, e2e (76), todas as concorrências
+e todas as atualizações; Vercel verde. O commit seguinte só acrescenta a documentação (§27, §15.9 e as notas do
+§20); o CI completo dele fica registrado na descrição da PR.
+
+### 27.9 Mutações
+
+Cada mutação é uma **cópia** do código aplicada por substituição de texto, uma
+por vez, com o arquivo restaurado depois de cada uma (o código da PR nunca é
+alterado). As 29 rodaram contra os 7 arquivos de teste do consumidor
+(`b3-2d2a-*` e `b3-2d2b3-*`); **nenhuma sobreviveu**. As 12 pedidas são M01 a
+M12 (com as variantes M06b, M07b, M07c, M12b e M12c); M13, M14 e X01 a X10 são
+extras.
+
+A **primeira rodada deixou uma sobrevivente: M12** (`console.error` no `catch`
+defensivo do consumidor). O caminho era inalcançável com o despachante real,
+que nunca lança. Foi o que levou ao arquivo `b3-2d2b3-consumidor-defesa`
+(teste primeiro, vermelho em 2 casos: ação desconhecida e retorno vazio) e a um
+endurecimento do consumidor: só `release` e `fail` deixam o claim com ele;
+qualquer outra coisa vira nova tentativa. M13 e M14 vieram dessa correção.
+
+| Mutação | Testes que a derrubam (arquivo: quantidade) |
+|---|---|
+| M01 evento `message.inbound` chama o efeito de saída observada | efeitos: 28; integrado: 17; 2d-2a inbox: 3; 2d-2a estático: 1 |
+| M02 `account` bloqueado quando o canal está `disconnected` | efeitos: 2; integrado: 1 |
+| M03 resultado `applied` sofre uma segunda finalização | efeitos: 44; integrado: 35; 2d-2a inbox: 2; 2d-2a estático: 1 |
+| M04 `identity_not_found` vira falha terminal | efeitos: 3; integrado: 1 |
+| M05 `identity_conflict` vira `release` | integrado: 1; efeitos: 1 |
+| M06 `invalid_account_event` vira nova tentativa | integrado: 4; efeitos: 2 |
+| M06b `invalid_account_event` vira `release` | integrado: 3; efeitos: 2 |
+| M07 resultado desconhecido do efeito vira sucesso | efeitos: 7 |
+| M07b erro de infraestrutura do efeito vira sucesso | integrado: 6; efeitos: 1 |
+| M07c erro que não é do efeito vira sucesso | efeitos: 2 |
+| M08 dois efeitos chamados para o mesmo evento | efeitos: 8; integrado: 6; 2d-2a inbox: 1; 2d-2a estático: 1 |
+| M09 claim copiado (`{ ...claim }`) antes do efeito | integrado: 71; 2d-2a inbox: 6; efeitos: 6; 2d-2a estático: 1 |
+| M10 `routing_mismatch` deixa passar | 2d-2a inbox: 9; efeitos: 7; 2d-2a falhas: 1 |
+| M11 resultado do consumidor expõe os dados do domínio devolvidos pelo efeito | efeitos: 47; integrado: 39; 2d-2a inbox: 4 |
+| M12 erro bruto no log (consumidor) | defesa: 2 |
+| M12b erro bruto no log (despachante) | 2d-2a estático: 1; integrado: 1 |
+| M12c erro bruto na mensagem do erro de nova tentativa | 2d-2a falhas: 7; integrado: 5; 2d-2a inbox: 2; efeitos: 1 |
+| M13 disposição desconhecida do despachante finaliza a entrada | integrado: 5; defesa: 3; efeitos: 1 |
+| M14 erro do despachante engolido e devolvido como `processed` | defesa: 2 |
+| X01 canal não ativo deixa de liberar mensagem, eco, status e identidade | 2d-2a inbox: 7; efeitos: 7; 2d-2a falhas: 2; integrado: 1 |
+| X02 `providerType` do eco e da conta não conferido | efeitos: 3 |
+| X03 `claim_lost` do efeito vira nova tentativa | efeitos: 9; integrado: 6 |
+| X04 `identity_keys_not_configured` vira falha terminal | 2d-2a inbox: 1; integrado: 1; efeitos: 1 |
+| X05 horário do provedor no futuro corrigido para agora | 2d-2a estático: 1; efeitos: 1 |
+| X06 `message_not_found` do status deixa de ser release | efeitos: 5; integrado: 2 |
+| X07 `account_reference_unverified` vira sucesso | integrado: 1; efeitos: 1 |
+| X08 evento da conta despachado ao efeito de status | efeitos: 31; integrado: 24; 2d-2a inbox: 1; 2d-2a estático: 1 |
+| X09 BSUID do remetente descartado na conversão | efeitos: 2; 2d-2a inbox: 1; integrado: 1 |
+| X10 `claim_lost` na finalização repete a finalização | efeitos: 48; integrado: 24; 2d-2a inbox: 23; 2d-2a falhas: 3; 2d-2a estático: 1 |
+
+### 27.10 Fora do escopo, decisões, riscos e divergências
+
+Fora desta PR: envio, mídia, o reconciliador e o batimento do canal
+(B3.2e), configuração real da YCloud (e o adaptador real no resolvedor),
+criação real de canal, alertas, retenção, C1, interface, chatbot,
+automação comercial e migrations hospedadas.
+
+Decisões:
+- o despachante fica em `effects/` e o consumidor continua sendo o **único**
+  que finaliza (verificado por teste estático: um ponto de `dispose`, um de
+  `fail`, um de `release`, nenhum de `complete`);
+- a tabela de resultados é **fechada por tipo**: um `outcome` que aquele
+  efeito nunca devolve (por exemplo `channel_paused` vindo do efeito da
+  conta, ou `recorded` vindo da mensagem) não vira sucesso nem falha de
+  conteúdo; vira nova tentativa;
+- um evento malformado (horário inválido, campo ausente) é falha terminal do
+  próprio tipo antes de chegar ao efeito, e o horário muito no futuro **não é
+  corrigido nem recusado pelo consumidor**: quem julga é o banco (§26.3).
+
+Riscos e divergências:
+- **nova tentativa e lease:** depois de uma falha de infraestrutura a entrada
+  continua `processing` até a lease vencer (5 minutos por padrão). Uma nova
+  tentativa do Inngest que chegue antes disso vê `busy` e termina sem fazer
+  nada; é a **reconciliação da B3.2e** (republicação das entradas `pending` e
+  das `processing` com lease vencida) que fecha esse ciclo. Isto é inerente ao
+  desenho do claim com lease (§19) e não muda aqui;
+- **`invalid_account_event` por relógio do provedor:** um provedor com o
+  relógio mais de 5 minutos adiantado tem todos os eventos da conta falhados
+  (terminais) em vez de repetidos; é a escolha pedida para esta etapa e fica
+  visível no código `invalid_account_event` da entrada;
+- **`identity_keys_not_configured`** libera a entrada para quando as chaves
+  de identidade existirem; com um canal real sem chaves, as mensagens com
+  BSUID ficam `pending` (nunca descartadas);
+- a conferência do `providerType` do eco e do evento da conta antes do efeito
+  é uma defesa a mais: se um adaptador futuro normalizar `providerType` com
+  outro valor que o `provider_event_type` bruto, o evento falha com
+  `event_mismatch` até o adaptador ser corrigido.

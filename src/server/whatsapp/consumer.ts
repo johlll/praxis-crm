@@ -14,14 +14,23 @@ import {
   type WhatsAppInboxDisposition,
   type WhatsAppInboxFinishOutcome,
 } from "@/server/whatsapp/inbox";
+import {
+  applyWhatsAppDomainEffect,
+  WHATSAPP_EFFECT_RECOVERABLE_CODES,
+  WHATSAPP_EFFECT_TERMINAL_CODES,
+  type WhatsAppDomainEvent,
+  type WhatsAppEffectProcessedCode,
+} from "@/server/whatsapp/effects/dispatch";
 import { WHATSAPP_INBOX_RECEIVED_EVENT } from "@/server/whatsapp/inbox-events";
 import { resolveWhatsAppProvider } from "@/server/whatsapp/provider";
 import { VerifiedWebhookBody, type NormalizedWhatsAppEvent } from "@/server/whatsapp/provider/contract";
 
 /**
  * Consumidor da inbox do WhatsApp (B3.2d-2a, docs/decisoes/b3-whatsapp-real.md
- * §20). Só a orquestração segura: NADA aqui escreve no domínio (contato,
- * lead, oportunidade, atividade, conversa, mensagem ou status da A7).
+ * §20; ligação aos efeitos na B3.2d-2b3, §27). Só a orquestração segura: o
+ * consumidor em si NÃO escreve no domínio — quem escreve são os cinco efeitos
+ * atômicos da B3.2d-2b2, chamados pelo despachante (`effects/dispatch.ts`)
+ * com o MESMO objeto de claim que a inbox emitiu.
  *
  * O evento interno traz SÓ o `inboxId`. Ambiente, workspace, canal, estado
  * do canal, provedor, routing key, hash e cifra saem do banco, pelo claim.
@@ -30,9 +39,17 @@ import { VerifiedWebhookBody, type NormalizedWhatsAppEvent } from "@/server/what
  * que a função do Inngest executa dentro de UM `step.run`:
  *   claim → decifração e hash (no claim) → hash conferido de novo →
  *   adaptador do provedor GRAVADO no canal → envelope → exatamente um
- *   evento normalizado → roteamento → estado do canal → decisão → UMA
- *   finalização (dispose, fail ou release).
+ *   evento normalizado → roteamento → estado do canal → decisão →
+ *   (tipo de domínio) UM efeito → no máximo UMA finalização.
  * O objeto do claim nunca sai daqui: o retorno é só `{ outcome, code }`.
+ *
+ * Os efeitos atômicos já deixam a entrada `processed` quando concluem
+ * (applied, recorded, stale_event, review_required, duplicate): para esses
+ * resultados, e para os sem posse (already_processed, terminal_failed,
+ * claim_lost, not_found), NADA é finalizado de novo. Só os resultados que
+ * mantêm o claim viram `release` ou `fail`, exatamente uma vez. Falha de
+ * infraestrutura do efeito não finaliza nada: vira nova tentativa do Inngest,
+ * que recomeça pelo claim.
  *
  * Nenhum log. Erros viram códigos fixos; falha de infraestrutura vira
  * `WhatsAppConsumerRetryableError` (nova tentativa do Inngest), sem a
@@ -52,6 +69,8 @@ export const WHATSAPP_CONSUMER_TERMINAL_CODES = [
   "routing_mismatch",
   "event_impossible",
   "provider_invalid",
+  // Dos efeitos do domínio (B3.2d-2b3): conflitos permanentes e conteúdo inválido.
+  ...WHATSAPP_EFFECT_TERMINAL_CODES,
 ] as const;
 
 /** Falhas RECUPERÁVEIS: a entrada volta a `pending` (release) e fica
@@ -64,12 +83,17 @@ export const WHATSAPP_CONSUMER_RECOVERABLE_CODES = [
   "channel_paused",
   "channel_disconnected",
   "channel_disabled",
-  "domain_effect_not_implemented",
+  // Dos efeitos do domínio (B3.2d-2b3): o que ainda não existe ou falta configurar.
+  ...WHATSAPP_EFFECT_RECOVERABLE_CODES,
 ] as const;
 
 export type WhatsAppConsumerTerminalCode = (typeof WHATSAPP_CONSUMER_TERMINAL_CODES)[number];
 export type WhatsAppConsumerRecoverableCode = (typeof WHATSAPP_CONSUMER_RECOVERABLE_CODES)[number];
-export type WhatsAppConsumerCode = WhatsAppConsumerTerminalCode | WhatsAppConsumerRecoverableCode | WhatsAppInboxDisposition;
+export type WhatsAppConsumerCode =
+  | WhatsAppConsumerTerminalCode
+  | WhatsAppConsumerRecoverableCode
+  | WhatsAppInboxDisposition
+  | WhatsAppEffectProcessedCode;
 
 export type WhatsAppConsumerOutcome =
   | "processed"
@@ -86,15 +110,21 @@ export type WhatsAppConsumerOutcome =
  * corpo ou identidade. */
 export type WhatsAppConsumerResult = Readonly<{ outcome: WhatsAppConsumerOutcome; code: WhatsAppConsumerCode | null }>;
 
-export type WhatsAppConsumerDecision =
+/** O que o consumidor finaliza (exatamente uma vez). */
+type WhatsAppConsumerFinalDecision =
   | Readonly<{ action: "dispose"; code: WhatsAppInboxDisposition }>
   | Readonly<{ action: "fail"; code: WhatsAppConsumerTerminalCode }>
   | Readonly<{ action: "release"; code: WhatsAppConsumerRecoverableCode }>;
 
-/** Falha de infraestrutura (banco indisponível no claim ou na finalização).
+export type WhatsAppConsumerDecision =
+  | WhatsAppConsumerFinalDecision
+  // Tipo de domínio: um efeito (B3.2d-2b2) decide, com o claim e o evento normalizado.
+  | Readonly<{ action: "apply"; event: WhatsAppDomainEvent }>;
+
+/** Falha de infraestrutura (banco indisponível no claim, no efeito ou na finalização).
  * Só o código: nem a mensagem original nem a pilha saem para o Inngest. */
 export class WhatsAppConsumerRetryableError extends Error {
-  constructor(public readonly code: "inbox_unavailable" | "inbox_finalize_unavailable") {
+  constructor(public readonly code: "inbox_unavailable" | "inbox_finalize_unavailable" | "effect_unavailable") {
     super(code);
     this.name = "WhatsAppConsumerRetryableError";
     this.stack = `${this.name}: ${code}`;
@@ -127,14 +157,14 @@ export function parseWhatsAppInboxReceivedEvent(event: unknown): { ok: true; inb
 // Decisão (pura)
 // ---------------------------------------------------------------------
 
-const release = (code: WhatsAppConsumerRecoverableCode): WhatsAppConsumerDecision => ({ action: "release", code });
-const fail = (code: WhatsAppConsumerTerminalCode): WhatsAppConsumerDecision => ({ action: "fail", code });
-const dispose = (code: WhatsAppInboxDisposition): WhatsAppConsumerDecision => ({ action: "dispose", code });
+const release = (code: WhatsAppConsumerRecoverableCode): WhatsAppConsumerFinalDecision => ({ action: "release", code });
+const fail = (code: WhatsAppConsumerTerminalCode): WhatsAppConsumerFinalDecision => ({ action: "fail", code });
+const dispose = (code: WhatsAppInboxDisposition): WhatsAppConsumerFinalDecision => ({ action: "dispose", code });
 
 /** Tipos que EXIGEM routing key (o contrato do adaptador a declara
  * obrigatória). */
 const ROUTED_KINDS: ReadonlySet<string> = new Set(["message.inbound", "message.outbound_observed", "message.status", "contact.identity_changed"]);
-/** Tipos que, a partir da B3.2d-2b, terão efeito no domínio. */
+/** Tipos com efeito no domínio (B3.2d-2b3). */
 const DOMAIN_KINDS: ReadonlySet<string> = new Set([...ROUTED_KINDS, "account"]);
 const IGNORED_DISPOSITIONS: Readonly<Record<string, WhatsAppInboxDisposition>> = {
   history: "ignored_history",
@@ -156,10 +186,16 @@ const CHANNEL_RELEASE: Readonly<Record<Exclude<WhatsAppChannelStatus, "active">,
  *     eco, status, troca de identidade e evento do NÚMERO exigem routing
  *     key; evento da conta (WABA), ignorado e não suportado podem vir sem —
  *     o canal é o da linha, e nenhuma routing key é inventada;
- *  3. estado ATUAL do canal: pausado, desconectado ou desativado → release
- *     com o código do estado (a entrada fica pendente, nunca descartada);
- *  4. tipo: o que um dia terá efeito no domínio → release
- *     `domain_effect_not_implemented`; ignorado e não suportado → dispose.
+ *  3. evento da conta ou do número (`account`): vai ao efeito em QUALQUER
+ *     estado do canal — a exclusão em canal pausado tem de desconectar, a
+ *     mais nova em canal desconectado tem de avançar o último evento de
+ *     estado, e o evento em canal desativado tem de ser registrado sem
+ *     reativá-lo nem rebaixá-lo;
+ *  4. estado ATUAL do canal: pausado, desconectado ou desativado → release
+ *     com o código do estado (a entrada fica pendente, nunca descartada) para
+ *     mensagem, eco, status, troca de identidade, ignorado e não suportado;
+ *  5. tipo: o que tem efeito no domínio → `apply`; ignorado e não suportado →
+ *     dispose.
  * A falha terminal de conteúdo prevalece sobre o estado do canal.
  */
 export function decideWhatsAppInboxEvent(params: {
@@ -181,11 +217,14 @@ export function decideWhatsAppInboxEvent(params: {
     if (routingKey !== params.channelRoutingKey) return fail("routing_mismatch");
   }
 
+  // O evento da conta não é bloqueado pelo estado do canal (ver acima).
+  if (kind === "account") return { action: "apply", event: params.event as WhatsAppDomainEvent };
+
   if (params.channelStatus !== "active") {
     return release(Object.hasOwn(CHANNEL_RELEASE, params.channelStatus) ? CHANNEL_RELEASE[params.channelStatus] : "consumer_transient_error");
   }
 
-  if (DOMAIN_KINDS.has(kind)) return release("domain_effect_not_implemented");
+  if (DOMAIN_KINDS.has(kind)) return { action: "apply", event: params.event as WhatsAppDomainEvent };
   if (kind === "ignored") {
     const reason = event.reason;
     if (typeof reason !== "string" || !Object.hasOwn(IGNORED_DISPOSITIONS, reason)) return fail("event_impossible");
@@ -247,6 +286,11 @@ function decideClaim(claim: WhatsAppInboxClaim): WhatsAppConsumerDecision {
   if (normalized.events.length !== 1) return fail("event_count_invalid");
   const [event] = normalized.events;
   if (!event || event.providerEventId !== claim.providerEventId) return fail("event_mismatch");
+  // Eco e evento da conta trazem o tipo bruto do provedor: tem de ser o da
+  // linha da inbox (o banco confere de novo dentro do efeito).
+  if ((event.kind === "message.outbound_observed" || event.kind === "account") && event.providerType !== claim.providerEventType) {
+    return fail("event_mismatch");
+  }
 
   return decideWhatsAppInboxEvent({ channelRoutingKey: claim.routingKey, channelStatus: claim.channelStatus, event });
 }
@@ -269,7 +313,7 @@ function claimErrorResult(error: unknown): WhatsAppConsumerResult {
 
 /** UMA finalização. Se ela própria falhar, nenhuma outra é tentada: a lease
  * vence e a entrada volta a ser reclamável. `claim_lost` também encerra. */
-async function finalize(claim: WhatsAppInboxClaim, decision: WhatsAppConsumerDecision): Promise<WhatsAppConsumerResult> {
+async function finalize(claim: WhatsAppInboxClaim, decision: WhatsAppConsumerFinalDecision): Promise<WhatsAppConsumerResult> {
   let result: { outcome: WhatsAppInboxFinishOutcome };
   try {
     if (decision.action === "dispose") result = await disposeWhatsAppInboxClaim(claim, decision.code);
@@ -294,7 +338,10 @@ async function finalize(claim: WhatsAppInboxClaim, decision: WhatsAppConsumerDec
  * Processa UMA entrada da inbox pelo `inboxId` — e SÓ por ele: qualquer
  * outro campo do chamador é ignorado. Resultados do claim sem posse (busy,
  * already_processed, terminal_failed, expired, not_found) encerram sem
- * finalização. Com o claim, decide e finaliza exatamente uma vez.
+ * finalização. Com o claim, decide e: finaliza exatamente uma vez
+ * (ignorado, não suportado, falha de conteúdo, canal não ativo) ou chama
+ * exatamente um efeito (tipo de domínio), que já conclui a entrada no banco —
+ * e então só finaliza, uma vez, se o resultado deixar o claim com o consumidor.
  */
 export async function processWhatsAppInboxEntry(params: { inboxId: string }): Promise<WhatsAppConsumerResult> {
   const inboxId = params?.inboxId;
@@ -314,5 +361,25 @@ export async function processWhatsAppInboxEntry(params: { inboxId: string }): Pr
     // Adaptador ou normalização falhando por dentro: falha transitória.
     decision = release("consumer_transient_error");
   }
-  return finalize(claim, decision);
+
+  let finalDecision: WhatsAppConsumerFinalDecision;
+  if (decision.action === "apply") {
+    // O efeito recebe o MESMO objeto de claim. Erro dele nunca é "falha
+    // transitória" do adaptador: o efeito pode ter sido confirmado no banco.
+    let applied;
+    try {
+      applied = await applyWhatsAppDomainEffect(claim, decision.event);
+    } catch {
+      throw new WhatsAppConsumerRetryableError("effect_unavailable");
+    }
+    // Concluído pelo banco ou sem posse: nada a finalizar.
+    if (applied?.action === "done") return { outcome: applied.outcome, code: applied.code };
+    // Só release e fail deixam o claim com o consumidor; qualquer outra coisa
+    // (nova tentativa, disposição fora do contrato, nada) não finaliza nada.
+    if (applied?.action !== "release" && applied?.action !== "fail") throw new WhatsAppConsumerRetryableError("effect_unavailable");
+    finalDecision = applied;
+  } else {
+    finalDecision = decision;
+  }
+  return finalize(claim, finalDecision);
 }
