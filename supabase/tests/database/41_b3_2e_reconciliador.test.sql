@@ -17,7 +17,7 @@
 -- chamadas passam por funções que capturam o erro: o arquivo roda até o fim.
 
 begin;
-select plan(100);
+select plan(102);
 
 insert into public.whatsapp_environment_keys (environment, signing_key) values
   ('production', 'chave-whatsapp-producao-de-teste-0123456789'),
@@ -696,6 +696,25 @@ select is(
   'new row for relation "whatsapp_webhook_inbox" violates check constraint "whatsapp_webhook_inbox_republish_error_code_check"',
   'o código de falha só aceita a lista fechada, também por escrita direta'
 );
+
+-- ---------------------------------------------------------------------
+-- 8. O batimento usa o ambiente assinado (depois da 1ª rodada de mutações)
+-- ---------------------------------------------------------------------
+
+select set_config('request.headers', :'h_prod', true);
+select pg_temp.txt($q$select public.whatsapp_reconciler_record_run('manual_test', clock_timestamp(), 'partial', 1, 1, 0, 0, 1) ->> 'outcome'$q$) as m \gset
+select is(
+  pg_temp.txt($q$select environment::text from public.whatsapp_reconciler_runs where origin = 'manual_test' and outcome = 'partial' and failures = 1 order by finished_at desc limit 1$q$),
+  'production',
+  'o batimento grava o ambiente assinado da requisição, nunca um fixo'
+);
+select set_config('request.headers', '{}', true);
+select is(
+  pg_temp.txt($q$select public.whatsapp_reconciler_record_run('inngest', clock_timestamp(), 'ok', 0, 0, 0, 0, 0) ->> 'outcome'$q$),
+  'ERRO:whatsapp_environment_required',
+  'sem o ambiente assinado, nenhum batimento é gravado'
+);
+select set_config('request.headers', :'h_prev', true);
 
 select * from finish();
 rollback;
