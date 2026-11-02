@@ -17,7 +17,7 @@
 -- chamadas passam por funções que capturam o erro: o arquivo roda até o fim.
 
 begin;
-select plan(84);
+select plan(100);
 
 insert into public.whatsapp_environment_keys (environment, signing_key) values
   ('production', 'chave-whatsapp-producao-de-teste-0123456789'),
@@ -314,7 +314,7 @@ select is(
       extract(epoch from reconcile_reserved_until - reconcile_reserved_at)::int, reconcile_attempts)
     from public.whatsapp_webhook_inbox where id = %L::uuid
   $q$, pg_temp.tk(:'r1'::jsonb, :'e1'), :'e1')),
-  'true|true|true|120|1',
+  't|t|t|120|1',
   'a reserva grava o token devolvido, o horário, o vencimento pedido e conta a tentativa'
 );
 select is(pg_temp.core(:'e1'), :'core1', 'a reserva não muda nada além das colunas técnicas (state, claim, cifra)');
@@ -624,7 +624,7 @@ select is(
     select concat_ws('|', environment, origin, outcome, candidates, reserved, published, skipped, failures, finished_at >= started_at)
     from public.whatsapp_reconciler_runs order by finished_at desc limit 1
   $q$),
-  'preview|inngest|partial|7|5|4|2|1|true',
+  'preview|inngest|partial|7|5|4|2|1|t',
   'com o ambiente assinado (não informado pelo chamador), o desfecho e as contagens verdadeiras'
 );
 select is(

@@ -140,8 +140,8 @@ select is(
   (select coalesce(string_agg(column_name::text, ',' order by column_name::text collate "C"), '')
    from information_schema.columns
    where table_schema = 'public' and table_name = 'whatsapp_webhook_inbox'),
-  'auth_tag,body_sha256,channel_id,ciphertext,claim_count,claim_token,claimed_at,conflict_count,disposition,environment,error_code,failed_at,id,key_version,last_conflict_at,last_conflict_sha256,last_release_code,last_released_at,lease_until,nonce,processed_at,provider,provider_event_id,provider_event_type,purged_at,received_at,retain_until,state,workspace_id',
-  'colunas exatas: só metadado (com o tipo BRUTO do provedor, sem tipo normalizado), hash, texto cifrado e o claim da B3.2d-1 (nada de corpo, telefone, BSUID, nome, assinatura ou segredo)'
+  'auth_tag,body_sha256,channel_id,ciphertext,claim_count,claim_token,claimed_at,conflict_count,disposition,environment,error_code,failed_at,id,key_version,last_conflict_at,last_conflict_sha256,last_release_code,last_released_at,last_republish_error_code,last_republished_at,lease_until,nonce,processed_at,provider,provider_event_id,provider_event_type,purged_at,received_at,reconcile_attempts,reconcile_next_at,reconcile_reserved_at,reconcile_reserved_until,reconcile_token,retain_until,state,workspace_id',
+  'colunas exatas: só metadado (com o tipo BRUTO do provedor, sem tipo normalizado), hash, texto cifrado e o claim da B3.2d-1 e as colunas técnicas da reconciliação da B3.2e (nada de corpo, telefone, BSUID, nome, assinatura ou segredo)'
 );
 
 select ok(

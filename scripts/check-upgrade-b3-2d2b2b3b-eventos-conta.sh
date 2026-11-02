@@ -101,7 +101,7 @@ union all select 'c:' || x.id, md5(x::text) from public.conversations x
 union all select 'm:' || x.id, md5(x::text) from public.messages x
 union all select 'h:' || x.id, md5(to_jsonb(x)::text) from public.whatsapp_channels x
 union all select 'l:' || x.id, md5(x::text) from public.whatsapp_effect_ledger x
-union all select 'b:' || x.id, md5(x::text) from public.whatsapp_webhook_inbox x where x.id <> :'entrada'::uuid;
+union all select 'b:' || x.id, md5((to_jsonb(x) - array['reconcile_token', 'reconcile_reserved_at', 'reconcile_reserved_until', 'reconcile_attempts', 'last_republished_at', 'last_republish_error_code', 'reconcile_next_at'])::text) from public.whatsapp_webhook_inbox x where x.id <> :'entrada'::uuid;
 create table public.upgrade_b3d2b2b3b_estado as
 select (:'r1'::jsonb ->> 'conversation_id') as conv_a7, :'entrada'::text as entrada, :'eco_outcome' || '/' || :'st_outcome' as antes;
 create table public.upgrade_b3d2b2b3b_contagens as
@@ -155,7 +155,8 @@ begin
     when 'm' then (select md5(x::text) from public.messages x where x.id = split_part(l.chave, ':', 2)::uuid)
     when 'h' then (select md5((to_jsonb(x) - 'provider_account_ref' - 'last_event_at' - 'provider_status_event_at')::text) from public.whatsapp_channels x where x.id = split_part(l.chave, ':', 2)::uuid)
     when 'l' then (select md5(x::text) from public.whatsapp_effect_ledger x where x.id = split_part(l.chave, ':', 2)::uuid)
-    when 'b' then (select md5(x::text) from public.whatsapp_webhook_inbox x where x.id = split_part(l.chave, ':', 2)::uuid)
+    -- Sem as colunas técnicas da reconciliação (B3.2e), que uma migration posterior acrescenta.
+    when 'b' then (select md5((to_jsonb(x) - array['reconcile_token', 'reconcile_reserved_at', 'reconcile_reserved_until', 'reconcile_attempts', 'last_republished_at', 'last_republish_error_code', 'reconcile_next_at'])::text) from public.whatsapp_webhook_inbox x where x.id = split_part(l.chave, ':', 2)::uuid)
   end;
   if v_bad <> 0 then
     raise exception '% linha(s) de canal, identidade, conversa, mensagem, ledger ou inbox mudaram na migration', v_bad;

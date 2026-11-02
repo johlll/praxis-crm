@@ -7,6 +7,11 @@ import {
   type WhatsAppConsumerResult,
 } from "@/server/whatsapp/consumer";
 import { WHATSAPP_INBOX_RECEIVED_EVENT } from "@/server/whatsapp/inbox-events";
+import {
+  handleWhatsAppInboxReconciler,
+  WHATSAPP_RECONCILER_FUNCTION_CONFIG,
+  whatsappReconcilerEnabled,
+} from "@/server/whatsapp/inngest-reconciler";
 
 /**
  * Função do Inngest que consome a inbox do WhatsApp (B3.2d-2a,
@@ -42,6 +47,9 @@ export async function handleWhatsAppInboxReceived({ event, step }: { event: unkn
   return step.run(WHATSAPP_INBOX_CONSUMER_STEP_ID, () => processWhatsAppInboxEntry({ inboxId: parsed.inboxId }));
 }
 
+/** O consumidor sempre; o reconciliador (B3.2e) só com a variável própria. */
 export function whatsappInngestFunctions(client: Inngest) {
-  return [client.createFunction(WHATSAPP_INBOX_CONSUMER_FUNCTION_CONFIG, async ({ event, step }) => handleWhatsAppInboxReceived({ event, step }))];
+  const consumer = client.createFunction(WHATSAPP_INBOX_CONSUMER_FUNCTION_CONFIG, async ({ event, step }) => handleWhatsAppInboxReceived({ event, step }));
+  if (!whatsappReconcilerEnabled()) return [consumer];
+  return [consumer, client.createFunction(WHATSAPP_RECONCILER_FUNCTION_CONFIG, async ({ step }) => handleWhatsAppInboxReconciler({ step }))];
 }

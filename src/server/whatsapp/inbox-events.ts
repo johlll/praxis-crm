@@ -10,7 +10,8 @@ import { whatsappInngestClient, WhatsAppInngestConfigError } from "@/server/what
  * routing key: o consumidor (B3.2d) resolve tudo pelo `inboxId` no banco e
  * nunca confia em contexto recebido no evento. O `id` do evento é o id da
  * inbox: a chave de deduplicação do Inngest, então republicar a mesma
- * entrada gera exatamente o mesmo evento.
+ * entrada gera exatamente o mesmo evento. O Inngest guarda, sem disparar nada,
+ * um evento com o id repetido em 24 horas (§28.8).
  *
  * Cliente próprio do WhatsApp (`@/server/whatsapp/inngest`). FALHA FECHADA:
  * sem `WHATSAPP_INNGEST_EVENT_KEY`, nada é enviado. A gravação já aconteceu

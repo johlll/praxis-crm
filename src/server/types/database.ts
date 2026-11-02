@@ -3792,6 +3792,48 @@ export type Database = {
           },
         ]
       }
+      whatsapp_reconciler_runs: {
+        Row: {
+          candidates: number
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          failures: number
+          finished_at: string
+          id: string
+          origin: string
+          outcome: string
+          published: number
+          reserved: number
+          skipped: number
+          started_at: string
+        }
+        Insert: {
+          candidates: number
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          failures: number
+          finished_at: string
+          id?: string
+          origin: string
+          outcome: string
+          published: number
+          reserved: number
+          skipped: number
+          started_at: string
+        }
+        Update: {
+          candidates?: number
+          environment?: Database["public"]["Enums"]["whatsapp_environment"]
+          failures?: number
+          finished_at?: string
+          id?: string
+          origin?: string
+          outcome?: string
+          published?: number
+          reserved?: number
+          skipped?: number
+          started_at?: string
+        }
+        Relationships: []
+      }
       whatsapp_webhook_inbox: {
         Row: {
           auth_tag: string | null
@@ -3812,6 +3854,8 @@ export type Database = {
           last_conflict_sha256: string | null
           last_release_code: string | null
           last_released_at: string | null
+          last_republish_error_code: string | null
+          last_republished_at: string | null
           lease_until: string | null
           nonce: string | null
           processed_at: string | null
@@ -3820,6 +3864,11 @@ export type Database = {
           provider_event_type: string
           purged_at: string | null
           received_at: string
+          reconcile_attempts: number
+          reconcile_next_at: string | null
+          reconcile_reserved_at: string | null
+          reconcile_reserved_until: string | null
+          reconcile_token: string | null
           retain_until: string
           state: string
           workspace_id: string
@@ -3843,6 +3892,8 @@ export type Database = {
           last_conflict_sha256?: string | null
           last_release_code?: string | null
           last_released_at?: string | null
+          last_republish_error_code?: string | null
+          last_republished_at?: string | null
           lease_until?: string | null
           nonce?: string | null
           processed_at?: string | null
@@ -3851,6 +3902,11 @@ export type Database = {
           provider_event_type: string
           purged_at?: string | null
           received_at?: string
+          reconcile_attempts?: number
+          reconcile_next_at?: string | null
+          reconcile_reserved_at?: string | null
+          reconcile_reserved_until?: string | null
+          reconcile_token?: string | null
           retain_until: string
           state?: string
           workspace_id: string
@@ -3874,6 +3930,8 @@ export type Database = {
           last_conflict_sha256?: string | null
           last_release_code?: string | null
           last_released_at?: string | null
+          last_republish_error_code?: string | null
+          last_republished_at?: string | null
           lease_until?: string | null
           nonce?: string | null
           processed_at?: string | null
@@ -3882,6 +3940,11 @@ export type Database = {
           provider_event_type?: string
           purged_at?: string | null
           received_at?: string
+          reconcile_attempts?: number
+          reconcile_next_at?: string | null
+          reconcile_reserved_at?: string | null
+          reconcile_reserved_until?: string | null
+          reconcile_token?: string | null
           retain_until?: string
           state?: string
           workspace_id?: string
@@ -5653,6 +5716,22 @@ export type Database = {
         Returns: Json
       }
       whatsapp_inbox_purge_expired: { Args: { p_limit: number }; Returns: Json }
+      whatsapp_inbox_reconcile_confirm: {
+        Args: { p_inbox_id: string; p_reservation_token: string }
+        Returns: Json
+      }
+      whatsapp_inbox_reconcile_fail: {
+        Args: {
+          p_code: string
+          p_inbox_id: string
+          p_reservation_token: string
+        }
+        Returns: Json
+      }
+      whatsapp_inbox_reconcile_reserve: {
+        Args: { p_limit: number; p_reservation_seconds: number }
+        Returns: Json
+      }
       whatsapp_inbox_release: {
         Args: {
           p_claim_token: string
@@ -5703,6 +5782,19 @@ export type Database = {
           p_actor_user_id: string
           p_channel_id: string
           p_workspace_id: string
+        }
+        Returns: Json
+      }
+      whatsapp_reconciler_record_run: {
+        Args: {
+          p_candidates: number
+          p_failures: number
+          p_origin: string
+          p_outcome: string
+          p_published: number
+          p_reserved: number
+          p_skipped: number
+          p_started_at: string
         }
         Returns: Json
       }
