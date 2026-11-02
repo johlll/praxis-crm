@@ -12,7 +12,9 @@
  *    único `step.run` da função chama `processWhatsAppInboxEntry`, e só a
  *    inbox e o consumidor tocam no claim.
  *
- * Escritos ANTES da implementação, contra a main 10e617f.
+ * Escritos ANTES da implementação, contra a main 10e617f. A seção 5 foi
+ * acrescentada na B3.2d-2b3 (ligação do consumidor aos efeitos), contra a main
+ * 8cd9191.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -129,5 +131,96 @@ describe("4. o claim não atravessa o step.run", () => {
     expectTypeOf<Result["outcome"]>().toMatchTypeOf<string>();
     const src = code(join(ROOT, "src/server/whatsapp/consumer.ts"));
     expect(src).toMatch(/processWhatsAppInboxEntry\([^)]*\)\s*:\s*Promise<WhatsAppConsumerResult>/);
+  });
+});
+
+// ---------------------------------------------------------------------
+// 5. B3.2d-2b3 — o consumidor ligado aos cinco efeitos
+// ---------------------------------------------------------------------
+
+describe("5. ligação do consumidor aos efeitos (B3.2d-2b3)", () => {
+  const DISPATCH = join(ROOT, "src/server/whatsapp/effects/dispatch.ts");
+  const CONSUMER = join(ROOT, "src/server/whatsapp/consumer.ts");
+  const EFFECT_FUNCTIONS = [
+    "applyWhatsAppInboundMessage",
+    "applyWhatsAppOutboundObserved",
+    "applyWhatsAppMessageStatus",
+    "applyWhatsAppIdentityChange",
+    "applyWhatsAppAccountEvent",
+  ];
+  const FINALIZERS = ["completeWhatsAppInboxClaim", "disposeWhatsAppInboxClaim", "failWhatsAppInboxClaim", "releaseWhatsAppInboxClaim"];
+
+  it("o despachante existe e chama cada um dos cinco efeitos em um único ponto", () => {
+    expect(existsSync(DISPATCH)).toBe(true);
+    const src = code(DISPATCH);
+    for (const fn of EFFECT_FUNCTIONS) {
+      expect(src.match(new RegExp(`${fn}\\(`, "g")) ?? [], fn).toHaveLength(1);
+    }
+  });
+
+  it("os efeitos são chamados só pelo despachante (nem o consumidor, nem a rota, nem outro arquivo)", () => {
+    const offenders = files(join(ROOT, "src"))
+      .filter((f) => EFFECT_FUNCTIONS.some((fn) => new RegExp(`${fn}\\(`).test(code(f))))
+      .map(rel)
+      .filter((f) => f !== "src/server/whatsapp/effects/dispatch.ts" && !/^src\/server\/whatsapp\/effects\/(inbound-message|outbound-observed|message-status|identity-change|account-event)\.ts$/.test(f));
+    expect(offenders).toEqual([]);
+  });
+
+  it("só o consumidor finaliza: o despachante e os módulos dos efeitos não chamam complete, dispose, fail nem release", () => {
+    const targets = [DISPATCH, ...files(join(ROOT, "src/server/whatsapp/effects"))].filter((f) => existsSync(f));
+    const offenders = targets.filter((f) => FINALIZERS.some((fn) => new RegExp(`${fn}\\b`).test(code(f))));
+    expect(offenders.map(rel)).toEqual([]);
+  });
+
+  it("o consumidor finaliza em um único ponto: dispose, fail e release uma vez cada, complete nunca", () => {
+    const src = code(CONSUMER);
+    expect(src.match(/disposeWhatsAppInboxClaim\(/g) ?? []).toHaveLength(1);
+    expect(src.match(/failWhatsAppInboxClaim\(/g) ?? []).toHaveLength(1);
+    expect(src.match(/releaseWhatsAppInboxClaim\(/g) ?? []).toHaveLength(1);
+    expect(src).not.toMatch(/completeWhatsAppInboxClaim/);
+    expect(src.match(/\bfinalize\(/g) ?? []).toHaveLength(2); // a definição e a única chamada
+  });
+
+  it("o claim não é copiado, espalhado, clonado nem serializado no consumidor ou no despachante", () => {
+    for (const file of [CONSUMER, DISPATCH]) {
+      const src = code(file);
+      expect(src, rel(file)).not.toMatch(/\.\.\.\s*claim\b|Object\.assign\([^)]*claim|structuredClone\(|JSON\.(stringify|parse)\(|\{\s*claim\s*[,}]/);
+      expect(src, rel(file)).not.toMatch(/claim\s*=\s*(?!claimed\.claim\b)/);
+    }
+  });
+
+  it("o despachante não usa relógio, timers, log, variáveis de ambiente nem o cliente do banco", () => {
+    const src = code(DISPATCH);
+    expect(src).not.toMatch(/Date\.now|new Date\(|setTimeout|setInterval|console\.|process\.env|createWhatsAppAdminSupabaseClient|createAdminSupabaseClient|\.rpc\(|\.from\(/);
+  });
+
+  it("o consumidor e o despachante não criam variáveis nem leem as do Inngest, da YCloud, da Meta ou do Cloudflare", () => {
+    for (const file of [CONSUMER, DISPATCH]) {
+      const src = code(file);
+      expect(src, rel(file)).not.toMatch(/process\.env|INNGEST_|YCLOUD_|META_|CLOUDFLARE_/);
+    }
+  });
+
+  it("o despachante não importa a A11, a agenda nem o adaptador de nenhum provedor", () => {
+    const src = code(DISPATCH);
+    expect(src).not.toMatch(/@\/server\/(ingest|calendar)|whatsapp\/provider\/(ycloud|simulated)|\/provider\/index|inngest/);
+  });
+
+  it("o adaptador YCloud real continua fora do resolvedor: canal ycloud nunca recebe adaptador", async () => {
+    const { resolveWhatsAppProvider } = await import("@/server/whatsapp/provider");
+    const env = { WHATSAPP_PROVIDER: "ycloud", VERCEL_ENV: "preview" };
+    expect(resolveWhatsAppProvider({ channelProvider: "ycloud", env }).status).toBe("disabled");
+    expect(resolveWhatsAppProvider({ channelProvider: "meta", env: { ...env, WHATSAPP_PROVIDER: "meta" } }).status).toBe("disabled");
+  });
+
+  it("o marcador provisório domain_effect_not_implemented não existe mais no código", () => {
+    const offenders = files(join(ROOT, "src")).filter((f) => /domain_effect_not_implemented/.test(read(f)));
+    expect(offenders.map(rel)).toEqual([]);
+  });
+
+  it("o consumidor continua sem importar o chatbot, as filas de envio ou o adaptador do provedor", () => {
+    for (const file of [CONSUMER, DISPATCH]) {
+      expect(code(file), rel(file)).not.toMatch(/chatbot|outbox|sendText|sendTemplate|@\/server\/whatsapp\/provider\/(ycloud|simulated)/);
+    }
   });
 });
