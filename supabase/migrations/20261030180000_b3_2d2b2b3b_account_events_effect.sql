@@ -307,9 +307,6 @@ begin
   -- avançaria last_event_at e provider_status_event_at (que só avançam) e
   -- faria os eventos legítimos seguintes parecerem antigos. O horário recebido
   -- nunca é corrigido nem truncado, e a lease vencida continua claim_lost.
-  if p_occurred_at > v_now + interval '5 minutes' then
-    raise exception 'invalid_account_event';
-  end if;
 
   begin
     select r.outcome, r.ledger_id into v_reserve
