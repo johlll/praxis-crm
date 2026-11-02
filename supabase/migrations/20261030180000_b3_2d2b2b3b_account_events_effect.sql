@@ -298,6 +298,9 @@ begin
   -- relógio de agora, antes da primeira escrita; o processed_at e o
   -- status_changed_at usam este horário.
   v_now := clock_timestamp();
+  if p_occurred_at > v_now + interval '5 minutes' then
+    raise exception 'invalid_account_event';
+  end if;
   if v_row.lease_until is null or v_row.lease_until <= v_now then
     return jsonb_build_object('outcome', 'claim_lost');
   end if;
@@ -307,9 +310,6 @@ begin
   -- avançaria last_event_at e provider_status_event_at (que só avançam) e
   -- faria os eventos legítimos seguintes parecerem antigos. O horário recebido
   -- nunca é corrigido nem truncado, e a lease vencida continua claim_lost.
-  if p_occurred_at > v_now + interval '5 minutes' then
-    raise exception 'invalid_account_event';
-  end if;
 
   begin
     select r.outcome, r.ledger_id into v_reserve
