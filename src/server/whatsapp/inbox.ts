@@ -507,6 +507,7 @@ export async function disposeWhatsAppInboxClaim(
 export async function runWhatsAppInboxClaimEffect(
   claim: WhatsAppInboxClaim,
   rpc:
+    | "whatsapp_effect_account_event"
     | "whatsapp_effect_identity_change"
     | "whatsapp_effect_inbound_message"
     | "whatsapp_effect_message_status"
