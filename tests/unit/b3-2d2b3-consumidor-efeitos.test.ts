@@ -515,7 +515,8 @@ describe("4. resultado do efeito → finalização", () => {
     expect(finalizations().map((c) => [c.name, c.args])).toEqual([
       ["whatsapp_inbox_release", { p_inbox_id: INBOX_ID, p_claim_token: TOKEN, p_error_code: outcome }],
     ]);
-    expect(order).toEqual(["claim", "normalize", "effect", "release"]);
+    expect(effectCalls()).toEqual(only(kind));
+    expect(order).toEqual(["claim", "normalize", "release"]);
   });
 
   it.each(allRows(FAIL))("%s / %s: conflito permanente — fail exatamente uma vez, com o código", async (kind, outcome) => {
@@ -872,15 +873,15 @@ describe("7. roteamento e correspondência antes do efeito", () => {
   });
 
   it("tipo normalizado impossível falha fechado (event_impossible), sem efeito e sem liberar", async () => {
-    for (const event of [
-      ev({ ...EVENTS.inbound, kind: "contact.deleted" }),
-      ev({ ...EVENTS.inbound, kind: undefined }),
-      ev({ ...EVENTS.inbound, kind: 42 }),
-      ev({ ...EVENTS.accountWaba, scope: "outro_escopo" }),
-      ev({ ...EVENTS.accountWaba, scope: undefined }),
-    ]) {
+    for (const [base, event] of [
+      [EVENTS.inbound, ev({ ...EVENTS.inbound, kind: "contact.deleted" })],
+      [EVENTS.inbound, ev({ ...EVENTS.inbound, kind: undefined })],
+      [EVENTS.inbound, ev({ ...EVENTS.inbound, kind: 42 })],
+      [EVENTS.accountWaba, ev({ ...EVENTS.accountWaba, scope: "outro_escopo" })],
+      [EVENTS.accountWaba, ev({ ...EVENTS.accountWaba, scope: undefined })],
+    ] as const) {
       rpcLog = [];
-      arrange(EVENTS.inbound, { adapter: { events: [event] } });
+      arrange(base, { adapter: { events: [event] } });
       await expect(run()).resolves.toEqual({ outcome: "failed", code: "event_impossible" });
       expect(effectCalls()).toEqual(noEffects);
       expect(finalizations().map((c) => [c.name, c.args.p_error_code])).toEqual([["whatsapp_inbox_fail", "event_impossible"]]);

@@ -185,7 +185,9 @@ describe("5. ligação do consumidor aos efeitos (B3.2d-2b3)", () => {
     for (const file of [CONSUMER, DISPATCH]) {
       const src = code(file);
       expect(src, rel(file)).not.toMatch(/\.\.\.\s*claim\b|Object\.assign\([^)]*claim|structuredClone\(|JSON\.(stringify|parse)\(|\{\s*claim\s*[,}]/);
-      expect(src, rel(file)).not.toMatch(/claim\s*=\s*(?!claimed\.claim\b)/);
+      // A única atribuição a `claim` é a do objeto devolvido pelo claim da inbox.
+      const assigns = (src.match(/\bclaim\s*=(?!=)[^;]*;/g) ?? []).map((a) => a.replace(/\s+/g, " "));
+      expect(assigns.filter((a) => a !== "claim = claimed.claim;"), rel(file)).toEqual([]);
     }
   });
 

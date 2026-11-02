@@ -509,8 +509,9 @@ describe("6. decisão por tipo de evento e roteamento", () => {
     // O tipo bruto da linha tem de ser o do evento de conta (conferido antes do efeito).
     for (const [event, rawType, expected] of [
       [EVENTS.ignoredHistory, "message.inbound", { outcome: "processed", code: "ignored_history" }],
-      [EVENTS.accountWaba, "account_update", { outcome: "processed", code: "recorded" }],
-      [EVENTS.identity, "message.inbound", { outcome: "released", code: "identity_not_found" }],
+      [{ ...EVENTS.accountWaba, providerType: "whatsapp.business_account.updated" }, "whatsapp.business_account.updated", { outcome: "processed", code: "recorded" }],
+      // O BSUID da identidade anterior exige as chaves de identidade, ausentes neste ambiente de teste.
+      [EVENTS.identity, "message.inbound", { outcome: "released", code: "identity_keys_not_configured" }],
     ] as const) {
       claimReturns(claimRow({ ...INBOUND, type: rawType }));
       withAdapter(
