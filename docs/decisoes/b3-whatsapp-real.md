@@ -1,15 +1,24 @@
 # B3 — WhatsApp real: levantamento técnico e plano
 
-Status: **plano aprovado na direção geral (YCloud atrás de um adaptador
-próprio, piloto com número dedicado de teste), com as correções da
-revisão incorporadas. Nenhuma implementação foi feita.** Este documento
-não cria código, migration, variável nem configuração externa. A B3.1
-simulada pode começar depois do merge; o adaptador real e qualquer número
-real dependem dos portões do §6.7. Situação de cada decisão no §12.
+Status (03/11/2026):
 
-Base: `main` no merge da PR #40 (`666a7eb`). Fontes oficiais da Meta e da
-YCloud consultadas em 19/10/2026 (lista no §13). O que não foi confirmado
-na documentação oficial está marcado como **a validar**.
+- **B3.1:** concluída e mesclada, só com o provedor simulado (§14).
+- **B3.2:** concluída e mesclada no código (§15.9 e §28.13), e **ainda não
+  operacional**.
+- **Migrations da B3:** ainda não aplicadas no Supabase hospedado.
+- **Configuração externa de WhatsApp:** nenhuma ativa.
+- **Validação obrigatória no Inngest Cloud:** ainda pendente (§28.13).
+- **B3.3:** ainda não iniciada.
+- **Provedor aprovado para o piloto:** YCloud, atrás de um adaptador próprio.
+- **Primeira validação:** número dedicado de teste, como aprovado.
+- **Portões do §6.7:** continuam valendo para credenciais e uso real.
+
+Situação de cada decisão no §12.
+
+Documento iniciado sobre a `main` no merge da PR #40 (`666a7eb`). O estado atual
+da implementação está no §15.9 e, para o fechamento da B3.2, no §28.13. Fontes
+oficiais da Meta e da YCloud consultadas em 19/10/2026 (lista no §13). O que não
+foi confirmado na documentação oficial está marcado como **a validar**.
 
 Escopo: B3 do plano (conexão real do WhatsApp com o CRM). A B2 não é
 reaberta. O chatbot externo da Vizentini é um projeto separado: não é
@@ -647,7 +656,7 @@ Ver §10.
 
 ### 6.7 Portões antes do adaptador real e do número real
 
-A **B3.1 com provedor simulado pode avançar sem estas respostas.** O
+A **B3.1 com provedor simulado não dependeu destas respostas** (§14). O
 adaptador YCloud real e qualquer número real **não podem**. Cada portão é
 fechado com evidência registrada (documentação oficial, resposta do
 suporte ou teste só de leitura) e aprovação.
