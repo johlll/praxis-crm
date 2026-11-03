@@ -656,7 +656,7 @@ Ver §10.
 
 ### 6.7 Portões antes do adaptador real e do número real
 
-A **B3.1 com provedor simulado não dependeu destas respostas** (§14). O
+A **B3.1 com provedor simulado pôde avançar sem estas respostas** (§14). O
 adaptador YCloud real e qualquer número real **não podem**. Cada portão é
 fechado com evidência registrada (documentação oficial, resposta do
 suporte ou teste só de leitura) e aprovação.
