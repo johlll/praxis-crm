@@ -1,15 +1,24 @@
 # B3 — WhatsApp real: levantamento técnico e plano
 
-Status: **plano aprovado na direção geral (YCloud atrás de um adaptador
-próprio, piloto com número dedicado de teste), com as correções da
-revisão incorporadas. Nenhuma implementação foi feita.** Este documento
-não cria código, migration, variável nem configuração externa. A B3.1
-simulada pode começar depois do merge; o adaptador real e qualquer número
-real dependem dos portões do §6.7. Situação de cada decisão no §12.
+Status (03/11/2026):
 
-Base: `main` no merge da PR #40 (`666a7eb`). Fontes oficiais da Meta e da
-YCloud consultadas em 19/10/2026 (lista no §13). O que não foi confirmado
-na documentação oficial está marcado como **a validar**.
+- **B3.1:** concluída e mesclada, só com o provedor simulado (§14).
+- **B3.2:** concluída e mesclada no código (§15.9 e §28.13), e **ainda não
+  operacional**.
+- **Migrations da B3:** ainda não aplicadas no Supabase hospedado.
+- **Configuração externa de WhatsApp:** nenhuma ativa.
+- **Validação obrigatória no Inngest Cloud:** ainda pendente (§28.13).
+- **B3.3:** ainda não iniciada.
+- **Provedor aprovado para o piloto:** YCloud, atrás de um adaptador próprio.
+- **Primeira validação:** número dedicado de teste, como aprovado.
+- **Portões do §6.7:** continuam valendo para credenciais e uso real.
+
+Situação de cada decisão no §12.
+
+Documento iniciado sobre a `main` no merge da PR #40 (`666a7eb`). O estado atual
+da implementação está no §15.9 e, para o fechamento da B3.2, no §28.13. Fontes
+oficiais da Meta e da YCloud consultadas em 19/10/2026 (lista no §13). O que não
+foi confirmado na documentação oficial está marcado como **a validar**.
 
 Escopo: B3 do plano (conexão real do WhatsApp com o CRM). A B2 não é
 reaberta. O chatbot externo da Vizentini é um projeto separado: não é
@@ -647,7 +656,7 @@ Ver §10.
 
 ### 6.7 Portões antes do adaptador real e do número real
 
-A **B3.1 com provedor simulado pode avançar sem estas respostas.** O
+A **B3.1 com provedor simulado pôde avançar sem estas respostas** (§14). O
 adaptador YCloud real e qualquer número real **não podem**. Cada portão é
 fechado com evidência registrada (documentação oficial, resposta do
 suporte ou teste só de leitura) e aprovação.
@@ -1544,7 +1553,7 @@ ou número.
 | B3.2d-2b2b3a | **Concluída e mesclada na PR #262 (merge `ff13405`; §25).** Identidade alterada e troca de número (`contact.identity_changed`): identidade anterior só lida, nunca criada (`identity_not_found` recuperável); o telefone novo substitui o antigo na MESMA identidade; telefone ou BSUID de outra identidade, ou outro BSUID na mesma → `identity_conflict`; sem auto-merge; a conversa acompanha o número, com os vínculos comerciais preservados e marcados para revisão; `identity` sem a nova → `review_required`; contato e telefones do contato intactos. Não liga o consumidor | B3.2d-2b2b2 |
 | B3.2d-2b2b3b | **Implementada na PR #293 (§26).** Eventos operacionais da conta e do número (`account`): `provider_account_ref` neutra e imutável no canal, e as datas `last_event_at` e `provider_status_event_at`, que só avançam; `whatsapp_channel_events` deny-all, sem telefone, routing key, conta ou payload; **só** `phone_number.deleted` e `business_account.deleted` desconectam (`active`/`paused` → `disconnected`, sem envio, auditoria sanitizada); evento igual ou anterior ao último de estado é `stale_event` (e não muda o canal); a exclusão mais nova num canal já `disconnected` só é registrada, mas avança `provider_status_event_at` (o último evento de estado do provedor); horário do provedor mais de 5 minutos à frente do relógio do banco é recusado (`invalid_account_event`); os demais tipos só são registrados (o `code` é opaco); `disabled` nunca é reativado e não existe reativação automática; canal sem referência confiável → `account_reference_unverified`. Não liga o consumidor nem a YCloud real | B3.2d-2b2b3a |
 | B3.2d-2b3 | **Implementada (§27).** Ligação do consumidor da B3.2d-2a aos cinco efeitos da B3.2d-2b2, por um despachante único (`effects/dispatch.ts`) que recebe o **mesmo objeto de claim** e nunca finaliza a entrada: `applied`, `recorded`, `stale_event`, `review_required` e `duplicate` (já concluídos pelo banco) e os resultados sem posse (`already_processed`, `terminal_failed`, `claim_lost`, `not_found`) **não sofrem segunda finalização**; `channel_*`, `identity_not_found`, `message_not_found`, `account_reference_unverified` e `identity_keys_not_configured` viram `release` uma vez; `identity_conflict`, `message_conflict`, `cost_conflict`, `effect_conflict`, `routing_mismatch`, `account_reference_mismatch` e todos os `invalid_*` (inclusive `invalid_account_event`, o horário a mais de 5 minutos no futuro) viram `fail` uma vez; erro `unknown`, `invalid_response`, `whatsapp_environment_required` ou de transporte do efeito vira nova tentativa do Inngest, sem finalizar. O `account` chega ao efeito em **qualquer** estado do canal; mensagem, eco, status e identidade continuam liberados com `channel_*` quando o canal não está `active`. `domain_effect_not_implemented` deixa de existir. Sem migration, sem variável nova, sem adaptador YCloud no resolvedor | B3.2d-2b2b3b |
-| B3.2e | **Implementada (§28).** Reconciliador: reserva atômica por linha (`SKIP LOCKED`, token próprio, vencimento curto) e republicação do mesmo evento interno, sem processar conteúdo nem chamar efeitos; `pending` e `processing` com lease vencida; `channel_*` só volta quando o canal muda; nunca tentada passa em qualquer estado do canal, o caminho do `account`; backoff de 1, 5, 15 e 60 minutos com teto de 6 horas, sem virar `failed`; batimento próprio `whatsapp_reconciler_runs`, e não `last_event_at`, que é o último evento do provedor; cron a cada 5 minutos, concorrência 1, só com `WHATSAPP_RECONCILER_ENABLED=true`. Publicação inicial com `id = inboxId` e cada reserva com `id = inboxId:r<tentativa>`, por causa da janela de 24 horas do Inngest (§28.8). Portão obrigatório antes de webhook real (§18.3) | B3.2d-2b3 |
+| B3.2e | **Implementada (§28).** Reconciliador: reserva atômica por linha (`SKIP LOCKED`, token próprio, vencimento curto) e republicação do mesmo evento interno, sem processar conteúdo nem chamar efeitos; `pending` e `processing` com lease vencida; `channel_*` só volta quando o canal muda; nunca tentada passa em qualquer estado do canal, o caminho do `account`; backoff de 1, 5, 15 e 60 minutos com teto de 6 horas, sem virar `failed`; batimento próprio `whatsapp_reconciler_runs`, e não `last_event_at`, que é o último evento do provedor; cron a cada 5 minutos, concorrência 1, só com `WHATSAPP_RECONCILER_ENABLED=true`. Publicação inicial com `id = inboxId` e cada reserva com `id = inboxId:r<tentativa>`, por causa da janela de 24 horas do Inngest (§28.8). Portão obrigatório antes de webhook real (§18.3). Mesclada, sem validação no Inngest Cloud (§28.13) | B3.2d-2b3 |
 | Fora do Praxis | Contrato do §15.6 no chatbot (rota, tabela de pedidos, testes), em branch/PR própria do chatbot, desligado e sem deploy | Decisão 15; implantação real com nova autorização; necessário antes da B3.3 no número do chatbot |
 | Posterior | Resumo e qualificação estruturados do chatbot (decisão 12) | Entrada real estável |
 
@@ -2483,6 +2492,8 @@ na rodada seguinte, com um `id` próprio da tentativa (`inboxId:r<tentativa>`, �
 que a janela de 24 horas do Inngest não descarta. Fica desligado até
 `WHATSAPP_RECONCILER_ENABLED=true`, e **tem de estar ligado antes de cadastrar
 qualquer webhook real**.
+
+Antes disso, a validação obrigatória no Preview do §28.13 tem de passar.
 
 ### 18.4 Resolução pelo localizador (banco)
 
@@ -6703,3 +6714,39 @@ Riscos:
 - o reconciliador nunca rodou contra o Inngest Cloud: a função, o cron e a rota foram
   testados com o SDK real e sem rede, e a entrega do `id` e a deduplicação, também no
   servidor de desenvolvimento local (§28.8).
+
+### 28.13 Merge, estado oficial e validação obrigatória no Preview
+
+**Merge.** PR #327 mesclada por merge commit em `3229a83` (pais `ea1fafd` e `1cba433`),
+fixada no HEAD aprovado. CI da `main` verde nesse merge (run 41611463467): 2832
+unitários em 120 arquivos, pgTAP 41 arquivos e 2163 testes, e2e 76, todas as
+concorrências e atualizações. Deploy automático de Production concluído. Production
+continua com 17 variáveis e **nenhuma `WHATSAPP_*`** (conferidos só os nomes).
+
+**Estado oficial: B3.2 implementada no código, mas ainda não operacional nem validada
+no Inngest Cloud.** As migrations da B3 não foram aplicadas no Supabase hospedado, e
+nada foi configurado: `WHATSAPP_RECONCILER_ENABLED`, app ou função no Inngest, chaves do
+Inngest, webhook da YCloud, YCloud, Meta, Cloudflare ou número real. Nenhum evento real
+foi publicado e nenhuma mensagem foi enviada.
+
+**Validação futura obrigatória no Preview**, antes de qualquer webhook ou número real.
+Até aqui, a entrega do `id` e a deduplicação só foram vistas no SDK real e no servidor de
+desenvolvimento local (§28.8):
+
+| # | O que tem de ser provado no Inngest Cloud |
+|---|---|
+| 1 | O Inngest Cloud entrega literalmente `event.id` |
+| 2 | `inboxId` dispara a execução inicial |
+| 3 | `inboxId:r1` e `inboxId:r2` disparam execuções diferentes |
+| 4 | Repetir exatamente o mesmo `id` não dispara outra função |
+| 5 | Evento sem `id` é recusado como `invalid_event` |
+| 6 | Nenhuma execução aplica efeito duplicado |
+| 7 | Reconciliador, batimento e backoff funcionam como documentados (§28.3, §28.4 e §28.7) |
+
+**Por que essa prova não bloqueou o merge:**
+- a integração está desligada;
+- nenhuma migration está hospedada;
+- a ausência ou alteração do `id` falha fechada;
+- claim, ledger e efeitos idempotentes continuam sendo as autoridades contra duplicidade.
+
+A ativação externa e a B3.3 não começaram.
