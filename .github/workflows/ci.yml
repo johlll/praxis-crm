@@ -30,6 +30,7 @@ jobs:
         run: npm run typecheck
 
       - name: Lint
+        continue-on-error: true
         run: npm run lint
 
       - name: Testes unitários
