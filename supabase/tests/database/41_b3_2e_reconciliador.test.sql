@@ -17,7 +17,7 @@
 -- chamadas passam por funções que capturam o erro: o arquivo roda até o fim.
 
 begin;
-select plan(126);
+select plan(129);
 
 insert into public.whatsapp_environment_keys (environment, signing_key) values
   ('production', 'chave-whatsapp-producao-de-teste-0123456789'),
@@ -795,6 +795,21 @@ select is(pg_temp.ids(pg_temp.res()), 'integer out of range', 'acabou o inteiro:
 select is(pg_temp.col(:'t5'), '2147483647', 'e nada muda na linha');
 
 -- A tentativa só sai da reserva.
+select pg_temp.fresh();
+select pg_temp.ent(1, 'evt-t6') as t6 \gset
+select pg_temp.res() as t6_a \gset
+select is(
+  pg_temp.txt(format($q$select string_agg(k, ',') from jsonb_object_keys(public.whatsapp_inbox_reconcile_confirm(%L::uuid, %L::uuid)) k$q$, :'t6', pg_temp.tk(:'t6_a'::jsonb, :'t6'))),
+  'outcome',
+  'a confirmação devolve só o desfecho, sem a tentativa'
+);
+select is(pg_temp.due(:'t6'), 'ok', 'o backoff vence para a reserva da falha');
+select pg_temp.res() as t6_b \gset
+select is(
+  pg_temp.txt(format($q$select string_agg(k, ',') from jsonb_object_keys(public.whatsapp_inbox_reconcile_fail(%L::uuid, %L::uuid, 'inbox_event_publish_failed')) k$q$, :'t6', pg_temp.tk(:'t6_b'::jsonb, :'t6'))),
+  'outcome',
+  'a falha devolve só o desfecho, sem a tentativa'
+);
 select is(
   pg_temp.txt($q$select string_agg(column_name::text, ',') from information_schema.columns where table_schema = 'public' and table_name = 'whatsapp_reconciler_runs' and column_name ilike '%attempt%'$q$),
   'NULL',

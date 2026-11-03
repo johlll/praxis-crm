@@ -211,8 +211,8 @@ describe("2. reserva, publicação e confirmação", () => {
 describe("3. falha de publicação", () => {
   it("falha numa entrada: registra só o código fixo com o token dela, continua as outras e o desfecho é parcial", async () => {
     handlers.whatsapp_inbox_reconcile_reserve = reserves([ENTRY_1, ENTRY_2, ENTRY_3]);
-    h.send.mockImplementation(async (event: { id: string }) => {
-      if (event.id === ID_2) throw new Error(`HTTP 500 https://inn.gs/e/${EVENT_KEY} ${PHONE}`);
+    h.send.mockImplementation(async (event: { data: { inboxId: string } }) => {
+      if (event.data.inboxId === ID_2) throw new Error(`HTTP 500 https://inn.gs/e/${EVENT_KEY} ${PHONE}`);
       return { ids: [] };
     });
     await expect(round()).resolves.toEqual({ outcome: "partial", candidates: 3, reserved: 3, published: 2, skipped: 0, failures: 1 });
@@ -225,8 +225,8 @@ describe("3. falha de publicação", () => {
 
   it("nunca confirma uma publicação que falhou", async () => {
     handlers.whatsapp_inbox_reconcile_reserve = reserves([ENTRY_1, ENTRY_2]);
-    h.send.mockImplementation(async (event: { id: string }) => {
-      if (event.id === ID_1) throw new Error("rede");
+    h.send.mockImplementation(async (event: { data: { inboxId: string } }) => {
+      if (event.data.inboxId === ID_1) throw new Error("rede");
       return { ids: [] };
     });
     await round();

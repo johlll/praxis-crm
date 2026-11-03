@@ -119,7 +119,7 @@ describe("1. o publicador constrói o id", () => {
   it("sem tentativa: id = inboxId, como a publicação inicial da rota do webhook", async () => {
     const { publishWhatsAppInboxReceived } = await loadEvents();
     await publishWhatsAppInboxReceived({ inboxId: ID_1 });
-    await publishWhatsAppInboxReceived({ inboxId: ID_1, reconciliationAttempt: undefined });
+    await publishWhatsAppInboxReceived({ inboxId: ID_1, reconciliationAttempt: undefined } as never);
     expect(h.send.mock.calls).toEqual([
       [{ id: ID_1, name: NAME, data: { inboxId: ID_1 } }],
       [{ id: ID_1, name: NAME, data: { inboxId: ID_1 } }],

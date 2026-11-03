@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { uuidSchema } from "@/lib/uuid";
 import { createWhatsAppAdminSupabaseClient } from "@/server/whatsapp/admin/supabase";
-import { publishWhatsAppInboxReceived, WhatsAppInboxEventError } from "@/server/whatsapp/inbox-events";
+import { publishWhatsAppInboxReceived, WhatsAppInboxEventError, whatsappReconciliationAttemptSchema } from "@/server/whatsapp/inbox-events";
 import { whatsappInngestClient } from "@/server/whatsapp/inngest";
 
 /**
@@ -11,18 +11,22 @@ import { whatsappInngestClient } from "@/server/whatsapp/inngest";
  * §28). Portão obrigatório antes de qualquer webhook real (§18.3).
  *
  * NÃO processa conteúdo e NÃO chama efeitos: encontra entradas elegíveis (no
- * banco), reserva cada uma de forma atômica, republica o MESMO evento interno
- * (`publishWhatsAppInboxReceived`: `{ id: inboxId, name, data: { inboxId } }`) e
- * registra só o resultado técnico. Quem faz claim, decifra, normaliza e aplica é
- * o consumidor normal. Nada aqui muda o estado de uma entrada.
+ * banco), reserva cada uma de forma atômica, republica o evento interno
+ * (`publishWhatsAppInboxReceived`, com a tentativa da reserva: `{ id:
+ * inboxId:r<tentativa>, name, data: { inboxId } }`) e registra só o resultado
+ * técnico. Quem faz claim, decifra, normaliza e aplica é o consumidor normal. Nada
+ * aqui muda o estado de uma entrada.
+ *
+ * A tentativa vem do banco, atribuída atomicamente na reserva, e nunca é contada
+ * aqui: a mesma reserva sempre gera o mesmo id, e uma reserva nova, um id novo,
+ * que a janela de 24 horas do Inngest não descarta (§28.8).
  *
  * O token da reserva existe só nesta função, na memória, dentro do mesmo
  * `step.run`: não sai no retorno, no erro, no batimento nem no evento.
  *
  * Publicação aceita significa só isto: o Inngest aceitou. Não significa que o
- * consumidor executou (o Inngest guarda, sem disparar nada, um evento com o id
- * repetido em 24 horas, §28.8); por isso a entrada continua elegível, pelo
- * backoff, enquanto o consumidor não a tratar.
+ * consumidor executou; por isso a entrada continua elegível, pelo backoff, enquanto
+ * o consumidor não a tratar.
  *
  * Nenhum log. Falha de uma entrada não para as outras; falha geral (banco ou
  * configuração) e rodada em que tudo falhou viram `WhatsAppReconcilerFailed`,
@@ -72,7 +76,7 @@ const reservationSchema = z
   .object({
     candidates: z.number().int().nonnegative(),
     entries: z
-      .array(z.object({ inbox_id: uuidSchema, reservation_token: uuidSchema }).strict())
+      .array(z.object({ inbox_id: uuidSchema, reservation_token: uuidSchema, reconcile_attempt: whatsappReconciliationAttemptSchema }).strict())
       .max(WHATSAPP_RECONCILER_BATCH_LIMIT),
   })
   .strict()
@@ -81,15 +85,15 @@ const reservationSchema = z
 const confirmSchema = z.object({ outcome: z.enum(["confirmed", "reservation_lost", "not_found"]) }).strict();
 const recordSchema = z.object({ outcome: z.literal("recorded") }).strict();
 
-type Entry = { inboxId: string; token: string };
+type Entry = { inboxId: string; token: string; attempt: number };
 type Admin = ReturnType<typeof createWhatsAppAdminSupabaseClient>;
 
 /** Publica uma entrada; recusa, erro ou demora viram o código fixo. */
-async function publish(inboxId: string): Promise<{ ok: true } | { ok: false; code: "inbox_event_publish_failed" | "inbox_event_not_configured" }> {
+async function publish(entry: Entry): Promise<{ ok: true } | { ok: false; code: "inbox_event_publish_failed" | "inbox_event_not_configured" }> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
-      publishWhatsAppInboxReceived({ inboxId }),
+      publishWhatsAppInboxReceived({ inboxId: entry.inboxId, reconciliationAttempt: entry.attempt }),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new WhatsAppInboxEventError("inbox_event_publish_failed")), WHATSAPP_RECONCILER_PUBLISH_TIMEOUT_MS);
       }),
@@ -113,7 +117,7 @@ async function reserve(admin: Admin): Promise<{ candidates: number; entries: Ent
   if (!parsed.success) throw new WhatsAppReconcilerFailed("reconciler_reserve_failed");
   return {
     candidates: parsed.data.candidates,
-    entries: parsed.data.entries.map((e) => ({ inboxId: e.inbox_id, token: e.reservation_token })),
+    entries: parsed.data.entries.map((e) => ({ inboxId: e.inbox_id, token: e.reservation_token, attempt: e.reconcile_attempt })),
   };
 }
 
@@ -197,7 +201,7 @@ export async function runWhatsAppInboxReconcilerRound(origin: WhatsAppReconciler
       skipped += 1;
       continue;
     }
-    const result = await publish(entry.inboxId);
+    const result = await publish(entry);
     if (!result.ok) {
       failures += 1;
       await recordFailure(admin, entry, result.code);

@@ -181,6 +181,10 @@ revoke all on function private.whatsapp_inbox_reconcile_eligible(public.whatsapp
 -- Reserva
 -- ---------------------------------------------------------------------
 
+-- Devolve, por entrada, o id, o token e a tentativa desta reserva: o contador já
+-- incrementado, na mesma instrução. A tentativa compõe o id do evento
+-- (inboxId:r<tentativa>, §28.8): a mesma reserva sempre gera o mesmo id, e uma
+-- reserva nova, um id novo.
 create function public.whatsapp_inbox_reconcile_reserve(p_limit integer, p_reservation_seconds integer)
 returns jsonb
 language plpgsql
@@ -230,10 +234,10 @@ begin
         reconcile_attempts = i.reconcile_attempts + 1
     from picked p
     where i.id = p.id
-    returning i.id, i.reconcile_token, i.received_at
+    returning i.id, i.reconcile_token, i.received_at, i.reconcile_attempts
   )
   select coalesce(
-    jsonb_agg(jsonb_build_object('inbox_id', r.id, 'reservation_token', r.reconcile_token) order by r.received_at, r.id),
+    jsonb_agg(jsonb_build_object('inbox_id', r.id, 'reservation_token', r.reconcile_token, 'reconcile_attempt', r.reconcile_attempts) order by r.received_at, r.id),
     '[]'::jsonb
   ) into v_entries
   from reserved r;

@@ -22,10 +22,12 @@ import { createHmac } from "node:crypto";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type * as ConsumerModule from "@/server/whatsapp/consumer";
+
 const h = vi.hoisted(() => ({ process: vi.fn() }));
 
 vi.mock("@/server/whatsapp/consumer", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/server/whatsapp/consumer")>()),
+  ...(await importOriginal<typeof ConsumerModule>()),
   processWhatsAppInboxEntry: h.process,
 }));
 
