@@ -35,7 +35,9 @@ export const WHATSAPP_INBOX_CONSUMER_FUNCTION_CONFIG = {
   name: "B3 — consumidor da inbox do WhatsApp",
   // Só falha de infraestrutura chega aqui; o resto é finalizado no banco.
   retries: 3 as const,
-  concurrency: { limit: 10 },
+  // Teto atual do plano Hobby da organização: acima dele o Inngest recusa a
+  // sincronização do app. Aumentar exige confirmar antes a mudança de plano (§28.14).
+  concurrency: { limit: 5 },
   triggers: [{ event: WHATSAPP_INBOX_RECEIVED_EVENT }],
 };
 
