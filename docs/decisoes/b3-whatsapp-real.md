@@ -7,7 +7,8 @@ Status (03/11/2026):
   operacional**.
 - **Migrations da B3:** ainda não aplicadas no Supabase hospedado.
 - **Configuração externa de WhatsApp:** nenhuma ativa.
-- **Validação obrigatória no Inngest Cloud:** ainda pendente (§28.13).
+- **Validação obrigatória no Inngest Cloud:** ainda pendente (§28.13); a primeira
+  tentativa parou na sincronização, antes de qualquer prova (§28.14).
 - **B3.3:** ainda não iniciada.
 - **Provedor aprovado para o piloto:** YCloud, atrás de um adaptador próprio.
 - **Primeira validação:** número dedicado de teste, como aprovado.
@@ -6750,3 +6751,29 @@ desenvolvimento local (§28.8):
 - claim, ledger e efeitos idempotentes continuam sendo as autoridades contra duplicidade.
 
 A ativação externa e a B3.3 não começaram.
+
+### 28.14 Sincronização recusada no plano Hobby (03/11/2026)
+
+A primeira tentativa da validação do §28.13 (provas 1 a 5, sem banco, no ambiente de
+branch `validacao-b3`) parou na sincronização do app `praxis-crm-whatsapp`. Mensagem do
+Inngest, sem nenhum valor sensível:
+
+> The function 'B3 — consumidor da inbox do WhatsApp' has higher concurrency limits (10)
+> than your plan limit of 5
+
+- **Causa:** o consumidor declarava concorrência 10, e o plano Hobby da organização tem
+  teto de 5. O teto é da organização, então a recusa valeria também em Production.
+- **Efeito:** nenhuma função registrada, nenhum evento publicado, nenhuma execução. **As
+  provas 1 a 5 não foram executadas**, e o comportamento do `event.id` no Cloud continua
+  sem prova.
+- **Ambiente limpo:** variáveis removidas da branch, rota de volta ao 503, bypass dedicado
+  revogado. No Inngest ficou só o registro do app em erro, sem função. Nenhuma migration
+  aplicada, e Production não mudou.
+- **Correção:** consumidor com concorrência 5, em literal e sem variável de ambiente. O
+  reconciliador continua com 1. O excedente espera na fila do Inngest, sem perda; a conta
+  já não passaria de 5 etapas simultâneas.
+- **Proteção:** `tests/unit/b3-inngest-concorrencia-hobby.test.ts` confere o teto no
+  payload real da sincronização, com o reconciliador ligado e desligado. Aumentar o valor
+  exige confirmar antes a mudança de plano.
+
+A validação só é retomada depois do merge desta correção.
