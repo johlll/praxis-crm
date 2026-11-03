@@ -1544,7 +1544,7 @@ ou número.
 | B3.2d-2b2b3a | **Concluída e mesclada na PR #262 (merge `ff13405`; §25).** Identidade alterada e troca de número (`contact.identity_changed`): identidade anterior só lida, nunca criada (`identity_not_found` recuperável); o telefone novo substitui o antigo na MESMA identidade; telefone ou BSUID de outra identidade, ou outro BSUID na mesma → `identity_conflict`; sem auto-merge; a conversa acompanha o número, com os vínculos comerciais preservados e marcados para revisão; `identity` sem a nova → `review_required`; contato e telefones do contato intactos. Não liga o consumidor | B3.2d-2b2b2 |
 | B3.2d-2b2b3b | **Implementada na PR #293 (§26).** Eventos operacionais da conta e do número (`account`): `provider_account_ref` neutra e imutável no canal, e as datas `last_event_at` e `provider_status_event_at`, que só avançam; `whatsapp_channel_events` deny-all, sem telefone, routing key, conta ou payload; **só** `phone_number.deleted` e `business_account.deleted` desconectam (`active`/`paused` → `disconnected`, sem envio, auditoria sanitizada); evento igual ou anterior ao último de estado é `stale_event` (e não muda o canal); a exclusão mais nova num canal já `disconnected` só é registrada, mas avança `provider_status_event_at` (o último evento de estado do provedor); horário do provedor mais de 5 minutos à frente do relógio do banco é recusado (`invalid_account_event`); os demais tipos só são registrados (o `code` é opaco); `disabled` nunca é reativado e não existe reativação automática; canal sem referência confiável → `account_reference_unverified`. Não liga o consumidor nem a YCloud real | B3.2d-2b2b3a |
 | B3.2d-2b3 | **Implementada (§27).** Ligação do consumidor da B3.2d-2a aos cinco efeitos da B3.2d-2b2, por um despachante único (`effects/dispatch.ts`) que recebe o **mesmo objeto de claim** e nunca finaliza a entrada: `applied`, `recorded`, `stale_event`, `review_required` e `duplicate` (já concluídos pelo banco) e os resultados sem posse (`already_processed`, `terminal_failed`, `claim_lost`, `not_found`) **não sofrem segunda finalização**; `channel_*`, `identity_not_found`, `message_not_found`, `account_reference_unverified` e `identity_keys_not_configured` viram `release` uma vez; `identity_conflict`, `message_conflict`, `cost_conflict`, `effect_conflict`, `routing_mismatch`, `account_reference_mismatch` e todos os `invalid_*` (inclusive `invalid_account_event`, o horário a mais de 5 minutos no futuro) viram `fail` uma vez; erro `unknown`, `invalid_response`, `whatsapp_environment_required` ou de transporte do efeito vira nova tentativa do Inngest, sem finalizar. O `account` chega ao efeito em **qualquer** estado do canal; mensagem, eco, status e identidade continuam liberados com `channel_*` quando o canal não está `active`. `domain_effect_not_implemented` deixa de existir. Sem migration, sem variável nova, sem adaptador YCloud no resolvedor | B3.2d-2b2b3b |
-| B3.2e | **Implementada (§28).** Reconciliador: reserva atômica por linha (`SKIP LOCKED`, token próprio, vencimento curto) e republicação do mesmo evento interno, sem processar conteúdo nem chamar efeitos; `pending` e `processing` com lease vencida; `channel_*` só volta quando o canal muda; nunca tentada passa em qualquer estado do canal, o caminho do `account`; backoff de 1, 5, 15 e 60 minutos com teto de 6 horas, sem virar `failed`; batimento próprio `whatsapp_reconciler_runs`, e não `last_event_at`, que é o último evento do provedor; cron a cada 5 minutos, concorrência 1, só com `WHATSAPP_RECONCILER_ENABLED=true`. **Limitação:** o Inngest descarta um `id` repetido por 24 horas (§28.8). Portão obrigatório antes de webhook real (§18.3) | B3.2d-2b3 |
+| B3.2e | **Implementada (§28).** Reconciliador: reserva atômica por linha (`SKIP LOCKED`, token próprio, vencimento curto) e republicação do mesmo evento interno, sem processar conteúdo nem chamar efeitos; `pending` e `processing` com lease vencida; `channel_*` só volta quando o canal muda; nunca tentada passa em qualquer estado do canal, o caminho do `account`; backoff de 1, 5, 15 e 60 minutos com teto de 6 horas, sem virar `failed`; batimento próprio `whatsapp_reconciler_runs`, e não `last_event_at`, que é o último evento do provedor; cron a cada 5 minutos, concorrência 1, só com `WHATSAPP_RECONCILER_ENABLED=true`. Publicação inicial com `id = inboxId` e cada reserva com `id = inboxId:r<tentativa>`, por causa da janela de 24 horas do Inngest (§28.8). Portão obrigatório antes de webhook real (§18.3) | B3.2d-2b3 |
 | Fora do Praxis | Contrato do §15.6 no chatbot (rota, tabela de pedidos, testes), em branch/PR própria do chatbot, desligado e sem deploy | Decisão 15; implantação real com nova autorização; necessário antes da B3.3 no número do chatbot |
 | Posterior | Resumo e qualificação estruturados do chatbot (decisão 12) | Entrada real estável |
 
@@ -2478,11 +2478,11 @@ republica o evento perdido. Sem a B3.2e, uma publicação perdida ficaria
 parada.
 
 **Portão implementado (§28).** O reconciliador da B3.2e existe e recupera a
-publicação perdida: a entrada `pending` é reservada e o mesmo evento é publicado de
-novo, na rodada seguinte. Fica desligado até `WHATSAPP_RECONCILER_ENABLED=true`, e
-**tem de estar ligado antes de cadastrar qualquer webhook real**. As entradas que o
-consumidor já viu têm uma limitação de até cerca de 30 horas, pela janela de 24
-horas do `id` do evento no Inngest (§28.8).
+publicação perdida: a entrada `pending` é reservada e o evento é publicado de novo,
+na rodada seguinte, com um `id` próprio da tentativa (`inboxId:r<tentativa>`, §28.8),
+que a janela de 24 horas do Inngest não descarta. Fica desligado até
+`WHATSAPP_RECONCILER_ENABLED=true`, e **tem de estar ligado antes de cadastrar
+qualquer webhook real**.
 
 ### 18.4 Resolução pelo localizador (banco)
 
@@ -2526,7 +2526,8 @@ whatsappInngestClient().send({
 - **Só o id da inbox.** Nada de workspace, canal, ambiente, provedor ou
   routing key. Um campo a mais na chamada nunca entra no evento.
 - **Mesma entrada, mesmo evento:** a duplicata republica exatamente o mesmo
-  evento, com o mesmo id.
+  evento, com o mesmo id. O reconciliador da B3.2e usa outro id por reserva,
+  `inboxId:r<tentativa>`, com o mesmo `data` (§28.8).
 - **Requisito da B3.2d:** o consumidor resolve tudo pelo `inboxId` no
   banco (canal, workspace, ambiente, provedor, estado) e **nunca confia em
   contexto recebido no evento**. Junto com o claim atômico (§17.7) e a
@@ -3201,7 +3202,8 @@ Motivos da divisão:
 
 - `inboxId` é UUID; `data` com qualquer campo a mais (workspace, canal,
   routing key, provedor, ambiente) é recusado;
-- o `id` do evento, quando vier, tem de ser o próprio `inboxId`;
+- o `id` do evento, quando vier, tem de ser o próprio `inboxId` (a B3.2e o torna
+  obrigatório e aceita também `inboxId:r<tentativa>`, §28.8);
 - evento inválido → `{ outcome: "invalid_event" }`, sem `step.run` e sem
   banco.
 
@@ -6231,8 +6233,8 @@ O reconciliador **não processa conteúdo e não chama efeitos do domínio**. El
 
 1. encontra entradas elegíveis;
 2. reserva cada uma de forma atômica;
-3. publica de novo o mesmo evento interno,
-   `{ id: inboxId, name: "praxis/whatsapp.inbox.received", data: { inboxId } }`;
+3. publica de novo o evento interno, com um `id` próprio da tentativa (§28.8),
+   `{ id: "<inboxId>:r<tentativa>", name: "praxis/whatsapp.inbox.received", data: { inboxId } }`;
 4. registra só o resultado técnico da publicação;
 5. deixa o consumidor normal fazer claim, decifrar, normalizar e aplicar.
 
@@ -6258,7 +6260,7 @@ assinado, com `SELECT ... FOR UPDATE OF i SKIP LOCKED`:
 | `reconcile_token` | Token próprio e aleatório; só existe durante a reserva |
 | `reconcile_reserved_at` | Horário da última reserva; fica depois do fim dela |
 | `reconcile_reserved_until` | Vencimento curto (30 a 300 s; o servidor pede 120) |
-| `reconcile_attempts` | Tentativas técnicas de republicação; nunca diminui |
+| `reconcile_attempts` | Tentativas técnicas de republicação; nunca diminui; compõe o `id` do evento (§28.8) |
 | `last_republished_at` | Última republicação **aceita** pelo Inngest |
 | `last_republish_error_code` | Código da última falha, em lista fechada (`inbox_event_publish_failed`, `inbox_event_not_configured`) |
 | `reconcile_next_at` | Próximo horário elegível pelo backoff |
@@ -6273,8 +6275,10 @@ assinado, com `SELECT ... FOR UPDATE OF i SKIP LOCKED`:
 - **A reserva não impede o claim:** o consumidor nunca espera o reconciliador.
 - **Expurgo com reserva vigente:** o gatilho apaga o token; um tombstone não guarda
   nenhum.
-- **Devolve só** `{ candidates, entries: [{ inbox_id, reservation_token }] }`.
-  Nenhuma cifra, hash, canal, workspace ou dado pessoal.
+- **Devolve só** `{ candidates, entries: [{ inbox_id, reservation_token, reconcile_attempt }] }`.
+  Nenhuma cifra, hash, canal, workspace ou dado pessoal. `reconcile_attempt` é o
+  contador já incrementado por aquela reserva, lido na própria instrução que o
+  incrementa (`RETURNING`).
 
 O token fica **na memória, dentro do mesmo `step.run`**: não sai no retorno, no
 erro, no batimento nem no evento, e nenhum outro step o recebe.
@@ -6321,8 +6325,9 @@ não (a entrada volta quando a reserva vencer). O contador nunca volta a zero.
 | Reserva perdida antes de confirmar | Nada (`reservation_lost`); o evento já saiu e conta como publicado | Tudo |
 | Sem resposta do banco ao confirmar | Nada; a reserva vence sozinha; conta como falha | Tudo |
 
-O resultado remoto indeterminado pode ser republicado: o `id` continua sendo o
-`inboxId`, o consumidor usa claim e os efeitos são idempotentes.
+O resultado remoto indeterminado não é repetido na mesma reserva: a falha a encerra,
+e a seguinte usa outro `id` (§28.8). Se as duas publicações chegarem, o consumidor
+usa claim e os efeitos são idempotentes.
 
 ### 28.6 Agendamento e ativação
 
@@ -6367,47 +6372,101 @@ uma nova. E-mail e alerta ficam fora desta etapa.
 perdidas antes da confirmação e as que ficaram para a reserva vencer. Por isso uma
 publicação aceita com a reserva perdida conta em `published` **e** em `skipped`.
 
-### 28.8 O `id` repetido e a janela de 24 horas do Inngest
+### 28.8 O `id` do evento e a janela de 24 horas do Inngest
 
-**Limitação conferida na documentação oficial do Inngest.** O `id` do evento é uma
-chave de idempotência por **24 horas**: um evento com o mesmo `id` nesse período é
-guardado, mas **não dispara nenhuma função**. O contrato pedido é `id = inboxId`,
-e foi mantido. O efeito depende de já ter havido um evento aceito para a entrada:
+**A limitação.** O `id` do evento é uma chave de idempotência por **24 horas**: um
+evento com o mesmo `id` nesse período é guardado, mas **não dispara nenhuma função**
+(documentação oficial do Inngest). Com `id = inboxId` em toda republicação, as
+entradas que o consumidor já viu (liberadas com recuperável, `channel_*` cujo canal
+voltou, lease vencida) só voltariam a rodar depois da janela, em até cerca de 30
+horas, e não nos minutos do backoff. A documentação também não diz se uma repetição
+renova a janela.
 
-| Caso | Já houve evento aceito? | O que acontece |
+**A política (decisão aprovada em 02/11/2026).**
+
+| Quem publica | `id` | Quando muda |
 |---|---|---|
-| Publicação inicial da rota falhou | Não | A republicação dispara o consumidor. **Recuperação na rodada seguinte** |
-| Chegou com o canal não ativo (a rota não publica) | Não | Idem: é o caminho do `account` em canal não ativo |
-| Liberada com recuperável (`message_not_found`, ...) | **Sim** | O Inngest aceita e **descarta** até 24 h depois do evento original |
-| `channel_*` e o canal volta a `active` em menos de 24 h | **Sim** | Idem |
-| `processing` com a lease vencida | **Sim** | Idem |
+| Rota do webhook (publicação inicial) | `inboxId` | Nunca: a duplicata do provedor repete exatamente o mesmo evento |
+| Reconciliador | `inboxId:r<tentativa>` | A cada reserva nova |
 
-Por isso `last_republished_at` não significa “executou”, e a entrada **continua
-elegível pelo backoff** enquanto o consumidor não a tratar: passadas as 24 horas,
-uma das republicações seguintes dispara o consumidor. Na prática, nesses três
-últimos casos a recuperação leva **até cerca de 30 horas** (24 h mais o teto de
-6 h), e não os minutos que o backoff sugere.
+**Não dependemos de saber se uma duplicata renova a janela:** uma reserva nova nunca
+repete um `id` já usado, então não há repetição que possa renová-la.
 
-O que isto **não** cobre e **não foi verificado**:
-- a documentação não diz se um evento repetido renova a janela. Se renovar, uma
-  republicação a cada 6 horas nunca deixaria a janela vencer, e esses três casos só
-  se recuperariam com outra ação. Isso só se confirma contra o Inngest real;
-- uma retenção da inbox menor que essa espera expurga a entrada antes (a retenção
-  prevalece).
+**A tentativa vem do banco.** É o `reconcile_attempts` resultante do incremento
+daquela reserva, atribuído de forma atômica e devolvido pela própria RPC
+(`reconcile_attempt`). O servidor nunca conta nada: confere que é inteiro, maior que
+zero e no máximo 2147483647, e recusa a resposta inteira da reserva se não for.
 
-**Decisão pendente antes do webhook real.** Se a recuperação em minutos for
-necessária, a saída é o reconciliador usar um `id` próprio por tentativa (por
-exemplo `inboxId:r<tentativa>`), o que continua seguro porque o claim e os efeitos
-idempotentes é que impedem o efeito duplicado. Exige mudar também a conferência do
-consumidor, que hoje recusa um `id` diferente do `inboxId`. Não foi feito porque o
-contrato desta etapa pede `id = inboxId`.
+**Só o publicador constrói o `id`.** `publishWhatsAppInboxReceived({ inboxId,
+reconciliationAttempt? })`: sem a tentativa, `inboxId`; com ela,
+`inboxId:r<tentativa>`. Nenhum chamador fornece um `id` ou `eventId`.
+
+**Estabilidade dentro da mesma reserva.** O `id` depende só da entrada e da tentativa:
+
+| Situação | O que acontece |
+|---|---|
+| Repetição interna do SDK (erro de rede ou HTTP) | Reenvia o mesmo evento, com o mesmo `id`; o Inngest deduplica |
+| Tempo limite ou resultado incerto | Nenhuma segunda publicação nessa reserva; a falha a encerra, e a seguinte é `r<tentativa + 1>` |
+| Nova rodada com a reserva ainda válida | A entrada não é elegível: nada é reservado nem publicado, e a tentativa não muda |
+| Confirmação ou falha técnica | Não mudam a tentativa |
+| Reserva nova (depois da confirmação, da falha ou da queda do worker) | Incrementa no banco, portanto `id` novo |
+
+**Quem impede efeito duplicado continua sendo o claim da inbox, o ledger e os efeitos
+idempotentes.** O `id` do Inngest é só deduplicação de transporte. Duas publicações
+da mesma entrada (a inicial e a `r1`, por exemplo) podem rodar o consumidor duas
+vezes: a segunda não obtém o claim, ou encontra a entrada já tratada.
+
+**O payload não muda:** `data` continua exatamente `{ inboxId }`. A tentativa só existe
+no `id`: nunca no `data`, nas respostas públicas, no batimento, em log ou em código de
+erro. As respostas de `_confirm` e `_fail` também não a trazem.
+
+**O consumidor** só aceita um `id` compatível com o `inboxId` do `data`, por comparação
+exata:
+
+| `id` (com `data.inboxId = X`) | Resultado |
+|---|---|
+| `X`, `X:r1`, `X:r2`, `X:r10`, `X:r2147483647` | Aceito |
+| Ausente, vazio, ou o ULID que o servidor gera quando o envio não traz `id` | Recusado |
+| `Y`, `Y:r1` (outra inbox) | Recusado |
+| `X:r0`, `X:r-1`, `X:r+1` | Recusado |
+| `X:r1.5`, `X:r1.0`, `X:r1e3`, `X:r0x10` | Recusado |
+| `X:r 1`, `X:r1 `, `X :r1`, ` X:r1`, ` X`, `X `, `X:r1\n` | Recusado |
+| `X:r01`, `X:r0001` | Recusado |
+| `X:r1x`, `X:r1:r2`, `X:r` | Recusado |
+| `X:R1`, `X:a1`, `X:1`, `X-r1`, `X_r1`, `X.r1`, `Xr1`, `X::r1`, `r1:X` | Recusado |
+| `X:r2147483648`, `X:r99999999999999999999` | Recusado |
+
+Recusado é `{ outcome: "invalid_event" }`, sem `step.run` e sem banco. O inteiro só é
+aceito na forma canônica, a mesma que o publicador produz, então um `id` aceito sempre
+é um que ele poderia ter gerado.
+
+**O `id` é obrigatório nesse gatilho.** Foi conferido em três camadas:
+- **SDK 4.20:** repassa o `event` recebido sem filtrar nada
+  (`event: z.record(z.any())`). Testado com o SDK real, por `POST` assinado na rota
+  (`tests/unit/b3-2e-rota-reconciliador.test.ts`);
+- **servidor de desenvolvimento local** (`inngest-cli` 1.49.0, app descartável fora do
+  repositório, sem conta nem chave): `id` puro e `:r1` chegaram literais em `event.id`;
+  `:r2` disparou mesmo com o puro e `:r1` já vistos; `:r2` e o puro, repetidos, não
+  dispararam nada; e, sem `id` no envio, a função recebeu um ULID gerado pelo servidor;
+- **documentação do Inngest:** o `event` recebido "corresponde ao que foi enviado".
+
+Não há, portanto, motivo técnico para manter o `id` opcional, e o único caso sem o
+`id` enviado (o ULID) é recusado de qualquer forma.
+
+**O que continua sem verificação:** nada disso rodou contra o Inngest Cloud. Se ele não
+entregasse o `id`, a falha seria fechada: toda execução daria `invalid_event`, sem
+efeito, e as entradas ficariam `pending`. Vale olhar isso na primeira execução real.
+
+**Limite do inteiro.** No máximo 2147483647 tentativas: com o teto de 6 horas do
+backoff, cerca de 1,4 milhão de anos. Se um dia acontecesse, a reserva falharia inteira
+(`integer out of range`, sem mudar nada) em vez de repetir um `id`.
 
 ### 28.9 Testes
 
-- `supabase/tests/database/41_b3_2e_reconciliador.test.sql` (pgTAP, 102): superfície
+- `supabase/tests/database/41_b3_2e_reconciliador.test.sql` (pgTAP, 129): superfície
   (só `service_role`, SECURITY DEFINER, sem acesso direto, sem coluna de texto livre
-  no batimento); cada linha da matriz do §28.3; a reserva devolve só o id e o token,
-  e não muda nada além das colunas técnicas; outro ambiente não vê nem confirma; sem
+  no batimento); cada linha da matriz do §28.3; a reserva devolve só o id, o token e a
+  tentativa, e não muda nada além das colunas técnicas; outro ambiente não vê nem confirma; sem
   o ambiente assinado nada acontece; reserva vigente, vencida e adquirida de novo
   com token novo; token antigo, vencido, inventado ou nulo não confirma nem libera;
   a confirmação e a falha não mudam `state` nem claim; a falha só aceita código da
@@ -6418,22 +6477,34 @@ contrato desta etapa pede `id = inboxId`.
   corrida claim/release; a retenção prevalece; backoff 1, 5, 15, 60 e o teto de 6
   horas mesmo com mil tentativas, sem virar `failed`; batimento com contagens
   verdadeiras, no ambiente assinado, valores fora da lista recusados e limpeza de 30
-  dias.
+  dias; tentativa devolvida igual à gravada e em número; `1`, `2`, `3` e `4` depois da
+  confirmação, da falha e da queda; reserva vigente, confirmação e falha não a mudam; cada
+  entrada do lote com o próprio contador; o último inteiro e o estouro; `_confirm`, `_fail`
+  e o batimento sem a tentativa.
+- `tests/unit/b3-2e-id-evento.test.ts` (85, política de id): o publicador constrói o
+  `id`, recusa tentativa inválida e ignora um `id` do chamador; a repetição interna do
+  SDK reenvia o mesmo `id` (cliente real, rede simulada); `:r1`, depois `:r2`; a mesma
+  reserva gera o mesmo `id`; publicação recusada e tempo limite não repetem na mesma
+  reserva; duas inboxes nunca compartilham `id`; a tentativa fora do `data`, do retorno,
+  do batimento, de log e de erro; todos os formatos do §28.8 no consumidor; nada usa a
+  rede.
 - `tests/unit/b3-2e-reconciliador.test.ts` (64, servidor): o evento exato, igual ao da
-  rota; ordem publicar e depois confirmar; só as RPCs do reconciliador; falha numa
+  rota no nome e no `data`; ordem publicar e depois confirmar; só as RPCs do reconciliador; falha numa
   entrada não para as outras; tempo limite; orçamento da rodada; toda falha geral
   vira falha da execução, com o erro sanitizado; resposta da reserva fora do
   contrato; sem a chave própria nada é reservado, com `INNGEST_EVENT_KEY` presente;
   batimento com contagens verdadeiras e sem token, id ou erro; token só nas RPCs de
   confirmar e falhar; a função (cron, concorrência 1, um `step.run`); a chave de
   ativação (valores errados, chaves da A11 e da agenda); fronteiras estáticas.
-- `tests/unit/b3-2e-rota-reconciliador.test.ts` (6, SDK real, sem rede): uma função sem
-  a variável, duas com ela; a signing key da A11 não autentica; 503 sem as chaves
-  próprias, mesmo com a variável ligada.
+- `tests/unit/b3-2e-rota-reconciliador.test.ts` (12, SDK real, sem rede): uma função
+  sem a variável, duas com ela; a signing key da A11 não autentica; 503 sem as chaves
+  próprias, mesmo com a variável ligada; e, numa execução assinada, o `id` chega ao
+  consumidor: compatível é processado só pelo `inboxId`; o de outra inbox, malformado,
+  gerado pelo servidor ou ausente é recusado.
 - `scripts/check-upgrade-b3-2e-reconciliador.sh` (no CI, por último): entradas
   gravadas antes da migration mantêm todas as colunas antigas, as técnicas nascem
-  vazias, as recuperáveis passam a ser reservadas sem mudar `state` nem claim, e
-  claim, finalização e gravação continuam funcionando.
+  vazias, as recuperáveis passam a ser reservadas sem mudar `state` nem claim, saem com
+  a tentativa 1, e claim, finalização e gravação continuam funcionando.
 - **Ajustados:** os pgTAP 29, 31 e 33 fixam listas exatas de colunas e funções, que
   agora incluem as novas, e o script de atualização da B3.2d-2b2b3b deixa de contar
   as colunas técnicas no hash da inbox.
@@ -6449,9 +6520,16 @@ reserva aceitava token sem vencimento, porque `NULL` passa num `CHECK`.
 
 **Verde:** CI completo na `0ec5cdf` (run 41541755914): typecheck, lint, 2739
 unitários em 119 arquivos, tipos gerados em dia, pgTAP inteiro (41 arquivos, 2134
-testes), isolamento, e2e (76), todas as concorrências e atualizações; Vercel verde. Os
-commits seguintes só acrescentam 2 testes ao pgTAP 41 e a documentação; o CI deles
-fica registrado na descrição da PR.
+testes), isolamento, e2e (76), todas as concorrências e atualizações; Vercel verde.
+
+**Política de id (§28.8), testes primeiro.** Vermelho (PR temporária #328, run
+41553304150, só os testes `bd34e6b` e o CI sem interromper nos passos, fechada sem
+merge): typecheck com 8 erros; lint com 1 erro; 62 testes unitários falham, em 4 arquivos
+de 120; pgTAP `Result: FAIL` (8 de 126); concorrência e atualização falham pela falta da
+tentativa; Build falha nos mesmos tipos, e o e2e fica sem build. Verde: CI completo na
+`1c31783` (run 41553223801): 2832 unitários em 120 arquivos, pgTAP 41 arquivos e 2163
+testes, e2e 76, todas as concorrências e atualizações; Vercel verde. O commit seguinte
+só acrescenta a documentação; o CI dele fica registrado na descrição da PR.
 
 ### 28.10 Concorrência real
 
@@ -6460,26 +6538,31 @@ separadas e transações reais:
 
 | Cenário | Prova |
 |---|---|
-| 1 | Dois reconciliadores no mesmo lote de 20 (15 cada): nenhuma entrada repetida, nenhuma perdida, uma tentativa por entrada |
+| 1 | Dois reconciliadores no mesmo lote de 20 (15 cada): nenhuma entrada repetida, nenhuma perdida, uma tentativa por entrada, devolvida como 1 |
 | 1b | Uma sessão segura a linha: o reconciliador pula a travada, reserva a livre e não espera |
-| 2 | A reserva vence: worker novo com token novo; o antigo não confirma nem registra falha; a nova segue intacta |
+| 2 | A reserva vence: worker novo com token novo e a tentativa 2; o antigo não confirma nem registra falha; a nova segue intacta |
 | 3 | Processada entre a reserva e a confirmação: o claim não é impedido, a confirmação não reabre, sem regressão |
 | 4 | Canal de `paused` para `active`: a entrada `channel_paused` volta a ser elegível |
 | 5 | Canal continua `paused`: publicada uma vez (nunca tentada), depois nenhuma em três ciclos, mesmo com o backoff vencido |
-| 6 | Falha depois da reserva: antes de vencer ninguém a recebe; depois volta com token novo; cifra, estado e claim intactos |
+| 6 | Falha depois da reserva: antes de vencer ninguém a recebe; depois volta com token novo e a tentativa seguinte; cifra, estado e claim intactos |
+| 7 | Dois workers disputam a mesma entrada em 5 ciclos: cada tentativa, de 1 a 5, vai para um só, e a linha acompanha. Nenhum `id` se repete |
 
 ### 28.11 Mutações
 
 Cada mutação é uma **cópia**: as de SQL, aplicadas num banco descartável, rodando o
 pgTAP 41 e a concorrência (sessões reais); as de servidor, por substituição de texto
 com o arquivo restaurado depois. Todas rodaram localmente, nenhuma no CI. Uma rodada de
-controle sem mutação passou nos dois. **49
-mutações, nenhuma sobreviveu**: as 19 pedidas são M01 a M19 (22 linhas, porque
-M15, M16 e M19 têm variante), e as X são extras. O código da PR nunca foi alterado.
+controle sem mutação passou nos dois. **100 mutações, nenhuma sobreviveu**: M01 a
+M19 são as 19 pedidas na etapa (22 linhas, porque M15, M16 e M19 têm variante), N são
+as 51 da política de id e X são 27 extras. Todas foram refeitas depois da política de
+id, e o código da PR nunca foi alterado.
 
-A **primeira rodada de SQL deixou três casos**, todos revistos:
+**A M10 foi invertida:** antes reprovava um `id` diferente do `inboxId`; agora reprova o
+publicador que ignora a tentativa, ou seja, a reconciliação com o `inboxId` puro.
+
+Na **primeira rodada de SQL da etapa**, três casos foram revistos:
 - **X16** sobreviveu e era um buraco real de cobertura: nenhum teste provava que o
-  batimento usa o ambiente assinado. Viraram os testes 101 e 102 do pgTAP 41;
+  batimento usa o ambiente assinado. Viraram dois testes do pgTAP 41;
 - **X10** sobreviveu por estar mal escrita: dois `UPDATE` da mesma linha na mesma
   instrução anulavam a mutação. Reescrita na confirmação, morre;
 - **M12** não chegou a aplicar (erro de sintaxe na própria mutação). Corrigida, morre.
@@ -6488,29 +6571,80 @@ A **primeira rodada de SQL deixou três casos**, todos revistos:
 |---|---|
 | M01 remove o SKIP LOCKED (trava com espera) | pgTAP 41: 96; concorrência 1b |
 | M02 dois workers podem reservar a mesma entrada (sem trava) | pgTAP 41: 96; concorrência 1 |
-| M03 aceita token antigo na confirmação | pgTAP 41: 28, 30 (+20 erros); concorrência 2 |
+| M03 aceita token antigo na confirmação | pgTAP 41: 28, 30; concorrência 2 |
 | M04 seleciona processing com a lease vigente | pgTAP 41: 13 |
 | M05 seleciona outro ambiente | pgTAP 41: 19, 20 |
 | M06 seleciona processed e failed | pgTAP 41: 15, 16, 76, 77, 78; concorrência 3 |
 | M07 seleciona entrada expurgada | pgTAP 41: 17 |
 | M08 ignora retain_until | pgTAP 41: 18, 79 |
-| M09 publica campo além de inboxId | evento 2c: 2; servidor: 2 |
-| M10 usa outro id no evento | servidor: 3; evento 2c: 2 |
-| M11 marca a inbox como processed depois de publicar | pgTAP 41: 40, 44, 54 (+17 erros); concorrência 3 |
+| M09 publica campo além de inboxId | id: 6; evento 2c: 2; servidor: 2 |
+| M10 o publicador ignora a tentativa: reconciliação com o inboxId puro | id: 14; servidor: 2 |
+| M11 marca a inbox como processed depois de publicar | pgTAP 41: 40, 44, 54; concorrência 3 |
 | M12 republica channel_paused sem mudança do canal | pgTAP 41: 69, 72, 74, 76, 77; concorrência 4 |
 | M13 bloqueia para sempre o evento account em canal não ativo | pgTAP 41: 65, 66, 67; concorrência 5 |
 | M14 remove o backoff | pgTAP 41: 43, 44, 50, 51, 52, 85 |
 | M15 permite lote acima de 25 | pgTAP 41: 58 |
 | M15b o servidor pede lote acima de 25 | servidor: 2 |
 | M16 batimento com coluna para token ou dado pessoal | pgTAP 41: 5 |
-| M16b registra o token no batimento | servidor: 10 |
+| M16b registra o token no batimento | servidor: 10; id: 1 |
 | M17 usa INNGEST_EVENT_KEY como reserva | evento 2c: 4; servidor: 1 |
 | M18 registra o cron com a chave desligada | servidor: 9; rota: 2; rota 2d-2a: 1 |
-| M19 esconde a falha geral como execução concluída | servidor: 13 |
-| M19b rodada em que tudo falhou devolve sucesso | servidor: 1 |
-| X01 token vencido, sem nova dona, ainda confirma | pgTAP 41: 28, 30 (+20 erros); concorrência 2 |
-| X02 aceita token antigo na falha | pgTAP 41: 29, 30 (+20 erros); concorrência 2 |
-| X03 reserva vigente é entregue a outro worker | pgTAP 41: 27, 30, 32, 35, 41, 64; concorrência 2 |
+| M19 esconde a falha geral como execução concluída | servidor: 13; id: 7 |
+| M19b rodada em que tudo falhou devolve sucesso | id: 1; servidor: 1 |
+| N01 o reconciliador não passa a tentativa: inboxId puro | id: 10; servidor: 2 |
+| N01b a publicação inicial deixa de ser o inboxId puro | evento 2c: 2; id: 2; servidor: 1 |
+| N01c a rota do webhook publica com tentativa | webhook 2c: 2; id: 1 |
+| N02a id diferente a cada publicação da mesma reserva (relógio no publicador) | id: 14; servidor: 2 |
+| N02b id diferente a cada publicação da mesma reserva (contador local) | id: 8; servidor: 1 |
+| N03a nova reserva reutiliza a primeira tentativa (memória local) | id: 8 |
+| N03b nova reserva reutiliza a tentativa anterior (devolve o contador menos 1) | pgTAP 41: 104, 112, 117, 119, 121, 122; concorrência 1 |
+| N03c nova reserva não incrementa depois da primeira | pgTAP 41: 14 testes; concorrência 2 |
+| N04a aceita tentativa de outra inbox | id: 6; rota: 1 |
+| N04b aceita o UUID puro de outra inbox | id: 2; consumidor 2d-2a: 1 |
+| N05a aceita tentativa zero e zeros à esquerda | id: 3; rota: 1 |
+| N05b aceita sinal de mais | id: 1 |
+| N05c aceita acima do máximo | id: 1 |
+| N05d aceita espaços em volta da tentativa | id: 3 |
+| N05e interpreta a tentativa com parseInt | id: 11; rota: 1 |
+| N05f regex sem o fim da tentativa: aceita texto depois | id: 5 |
+| N05g aceita espaços em volta do id puro | id: 3 |
+| N05h aceita outro separador | id: 1 |
+| N05i aceita prefixo maiúsculo | id: 1 |
+| N06a põe a tentativa no data | id: 5; servidor: 3 |
+| N06b o consumidor aceita a tentativa no data | consumidor 2d-2a: 1 |
+| N07a o chamador fornece eventId | id: 2 |
+| N07b o chamador fornece id | id: 1 |
+| N08a o servidor soma 1 à tentativa do banco | id: 9; servidor: 2 |
+| N08b o servidor ignora a tentativa do banco | id: 8; servidor: 1 |
+| N08c devolve o contador mais 1, diferente do gravado | pgTAP 41: 104, 112, 117, 119, 121, 122, 123, 125; concorrência 1 |
+| N08d devolve sempre 1 | pgTAP 41: 112, 117, 119, 121, 122; concorrência 2 |
+| N08e devolve o valor lido antes do incremento | pgTAP 41: 104, 112, 117, 119, 121, 122; concorrência 1 |
+| N08f devolve a tentativa como texto | pgTAP 41: 105 |
+| N08g todas as entradas do lote recebem a maior tentativa | pgTAP 41: 121 |
+| N09a o publicador não valida a tentativa | id: 10 |
+| N09b a validação aceita zero | id: 2 |
+| N09c a validação não tem máximo | id: 2 |
+| N09d a validação aceita decimal | id: 2 |
+| N09e a resposta da reserva sem conferir a tentativa | id: 6 |
+| N09f a resposta da reserva aceita tentativa ausente | id: 1 |
+| N10 id volta a ser opcional no consumidor | consumidor 2d-2a: 1; id: 1; rota: 1 |
+| N11 o consumidor compara sem diferenciar maiúsculas | id: 2 |
+| N12a a tentativa vai para o batimento | id: 2; servidor: 1 |
+| N12b a tentativa vai para a confirmação | id: 1; servidor: 1 |
+| N12c a tentativa sai no retorno da rodada | servidor: 8; id: 1 |
+| N12d a tentativa vai no código de falha | servidor: 2; id: 1 |
+| N12e a tentativa vai para o log | servidor: 26; id: 13 |
+| N12f a tentativa vai na mensagem de erro do publicador | id: 10 |
+| N13 o consumidor devolve a tentativa | id: 7; consumidor 2d-2a: 1 |
+| N14a a confirmação muda a tentativa | pgTAP 41: 10 testes; concorrência 5 |
+| N14b a falha muda a tentativa | pgTAP 41: 49, 52, 115, 117, 119, 120 |
+| N15a a confirmação devolve a tentativa | pgTAP 41: 126 |
+| N15b a falha devolve a tentativa | pgTAP 41: 128 |
+| N16 batimento com coluna de tentativa | pgTAP 41: 5, 129 |
+| N17 troca o separador da tentativa | id: 19; servidor: 2; rota: 1 |
+| X01 token vencido, sem nova dona, ainda confirma | pgTAP 41: 28, 30; concorrência 2 |
+| X02 aceita token antigo na falha | pgTAP 41: 29, 30; concorrência 2 |
+| X03 reserva vigente é entregue a outro worker | pgTAP 41: 15 testes; concorrência 2 |
 | X04 corrida claim/release: estado atual do canal ignorado | pgTAP 41: 78 |
 | X05 sem atalho do backoff depois da mudança do canal | pgTAP 41: 72 |
 | X06 falha de publicação depois da mudança ignora o backoff | pgTAP 41: 73, 74 |
@@ -6524,12 +6658,12 @@ A **primeira rodada de SQL deixou três casos**, todos revistos:
 | X14 código de falha com texto livre | pgTAP 41: 45, 46, 47, 49, 100 |
 | X15 a reserva usa o início da transação em vez do relógio | pgTAP 41: 96 |
 | X16 batimento sem o ambiente assinado (aceita qualquer um) | pgTAP 41: 101, 102 |
-| X20 confirma mesmo com a publicação recusada | servidor: 7 |
-| X21 falha de publicação grava a mensagem original | servidor: 2 |
-| X22 erro bruto no log | servidor: 14 |
-| X23 retorno leva a reserva | servidor: 8 |
+| X20 confirma mesmo com a publicação recusada | servidor: 7; id: 1 |
+| X21 falha de publicação grava a mensagem original | servidor: 2; id: 1 |
+| X22 erro bruto no log | servidor: 14; id: 7 |
+| X23 retorno leva a reserva | servidor: 8; id: 1 |
 | X24 batimento que falha não falha a execução | servidor: 4 |
-| X25 sem tempo limite na publicação | servidor: 1 |
+| X25 sem tempo limite na publicação | id: 1; servidor: 1 |
 | X26 concorrência 2 na função | servidor: 1 |
 | X27 resposta da reserva sem conferência estrita | servidor: 1 |
 | X28 qualquer valor liga a chave | servidor: 6; rota: 1 |
@@ -6559,12 +6693,13 @@ Decisões que vão além do pedido literal:
   minutos, recomeça.
 
 Riscos:
-- **a janela de 24 horas do §28.8 é o principal**: o portão do §18.3 (evento
-  perdido) fica coberto, mas a recuperação das entradas que o consumidor já viu não
-  acontece em minutos;
+- **cada reserva agora dispara o consumidor de verdade**, porque a janela de 24 horas
+  deixou de suprimir as republicações (§28.8): é o que se quer, com o ritmo limitado
+  pelo backoff, e uma execução a mais encontra o claim ou a entrada já tratada;
 - o tempo limite de 8 s não cancela a chamada ao Inngest: ela pode ser aceita depois
   de contada como falha. É inofensivo pelo mesmo motivo do resultado indeterminado;
 - o contador de tentativas sobe em cada reserva, inclusive numa queda do worker, o
   que só alonga o backoff;
-- o reconciliador nunca rodou contra um Inngest real: a função, o cron e a rota
-  foram testados com o SDK real e sem rede.
+- o reconciliador nunca rodou contra o Inngest Cloud: a função, o cron e a rota foram
+  testados com o SDK real e sem rede, e a entrega do `id` e a deduplicação, também no
+  servidor de desenvolvimento local (§28.8).
