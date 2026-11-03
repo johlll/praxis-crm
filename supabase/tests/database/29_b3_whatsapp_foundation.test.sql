@@ -129,6 +129,8 @@ select is(
      and p.proname not like 'whatsapp\_%internal\_identit%'
      -- Os efeitos no domínio (B3.2d-2b2) têm teste próprio (36).
      and p.proname not like 'whatsapp\_effect\_%'
+     -- O batimento do reconciliador (B3.2e) tem teste próprio (41).
+     and p.proname <> 'whatsapp_reconciler_record_run'
      and has_function_privilege('service_role', p.oid, 'execute')),
   10,
   'as 10 funções public.whatsapp_* da B3.1 são executáveis por service_role'

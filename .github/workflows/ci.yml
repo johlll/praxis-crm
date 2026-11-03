@@ -226,6 +226,16 @@ jobs:
         # Canais próprios; roda antes do passo que recria o banco local.
         run: bash scripts/b3-2d2b2b3b-account-event-concurrency-check.sh
 
+      - name: Teste de concorrência real (B3.2e — reserva da republicação da inbox)
+        # Dois reconciliadores no mesmo lote (cada entrada para um só, com
+        # SKIP LOCKED), reserva vencida com token novo e o antigo sem valor,
+        # entrada processada entre a reserva e a confirmação, canal de paused
+        # para active, canal parado sem republicação em todo ciclo e queda do
+        # worker depois da reserva — ver
+        # scripts/b3-2e-inbox-reconciler-concurrency-check.sh. Canais próprios;
+        # roda antes do passo que recria o banco local.
+        run: bash scripts/b3-2e-inbox-reconciler-concurrency-check.sh
+
       - name: Atualização a partir da versão anterior (numeração de propostas)
         # "Aplicar migrations do zero" já valida a criação do banco; este
         # passo valida a ATUALIZAÇÃO com dados emitidos pela versão anterior.
@@ -286,8 +296,17 @@ jobs:
         # guarda do canal continua; o simulador, o envio e o status da A7
         # seguem funcionando — ver
         # scripts/check-upgrade-b3-2d2b2b3b-eventos-conta.sh. Recria o banco
-        # local, por isso roda por último.
+        # local, por isso roda depois do e2e.
         run: bash scripts/check-upgrade-b3-2d2b2b3b-eventos-conta.sh
+
+      - name: Atualização a partir da versão anterior (B3.2e — reconciliador da inbox)
+        # Entradas pending, liberadas, em processing e terminais gravadas antes
+        # da migration: nenhuma coluna antiga muda, as técnicas nascem vazias,
+        # as recuperáveis passam a ser reservadas sem mudar state nem claim, e
+        # o claim e a finalização continuam funcionando — ver
+        # scripts/check-upgrade-b3-2e-reconciliador.sh. Recria o banco local,
+        # por isso roda por último.
+        run: bash scripts/check-upgrade-b3-2e-reconciliador.sh
 
       - name: Publicar relatório do Playwright (só se algo falhar)
         if: failure()

@@ -21,7 +21,7 @@ import {
   type WhatsAppDomainEvent,
   type WhatsAppEffectProcessedCode,
 } from "@/server/whatsapp/effects/dispatch";
-import { WHATSAPP_INBOX_RECEIVED_EVENT } from "@/server/whatsapp/inbox-events";
+import { isWhatsAppInboxEventIdFor, WHATSAPP_INBOX_RECEIVED_EVENT } from "@/server/whatsapp/inbox-events";
 import { resolveWhatsAppProvider } from "@/server/whatsapp/provider";
 import { VerifiedWebhookBody, type NormalizedWhatsAppEvent } from "@/server/whatsapp/provider/contract";
 
@@ -139,18 +139,19 @@ const receivedEventSchema = z.object({
   name: z.literal(WHATSAPP_INBOX_RECEIVED_EVENT),
   // `data` é exatamente { inboxId }: qualquer contexto a mais é recusado.
   data: z.object({ inboxId: uuidSchema }).strict(),
-  id: z.string().optional(),
+  id: z.string(),
 });
 
-/** Aceita só `{ name: "praxis/whatsapp.inbox.received", data: { inboxId } }`.
- * O `id` do evento, quando vier, é o próprio `inboxId` (contrato do
- * publicador). Campos do envelope do Inngest (como `ts`) não são lidos. */
+/** Aceita só `{ id, name: "praxis/whatsapp.inbox.received", data: { inboxId } }`.
+ * O `id` é obrigatório e preso ao `inboxId` do `data`: `inboxId` ou
+ * `inboxId:r<tentativa>` (contrato do publicador, §28.8). O servidor do Inngest
+ * sempre o entrega: o enviado, ou um gerado quando o envio não traz nenhum.
+ * A tentativa não segue adiante. Campos do envelope (como `ts`) não são lidos. */
 export function parseWhatsAppInboxReceivedEvent(event: unknown): { ok: true; inboxId: string } | { ok: false } {
   const parsed = receivedEventSchema.safeParse(event);
   if (!parsed.success) return { ok: false };
-  const inboxId = parsed.data.data.inboxId.toLowerCase();
-  if (parsed.data.id !== undefined && parsed.data.id.toLowerCase() !== inboxId) return { ok: false };
-  return { ok: true, inboxId };
+  if (!isWhatsAppInboxEventIdFor(parsed.data.id, parsed.data.data.inboxId)) return { ok: false };
+  return { ok: true, inboxId: parsed.data.data.inboxId.toLowerCase() };
 }
 
 // ---------------------------------------------------------------------

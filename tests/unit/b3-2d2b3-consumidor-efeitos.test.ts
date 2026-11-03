@@ -696,7 +696,7 @@ describe("5. erros do efeito", () => {
     const { handleWhatsAppInboxReceived } = await loadHandler();
     const { WhatsAppConsumerRetryableError } = await loadConsumer();
     const step = { run: async (_id: string, fn: () => Promise<unknown>) => fn() };
-    await expect(handleWhatsAppInboxReceived({ event: { name: "praxis/whatsapp.inbox.received", data: { inboxId: INBOX_ID } }, step })).rejects.toBeInstanceOf(
+    await expect(handleWhatsAppInboxReceived({ event: { id: INBOX_ID, name: "praxis/whatsapp.inbox.received", data: { inboxId: INBOX_ID } }, step })).rejects.toBeInstanceOf(
       WhatsAppConsumerRetryableError,
     );
     expect(finalizations()).toEqual([]);
@@ -783,7 +783,7 @@ describe("6. o claim que o efeito recebe é o objeto original", () => {
         }
       },
     };
-    const result = await handleWhatsAppInboxReceived({ event: { name: "praxis/whatsapp.inbox.received", data: { inboxId: INBOX_ID } }, step });
+    const result = await handleWhatsAppInboxReceived({ event: { id: INBOX_ID, name: "praxis/whatsapp.inbox.received", data: { inboxId: INBOX_ID } }, step });
     expect(steps).toBe(1);
     expect(result).toEqual({ outcome: "released", code: "identity_not_found" });
     expect(rpcLog.map((c) => [c.name, c.insideStep])).toEqual([
@@ -803,7 +803,7 @@ describe("6. o claim que o efeito recebe é o objeto original", () => {
       { inboxId: INBOX_ID, provider: "ycloud" },
       { inboxId: INBOX_ID, routingKey: ROUTING },
     ]) {
-      await expect(handleWhatsAppInboxReceived({ event: { name: "praxis/whatsapp.inbox.received", data }, step })).resolves.toEqual({ outcome: "invalid_event", code: null });
+      await expect(handleWhatsAppInboxReceived({ event: { id: INBOX_ID, name: "praxis/whatsapp.inbox.received", data }, step })).resolves.toEqual({ outcome: "invalid_event", code: null });
     }
     expect(step.run).not.toHaveBeenCalled();
     expect(h.rpc).not.toHaveBeenCalled();
