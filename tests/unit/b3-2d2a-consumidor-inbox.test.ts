@@ -228,9 +228,8 @@ function withAdapter(adapter: WhatsAppProvider) {
 describe("1. evento interno validado de forma estrita", () => {
   const NAME = "praxis/whatsapp.inbox.received";
 
-  it("aceita exatamente { name, data: { inboxId } }, com ou sem id igual ao inboxId", async () => {
+  it("aceita exatamente { id, name, data: { inboxId } }, com o id igual ao inboxId", async () => {
     const { parseWhatsAppInboxReceivedEvent } = await loadConsumer();
-    expect(parseWhatsAppInboxReceivedEvent({ name: NAME, data: { inboxId: INBOX_ID } })).toEqual({ ok: true, inboxId: INBOX_ID });
     expect(parseWhatsAppInboxReceivedEvent({ id: INBOX_ID, name: NAME, data: { inboxId: INBOX_ID }, ts: 1 })).toEqual({ ok: true, inboxId: INBOX_ID });
     expect(parseWhatsAppInboxReceivedEvent({ id: INBOX_ID.toUpperCase(), name: NAME, data: { inboxId: INBOX_ID.toUpperCase() } })).toEqual({
       ok: true,
@@ -239,15 +238,17 @@ describe("1. evento interno validado de forma estrita", () => {
   });
 
   it.each([
-    ["data com workspace", { name: NAME, data: { inboxId: INBOX_ID, workspaceId: WS } }],
-    ["data com canal e routing key", { name: NAME, data: { inboxId: INBOX_ID, channelId: CHANNEL, routingKey: ROUTING } }],
-    ["data com provedor e ambiente", { name: NAME, data: { inboxId: INBOX_ID, provider: "ycloud", environment: "production" } }],
-    ["inboxId que não é UUID", { name: NAME, data: { inboxId: "1; drop table" } }],
-    ["inboxId numérico", { name: NAME, data: { inboxId: 42 } }],
-    ["sem inboxId", { name: NAME, data: {} }],
-    ["data nulo", { name: NAME, data: null }],
-    ["data em lista", { name: NAME, data: [INBOX_ID] }],
-    ["outro nome", { name: "praxis/form.submitted", data: { inboxId: INBOX_ID } }],
+    ["data com workspace", { id: INBOX_ID, name: NAME, data: { inboxId: INBOX_ID, workspaceId: WS } }],
+    ["data com canal e routing key", { id: INBOX_ID, name: NAME, data: { inboxId: INBOX_ID, channelId: CHANNEL, routingKey: ROUTING } }],
+    ["data com provedor e ambiente", { id: INBOX_ID, name: NAME, data: { inboxId: INBOX_ID, provider: "ycloud", environment: "production" } }],
+    ["data com a tentativa", { id: `${INBOX_ID}:r1`, name: NAME, data: { inboxId: INBOX_ID, reconcileAttempt: 1 } }],
+    ["inboxId que não é UUID", { id: "1; drop table", name: NAME, data: { inboxId: "1; drop table" } }],
+    ["inboxId numérico", { id: 42, name: NAME, data: { inboxId: 42 } }],
+    ["sem inboxId", { id: INBOX_ID, name: NAME, data: {} }],
+    ["data nulo", { id: INBOX_ID, name: NAME, data: null }],
+    ["data em lista", { id: INBOX_ID, name: NAME, data: [INBOX_ID] }],
+    ["outro nome", { id: INBOX_ID, name: "praxis/form.submitted", data: { inboxId: INBOX_ID } }],
+    ["sem id", { name: NAME, data: { inboxId: INBOX_ID } }],
     ["id diferente do inboxId", { id: "46000000-0000-4000-8000-000000000099", name: NAME, data: { inboxId: INBOX_ID } }],
     ["evento nulo", null],
     ["texto", "praxis/whatsapp.inbox.received"],
@@ -281,7 +282,7 @@ describe("2. claim, decisão e finalização no mesmo step.run", () => {
     const { WHATSAPP_INBOX_CONSUMER_STEP_ID } = await loadConsumer();
     claimReturns(claimRow(OTHER));
     const step = fakeStep();
-    const result = await handleWhatsAppInboxReceived({ event: { name: "praxis/whatsapp.inbox.received", data: { inboxId: INBOX_ID } }, step } as never);
+    const result = await handleWhatsAppInboxReceived({ event: { id: INBOX_ID, name: "praxis/whatsapp.inbox.received", data: { inboxId: INBOX_ID } }, step } as never);
     expect(step.run).toHaveBeenCalledTimes(1);
     expect(step.run.mock.calls[0]?.[0]).toBe(WHATSAPP_INBOX_CONSUMER_STEP_ID);
     expect(names()).toEqual(["whatsapp_inbox_claim", "whatsapp_inbox_dispose"]);
@@ -302,7 +303,7 @@ describe("2. claim, decisão e finalização no mesmo step.run", () => {
   it("evento inválido: nenhum step.run e nenhuma chamada ao banco", async () => {
     const { handleWhatsAppInboxReceived } = await loadHandler();
     const step = fakeStep();
-    const result = await handleWhatsAppInboxReceived({ event: { name: "praxis/whatsapp.inbox.received", data: { inboxId: INBOX_ID, workspaceId: WS } }, step } as never);
+    const result = await handleWhatsAppInboxReceived({ event: { id: INBOX_ID, name: "praxis/whatsapp.inbox.received", data: { inboxId: INBOX_ID, workspaceId: WS } }, step } as never);
     expect(result).toEqual({ outcome: "invalid_event", code: null });
     expect(step.run).not.toHaveBeenCalled();
     expect(rpcMock).not.toHaveBeenCalled();

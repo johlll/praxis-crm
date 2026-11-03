@@ -5,8 +5,9 @@
  * cliente do Inngest com o `send` espiado; a chave continua lida de verdade).
  *
  * O reconciliador não processa conteúdo e não chama efeitos: reserva, republica
- * o MESMO evento interno `{ id: inboxId, name, data: { inboxId } }` e registra
- * só o resultado técnico. O token da reserva existe só na memória, dentro do
+ * o evento interno `{ id: inboxId:r<tentativa>, name, data: { inboxId } }` e
+ * registra só o resultado técnico (a política do id tem testes próprios, em
+ * b3-2e-id-evento.test.ts). O token da reserva existe só na memória, dentro do
  * mesmo `step.run`. Ativação só com `WHATSAPP_RECONCILER_ENABLED=true`.
  *
  * Escritos ANTES da implementação, contra a main ea1fafd. Tudo fictício.
@@ -44,9 +45,9 @@ const TOK_1 = "6a000000-0000-4000-8000-00000000000a";
 const TOK_2 = "6a000000-0000-4000-8000-00000000000b";
 const TOK_3 = "6a000000-0000-4000-8000-00000000000c";
 const PHONE = "+5511999990000";
-const ENTRY_1 = { inbox_id: ID_1, reservation_token: TOK_1 };
-const ENTRY_2 = { inbox_id: ID_2, reservation_token: TOK_2 };
-const ENTRY_3 = { inbox_id: ID_3, reservation_token: TOK_3 };
+const ENTRY_1 = { inbox_id: ID_1, reservation_token: TOK_1, reconcile_attempt: 1 };
+const ENTRY_2 = { inbox_id: ID_2, reservation_token: TOK_2, reconcile_attempt: 4 };
+const ENTRY_3 = { inbox_id: ID_3, reservation_token: TOK_3, reconcile_attempt: 9 };
 
 type Rpc = (args: Record<string, unknown>) => { data: unknown; error: unknown };
 let handlers: Record<string, Rpc> = {};
@@ -106,13 +107,13 @@ const lastRun = () => named("whatsapp_reconciler_record_run").at(-1)?.args;
 // 1. O evento republicado
 // ---------------------------------------------------------------------
 
-describe("1. o evento republicado é exatamente o evento interno", () => {
-  it("id = inboxId, nome fixo e data exatamente { inboxId }, um por entrada", async () => {
+describe("1. o evento republicado é o evento interno, com o id da tentativa", () => {
+  it("id = inboxId:r<tentativa>, nome fixo e data exatamente { inboxId }, um por entrada", async () => {
     handlers.whatsapp_inbox_reconcile_reserve = reserves([ENTRY_1, ENTRY_2]);
     await round();
     expect(h.send.mock.calls).toEqual([
-      [{ id: ID_1, name: "praxis/whatsapp.inbox.received", data: { inboxId: ID_1 } }],
-      [{ id: ID_2, name: "praxis/whatsapp.inbox.received", data: { inboxId: ID_2 } }],
+      [{ id: `${ID_1}:r1`, name: "praxis/whatsapp.inbox.received", data: { inboxId: ID_1 } }],
+      [{ id: `${ID_2}:r4`, name: "praxis/whatsapp.inbox.received", data: { inboxId: ID_2 } }],
     ]);
   });
 
@@ -125,14 +126,17 @@ describe("1. o evento republicado é exatamente o evento interno", () => {
     expect(JSON.stringify(event)).not.toContain(TOK_1);
   });
 
-  it("o evento republicado é o mesmo que a rota do webhook publica", async () => {
+  it("o evento republicado só difere do da rota do webhook no id: mesmo nome, mesmo data", async () => {
     const { publishWhatsAppInboxReceived } = await import("@/server/whatsapp/inbox-events");
     await publishWhatsAppInboxReceived({ inboxId: ID_1 });
-    const fromRoute = h.send.mock.calls[0]![0];
+    const fromRoute = h.send.mock.calls[0]![0] as Record<string, unknown>;
     h.send.mockClear();
     handlers.whatsapp_inbox_reconcile_reserve = reserves([ENTRY_1]);
     await round();
-    expect(h.send.mock.calls[0]![0]).toEqual(fromRoute);
+    const republished = h.send.mock.calls[0]![0] as Record<string, unknown>;
+    expect(fromRoute.id).toBe(ID_1);
+    expect(republished.id).toBe(`${ID_1}:r1`);
+    expect({ ...republished, id: null }).toEqual({ ...fromRoute, id: null });
   });
 });
 
@@ -320,8 +324,8 @@ describe("4. falha geral da rodada", () => {
     ["sem entries", { candidates: 1 }],
     ["campo a mais na resposta", { candidates: 1, entries: [], workspace_id: "x" }],
     ["campo a mais na entrada (cifra)", { candidates: 1, entries: [{ ...ENTRY_1, ciphertext: "QUFB" }] }],
-    ["id que não é UUID", { candidates: 1, entries: [{ inbox_id: "1; drop table", reservation_token: TOK_1 }] }],
-    ["token que não é UUID", { candidates: 1, entries: [{ inbox_id: ID_1, reservation_token: "x" }] }],
+    ["id que não é UUID", { candidates: 1, entries: [{ inbox_id: "1; drop table", reservation_token: TOK_1, reconcile_attempt: 1 }] }],
+    ["token que não é UUID", { candidates: 1, entries: [{ inbox_id: ID_1, reservation_token: "x", reconcile_attempt: 1 }] }],
     ["candidatas negativas", { candidates: -1, entries: [] }],
     ["mais entradas que o lote", { candidates: 26, entries: Array.from({ length: 26 }, () => ENTRY_1) }],
     ["mais entradas que candidatas", { candidates: 0, entries: [ENTRY_1] }],

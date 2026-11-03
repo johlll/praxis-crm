@@ -61,6 +61,7 @@ ids_in() { # $1 = jsonb da resposta, $2.. = ids procurados
   q "select coalesce(string_agg(e ->> 'inbox_id', ' ' order by e ->> 'inbox_id'), '') from jsonb_array_elements('$resp'::jsonb -> 'entries') e where e ->> 'inbox_id' in (${list%,})"
 }
 tok_of() { q "select e ->> 'reservation_token' from jsonb_array_elements('$1'::jsonb -> 'entries') e where e ->> 'inbox_id' = '$2'"; }
+att_of() { q "select e ->> 'reconcile_attempt' from jsonb_array_elements('$1'::jsonb -> 'entries') e where e ->> 'inbox_id' = '$2'"; }
 state_of() { q "select concat_ws('|', state, claim_count, claim_token is not null) from public.whatsapp_webhook_inbox where id = '$1'"; }
 # Tudo o que NÃO é técnico da reconciliação: nada disto pode mudar.
 core_of() { q "select md5((to_jsonb(i) - array['reconcile_token','reconcile_reserved_at','reconcile_reserved_until','reconcile_attempts','last_republished_at','last_republish_error_code','reconcile_next_at'])::text) from public.whatsapp_webhook_inbox i where i.id = '$1'"; }
@@ -124,6 +125,10 @@ INTER="$(comm -12 <(tr ' ' '\n' <<<"$A1" | sort) <(tr ' ' '\n' <<<"$A2" | sort) 
 [ "$N1" -le 15 ] && [ "$N2" -le 15 ] || fail "lote maior que o pedido: $N1, $N2"
 ATT="$(q "select string_agg(distinct reconcile_attempts::text, ',') from public.whatsapp_webhook_inbox where channel_id = '${CH[1]}'")"
 [ "$ATT" = "1" ] || fail "cada entrada devia ter exatamente uma tentativa, veio: $ATT"
+for resp in "$R1" "$R2"; do
+  [ "$(q "select count(*) from jsonb_array_elements('$resp'::jsonb -> 'entries') e where e ->> 'reconcile_attempt' is distinct from '1'")" = "0" ] \
+    || fail "a resposta devia devolver a tentativa 1 em toda entrada: $resp"
+done
 echo "   ok: $N1 + $N2 = 20, nenhuma repetida"
 
 echo "== 1b. uma sessão segura a linha: o outro reconciliador pula, sem esperar"
@@ -159,6 +164,7 @@ q "update public.whatsapp_webhook_inbox set reconcile_reserved_at = clock_timest
 R_B="$(reserve b3e_w2)"
 T_B="$(tok_of "$R_B" "$E2")"
 [ -n "$T_B" ] && [ "$T_B" != "$T_A" ] || fail "o worker novo devia receber um token novo: $T_A / $T_B"
+[ "$(att_of "$R_A" "$E2")/$(att_of "$R_B" "$E2")" = "1/2" ] || fail "a reserva nova devia ser a tentativa seguinte: $(att_of "$R_A" "$E2")/$(att_of "$R_B" "$E2")"
 [ "$(confirm "$E2" "$T_A")" = "reservation_lost" ] || fail "o token antigo confirmou a reserva nova"
 [ "$(pfail "$E2" "$T_A")" = "reservation_lost" ] || fail "o token antigo liberou a reserva nova"
 [ "$(q "select reconcile_token = '$T_B' from public.whatsapp_webhook_inbox where id = '$E2'")" = "t" ] || fail "a reserva nova não ficou intacta"
@@ -221,8 +227,36 @@ R6="$(reserve b3e_w6 25 30)"; T6="$(tok_of "$R6" "$E6")"
 q "update public.whatsapp_webhook_inbox set reconcile_reserved_at = clock_timestamp() - interval '5 minutes', reconcile_reserved_until = clock_timestamp() - interval '1 second' where id = '$E6'" > /dev/null
 R7="$(reserve b3e_w7)"; T7="$(tok_of "$R7" "$E6")"
 [ -n "$T7" ] && [ "$T7" != "$T6" ] || fail "vencida a reserva, a entrada devia voltar com um token novo: $R7"
+[ "$(att_of "$R6" "$E6")/$(att_of "$R7" "$E6")" = "1/2" ] || fail "depois da queda, devia ser a tentativa seguinte: $(att_of "$R6" "$E6")/$(att_of "$R7" "$E6")"
 [ "$(core_of "$E6")" = "$CORE6" ] || fail "a queda mudou a entrada: cifra, estado ou claim"
 [ "$(state_of "$E6")" = "pending|0|f" ] || fail "estado inesperado: $(state_of "$E6")"
 echo "   ok"
+
+echo "== 7. disputa pela mesma entrada: nenhuma tentativa se repete"
+isolate "${CH[3]}"
+E8="$(new_entry 3 evt-rc7-1)"
+for ciclo in 1 2 3 4 5; do
+  O_A="$(mktemp)"; O_B="$(mktemp)"
+  psql_as b3e_d1 > "$O_A" 2>&1 <<SQL &
+$SERVICE_SQL
+$BARREIRA
+select public.whatsapp_inbox_reconcile_reserve(25, 120);
+SQL
+  P_A=$!
+  psql_as b3e_d2 > "$O_B" 2>&1 <<SQL &
+$SERVICE_SQL
+$BARREIRA
+select public.whatsapp_inbox_reconcile_reserve(25, 120);
+SQL
+  P_B=$!
+  wait "$P_A" || fail "disputante 1: $(cat "$O_A")"
+  wait "$P_B" || fail "disputante 2: $(cat "$O_B")"
+  G_A="$(att_of "$(tail -1 "$O_A")" "$E8")"; G_B="$(att_of "$(tail -1 "$O_B")" "$E8")"
+  [ -z "$G_A" ] || [ -z "$G_B" ] || fail "a mesma entrada foi para os dois no ciclo $ciclo: $G_A e $G_B"
+  [ "$G_A$G_B" = "$ciclo" ] || fail "ciclo $ciclo: esperava a tentativa $ciclo, veio [$G_A$G_B]"
+  [ "$(q "select reconcile_attempts from public.whatsapp_webhook_inbox where id = '$E8'")" = "$ciclo" ] || fail "ciclo $ciclo: a linha não acompanhou"
+  q "update public.whatsapp_webhook_inbox set reconcile_reserved_at = clock_timestamp() - interval '5 minutes', reconcile_reserved_until = clock_timestamp() - interval '1 second' where id = '$E8'" > /dev/null
+done
+echo "   ok: tentativas 1 a 5, cada uma para um só worker"
 
 echo "B3.2e — concorrência da reserva da republicação: OK"

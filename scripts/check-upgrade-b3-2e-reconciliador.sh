@@ -127,7 +127,7 @@ select whatsapp_inbox_reconcile_reserve(25, 120) as r \gset
 reset role;
 
 create table public.upgrade_b3e_reservadas as
-select e ->> 'inbox_id' as id, e ->> 'reservation_token' as token from jsonb_array_elements(:'r'::jsonb -> 'entries') e;
+select e ->> 'inbox_id' as id, e ->> 'reservation_token' as token, e ->> 'reconcile_attempt' as tentativa from jsonb_array_elements(:'r'::jsonb -> 'entries') e;
 
 do \$check\$
 declare
@@ -137,6 +137,10 @@ begin
   from public.upgrade_b3e_ids n join public.upgrade_b3e_reservadas r on r.id = n.id::text;
   if v is distinct from 'nova,rec,vencida' then
     raise exception 'elegibilidade das entradas antigas: esperava nova,rec,vencida, veio %', v;
+  end if;
+
+  if exists (select 1 from public.upgrade_b3e_reservadas where tentativa is distinct from '1') then
+    raise exception 'as entradas antigas deviam sair com a tentativa 1';
   end if;
 
   select string_agg(l.id::text, ',') into v

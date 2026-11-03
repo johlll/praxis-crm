@@ -17,7 +17,7 @@
 -- chamadas passam por funções que capturam o erro: o arquivo roda até o fim.
 
 begin;
-select plan(102);
+select plan(126);
 
 insert into public.whatsapp_environment_keys (environment, signing_key) values
   ('production', 'chave-whatsapp-producao-de-teste-0123456789'),
@@ -305,8 +305,8 @@ select is(
 );
 select is(
   (select string_agg(k, ',' order by k) from jsonb_object_keys((:'r1'::jsonb -> 'entries') -> 0) k),
-  'inbox_id,reservation_token',
-  'cada entrada sai só com o id e o token: nenhuma cifra, hash, canal ou workspace'
+  'inbox_id,reconcile_attempt,reservation_token',
+  'cada entrada sai só com o id, o token e a tentativa: nenhuma cifra, hash, canal ou workspace'
 );
 select is(
   pg_temp.txt(format($q$
@@ -715,6 +715,91 @@ select is(
   'sem o ambiente assinado, nenhum batimento é gravado'
 );
 select set_config('request.headers', :'h_prev', true);
+
+-- ---------------------------------------------------------------------
+-- 9. A tentativa devolvida pela reserva (id do evento, §28.8)
+-- ---------------------------------------------------------------------
+
+-- A tentativa de uma entrada numa resposta.
+create function pg_temp.att(p jsonb, p_id text) returns text language sql as $f$
+  select coalesce(p ->> 'erro', (select e ->> 'reconcile_attempt' from jsonb_array_elements(p -> 'entries') e where e ->> 'inbox_id' = p_id))
+$f$;
+-- O contador gravado na linha.
+create function pg_temp.col(p_id text) returns text language sql as $f$
+  select pg_temp.txt(format($q$select reconcile_attempts from public.whatsapp_webhook_inbox where id = %L::uuid$q$, p_id))
+$f$;
+-- Encurta a espera do backoff: a entrada volta a ser elegível.
+create function pg_temp.due(p_id text) returns text language sql as $f$
+  select pg_temp.up(format($q$update public.whatsapp_webhook_inbox set reconcile_next_at = clock_timestamp() - interval '1 minute' where id = %L::uuid$q$, p_id))
+$f$;
+-- A reserva vence: o worker caiu.
+create function pg_temp.expire(p_id text) returns text language sql as $f$
+  select pg_temp.up(format($q$update public.whatsapp_webhook_inbox set reconcile_reserved_at = clock_timestamp() - interval '5 minutes', reconcile_reserved_until = clock_timestamp() - interval '1 second' where id = %L::uuid$q$, p_id))
+$f$;
+
+select pg_temp.fresh();
+select pg_temp.ent(1, 'evt-t1') as t1 \gset
+select is(pg_temp.col(:'t1'), '0', 'nunca reservada: nenhuma tentativa');
+select pg_temp.res() as t1_a \gset
+select is(pg_temp.att(:'t1_a'::jsonb, :'t1'), '1', 'a primeira reserva devolve a tentativa 1');
+select is(jsonb_typeof((:'t1_a'::jsonb -> 'entries') -> 0 -> 'reconcile_attempt'), 'number', 'a tentativa sai como número, não como texto');
+select is(pg_temp.col(:'t1'), '1', 'o número devolvido é o gravado na linha');
+
+-- A mesma reserva: nada muda enquanto ela existir.
+select is(pg_temp.ids(pg_temp.res()), 'nada', 'com a reserva vigente, a entrada não é reservada de novo');
+select is(pg_temp.col(:'t1'), '1', 'uma nova rodada, com a reserva vigente, não muda a tentativa');
+select is(pg_temp.confirm(:'t1', pg_temp.tk(:'t1_a'::jsonb, :'t1')), 'confirmed', 'a publicação da tentativa 1 é confirmada');
+select is(pg_temp.col(:'t1'), '1', 'a confirmação não muda a tentativa');
+
+-- Reserva nova depois da confirmação.
+select is(pg_temp.due(:'t1'), 'ok', 'o backoff vence');
+select pg_temp.res() as t1_b \gset
+select is(pg_temp.att(:'t1_b'::jsonb, :'t1'), '2', 'a reserva seguinte, depois de confirmada a anterior, é a tentativa 2');
+select isnt(pg_temp.tk(:'t1_b'::jsonb, :'t1'), pg_temp.tk(:'t1_a'::jsonb, :'t1'), 'reserva nova, token novo');
+
+-- Reserva nova depois da falha.
+select is(pg_temp.pfail(:'t1', pg_temp.tk(:'t1_b'::jsonb, :'t1')), 'failed', 'a publicação da tentativa 2 falha');
+select is(pg_temp.col(:'t1'), '2', 'a falha técnica não muda a tentativa');
+select is(pg_temp.due(:'t1'), 'ok', 'o backoff vence de novo');
+select pg_temp.res() as t1_c \gset
+select is(pg_temp.att(:'t1_c'::jsonb, :'t1'), '3', 'depois da falha, a reserva seguinte é a tentativa 3: nunca reutiliza a anterior');
+
+-- Reserva nova depois da queda do worker.
+select is(pg_temp.expire(:'t1'), 'ok', 'o worker cai e a reserva vence');
+select pg_temp.res() as t1_d \gset
+select is(pg_temp.att(:'t1_d'::jsonb, :'t1'), '4', 'depois da queda, a reserva seguinte é a tentativa 4');
+select is(pg_temp.col(:'t1'), '4', 'e a linha acompanha');
+
+-- Cada entrada do lote com o próprio contador.
+select pg_temp.fresh();
+select pg_temp.ent(1, 'evt-t2', '30 minutes') as t2 \gset
+select pg_temp.ent(1, 'evt-t3', '20 minutes') as t3 \gset
+select pg_temp.ent(1, 'evt-t4', '10 minutes') as t4 \gset
+select pg_temp.up(format($q$update public.whatsapp_webhook_inbox set reconcile_attempts = 41 where id = %L$q$, :'t2')) as m \gset
+select pg_temp.up(format($q$update public.whatsapp_webhook_inbox set reconcile_attempts = 9 where id = %L$q$, :'t3')) as m \gset
+select pg_temp.res() as t_lote \gset
+select is(
+  concat_ws(',', pg_temp.att(:'t_lote'::jsonb, :'t2'), pg_temp.att(:'t_lote'::jsonb, :'t3'), pg_temp.att(:'t_lote'::jsonb, :'t4')),
+  '42,10,1',
+  'no mesmo lote, cada entrada recebe o próprio contador já incrementado'
+);
+
+-- Limites do inteiro.
+select pg_temp.fresh();
+select pg_temp.ent(1, 'evt-t5') as t5 \gset
+select pg_temp.up(format($q$update public.whatsapp_webhook_inbox set reconcile_attempts = 2147483646 where id = %L$q$, :'t5')) as m \gset
+select pg_temp.res() as t5_a \gset
+select is(pg_temp.att(:'t5_a'::jsonb, :'t5'), '2147483647', 'a última tentativa possível ainda sai certa');
+select is(pg_temp.expire(:'t5'), 'ok', 'e vence');
+select is(pg_temp.ids(pg_temp.res()), 'integer out of range', 'acabou o inteiro: a reserva falha em vez de repetir um id');
+select is(pg_temp.col(:'t5'), '2147483647', 'e nada muda na linha');
+
+-- A tentativa só sai da reserva.
+select is(
+  pg_temp.txt($q$select string_agg(column_name::text, ',') from information_schema.columns where table_schema = 'public' and table_name = 'whatsapp_reconciler_runs' and column_name ilike '%attempt%'$q$),
+  'NULL',
+  'o batimento não tem coluna de tentativa'
+);
 
 select * from finish();
 rollback;
