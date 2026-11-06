@@ -241,8 +241,8 @@ describe("1. WhatsApp desligado ou localizador inválido: 404 sem tocar no banco
     expect(rpcMock).not.toHaveBeenCalled();
   });
 
-  it("YCloud habilitado, mas sem adaptador registrado nesta etapa: 404 sem banco", async () => {
-    vi.stubEnv("WHATSAPP_PROVIDER", "ycloud");
+  it("rota YCloud com outro provedor habilitado: 404 sem banco (§28.16)", async () => {
+    vi.stubEnv("WHATSAPP_PROVIDER", "simulated");
     const result = await post(bytes("{}"), { provider: "ycloud", sign: false });
     expect(result.status).toBe(404);
     expect(rpcMock).not.toHaveBeenCalled();

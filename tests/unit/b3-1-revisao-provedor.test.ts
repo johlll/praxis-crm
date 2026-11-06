@@ -33,7 +33,6 @@ describe("resolução pelo provedor do canal", () => {
     ["canal YCloud, variável simulated", "ycloud", { WHATSAPP_PROVIDER: "simulated", VERCEL_ENV: "preview" }, "provider_not_enabled"],
     ["canal Meta, variável simulated", "meta", { WHATSAPP_PROVIDER: "simulated", VERCEL_ENV: "preview" }, "provider_not_enabled"],
     ["canal simulado, variável ycloud", "simulated", { WHATSAPP_PROVIDER: "ycloud" }, "provider_not_enabled"],
-    ["canal YCloud, variável ycloud (adaptador ainda não existe)", "ycloud", { WHATSAPP_PROVIDER: "ycloud" }, "not_available"],
     ["canal Meta, variável meta (adaptador ainda não existe)", "meta", { WHATSAPP_PROVIDER: "meta" }, "not_available"],
     ["variável ausente", "simulated", {}, "missing"],
     ["variável vazia", "simulated", { WHATSAPP_PROVIDER: " " }, "missing"],

@@ -208,10 +208,12 @@ describe("5. ligação do consumidor aos efeitos (B3.2d-2b3)", () => {
     expect(src).not.toMatch(/@\/server\/(ingest|calendar)|whatsapp\/provider\/(ycloud|simulated)|\/provider\/index|inngest/);
   });
 
-  it("o adaptador YCloud real continua fora do resolvedor: canal ycloud nunca recebe adaptador", async () => {
+  it("canal ycloud recebe só o adaptador YCloud, e só com a variável dele (§28.16); meta continua sem adaptador", async () => {
     const { resolveWhatsAppProvider } = await import("@/server/whatsapp/provider");
     const env = { WHATSAPP_PROVIDER: "ycloud", VERCEL_ENV: "preview" };
-    expect(resolveWhatsAppProvider({ channelProvider: "ycloud", env }).status).toBe("disabled");
+    const ycloud = resolveWhatsAppProvider({ channelProvider: "ycloud", env });
+    expect(ycloud.status === "enabled" && ycloud.provider.kind).toBe("ycloud");
+    expect(resolveWhatsAppProvider({ channelProvider: "ycloud", env: { ...env, WHATSAPP_PROVIDER: "simulated" } }).status).toBe("disabled");
     expect(resolveWhatsAppProvider({ channelProvider: "meta", env: { ...env, WHATSAPP_PROVIDER: "meta" } }).status).toBe("disabled");
   });
 

@@ -672,7 +672,7 @@ suporte ou teste só de leitura) e aprovação.
 | P6 | Usar número real | Confirmadas as regras para mover o mesmo número entre fornecedores (YCloud ↔ Meta direta) |
 | P7 | Usar o número do chatbot | Provado o contrato de passagem do §5.2, com confirmação do chatbot em teste |
 | P8 | Preview externo e Production | Preços, franquias, categorias e regras de cobrança conferidos de novo (§2) |
-| P9 | Validação externa | Prazo provisório de retenção definido (§7.2) |
+| P9 | Validação externa | Prazo provisório de retenção definido (§7.2). **Resolvido em 06/11/2026:** 7 dias para o payload bruto cifrado da inbox (§28.16) |
 
 ## 7. Modelo de segurança
 
@@ -906,7 +906,7 @@ pelo levantamento do chatbot (§15), aprovadas em 20/10/2026:
 | 3 | Mídias no piloto | **Aprovada** | **Receber** texto, áudio, imagem e documento; **enviar** só texto e template | Cobre o que cliente de advocacia manda sem o fluxo de upload | Vídeo e envio de mídia em etapa posterior |
 | 4 | Templates fora da janela de 24 h | **Aprovada com correção** | Só template **aprovado** com **categoria final permitida** (no piloto, utility); utility ligado a solicitação, caso, compromisso, documento ou serviço específico; **marketing desabilitado**; recategorização, rejeição ou categoria inesperada bloqueia; nenhuma mensagem genérica de reengajamento é presumida utility (§6, B3.3) | Permite retomar um atendimento concreto fora da janela; cada envio é cobrado | Não permitir templates: fora da janela, só pelo celular |
 | 5 | Quem conecta e administra o canal | **Aprovada** | **Owner e admin** (`channel.manage`) | Poucas pessoas mexem em credencial | — |
-| 6 | Retenção de mensagens, mídia, payload e eventos | **Pendente** (decisão da Vizentini, como controladora) | Nenhum prazo definitivo aprovado. O desenho aceita prazos por categoria, eliminação em lotes, tombstone, trilha e legal hold (§7.2). Piloto com prazo provisório curto, definido antes da validação externa (P9) | Sem a política final, nada vai para o número real do escritório | — |
+| 6 | Retenção de mensagens, mídia, payload e eventos | **Pendente** (decisão da Vizentini, como controladora) | Nenhum prazo definitivo aprovado. O desenho aceita prazos por categoria, eliminação em lotes, tombstone, trilha e legal hold (§7.2). Piloto com prazo provisório curto, definido antes da validação externa (P9). Em 06/11/2026: 7 dias só para o payload bruto cifrado da inbox (§28.16) | Sem a política final, nada vai para o número real do escritório | — |
 | 7 | Passagem chatbot → humano | **Substituída** | O prefixo em `externalId` deixa de ser o mecanismo. Vale o **contrato explícito e autenticado** do §5.2: estado durável, canal autenticado, idempotência, confirmação, expiração e falha fechada. `externalId` fica só como correlação | Exige mudança no chatbot, fora da B3; até a confirmação, o CRM não envia no número do chatbot | O advogado assume só pelo celular, e o CRM fica só de leitura naquele número |
 | 8 | Canal pausado no webhook | **Aprovada** (20/10/2026, merge da PR #42) | Canal **pausado** continua resolvível pela resolução do webhook, com o estado devolvido; a **B3.2 deve definir e testar** quais efeitos são permitidos para evento de canal pausado. Canal **desativado** não é resolvido | O evento de um canal pausado não se perde, e nada é feito com ele sem regra testada | Recusar também o canal pausado (eventos descartados enquanto pausado) |
 | 9 | Papel de `WHATSAPP_PROVIDER` | **Aprovada** (20/10/2026, merge da PR #42) | Durante o piloto, habilita **um único provedor por ambiente**. Nunca substitui o provedor gravado no canal: o adaptador é sempre o do canal, e `adapter.kind === canal.provider === credencial.provider` antes de banco adicional ou rede | Configuração simples no piloto; um canal YCloud nunca usa o simulador | Lista de provedores habilitados por ambiente, se um dia dois provedores precisarem conviver |
@@ -6809,3 +6809,32 @@ pausadas. Faltava agendar o expurgo (§17.6), que não tinha agendador.
 1. ligar `WHATSAPP_INBOX_PURGE_ENABLED=true` junto com o resto da configuração;
 2. ver uma execução do expurgo concluída no Inngest Cloud;
 3. definir o prazo de retenção do piloto (P9, decisão 6).
+
+### 28.16 YCloud no resolvedor do provedor e retenção provisória P9 (06/11/2026)
+
+**Resolvedor.** Depois do merge do §28.15 (`84ebb28`), uma conferência no código mostrou
+que o adaptador YCloud existia (B3.2a), mas estava fora do resolvedor:
+- `ycloud: null` em `src/server/whatsapp/provider/index.ts`;
+- por isso, um canal YCloud sempre terminava em `not_available`, e a rota do webhook e o
+  consumidor recusavam tudo.
+
+Agora o resolvedor entrega o `YCloudWhatsAppProvider`. Continua falhando fechado:
+- só com `WHATSAPP_PROVIDER=ycloud` exato;
+- só para canal YCloud;
+- qualquer outra combinação continua desligada;
+- a Meta segue sem adaptador;
+- o simulador continua recusado em Production.
+
+Testes: `tests/unit/b3-ycloud-resolvedor.test.ts`.
+
+**Decisão P9 (retenção provisória do piloto):**
+- **Prazo:** o payload bruto cifrado da inbox fica guardado por 7 dias.
+- **Variável:** `WHATSAPP_INBOX_RETENTION_SECONDS=604800`.
+- **Alcance:** não define a retenção das mensagens normalizadas do CRM, que segue
+  pendente na decisão 6.
+
+**Falta para ligar o número de teste:**
+1. Cadastrar um canal YCloud. Hoje só existe a criação de canal simulado
+   (`whatsapp_create_simulated_channel`), e nenhuma função ou interface cria um canal
+   `ycloud` com routing key, segredo do webhook e chave de API cifrados.
+2. Configurar o Preview (§28.15).
