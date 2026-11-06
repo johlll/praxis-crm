@@ -7,6 +7,7 @@ import {
   type WhatsAppConsumerResult,
 } from "@/server/whatsapp/consumer";
 import { WHATSAPP_INBOX_RECEIVED_EVENT } from "@/server/whatsapp/inbox-events";
+import { handleWhatsAppInboxPurge, WHATSAPP_INBOX_PURGE_FUNCTION_CONFIG, whatsappInboxPurgeEnabled } from "@/server/whatsapp/inngest-purge";
 import {
   handleWhatsAppInboxReconciler,
   WHATSAPP_RECONCILER_FUNCTION_CONFIG,
@@ -49,9 +50,15 @@ export async function handleWhatsAppInboxReceived({ event, step }: { event: unkn
   return step.run(WHATSAPP_INBOX_CONSUMER_STEP_ID, () => processWhatsAppInboxEntry({ inboxId: parsed.inboxId }));
 }
 
-/** O consumidor sempre; o reconciliador (B3.2e) só com a variável própria. */
+/** O consumidor sempre; o reconciliador (B3.2e) e o expurgo (§28.15), cada um
+ * só com a sua variável própria. */
 export function whatsappInngestFunctions(client: Inngest) {
   const consumer = client.createFunction(WHATSAPP_INBOX_CONSUMER_FUNCTION_CONFIG, async ({ event, step }) => handleWhatsAppInboxReceived({ event, step }));
-  if (!whatsappReconcilerEnabled()) return [consumer];
-  return [consumer, client.createFunction(WHATSAPP_RECONCILER_FUNCTION_CONFIG, async ({ step }) => handleWhatsAppInboxReconciler({ step }))];
+  const reconciler = whatsappReconcilerEnabled()
+    ? [client.createFunction(WHATSAPP_RECONCILER_FUNCTION_CONFIG, async ({ step }) => handleWhatsAppInboxReconciler({ step }))]
+    : [];
+  const purge = whatsappInboxPurgeEnabled()
+    ? [client.createFunction(WHATSAPP_INBOX_PURGE_FUNCTION_CONFIG, async ({ step }) => handleWhatsAppInboxPurge({ step }))]
+    : [];
+  return [consumer, ...reconciler, ...purge];
 }
