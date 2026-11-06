@@ -6777,3 +6777,35 @@ Inngest, sem nenhum valor sensível:
   exige confirmar antes a mudança de plano.
 
 A validação só é retomada depois do merge desta correção.
+
+### 28.15 Expurgo agendado da inbox (06/11/2026)
+
+**Contexto.** As 14 migrations da B3 foram aplicadas no Supabase hospedado e as 7 provas
+do §28.13 passaram no Preview (5 e 6/11/2026). O ambiente foi encerrado com as funções
+pausadas. Faltava agendar o expurgo (§17.6), que não tinha agendador.
+
+**Implementado** (`src/server/whatsapp/inngest-purge.ts`):
+- **Onde:** função `b3-whatsapp-inbox-purge`, no app próprio `praxis-crm-whatsapp`, sem
+  nenhum módulo, chave ou variável da A11 ou da agenda.
+- **Ativação:** só com `WHATSAPP_INBOX_PURGE_ENABLED=true`. Desligar a variável não tira
+  do Inngest uma função já sincronizada sem uma nova sincronização.
+- **Frequência:** de hora em hora, no minuto 17 UTC (`TZ=UTC 17 * * * *`). A retenção vai
+  de 60 s a 30 dias e o plano não fixa frequência, então a cifra vencida dura no máximo
+  cerca de 1 hora além do prazo.
+- **Execução:** concorrência 1, um único `step.run` que chama
+  `purgeExpiredWhatsAppWebhookInbox` com o lote máximo da operação (5.000). O que sobrar
+  fica para a próxima hora.
+  - O banco expurga só o ambiente assinado.
+  - Sem o ambiente assinado configurado, a execução falha antes do banco.
+- **Saída:** só `{ purged }`, sem log.
+- **Falha:** erro do banco, banco fora do ar ou resposta inválida viram
+  `inbox_purge_failed`, uma falha da execução sem nova tentativa e sem a mensagem
+  original. O próximo ciclo, ou um "Rerun" no painel, repete com segurança, porque o
+  expurgo é idempotente.
+
+**Testes:** `tests/unit/b3-expurgo-inbox-agendado.test.ts`.
+
+**Falta, antes de qualquer webhook ou dado real:**
+1. ligar `WHATSAPP_INBOX_PURGE_ENABLED=true` junto com o resto da configuração;
+2. ver uma execução do expurgo concluída no Inngest Cloud;
+3. definir o prazo de retenção do piloto (P9, decisão 6).
