@@ -6838,3 +6838,57 @@ Testes: `tests/unit/b3-ycloud-resolvedor.test.ts`.
    (`whatsapp_create_simulated_channel`), e nenhuma função ou interface cria um canal
    `ycloud` com routing key, segredo do webhook e chave de API cifrados.
 2. Configurar o Preview (§28.15).
+
+### 28.17 Cadastro controlado de canal YCloud (06/11/2026)
+
+**Contexto.** O resolvedor já entrega o adaptador YCloud (§28.16), mas só existia a criação
+de canal simulado. Sem canal `ycloud`, o webhook não tem para onde ir.
+
+**Implementado, sem interface e sem nenhuma chamada à YCloud:**
+- **Banco** (`20261106120000_b3_cadastro_canal_ycloud.sql`):
+  - `whatsapp_create_ycloud_channel` cria o canal e as duas credenciais na mesma
+    transação, nas tabelas que já existem;
+  - provedor fixo em `ycloud`;
+  - ambiente só do cabeçalho assinado do WhatsApp;
+  - owner/admin revalidados pelo banco;
+  - credenciais recebidas já cifradas;
+  - o canal nasce `paused` e com `send_enabled = false`;
+  - `webhook_route_id` gerado pelo banco e devolvido uma única vez, na criação;
+  - routing key duplicada devolve sempre `channel_routing_key_taken`, venha o conflito de
+    onde vier;
+  - a auditoria leva só ambiente e provedor.
+- **Chave de API:** `whatsapp_get_channel_credential` só entrega a chave de API de canal
+  ativo com envio habilitado. Nada habilita envio hoje, então ela fica inalcançável até a
+  etapa de envio. O segredo do webhook segue independente do envio.
+- **Servidor:** `adminCreateYCloudWhatsAppChannel` e `adminStoreWhatsAppChannelCredential`
+  (`src/server/whatsapp/admin/channels.ts`), com as versões com sessão
+  `createYCloudWhatsAppChannel` e `storeWhatsAppChannelCredential`
+  (`src/modules/whatsapp-channels/service.ts`).
+  - A entrada é estrita: workspace, usuário, papel, ambiente e provedor nunca vêm do chamador.
+  - Só funciona com `WHATSAPP_PROVIDER=ycloud` e a cifra configurada.
+  - A cifra usa a AAD do canal, com a mesma cifra da B3.1.
+
+**Ordem do cadastro.** A YCloud só devolve o segredo do webhook depois de criar o endpoint
+(https://docs.ycloud.com/reference/webhook-integration-guide), e o endpoint precisa da URL,
+que leva o `webhook_route_id`. Então:
+1. cria-se o canal; o segredo do webhook nasce provisório, aleatório e nunca exibido;
+2. cria-se o endpoint na YCloud com
+   `/api/webhooks/whatsapp/ycloud/<webhook_route_id>`;
+3. grava-se o segredo real com `adminStoreWhatsAppChannelCredential`;
+4. só então se ativa o canal (`whatsapp_reactivate_channel`, de `paused` para `active`).
+
+Pausado, o webhook ainda guarda a entrega na inbox, mas o consumidor não aplica efeito
+nenhum (`channel_paused`).
+
+**Chamada no Preview.** Não há tela nem rota. A operação é chamada por um processo local
+efêmero, com o ambiente do Preview, que importa a função administrativa. O ator é o
+owner/admin do workspace, e o banco revalida o papel. Os valores entram só em memória,
+nunca em argumento de linha de comando, arquivo ou log.
+
+**Testes:** `supabase/tests/database/42_b3_cadastro_canal_ycloud.test.sql` e
+`tests/unit/b3-cadastro-canal-ycloud.test.ts`. Dois testes antigos foram ajustados: o 29
+exclui a função nova da contagem (que tem teste próprio) e o 30 lê o segredo do webhook em
+vez da chave de API.
+
+**Continua pendente:** P1 e P2 só se resolvem com a configuração real da YCloud. P5, P6 e P8
+seguem para a ativação do Preview. Nada foi aplicado no Supabase hospedado.

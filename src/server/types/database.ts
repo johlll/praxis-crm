@@ -5564,6 +5564,21 @@ export type Database = {
         }
         Returns: Json
       }
+      whatsapp_create_ycloud_channel: {
+        Args: {
+          p_actor_user_id: string
+          p_api_key_ciphertext: string
+          p_api_key_key_version: string
+          p_channel_id: string
+          p_display_phone_number: string
+          p_label: string
+          p_routing_key: string
+          p_webhook_secret_ciphertext: string
+          p_webhook_secret_key_version: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       whatsapp_disable_channel_send: {
         Args: {
           p_actor_user_id: string

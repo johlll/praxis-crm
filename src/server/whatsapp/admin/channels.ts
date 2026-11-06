@@ -179,6 +179,57 @@ export async function adminCreateSimulatedWhatsAppChannel(
   return mapSafeChannel(data);
 }
 
+export type CreatedYCloudWhatsAppChannel = SafeWhatsAppChannel & { webhookRouteId: string };
+
+const createdRouteSchema = z.object({ webhook_route_id: uuidSchema });
+
+/**
+ * Canal YCLOUD (docs/decisoes/b3-whatsapp-real.md §28.17), sem interface e sem
+ * nenhuma chamada à YCloud. Provedor fixo; ambiente SÓ o do servidor (o banco
+ * confere com o cabeçalho assinado); `workspaceId` e `actorUserId` vêm da
+ * verificação de `channel.manage`, e o banco revalida owner/admin.
+ *
+ * A chave de API entra aqui em texto puro e sai cifrada: o banco só recebe o
+ * texto cifrado, com a AAD do próprio canal. O segredo do webhook nasce
+ * PROVISÓRIO (aleatório, nunca exibido): o segredo real só existe depois que o
+ * endpoint é criado na YCloud, que precisa da URL, que leva o
+ * `webhookRouteId` devolvido aqui — e o segredo real entra depois por
+ * `adminStoreWhatsAppChannelCredential`. O canal nasce pausado e sem envio.
+ *
+ * O `webhookRouteId` é devolvido UMA vez, aqui; nenhuma listagem o traz.
+ */
+export async function adminCreateYCloudWhatsAppChannel(
+  params: Actor & { label: string; routingKey: string; displayPhoneNumber: string; apiKey: string },
+): Promise<CreatedYCloudWhatsAppChannel> {
+  // Falha fechada também para a chamada controlada, sem sessão: só com a YCloud
+  // habilitada neste ambiente (`WHATSAPP_PROVIDER=ycloud`).
+  if (resolveWhatsAppProvider({ channelProvider: "ycloud" }).status !== "enabled") {
+    throw new WhatsAppChannelStoreError("whatsapp_provider_unavailable");
+  }
+  const channelId = randomUUID();
+  const context = { environment: getWhatsAppEnvironment(), workspaceId: params.workspaceId, channelId, provider: "ycloud" as const };
+  const webhookSecret = encryptWhatsAppCredential(randomBytes(32).toString("base64url"), { ...context, purpose: "webhook_secret" });
+  const apiKey = encryptWhatsAppCredential(params.apiKey, { ...context, purpose: "api_key" });
+
+  const admin = createWhatsAppAdminSupabaseClient();
+  const { data, error } = await admin.rpc("whatsapp_create_ycloud_channel", {
+    p_channel_id: channelId,
+    p_workspace_id: params.workspaceId,
+    p_actor_user_id: params.actorUserId,
+    p_label: params.label,
+    p_routing_key: params.routingKey,
+    p_display_phone_number: params.displayPhoneNumber,
+    p_webhook_secret_ciphertext: webhookSecret.ciphertextBase64,
+    p_webhook_secret_key_version: webhookSecret.keyVersion,
+    p_api_key_ciphertext: apiKey.ciphertextBase64,
+    p_api_key_key_version: apiKey.keyVersion,
+  });
+  if (error) throw toChannelStoreError(error);
+  const route = createdRouteSchema.safeParse(data);
+  if (!route.success) throw new WhatsAppChannelStoreError("unknown");
+  return { ...mapSafeChannel(data), webhookRouteId: route.data.webhook_route_id };
+}
+
 export async function adminUpdateWhatsAppChannelSettings(
   params: ChannelRef & { label: string; displayPhoneNumber: string },
 ): Promise<SafeWhatsAppChannel> {
@@ -210,6 +261,38 @@ async function changeState(rpc: StateRpc, params: ChannelRef): Promise<SafeWhats
 export const adminPauseWhatsAppChannel = (params: ChannelRef) => changeState("whatsapp_pause_channel", params);
 export const adminReactivateWhatsAppChannel = (params: ChannelRef) => changeState("whatsapp_reactivate_channel", params);
 export const adminDisableWhatsAppChannelSend = (params: ChannelRef) => changeState("whatsapp_disable_channel_send", params);
+
+/**
+ * Substitui uma credencial de um canal já cadastrado (por exemplo, o segredo
+ * real do webhook, que a YCloud só entrega depois de criar o endpoint). Provedor
+ * e ambiente vêm do estado do canal confirmado pelo banco para este ator, nunca
+ * do chamador. O valor só existe aqui, em memória: cifrado antes do banco e
+ * jamais devolvido. A RPC é a mesma da B3.1.
+ */
+export async function adminStoreWhatsAppChannelCredential(
+  params: ChannelRef & { purpose: WhatsAppCredentialPurpose; secret: string },
+): Promise<SafeWhatsAppChannel> {
+  const channel = await adminGetWhatsAppChannelState(params);
+  if (channel.id !== params.channelId) throw new WhatsAppChannelStoreError("channel_context_mismatch");
+  const encrypted = encryptWhatsAppCredential(params.secret, {
+    environment: channel.environment,
+    workspaceId: params.workspaceId,
+    channelId: channel.id,
+    provider: channel.provider,
+    purpose: params.purpose,
+  });
+  const admin = createWhatsAppAdminSupabaseClient();
+  const { data, error } = await admin.rpc("whatsapp_store_channel_credential", {
+    p_channel_id: channel.id,
+    p_workspace_id: params.workspaceId,
+    p_actor_user_id: params.actorUserId,
+    p_purpose: params.purpose,
+    p_ciphertext: encrypted.ciphertextBase64,
+    p_key_version: encrypted.keyVersion,
+  });
+  if (error) throw toChannelStoreError(error);
+  return mapSafeChannel(data);
+}
 
 // ---------------------------------------------------------------------
 // Contexto confiável do canal e leitura interna de credenciais

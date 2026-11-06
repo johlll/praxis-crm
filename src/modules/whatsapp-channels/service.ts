@@ -4,19 +4,28 @@ import { toUserMessage } from "@/lib/errors";
 import { requirePermissionSafe } from "@/server/authz/safe";
 import {
   adminCreateSimulatedWhatsAppChannel,
+  adminCreateYCloudWhatsAppChannel,
   adminDisableWhatsAppChannelSend,
   adminGetWhatsAppChannelState,
   adminListWhatsAppChannels,
   adminPauseWhatsAppChannel,
   adminReactivateWhatsAppChannel,
+  adminStoreWhatsAppChannelCredential,
   adminUpdateWhatsAppChannelSettings,
   WhatsAppChannelStoreError,
+  type CreatedYCloudWhatsAppChannel,
   type SafeWhatsAppChannel,
 } from "@/server/whatsapp/admin/channels";
 import { isWhatsAppCredentialCryptoConfigured, WhatsAppCredentialError } from "@/server/whatsapp/credential-crypto";
 import { isWhatsAppEnvironmentConfigured } from "@/server/whatsapp/environment";
 import { resolveWhatsAppProvider } from "@/server/whatsapp/provider";
-import { channelRefSchema, createSimulatedChannelSchema, updateChannelSettingsSchema } from "./schema";
+import {
+  channelRefSchema,
+  createSimulatedChannelSchema,
+  createYCloudChannelSchema,
+  storeChannelCredentialSchema,
+  updateChannelSettingsSchema,
+} from "./schema";
 
 /**
  * Operações internas de canal de WhatsApp (B3.1). NÃO são Server Actions
@@ -143,4 +152,52 @@ export async function disableWhatsAppChannelSend(input: unknown): Promise<WhatsA
   return run(input, channelRefSchema, (data, session) =>
     adminDisableWhatsAppChannelSend({ ...session, channelId: data.channelId }),
   );
+}
+
+/**
+ * Canal YCloud (§28.17): só com a YCloud habilitada neste ambiente
+ * (`WHATSAPP_PROVIDER=ycloud`) e a cifra configurada. O canal nasce pausado e
+ * sem envio. Devolve o localizador do webhook uma única vez; a chave de API
+ * nunca volta.
+ */
+export async function createYCloudWhatsAppChannel(input: unknown): Promise<WhatsAppChannelResult<CreatedYCloudWhatsAppChannel>> {
+  const auth = await authorize();
+  if ("error" in auth) return { ok: false, error: auth.error };
+  const parsed = createYCloudChannelSchema.safeParse(input);
+  if (!parsed.success) return invalidInput(parsed.error.issues);
+  const notReady = environmentReady();
+  if (notReady) return notReady;
+
+  const provider = resolveWhatsAppProvider({ channelProvider: "ycloud" });
+  if (provider.status !== "enabled") {
+    return { ok: false, error: toUserMessage({ message: "whatsapp_provider_unavailable" }) };
+  }
+  if (!isWhatsAppCredentialCryptoConfigured()) {
+    return { ok: false, error: toUserMessage({ message: "whatsapp_not_configured" }) };
+  }
+
+  try {
+    return { ok: true, data: await adminCreateYCloudWhatsAppChannel({ ...auth.session, ...parsed.data }) };
+  } catch (error) {
+    return failure(error, auth.session);
+  }
+}
+
+/** Substitui a chave de API ou o segredo do webhook de um canal já cadastrado
+ * (§28.17). O valor nunca é devolvido. */
+export async function storeWhatsAppChannelCredential(input: unknown): Promise<WhatsAppChannelResult<SafeWhatsAppChannel>> {
+  const auth = await authorize();
+  if ("error" in auth) return { ok: false, error: auth.error };
+  const parsed = storeChannelCredentialSchema.safeParse(input);
+  if (!parsed.success) return invalidInput(parsed.error.issues);
+  const notReady = environmentReady();
+  if (notReady) return notReady;
+  if (!isWhatsAppCredentialCryptoConfigured()) {
+    return { ok: false, error: toUserMessage({ message: "whatsapp_not_configured" }) };
+  }
+  try {
+    return { ok: true, data: await adminStoreWhatsAppChannelCredential({ ...auth.session, ...parsed.data }) };
+  } catch (error) {
+    return failure(error, auth.session);
+  }
 }
