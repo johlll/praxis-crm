@@ -69,11 +69,10 @@ describe("isolamento", () => {
     expect(source).not.toMatch(/\bfetch\s*\(|process\.env|console\./);
   });
 
-  it("a resolução de provedor continua sem adaptador YCloud ligado (a rota é da B3.2c)", () => {
-    expect(resolveWhatsAppProvider({ channelProvider: "ycloud", env: { WHATSAPP_PROVIDER: "ycloud" } })).toEqual({
-      status: "disabled",
-      reason: "not_available",
-    });
+  it("com WHATSAPP_PROVIDER=ycloud, o canal YCloud recebe este adaptador (ligado no resolvedor, §28.16)", async () => {
+    const { YCloudWhatsAppProvider } = await load();
+    const resolution = resolveWhatsAppProvider({ channelProvider: "ycloud", env: { WHATSAPP_PROVIDER: "ycloud" } });
+    expect(resolution.status === "enabled" && resolution.provider).toBeInstanceOf(YCloudWhatsAppProvider);
   });
 });
 

@@ -1,5 +1,6 @@
 import type { WhatsAppProvider, WhatsAppProviderKind } from "@/server/whatsapp/provider/contract";
 import { SimulatedWhatsAppProvider } from "@/server/whatsapp/provider/simulated";
+import { YCloudWhatsAppProvider } from "@/server/whatsapp/provider/ycloud";
 
 /**
  * Seleção do adaptador de WhatsApp pelo provedor GRAVADO NO CANAL (B3.1,
@@ -10,9 +11,9 @@ import { SimulatedWhatsAppProvider } from "@/server/whatsapp/provider/simulated"
  * canal YCloud nunca recebe o simulador, qualquer que seja a variável.
  *
  * FALHA FECHADA: provedor do canal desconhecido, variável ausente, vazia,
- * desconhecida ou de outro provedor → desligado. `ycloud` e `meta` são
- * reconhecidos, mas continuam sem adaptador até a etapa real (e os portões
- * P1–P9 do plano). O simulado nunca liga em Production.
+ * desconhecida ou de outro provedor → desligado. O YCloud (adaptador puro da
+ * B3.2a) liga só com `WHATSAPP_PROVIDER=ycloud` e só para canal YCloud; `meta`
+ * é reconhecido, mas continua sem adaptador. O simulado nunca liga em Production.
  */
 export type WhatsAppProviderResolution =
   | { status: "enabled"; provider: WhatsAppProvider }
@@ -34,7 +35,7 @@ const KINDS: ReadonlySet<string> = new Set<WhatsAppProviderKind>(["simulated", "
 
 const ADAPTERS: Readonly<Record<WhatsAppProviderKind, (() => WhatsAppProvider) | null>> = {
   simulated: () => new SimulatedWhatsAppProvider(),
-  ycloud: null,
+  ycloud: () => new YCloudWhatsAppProvider(),
   meta: null,
 };
 
