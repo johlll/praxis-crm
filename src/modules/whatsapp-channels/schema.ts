@@ -24,6 +24,31 @@ export const createSimulatedChannelSchema = z
   })
   .strict();
 
+/** Credencial colada do painel da YCloud: sem espaços nas pontas, sem quebra de linha. */
+const providerSecret = z
+  .string()
+  .trim()
+  .min(8, "Informe a credencial completa.")
+  .max(512)
+  .regex(/^[\x21-\x7E]+$/, "A credencial não pode ter espaços nem quebras de linha.");
+
+export const createYCloudChannelSchema = z
+  .object({
+    label,
+    routingKey: createSimulatedChannelSchema.shape.routingKey,
+    displayPhoneNumber,
+    apiKey: providerSecret,
+  })
+  .strict();
+
+export const storeChannelCredentialSchema = z
+  .object({
+    channelId: uuidSchema,
+    purpose: z.enum(["api_key", "webhook_secret"]),
+    secret: providerSecret,
+  })
+  .strict();
+
 export const updateChannelSettingsSchema = z
   .object({
     channelId: uuidSchema,

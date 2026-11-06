@@ -178,10 +178,12 @@ select throws_ok(
   format($q$ select * from public.whatsapp_get_channel_credential(%L::uuid, %L::uuid, 'simulated', 'b3r-legado', 'webhook_secret') $q$, :'ch_a7', :'ws_um'),
   'P0001', 'channel_not_found', 'canal legado da A7: recusado'
 );
+-- A chave de API só sai de canal ativo com envio habilitado (§28.17, teste 42);
+-- aqui, o segredo do webhook prova que só o propósito pedido sai.
 select is(
   pg_temp.try_text(format($q$ select purpose::text || '|' || ciphertext
-     from public.whatsapp_get_channel_credential(%L::uuid, %L::uuid, 'ycloud', 'b3r-yc', 'api_key') $q$, :'ch_yc', :'ws_um')),
-  'api_key|' || :'cifra_api',
+     from public.whatsapp_get_channel_credential(%L::uuid, %L::uuid, 'ycloud', 'b3r-yc', 'webhook_secret') $q$, :'ch_yc', :'ws_um')),
+  'webhook_secret|' || :'cifra_wh',
   'canal YCloud com contexto coerente: lê só o propósito pedido'
 );
 
