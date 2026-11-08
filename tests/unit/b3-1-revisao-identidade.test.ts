@@ -106,12 +106,12 @@ describe("simulador produz a identidade no evento de entrada", () => {
   });
 });
 
-describe("saída declara destinatário pela mesma identidade (continua unsupported)", () => {
-  it("envio para destinatário só com BSUID responde unsupported, não erro de tipo", async () => {
+describe("saída declara destinatário pela mesma identidade", () => {
+  it("destinatário só com BSUID é aceito pelo contrato do envio simulado (B3.3), sem erro de tipo", async () => {
     const recipient = whatsappContactIdentity({ bsuid: BSUID });
     expect(recipient).not.toBeNull();
     await expect(
       provider.sendText({ routingKey: "sim-1", recipient: recipient!, text: "oi", correlationId: "c" }),
-    ).resolves.toEqual({ ok: false, reason: "unsupported", capability: "sendText" });
+    ).resolves.toMatchObject({ ok: true, state: "accepted" });
   });
 });

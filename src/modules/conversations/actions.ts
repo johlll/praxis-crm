@@ -16,11 +16,13 @@ import {
   type MessageListItem,
   type MessagesCursor,
 } from "./queries";
+import { sendViaWhatsAppOutbox } from "./whatsapp-send";
 import {
   createWhatsAppChannelSchema,
   simulateInboundMessageSchema,
   simulateStatusEventSchema,
   sendMessageSchema,
+  sendTemplateSchema,
   resolveConversationLinkSchema,
   registerContactConsentSchema,
   revokeContactConsentSchema,
@@ -202,6 +204,20 @@ export async function sendMessageAction(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
   }
 
+  // Conversa de canal da B3: sai pela outbox (reserva + uma tentativa), com janela,
+  // consentimento, template e idempotência. Canal legado da A7 segue abaixo.
+  const routed = await sendViaWhatsAppOutbox({
+    workspaceId: guard.ctx.workspaceId,
+    actorUserId: guard.ctx.userId,
+    conversationId: parsed.data.conversationId,
+    clientDedupeKey: parsed.data.clientDedupeKey,
+    content: { kind: "text", text: parsed.data.bodyText },
+  });
+  if (routed.handled) {
+    revalidateConversationRoutes(parsed.data.conversationId);
+    return routed.result;
+  }
+
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("send_message", {
     p_conversation_id: parsed.data.conversationId,
@@ -229,6 +245,38 @@ export async function sendMessageAction(
 
   revalidateConversationRoutes(parsed.data.conversationId);
   return { ok: true, message: result.message, duplicateSubmit: result.duplicateSubmit };
+}
+
+/**
+ * Envio de TEMPLATE (B3.3): fora da janela de 24 h, só template aprovado e de
+ * utilidade, com a conversa vinculada a um caso. Só existe para canal da B3.
+ */
+export async function sendWhatsAppTemplateAction(
+  conversationId: string,
+  templateId: string,
+  templateParams: string[],
+  clientDedupeKey: string,
+): Promise<SendMessageActionResult> {
+  const guard = await requirePermissionSafe("conversation.send");
+  if ("error" in guard) return { ok: false, error: guard.error };
+
+  const parsed = sendTemplateSchema.safeParse({ conversationId, templateId, templateParams, clientDedupeKey });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Dados inválidos." };
+  }
+
+  const routed = await sendViaWhatsAppOutbox({
+    workspaceId: guard.ctx.workspaceId,
+    actorUserId: guard.ctx.userId,
+    conversationId: parsed.data.conversationId,
+    clientDedupeKey: parsed.data.clientDedupeKey,
+    content: { kind: "template", templateId: parsed.data.templateId, params: parsed.data.templateParams },
+  });
+  if (!routed.handled) {
+    return { ok: false, error: toUserMessage({ message: "invalid_message_kind" }) };
+  }
+  revalidateConversationRoutes(parsed.data.conversationId);
+  return routed.result;
 }
 
 export async function resolveConversationLinkAction(

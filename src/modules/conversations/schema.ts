@@ -65,6 +65,13 @@ export const sendMessageSchema = z.object({
   clientDedupeKey: uuidSchema,
 });
 
+export const sendTemplateSchema = z.object({
+  conversationId: uuidSchema,
+  templateId: uuidSchema,
+  templateParams: z.array(z.string().trim().min(1, "Preencha todos os campos do template.").max(128)).max(10),
+  clientDedupeKey: uuidSchema,
+});
+
 export const resolveConversationLinkSchema = z.object({
   conversationId: uuidSchema,
   contactId: uuidSchema.optional(),

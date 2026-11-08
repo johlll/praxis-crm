@@ -5,7 +5,7 @@
  * pelo provedor do canal está em b3-1-revisao-provedor.test.ts. Nenhuma
  * chamada externa.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { VerifiedWebhookBody, WHATSAPP_CAPABILITIES, whatsappContactIdentity } from "@/server/whatsapp/provider/contract";
 import {
@@ -21,25 +21,35 @@ const NOW_S = Math.floor(NOW_MS / 1000);
 describe("contrato do provedor simulado", () => {
   const provider = new SimulatedWhatsAppProvider();
 
-  it("descreve todas as capacidades do contrato, e só verificar/normalizar estão ativas", () => {
+  it("descreve todas as capacidades do contrato; verificar, normalizar e enviar (B3.3) estão ativas", () => {
     const caps = provider.describeCapabilities();
     expect(Object.keys(caps).sort()).toEqual([...WHATSAPP_CAPABILITIES].sort());
     expect(caps).toEqual({
       verifyWebhook: true,
       normalizeEvents: true,
-      sendText: false,
-      sendTemplate: false,
+      sendText: true,
+      sendTemplate: true,
       lookupMessage: false,
       fetchMedia: false,
     });
   });
 
-  it("capacidades fora da B3.1 respondem 'unsupported' explícito, nunca sucesso", async () => {
-    const send = { routingKey: "r", recipient: whatsappContactIdentity({ phoneE164: "+5511999990000" })!, text: "oi", correlationId: "c" };
-    await expect(provider.sendText(send)).resolves.toEqual({ ok: false, reason: "unsupported", capability: "sendText" });
+  it("envio simulado (B3.3): aceita sem rede, com id determinístico pela correlação", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const send = { routingKey: "r", recipient: whatsappContactIdentity({ phoneE164: "+5511999990000" })!, text: "oi", correlationId: "c-1" };
+    const first = await provider.sendText(send);
+    expect(first).toEqual({ ok: true, providerMessageId: expect.stringMatching(/^wamid\.sim\.[0-9a-f]{32}$/), state: "accepted" });
+    await expect(provider.sendText(send)).resolves.toEqual(first);
+    await expect(provider.sendText({ ...send, correlationId: "c-2" })).resolves.not.toEqual(first);
     await expect(
       provider.sendTemplate({ ...send, templateName: "t", templateLanguage: "pt_BR", parameters: [] }),
-    ).resolves.toEqual({ ok: false, reason: "unsupported", capability: "sendTemplate" });
+    ).resolves.toEqual(first);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("capacidades fora do escopo respondem 'unsupported' explícito, nunca sucesso", async () => {
     await expect(provider.lookupMessage({ routingKey: "r", providerMessageId: "m" })).resolves.toEqual({
       ok: false,
       reason: "unsupported",
