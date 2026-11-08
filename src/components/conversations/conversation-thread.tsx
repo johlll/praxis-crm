@@ -11,7 +11,10 @@ import {
   sendMessageAction,
   simulateStatusEventAction,
 } from "@/modules/conversations/actions";
+import type { WhatsAppSendUi } from "@/modules/conversations/whatsapp-send";
+import { toUserMessage } from "@/lib/errors";
 import { MESSAGE_STATUS_LABEL } from "./labels";
+import { WhatsAppComposer } from "./whatsapp-composer";
 
 function formatTime(iso: string): string {
   return new Intl.DateTimeFormat("pt-BR", {
@@ -19,6 +22,12 @@ function formatTime(iso: string): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(iso));
+}
+
+/** Motivo de falha do envio do CRM em texto claro; texto livre (A7) fica como veio. */
+function errorReasonTitle(reason: string): string {
+  const friendly = toUserMessage({ message: reason });
+  return /^[a-z][a-z0-9_]*$/.test(reason) && friendly !== toUserMessage(null) ? friendly : reason;
 }
 
 function StatusIcon({ status }: { status: MessageListItem["status"] }) {
@@ -38,6 +47,7 @@ export function ConversationThread({
   phoneNumberId,
   recipientWaId,
   consentBlocked,
+  sendContext,
 }: {
   conversationId: string;
   initialItems: MessageListItem[];
@@ -47,6 +57,8 @@ export function ConversationThread({
   phoneNumberId: string;
   recipientWaId: string;
   consentBlocked: boolean;
+  /** Canal real da B3: compositor com janela, bloqueio com motivo e template. `null` = canal legado da A7. */
+  sendContext: WhatsAppSendUi | null;
 }) {
   const [items, setItems] = useState(initialItems);
   const [hasMore, setHasMore] = useState(initialHasMore);
@@ -128,8 +140,8 @@ export function ConversationThread({
                     />
                   ) : null}
                   {m.errorReason ? (
-                    <span className="text-label text-danger" title={m.errorReason}>
-                      {MESSAGE_STATUS_LABEL.failed}
+                    <span className="text-label text-danger" title={errorReasonTitle(m.errorReason)}>
+                      {m.errorReason === "send_uncertain" ? "Envio incerto" : MESSAGE_STATUS_LABEL.failed}
                     </span>
                   ) : null}
                   <span className="text-label text-text-tertiary">{formatTime(m.createdAt)}</span>
@@ -142,7 +154,11 @@ export function ConversationThread({
       </div>
 
       {canSend ? (
-        <Composer conversationId={conversationId} disabled={consentBlocked} onSent={handleSent} />
+        sendContext ? (
+          <WhatsAppComposer conversationId={conversationId} context={sendContext} onSent={handleSent} />
+        ) : (
+          <Composer conversationId={conversationId} disabled={consentBlocked} onSent={handleSent} />
+        )
       ) : null}
     </div>
   );

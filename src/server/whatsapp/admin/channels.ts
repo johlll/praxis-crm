@@ -64,6 +64,8 @@ export const WHATSAPP_CHANNEL_ERROR_CODES = [
   "provider_mismatch",
   "credential_not_found",
   "whatsapp_provider_unavailable",
+  "provider_send_not_available",
+  "invalid_template",
 ] as const;
 
 export type WhatsAppChannelErrorCode = (typeof WHATSAPP_CHANNEL_ERROR_CODES)[number] | "unknown";
@@ -245,7 +247,11 @@ export async function adminUpdateWhatsAppChannelSettings(
   return mapSafeChannel(data);
 }
 
-type StateRpc = "whatsapp_pause_channel" | "whatsapp_reactivate_channel" | "whatsapp_disable_channel_send";
+type StateRpc =
+  | "whatsapp_pause_channel"
+  | "whatsapp_reactivate_channel"
+  | "whatsapp_disable_channel_send"
+  | "whatsapp_enable_channel_send";
 
 async function changeState(rpc: StateRpc, params: ChannelRef): Promise<SafeWhatsAppChannel> {
   const admin = createWhatsAppAdminSupabaseClient();
@@ -261,6 +267,62 @@ async function changeState(rpc: StateRpc, params: ChannelRef): Promise<SafeWhats
 export const adminPauseWhatsAppChannel = (params: ChannelRef) => changeState("whatsapp_pause_channel", params);
 export const adminReactivateWhatsAppChannel = (params: ChannelRef) => changeState("whatsapp_reactivate_channel", params);
 export const adminDisableWhatsAppChannelSend = (params: ChannelRef) => changeState("whatsapp_disable_channel_send", params);
+/** B3.3: liga o envio de um canal ATIVO e SIMULADO; YCloud e Meta são recusados pelo banco. */
+export const adminEnableWhatsAppChannelSend = (params: ChannelRef) => changeState("whatsapp_enable_channel_send", params);
+
+const templateRowSchema = z.object({
+  id: uuidSchema,
+  channel_id: uuidSchema,
+  name: z.string(),
+  language: z.string(),
+  category: z.enum(["utility", "marketing", "authentication"]),
+  status: z.enum(["approved", "pending", "rejected", "paused", "disabled"]),
+  param_count: z.number().int(),
+});
+
+export type SafeWhatsAppTemplate = {
+  id: string;
+  channelId: string;
+  name: string;
+  language: string;
+  category: "utility" | "marketing" | "authentication";
+  status: "approved" | "pending" | "rejected" | "paused" | "disabled";
+  paramCount: number;
+};
+
+/**
+ * Cadastra ou atualiza o espelho de um template do canal (B3.3). Sem interface:
+ * é a operação que o futuro espelho de revisões do provedor vai usar. Aceita a
+ * categoria FINAL, nunca a pretendida; só `utility` aprovado sai (§28.18).
+ */
+export async function adminUpsertWhatsAppTemplate(
+  params: ChannelRef & {
+    name: string;
+    language: string;
+    category: SafeWhatsAppTemplate["category"];
+    status: SafeWhatsAppTemplate["status"];
+    bodyText: string;
+    paramCount: number;
+  },
+): Promise<SafeWhatsAppTemplate> {
+  const admin = createWhatsAppAdminSupabaseClient();
+  const { data, error } = await admin.rpc("whatsapp_upsert_template", {
+    p_channel_id: params.channelId,
+    p_workspace_id: params.workspaceId,
+    p_actor_user_id: params.actorUserId,
+    p_name: params.name,
+    p_language: params.language,
+    p_category: params.category,
+    p_status: params.status,
+    p_body_text: params.bodyText,
+    p_param_count: params.paramCount,
+  });
+  if (error) throw toChannelStoreError(error);
+  const parsed = templateRowSchema.safeParse(data);
+  if (!parsed.success) throw new WhatsAppChannelStoreError("unknown");
+  const r = parsed.data;
+  return { id: r.id, channelId: r.channel_id, name: r.name, language: r.language, category: r.category, status: r.status, paramCount: r.param_count };
+}
 
 /**
  * Substitui uma credencial de um canal já cadastrado (por exemplo, o segredo

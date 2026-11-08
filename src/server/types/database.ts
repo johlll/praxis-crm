@@ -3792,6 +3792,111 @@ export type Database = {
           },
         ]
       }
+      whatsapp_outbox: {
+        Row: {
+          attempts: number
+          channel_id: string
+          client_dedupe_key: string
+          conversation_id: string
+          created_at: string
+          created_by: string | null
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          error_code: string | null
+          id: string
+          kind: string
+          lease_until: string | null
+          message_id: string
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          provider_message_id: string | null
+          sending_started_at: string | null
+          state: string
+          template_id: string | null
+          template_params: string[] | null
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          attempts?: number
+          channel_id: string
+          client_dedupe_key: string
+          conversation_id: string
+          created_at?: string
+          created_by?: string | null
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          error_code?: string | null
+          id?: string
+          kind: string
+          lease_until?: string | null
+          message_id: string
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          provider_message_id?: string | null
+          sending_started_at?: string | null
+          state?: string
+          template_id?: string | null
+          template_params?: string[] | null
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          attempts?: number
+          channel_id?: string
+          client_dedupe_key?: string
+          conversation_id?: string
+          created_at?: string
+          created_by?: string | null
+          environment?: Database["public"]["Enums"]["whatsapp_environment"]
+          error_code?: string | null
+          id?: string
+          kind?: string
+          lease_until?: string | null
+          message_id?: string
+          provider?: Database["public"]["Enums"]["whatsapp_provider"]
+          provider_message_id?: string | null
+          sending_started_at?: string | null
+          state?: string
+          template_id?: string | null
+          template_params?: string[] | null
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_outbox_channel_identity_fkey"
+            columns: ["workspace_id", "channel_id", "environment", "provider"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_channels"
+            referencedColumns: ["workspace_id", "id", "environment", "provider"]
+          },
+          {
+            foreignKeyName: "whatsapp_outbox_conversation_fkey"
+            columns: ["workspace_id", "conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "whatsapp_outbox_message_fkey"
+            columns: ["message_id", "workspace_id", "channel_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id", "workspace_id", "channel_id"]
+          },
+          {
+            foreignKeyName: "whatsapp_outbox_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_templates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "whatsapp_outbox_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       whatsapp_reconciler_runs: {
         Row: {
           candidates: number
@@ -3833,6 +3938,69 @@ export type Database = {
           started_at?: string
         }
         Relationships: []
+      }
+      whatsapp_templates: {
+        Row: {
+          body_text: string
+          category: string
+          channel_id: string
+          created_at: string
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          id: string
+          language: string
+          name: string
+          param_count: number
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          status: string
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          body_text: string
+          category: string
+          channel_id: string
+          created_at?: string
+          environment: Database["public"]["Enums"]["whatsapp_environment"]
+          id?: string
+          language: string
+          name: string
+          param_count: number
+          provider: Database["public"]["Enums"]["whatsapp_provider"]
+          status: string
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          body_text?: string
+          category?: string
+          channel_id?: string
+          created_at?: string
+          environment?: Database["public"]["Enums"]["whatsapp_environment"]
+          id?: string
+          language?: string
+          name?: string
+          param_count?: number
+          provider?: Database["public"]["Enums"]["whatsapp_provider"]
+          status?: string
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_templates_channel_identity_fkey"
+            columns: ["workspace_id", "channel_id", "environment", "provider"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_channels"
+            referencedColumns: ["workspace_id", "id", "environment", "provider"]
+          },
+          {
+            foreignKeyName: "whatsapp_templates_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       whatsapp_webhook_inbox: {
         Row: {
@@ -5669,6 +5837,14 @@ export type Database = {
         }
         Returns: Json
       }
+      whatsapp_enable_channel_send: {
+        Args: {
+          p_actor_user_id: string
+          p_channel_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       whatsapp_get_channel_credential: {
         Args: {
           p_channel_id: string
@@ -5784,6 +5960,19 @@ export type Database = {
         }
         Returns: Json
       }
+      whatsapp_outbox_begin: {
+        Args: { p_lease_seconds?: number; p_outbox_id: string }
+        Returns: Json
+      }
+      whatsapp_outbox_finish: {
+        Args: {
+          p_error_code?: string
+          p_outbox_id: string
+          p_outcome: string
+          p_provider_message_id?: string
+        }
+        Returns: Json
+      }
       whatsapp_pause_channel: {
         Args: {
           p_actor_user_id: string
@@ -5810,6 +5999,19 @@ export type Database = {
           p_reserved: number
           p_skipped: number
           p_started_at: string
+        }
+        Returns: Json
+      }
+      whatsapp_reserve_send: {
+        Args: {
+          p_actor_user_id: string
+          p_body_text?: string
+          p_client_dedupe_key: string
+          p_conversation_id: string
+          p_kind: string
+          p_template_id?: string
+          p_template_params?: string[]
+          p_workspace_id: string
         }
         Returns: Json
       }
@@ -5843,6 +6045,14 @@ export type Database = {
           workspace_id: string
         }[]
       }
+      whatsapp_send_context: {
+        Args: {
+          p_actor_user_id: string
+          p_conversation_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       whatsapp_set_internal_identity_active: {
         Args: {
           p_active: boolean
@@ -5869,6 +6079,20 @@ export type Database = {
           p_channel_id: string
           p_display_phone_number: string
           p_label: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      whatsapp_upsert_template: {
+        Args: {
+          p_actor_user_id: string
+          p_body_text: string
+          p_category: string
+          p_channel_id: string
+          p_language: string
+          p_name: string
+          p_param_count: number
+          p_status: string
           p_workspace_id: string
         }
         Returns: Json

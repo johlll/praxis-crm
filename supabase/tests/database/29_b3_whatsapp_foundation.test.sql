@@ -11,7 +11,7 @@
 -- só desta transação.
 
 begin;
-select plan(74);
+select plan(73);
 
 \set ana     '20000000-0000-0000-0000-000000000001'
 \set bruno   '20000000-0000-0000-0000-000000000002'
@@ -133,6 +133,9 @@ select is(
      and p.proname <> 'whatsapp_reconciler_record_run'
      -- O cadastro do canal YCloud (§28.17) tem teste próprio (42).
      and p.proname <> 'whatsapp_create_ycloud_channel'
+     -- A saída humana (B3.3, §28.18) tem teste próprio (43).
+     and p.proname not in ('whatsapp_enable_channel_send', 'whatsapp_upsert_template', 'whatsapp_send_context',
+                           'whatsapp_reserve_send', 'whatsapp_outbox_begin', 'whatsapp_outbox_finish')
      and has_function_privilege('service_role', p.oid, 'execute')),
   10,
   'as 10 funções public.whatsapp_* da B3.1 são executáveis por service_role'
@@ -337,8 +340,8 @@ select throws_ok(format($i$ update public.whatsapp_channels set routing_key = 'o
   'P0001', 'channel_identity_immutable', 'chave de roteamento é imutável');
 select throws_ok(format($i$ update public.whatsapp_channels set environment = 'production' where id = %L $i$, :'ch_um'),
   'P0001', 'channel_identity_immutable', 'ambiente do canal é imutável');
-select throws_ok(format($i$ update public.whatsapp_channels set send_enabled = true where id = %L $i$, :'ch_um'),
-  '23514', null, 'canal simulado nunca habilita envio');
+-- B3.3 (§28.18): o simulador pode enviar no Preview (o adaptador não sai do processo) e nunca em Production;
+-- a restrição nova é provada em 43_b3_3_saida_humana.test.sql.
 select throws_ok(
   format($i$ insert into public.whatsapp_channels (workspace_id, label, phone_number_id, display_phone_number, created_by, environment, routing_key)
             values (%L, 'x', 'tel-x', '1', %L, 'preview', 'b3-misto') $i$, :'ws_um', :'ana'),

@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 import { z } from "zod";
 
@@ -37,8 +37,11 @@ import {
  *  - normaliza, só depois da assinatura, um payload simulado para os tipos
  *    do contrato (UTF-8 estrita; contato por telefone, BSUID ou ambos).
  *
- * O que ele NÃO faz: enviar, consultar mensagem, buscar mídia. Essas
- * capacidades respondem `unsupported` — nunca um sucesso fingido.
+ * Envio (B3.3, docs/decisoes/b3-whatsapp-real.md §28.18): texto e template
+ * são "aceitos" sem sair do processo (nenhuma rede), com um id do provedor
+ * determinístico a partir da correlação — repetir a mesma correlação devolve o
+ * mesmo id. Consultar mensagem e buscar mídia seguem `unsupported`: nunca um
+ * sucesso fingido.
  */
 
 export const SIMULATED_SIGNATURE_HEADER = "X-Praxis-Simulated-Signature";
@@ -47,11 +50,16 @@ export const SIMULATED_SIGNATURE_TOLERANCE_SECONDS = 300;
 const CAPABILITIES: WhatsAppCapabilities = Object.freeze({
   verifyWebhook: true,
   normalizeEvents: true,
-  sendText: false,
-  sendTemplate: false,
+  sendText: true,
+  sendTemplate: true,
   lookupMessage: false,
   fetchMedia: false,
 });
+
+function simulatedAcceptance(correlationId: string): SendResult {
+  const digest = createHash("sha256").update(correlationId).digest("hex").slice(0, 32);
+  return { ok: true, providerMessageId: `wamid.sim.${digest}`, state: "accepted" };
+}
 
 export function signSimulatedWebhook(rawBody: Uint8Array, secret: string, timestampSeconds: number): string {
   const signature = createHmac("sha256", secret).update(`${timestampSeconds}.`).update(rawBody).digest("hex");
@@ -229,12 +237,12 @@ export class SimulatedWhatsAppProvider implements WhatsAppProvider {
     return { ok: true, events };
   }
 
-  async sendText(_request: SendTextRequest): Promise<SendResult> {
-    return unsupported("sendText");
+  async sendText(request: SendTextRequest): Promise<SendResult> {
+    return simulatedAcceptance(request.correlationId);
   }
 
-  async sendTemplate(_request: SendTemplateRequest): Promise<SendResult> {
-    return unsupported("sendTemplate");
+  async sendTemplate(request: SendTemplateRequest): Promise<SendResult> {
+    return simulatedAcceptance(request.correlationId);
   }
 
   async lookupMessage(_request: LookupMessageRequest): Promise<LookupMessageResult> {

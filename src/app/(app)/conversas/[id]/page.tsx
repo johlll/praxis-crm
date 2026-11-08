@@ -6,6 +6,7 @@ import { Topbar } from "@/components/app-shell/topbar";
 import { getShellContext } from "@/modules/shell/queries";
 import { roleHasPermission } from "@/lib/roles";
 import { getConversation, listConversationMessages, listContactConsents, hasActiveWhatsAppConsent } from "@/modules/conversations/queries";
+import { loadWhatsAppSendUi } from "@/modules/conversations/whatsapp-send";
 import { listAllOpportunities, type OpportunityListItem } from "@/modules/opportunities/queries";
 import { requireWorkspace } from "@/server/authz/permissions";
 import { ConversationThread } from "@/components/conversations/conversation-thread";
@@ -40,6 +41,8 @@ export default async function ConversaDetalhePage({ params }: { params: Promise<
   ]);
 
   const canSend = roleHasPermission(user.role, "conversation.send");
+  // Canal real da B3: janela, motivo de bloqueio e templates. Canal legado da A7: `null`.
+  const sendContext = canSend ? await loadWhatsAppSendUi({ workspaceId, actorUserId: user.id }, id) : null;
   const canSimulate = roleHasPermission(user.role, "conversation.simulate");
   const consentBlocked = !hasActiveWhatsAppConsent(consents);
   const recipientWaId = conversation.waId.replace(/^\+/, "");
@@ -92,6 +95,7 @@ export default async function ConversaDetalhePage({ params }: { params: Promise<
               phoneNumberId={conversation.phoneNumberId}
               recipientWaId={recipientWaId}
               consentBlocked={consentBlocked}
+              sendContext={sendContext}
             />
           </div>
 

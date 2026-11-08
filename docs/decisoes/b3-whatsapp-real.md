@@ -1,15 +1,21 @@
 # B3 — WhatsApp real: levantamento técnico e plano
 
-Status (03/11/2026):
+Status (08/11/2026):
 
 - **B3.1:** concluída e mesclada, só com o provedor simulado (§14).
-- **B3.2:** concluída e mesclada no código (§15.9 e §28.13), e **ainda não
-  operacional**.
-- **Migrations da B3:** ainda não aplicadas no Supabase hospedado.
-- **Configuração externa de WhatsApp:** nenhuma ativa.
-- **Validação obrigatória no Inngest Cloud:** ainda pendente (§28.13); a primeira
-  tentativa parou na sincronização, antes de qualquer prova (§28.14).
-- **B3.3:** ainda não iniciada.
+- **B3.2:** implementada no código e no banco (§15.9 e §28). As 14 migrations da
+  B3 estão aplicadas no Supabase hospedado (6/11/2026), e as provas simuladas e
+  as do Inngest Cloud foram aprovadas (§28.13).
+- **Validação real:** webhook e número reais da YCloud **pendentes**. Falta uma
+  conta YCloud isolada com um número novo e dedicado de teste, providência de João
+  Niero. Retomada prevista até 25/11/2026; entrega final do CRM em 05/12/2026.
+- **Production:** desligada, sem nenhuma `WHATSAPP_*`.
+- **Preview:** sem configuração ativa.
+- **Vitória (chatbot) e conta "Marketing Vizentini":** intocados. O envio no
+  número da Vitória continua **proibido** até existir o contrato autenticado de
+  passagem entre o Praxis e a Vitória (§5.2).
+- **B3.3:** implementada no código só com o provedor simulado (§28.18); nenhuma
+  chamada real à YCloud.
 - **Provedor aprovado para o piloto:** YCloud, atrás de um adaptador próprio.
 - **Primeira validação:** número dedicado de teste, como aprovado.
 - **Portões do §6.7:** continuam valendo para credenciais e uso real.
@@ -6892,3 +6898,48 @@ vez da chave de API.
 
 **Continua pendente:** P1 e P2 só se resolvem com a configuração real da YCloud. P5, P6 e P8
 seguem para a ativação do Preview. Nada foi aplicado no Supabase hospedado.
+
+### 28.18 B3.3 — saída humana pelo CRM, com o provedor simulado (08/11/2026)
+
+**Escopo.** Envio de texto e de template por usuário autorizado, em conversa já existente.
+Só o adaptador **simulado** envia: nenhuma rede, nenhuma chamada à YCloud, nenhuma
+configuração externa. Fora desta etapa: áudio, imagem, documento, campanhas, template de
+marketing, automação, chatbot e o número da Vitória.
+
+**Fluxo** (migration `20261108120000_b3_3_saida_humana.sql`):
+1. **Reserva** (`whatsapp_reserve_send`):
+   - confere papel de envio, workspace, acesso à conversa, vínculo com contato,
+     consentimento de atendimento, canal ativo e `send_enabled`;
+   - **texto livre** só dentro da janela de 24 h, contada a partir da última mensagem recebida
+     do contato, com 5 minutos de margem (a autoridade final é o provedor);
+   - **fora da janela**, só template aprovado e de categoria **utility**, com a conversa
+     vinculada a um caso (lead);
+   - **marketing** e qualquer outra categoria são recusados;
+   - idempotência por `client_dedupe_key`: a mesma intenção devolve o que já existe, e outro
+     conteúdo com a mesma chave é `content_conflict`.
+   - Grava a mensagem do CRM (`origin = crm`, `sender_classification = internal`, `queued`) e a
+     outbox na mesma transação.
+2. **Tentativa**: `whatsapp_outbox_begin` e `whatsapp_outbox_finish` em volta de **uma única**
+   chamada ao provedor (`attempts <= 1`, por restrição). Resultado incerto (exceção, tempo,
+   processo que some e lease vencida) vira `uncertain` e **nunca é reenviado**; reenviar é uma
+   nova intenção, por decisão humana, com chave nova.
+3. **Status seguintes** seguem a estrutura da B3.2: a mensagem aceita guarda o id do provedor.
+
+**Mais três decisões de segurança:**
+- `whatsapp_enable_channel_send` liga o envio só de canal **ativo** e **simulado**; YCloud e
+  Meta são recusados (`provider_send_not_available`). Canal simulado de Production nunca envia.
+- O `send_message` da A7 passou a recusar conversa de canal da B3: antes, gravaria uma saída
+  "enviada" que nunca saiu.
+- A chave de API só sai de canal ativo com envio habilitado (§28.17).
+
+**Interface.** Na conversa de canal da B3: aviso da janela, motivo quando o envio está
+bloqueado, composer de template fora da janela e rótulo "Envio incerto". Canal legado da A7
+não muda.
+
+**Limitações que seguem:**
+- o envio real exige o adaptador YCloud e o contrato autenticado de passagem com a Vitória;
+- os templates entram por uma operação do servidor (`adminUpsertWhatsAppTemplate`), sem
+  tela, sem espelho dos eventos de revisão do provedor;
+- o instante exato do evento recebido não fica na mensagem (a janela usa o instante em que o
+  CRM a gravou);
+- resultado incerto só se resolve por reconciliação futura (webhook ou consulta).
