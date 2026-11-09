@@ -41,19 +41,29 @@ rota). Tela: `Automações` (`/automacoes`).
   fechados** são gravados (CHECK na coluna) — nunca payload, dado pessoal ou
   mensagem do banco. A falha de uma regra não desfaz a operação original nem
   outra execução.
+- **Origem da atividade.** A atividade criada por uma regra tem
+  `source = 'automation'` (valor novo de `activity_source`, adicionado nesta
+  mesma migration; a CHECK `activities_source_consistency` ganhou o ramo
+  correspondente e os quatro anteriores ficaram iguais). O vínculo com a
+  execução fica em `automation_executions.activity_id`.
 - **Quem processa.** As telas pedem uma rodada do próprio workspace logo depois
   de criar um lead ou mover uma etapa (`after()`, melhor esforço); há o botão
   "Processar agora" e a rota `/api/cron/automations` (segredo `CRON_SECRET`,
-  todos os workspaces). Nenhum agendador foi configurado.
+  todos os workspaces). **Nenhum agendador foi configurado nesta PR.**
 
-## Limites conhecidos (não são bloqueios)
+## Agendamento periódico: obrigatório antes do uso real
 
-- Sem agendador periódico: as novas tentativas acontecem na próxima rodada
-  (nova operação, "Processar agora" ou o cron, quando alguém o configurar). O
-  cron também depende da configuração de serviço da A11, ausente em Production.
-- A atividade criada fica com origem "manual" (o enum de origem das atividades
-  não foi estendido); a observação diz "Criada pela automação «nome»" e a
-  execução guarda o vínculo.
+- O agendamento periódico da rota `/api/cron/automations` é **obrigatório antes
+  do uso real** e será fechado na **B6**. Sem ele, a primeira tentativa continua
+  em melhor esforço (logo depois da operação) e as novas tentativas só
+  acontecem numa nova rodada manual ("Processar agora") ou incidental (outra
+  criação de lead ou mudança de etapa).
+- Isso não impede o merge do código, mas **impede considerar a C1 operacional
+  em Production** enquanto o agendamento não existir. O cron também depende da
+  configuração de serviço da A11, ausente em Production.
+
+## Limites conhecidos
+
 - O histórico mostra as últimas 50 execuções, sem paginação; não há expurgo de
   eventos e execuções antigos.
 - Sem campos personalizados, outras ações, condições compostas ou reexecução

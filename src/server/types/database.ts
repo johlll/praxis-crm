@@ -6424,6 +6424,7 @@ export type Database = {
         | "stage_rule"
         | "whatsapp_inbound"
         | "form_intake"
+        | "automation"
       activity_status: "pending" | "done"
       activity_type: "call" | "meeting" | "task" | "email" | "deadline"
       calendar_connection_status: "active" | "needs_reauth" | "disconnected"
@@ -6648,6 +6649,7 @@ export const Constants = {
         "stage_rule",
         "whatsapp_inbound",
         "form_intake",
+        "automation",
       ],
       activity_status: ["pending", "done"],
       activity_type: ["call", "meeting", "task", "email", "deadline"],

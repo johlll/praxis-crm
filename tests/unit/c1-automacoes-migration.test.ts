@@ -73,9 +73,15 @@ describe("migration da C1: forward-only e fechada", () => {
     expect((code.match(/create table /g) ?? []).length).toBe(3);
     expect((code.match(/create function /g) ?? []).length).toBe(PUBLIC_FUNCTIONS.length + PRIVATE_FUNCTIONS.length);
     expect(code).not.toMatch(/create or replace/);
-    expect(code).not.toMatch(/\bdrop\b/i);
-    expect(code).not.toMatch(/alter type/i);
-    expect(code).not.toMatch(/alter table public\.(?!automation_)/);
+    // Únicas mexidas em objetos existentes: o valor `automation` do enum de origem e a CHECK
+    // de origem de `activities` (que ganha o ramo novo; os quatro anteriores ficam iguais).
+    expect([...code.matchAll(/alter type [^;]*;/gi)].map((m) => m[0])).toEqual([
+      "alter type public.activity_source add value 'automation';",
+    ]);
+    expect([...code.matchAll(/\bdrop\b[^;]*;/gi)].map((m) => m[0].replace(/\s+/g, " "))).toEqual([
+      "drop constraint activities_source_consistency;",
+    ]);
+    expect([...code.matchAll(/alter table public\.(?!automation_)(\w+)/g)].map((m) => m[1])).toEqual(["activities", "activities"]);
     expect(code).not.toMatch(/create (unique )?index [^;]*\bon public\.(?!automation_)/);
     // As duas únicas mexidas em tabelas existentes são os triggers de captura (AFTER INSERT).
     const triggers = [...code.matchAll(/create trigger (\w+)\s+(before|after) (\w+) on (public\.\w+)/g)].map((m) => `${m[1]}:${m[2]}:${m[3]}:${m[4]}`);
@@ -183,6 +189,29 @@ describe("garantias de segurança no código das funções", () => {
     const body = bodyOf("public.update_automation_rule");
     expect(body).toMatch(/version = case when v_changed then version \+ 1 else version end/);
     expect(body).toMatch(/status = case when v_changed and status = 'active' then 'paused' else status end/);
+  });
+
+  it("a atividade criada pela regra tem origem `automation` (nunca manual) e os valores antigos ficam", () => {
+    const body = bodyOf("private.automation_run_execution");
+    const insert = body.slice(body.indexOf("insert into public.activities"), body.indexOf("returning id into v_activity_id"));
+    expect(insert).toContain("'pending', 'automation'");
+    expect(insert).not.toContain("'manual'");
+    // O valor novo é adicionado ANTES de tudo e só é usado em corpo de função e em CHECK por texto
+    // (o PostgreSQL proíbe referenciar o literal novo na transação que o adiciona).
+    const add = code.indexOf("add value 'automation'");
+    expect(add).toBeGreaterThan(0);
+    expect(add).toBeLessThan(code.indexOf("create table public.automation_rules"));
+    expect(code).not.toMatch(/source = 'automation'/);
+    expect(code).toContain(
+      "(source::text = 'automation' and source_stage_transition_id is null and source_rule_id is null and source_conversation_message_id is null and source_webhook_event_id is null)",
+    );
+    for (const antigo of ["manual", "stage_rule", "whatsapp_inbound", "form_intake"]) {
+      expect(code).toContain(`(source = '${antigo}' and`);
+    }
+    // Tipos gerados na mesma ordem do enum.
+    const types = read("src/server/types/database.ts");
+    expect(types).toMatch(/activity_source:\s*\|\s*"manual"\s*\|\s*"stage_rule"\s*\|\s*"whatsapp_inbound"\s*\|\s*"form_intake"\s*\|\s*"automation"/);
+    expect(types).toMatch(/activity_source: \[\s*"manual",\s*"stage_rule",\s*"whatsapp_inbound",\s*"form_intake",\s*"automation",\s*\]/);
   });
 
   it("a execução confere regra ativa e versão ANTES de qualquer efeito", () => {

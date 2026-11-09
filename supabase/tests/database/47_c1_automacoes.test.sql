@@ -8,7 +8,7 @@
 -- scripts/c1-automations-concurrency-check.sh.
 
 begin;
-select plan(141);
+select plan(148);
 
 \set ana    '20000000-0000-0000-0000-000000000001'
 \set bruno  '20000000-0000-0000-0000-000000000002'
@@ -82,6 +82,9 @@ select id as st_dois from public.pipeline_stages where pipeline_id = :'pipe_dois
 select
   (select count(*) from public.messages) + (select count(*) from public.conversations)
   + (select count(*) from public.whatsapp_outbox) + (select count(*) from public.outbox) as externos_antes \gset
+
+-- Fotografia da origem das atividades que já existem antes de qualquer automação.
+create temp table c1_origem_antes as select id, source from public.activities;
 
 set local role authenticated;
 select pg_temp.login(:'ana'::uuid);
@@ -453,6 +456,45 @@ select process_automation_events(:'ws_um'::uuid);
 reset role;
 select is(pg_temp.n('select count(*) from public.automation_executions'), 1::bigint, 'reprocessar o evento não cria outra execução');
 select is(pg_temp.n(format('select count(*) from public.activities where lead_id = %L and title = ''Retornar o contato''', :'lead_a')), 1::bigint, 'nem outra atividade (evento repetido não duplica)');
+
+-- Origem da atividade: criada pela automação, nunca como "manual".
+select is(
+  (select array_agg(e.enumlabel::text order by e.enumsortorder) from pg_enum e where e.enumtypid = 'public.activity_source'::regtype),
+  array['manual', 'stage_rule', 'whatsapp_inbound', 'form_intake', 'automation'],
+  'activity_source tem os quatro valores anteriores, na ordem, mais "automation"'
+);
+select is(
+  (select source::text from public.activities where lead_id = (:'lead_a')::uuid),
+  'automation',
+  'a atividade criada pela regra tem source = automation (não manual)'
+);
+select ok(
+  exists (
+    select 1 from public.automation_executions x join public.activities a on a.id = x.activity_id
+    where a.lead_id = (:'lead_a')::uuid and x.state = 'succeeded' and a.source = 'automation'
+  ),
+  'e continua vinculada à execução que a criou'
+);
+select ok(
+  not exists (select 1 from public.automation_executions x join public.activities a on a.id = x.activity_id where a.source <> 'automation')
+  and not exists (select 1 from public.activities a where a.source = 'automation' and not exists (select 1 from public.automation_executions x where x.activity_id = a.id)),
+  'só atividades de execução usam automation, e toda atividade de execução usa automation'
+);
+
+-- Atividade manual continua manual; as que já existiam não mudam de origem.
+set local role authenticated;
+select pg_temp.login(:'ana'::uuid);
+select create_activity(p_lead_id := (:'lead_b')::uuid, p_type := 'call'::activity_type, p_title := 'Ligar manualmente', p_due_date := ((now() at time zone 'America/Sao_Paulo')::date + 1)) as ativ_manual \gset
+reset role;
+select is((select source::text from public.activities where id = (:'ativ_manual')::uuid), 'manual', 'uma atividade criada à mão continua com source = manual');
+select ok(
+  not exists (select 1 from c1_origem_antes o left join public.activities a on a.id = o.id where a.id is null or a.source is distinct from o.source),
+  'nenhuma atividade anterior às automações mudou de origem'
+);
+select ok(
+  not exists (select 1 from public.audit_logs where action = 'activity.auto_created' and (metadata - 'rule_id') <> '{}'::jsonb),
+  'a auditoria da criação automática guarda só o identificador da regra (sem dado pessoal)'
+);
 
 -- =====================================================================
 -- 6) Gatilho: oportunidade mudou de etapa -> uma atividade

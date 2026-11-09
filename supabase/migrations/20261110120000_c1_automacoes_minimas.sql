@@ -2,7 +2,8 @@
 -- eventos registrados junto da operação de origem, execução idempotente e
 -- histórico. Migration NOVA e forward-only: três tabelas, triggers de captura
 -- de evento, funções privadas e as RPCs da tela de Automações. Nenhuma função,
--- policy, grant ou tabela existente é alterada.
+-- policy, grant ou tabela existente é alterada; a única mudança em objeto
+-- existente é o valor novo `automation` em `public.activity_source` (abaixo).
 --
 -- O que existe (e só isto):
 --   * Gatilhos: lead criado; oportunidade mudou de etapa.
@@ -44,6 +45,42 @@
 -- Acesso. As três tabelas têm RLS habilitada e FORÇADA, sem policy e sem grant:
 -- tudo passa pelas funções abaixo. Gerir regras: owner e admin; consultar
 -- regras e histórico: também manager.
+
+-- ---------------------------------------------------------------------
+-- Origem da atividade
+-- ---------------------------------------------------------------------
+-- A atividade criada por uma regra nasce com source = 'automation' (nunca
+-- 'manual'). Os quatro valores anteriores e as atividades já existentes não
+-- mudam. O valor novo só é USADO dentro do corpo de `private.automation_run_execution`
+-- (plpgsql avalia o literal na execução, nunca na criação da função), portanto
+-- não há uso na mesma transação em que ele é adicionado — o que o PostgreSQL
+-- proíbe. Nada nesta migration executa o processador.
+
+alter type public.activity_source add value 'automation';
+
+comment on type public.activity_source is
+  'Origem da atividade: manual, automática por regra de etapa (A6), pela primeira mensagem de WhatsApp de um contato novo (A7), pela captação de um formulário público próprio (A11) ou criada por uma regra de Automações (C1).';
+
+-- A CHECK de consistência da origem (A6/A7/A11) recusaria a linha nova: ganha
+-- UM ramo, o da automação (sem nenhuma coluna de rastreabilidade — o vínculo
+-- fica em automation_executions.activity_id). Os quatro ramos anteriores são
+-- copiados byte a byte; nenhuma atividade existente passa a valer menos nem
+-- mais. O ramo novo compara `source::text` porque o literal do enum recém
+-- adicionado não pode ser referenciado na transação que o adiciona.
+alter table public.activities
+  drop constraint activities_source_consistency;
+
+alter table public.activities
+  add constraint activities_source_consistency check (
+    (source = 'manual' and source_stage_transition_id is null and source_rule_id is null and source_conversation_message_id is null and source_webhook_event_id is null) or
+    (source = 'stage_rule' and source_stage_transition_id is not null and source_conversation_message_id is null and source_webhook_event_id is null) or
+    (source = 'whatsapp_inbound' and source_conversation_message_id is not null and source_stage_transition_id is null and source_rule_id is null and source_webhook_event_id is null) or
+    (source = 'form_intake' and source_webhook_event_id is not null and source_stage_transition_id is null and source_rule_id is null and source_conversation_message_id is null) or
+    (source::text = 'automation' and source_stage_transition_id is null and source_rule_id is null and source_conversation_message_id is null and source_webhook_event_id is null)
+  );
+
+comment on constraint activities_source_consistency on public.activities is
+  'Cada source exige sua própria coluna de rastreabilidade (e só ela): stage_rule -> source_stage_transition_id; whatsapp_inbound -> source_conversation_message_id; form_intake -> source_webhook_event_id; automation e manual -> nenhuma (a automação se liga pela execução).';
 
 -- ---------------------------------------------------------------------
 -- Tabelas
@@ -495,7 +532,7 @@ begin
       values (
         v_ex.workspace_id, v_lead.id, v_event.opportunity_id, 'task', v_rule.action_title,
         'Criada pela automação "' || v_rule.name || '".', v_assignee, v_rule.action_priority,
-        private.automation_due_at(v_rule.action_due_days), false, 'pending', 'manual',
+        private.automation_due_at(v_rule.action_due_days), false, 'pending', 'automation',
         coalesce(v_event.actor_user_id, v_rule.created_by)
       )
       returning id into v_activity_id;
