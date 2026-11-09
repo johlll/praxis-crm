@@ -68,9 +68,10 @@ conveniência): **SELECT** em `workspaces`, `users`, `memberships` e
 leitura e escrita da trilha passa pelas funções `SECURITY DEFINER`
 (próxima seção), que rodam com o privilégio de quem as definiu, não do
 chamador, e por isso nunca precisaram de GRANT em `authenticated`. Isso é
-mais restritivo que a própria policy de SELECT de `audit_logs` (que já
-existe, para quando uma tela de auditoria for implementada) — o dia em que
-essa tela existir, o grant correspondente entra numa migration nova.
+mais restritivo que a própria policy de SELECT de `audit_logs`. A tela de
+auditoria (B5) manteve isso: lê pela RPC `list_audit_log`, que devolve só uma
+projeção sanitizada, sem abrir grant de tabela
+(`docs/decisoes/b5-auditoria-posse.md`).
 
 A plataforma também concede, por padrão, `REFERENCES`/`TRIGGER`/
 `TRUNCATE`/`MAINTAIN` a `anon`/`authenticated` em toda tabela nova (um

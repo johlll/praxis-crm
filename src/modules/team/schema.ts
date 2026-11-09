@@ -21,6 +21,16 @@ export const updateMembershipRoleSchema = z.object({
   role: z.enum(ROLES),
 });
 
+/**
+ * Transferência de posse (B5). `confirm` é a confirmação explícita da tela
+ * (caixa marcada): sem ela a action nem chama o banco. O workspace NÃO está
+ * aqui de propósito — vem sempre da sessão, nunca do formulário.
+ */
+export const transferOwnershipSchema = z.object({
+  membershipId: uuidSchema,
+  confirm: z.literal("yes"),
+});
+
 export const acceptInvitationSchema = z.object({
   token: z.string().min(16).max(256),
 });

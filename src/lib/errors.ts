@@ -183,6 +183,12 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   invalid_internal_identity: "Informe um nome e um telefone (formato internacional) ou um BSUID válidos.",
   internal_identity_taken: "Este número ou BSUID já está cadastrado como interno neste canal.",
   internal_identity_not_found: "Identidade interna não encontrada.",
+  // B5 — transferência de posse. membership_not_found e insufficient_permission
+  // já existem acima (A2) e servem aqui também: um destinatário de outro
+  // workspace e um inexistente são o mesmo caso.
+  cannot_transfer_to_self: "Escolha outra pessoa: a posse não pode ser transferida para você mesmo.",
+  membership_not_active: "Só é possível transferir a posse para um membro ativo da equipe.",
+  ownership_transfer_failed: "Não foi possível transferir a posse. Nada foi alterado.",
 };
 
 /** update_lead_basic_fields()/assign_lead()/set_lead_status()/set_lead_value()

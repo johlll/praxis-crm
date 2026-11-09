@@ -151,7 +151,11 @@ export type Permission =
   // de um canal, e guardar suas credenciais cifradas. Só owner/admin —
   // mesma faixa de conversation.simulate e form_endpoint.manage. Nunca
   // manager, advogado, atendimento ou visualizador.
-  | "channel.manage";
+  | "channel.manage"
+  // B5 — passar a posse do workspace a outro membro (docs/decisoes/b5-auditoria-posse.md).
+  // Só o proprietário: nem admin transfere. O banco repete a regra
+  // (transfer_workspace_ownership exige owner ATIVO).
+  | "workspace.transfer_ownership";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -193,6 +197,7 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "calendar.connect_own": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
   "calendar.manage": new Set<Role>(["owner", "admin"]),
   "channel.manage": new Set<Role>(["owner", "admin"]),
+  "workspace.transfer_ownership": new Set<Role>(["owner"]),
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {
