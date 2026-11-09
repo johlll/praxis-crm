@@ -283,7 +283,12 @@ describe("sem efeito externo e sem dado pessoal", () => {
 
 describe("tipos gerados e chamadas do TypeScript espelham o SQL", () => {
   const types = read("src/server/types/database.ts");
-  const block = (name: string) => new RegExp(`\\n      ${name}: \\{[\\s\\S]*?\\n      \\}\\n`).exec(types)?.[0] ?? "";
+  // O gerador põe numa linha só a entrada que cabe em 80 colunas
+  // (`nome: { Args: {...}; Returns: Json }`); as maiores ocupam várias linhas.
+  const block = (name: string) =>
+    new RegExp(`\\n      ${name}: \\{ Args: [^\\n]*\\}\\n`).exec(types)?.[0] ??
+    new RegExp(`\\n      ${name}: \\{\\n[\\s\\S]*?\\n      \\}\\n`).exec(types)?.[0] ??
+    "";
 
   it.each(PUBLIC_FUNCTIONS)("%s: parâmetros (e quais são opcionais) iguais ao SQL", (name) => {
     const declaration = new RegExp(`create function public\\.${name}\\(([\\s\\S]*?)\\)\\s*returns`).exec(code)?.[1] ?? "";

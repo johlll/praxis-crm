@@ -5254,10 +5254,7 @@ export type Database = {
         Args: { p_limit?: number; p_rule_id?: string; p_workspace_id: string }
         Returns: Json
       }
-      list_automation_rules: {
-        Args: { p_workspace_id: string }
-        Returns: Json
-      }
+      list_automation_rules: { Args: { p_workspace_id: string }; Returns: Json }
       list_calendar_connections: {
         Args: { p_workspace_id: string }
         Returns: Json
@@ -5744,10 +5741,7 @@ export type Database = {
         }
         Returns: string
       }
-      simulate_automation_rule: {
-        Args: { p_rule_id: string }
-        Returns: Json
-      }
+      simulate_automation_rule: { Args: { p_rule_id: string }; Returns: Json }
       simulate_inbound_whatsapp_message: {
         Args: {
           p_body_text: string
