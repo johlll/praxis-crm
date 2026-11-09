@@ -74,7 +74,7 @@ $body$;
 comment on function private.audit_log_safe_details(jsonb) is
   'Projeção sanitizada de audit_logs.metadata: só papéis, ambiente e provedor, com valor de vocabulário fechado. Tudo o mais é descartado. Sem grant: só list_audit_log chama.';
 
-revoke all on function private.audit_log_safe_details(jsonb) from public;
+revoke all on function private.audit_log_safe_details(jsonb) from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------
 -- list_audit_log

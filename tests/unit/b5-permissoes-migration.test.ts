@@ -69,7 +69,7 @@ describe("migration da B5: aditiva e fechada", () => {
       expect(sql).toContain(`revoke all on function ${sig} from public, anon;`);
       expect(sql).toContain(`grant execute on function ${sig} to authenticated;`);
     }
-    expect(sql).toContain("revoke all on function private.audit_log_safe_details(jsonb) from public;");
+    expect(sql).toContain("revoke all on function private.audit_log_safe_details(jsonb) from public, anon, authenticated;");
     expect(sql).not.toMatch(/grant[^;]*audit_log_safe_details/i);
     // Nada concedido a anon/public, e audit_logs continua sem grant de tabela.
     expect(sql).not.toMatch(/grant\s[^;]*\bto\s+[^;]*\b(anon|public)\b/i);
