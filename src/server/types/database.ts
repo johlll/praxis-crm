@@ -4981,6 +4981,22 @@ export type Database = {
         Args: { p_activity_ids: string[] }
         Returns: Json
       }
+      list_audit_log: {
+        Args: {
+          p_action?: string
+          p_actor_user_id?: string
+          p_before?: string
+          p_before_id?: string
+          p_from?: string
+          p_limit?: number
+          p_to?: string
+          p_workspace_id: string
+        }
+        Returns: {
+          has_more: boolean
+          items: Json
+        }[]
+      }
       list_calendar_connections: {
         Args: { p_workspace_id: string }
         Returns: Json
@@ -5492,6 +5508,10 @@ export type Database = {
           p_owner_user_id?: string
         }
         Returns: Json
+      }
+      transfer_workspace_ownership: {
+        Args: { p_target_membership_id: string; p_workspace_id: string }
+        Returns: undefined
       }
       unmerge_contact: {
         Args: { p_merge_id: string }

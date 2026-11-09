@@ -7,6 +7,7 @@ import { listPendingInvitations, listTeamMembers } from "@/modules/team/queries"
 import { MemberRow } from "@/components/team/member-row";
 import { PendingInvitationRow } from "@/components/team/pending-invitation-row";
 import { InviteDialog } from "@/components/team/invite-dialog";
+import { TransferOwnershipDialog } from "@/components/team/transfer-ownership-dialog";
 import { EmptyState } from "@/components/feedback/empty-state";
 
 export const metadata: Metadata = {
@@ -17,6 +18,7 @@ export default async function EquipePage() {
   const { user, activeWorkspace } = await getShellContext();
   const membership = await requireMembership();
   const canManage = roleHasPermission(membership.role, "membership.manage");
+  const canTransferOwnership = roleHasPermission(membership.role, "workspace.transfer_ownership");
 
   const members = await listTeamMembers(activeWorkspace.id, membership.userId);
   const invitations = canManage ? await listPendingInvitations(activeWorkspace.id) : [];
@@ -57,6 +59,30 @@ export default async function EquipePage() {
                   <PendingInvitationRow key={invitation.id} invitation={invitation} />
                 ))
               )}
+            </section>
+          ) : null}
+
+          {canTransferOwnership ? (
+            <section className="rounded-lg border border-border bg-surface">
+              <div className="border-b border-border px-4 py-3">
+                <h2 className="text-body font-semibold text-text">Posse do workspace</h2>
+              </div>
+              <div className="flex flex-col gap-3 p-4">
+                <p className="m-0 text-small text-text-tertiary">
+                  Você é o proprietário de {activeWorkspace.name}. Para passar a posse, escolha outro membro da equipe:
+                  ele passa a ser Proprietário e você passa a ser Administrador. A transferência fica registrada na
+                  auditoria.
+                </p>
+                {members.some((member) => !member.isCurrentUser) ? (
+                  <div>
+                    <TransferOwnershipDialog members={members} />
+                  </div>
+                ) : (
+                  <p className="m-0 text-small text-text-muted">
+                    Convide mais alguém para a equipe antes de transferir a posse.
+                  </p>
+                )}
+              </div>
             </section>
           ) : null}
         </div>

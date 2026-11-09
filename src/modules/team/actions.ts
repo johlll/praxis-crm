@@ -16,6 +16,7 @@ import {
   createInvitationSchema,
   invitationIdSchema,
   membershipIdSchema,
+  transferOwnershipSchema,
   updateMembershipRoleSchema,
 } from "./schema";
 
@@ -139,6 +140,42 @@ export async function removeMembershipAction(formData: FormData): Promise<Action
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.rpc("remove_membership", {
     p_membership_id: parsed.data.membershipId,
+  });
+  if (error) return { ok: false, error: toUserMessage(error) };
+
+  revalidatePath("/configuracoes/equipe");
+  return { ok: true };
+}
+
+const TRANSFER_UNCONFIRMED_MESSAGE = "Confirme que entendeu as consequências para transferir a posse.";
+
+/**
+ * Transfere a posse do workspace (B5): o destinatário vira proprietário e
+ * quem transferiu vira administrador, atomicamente, dentro do banco.
+ *
+ * O workspace é o da SESSÃO (nunca do formulário), e o destinatário é uma
+ * membership procurada dentro dele: de outro workspace ou inexistente dá o
+ * mesmo erro. A checagem "é o proprietário" acontece aqui (erro sanitizado
+ * cedo) e de novo no banco, que é quem de fato decide. Sem a caixa de
+ * confirmação marcada, nada é chamado.
+ */
+export async function transferOwnershipAction(formData: FormData): Promise<ActionResult> {
+  const guard = await requirePermissionSafe("workspace.transfer_ownership");
+  if ("error" in guard) return { ok: false, error: guard.error };
+
+  const parsed = transferOwnershipSchema.safeParse({
+    membershipId: formData.get("membershipId"),
+    confirm: formData.get("confirm"),
+  });
+  if (!parsed.success) {
+    const onlyConfirmMissing = parsed.error.issues.every((issue) => issue.path[0] === "confirm");
+    return { ok: false, error: onlyConfirmMissing ? TRANSFER_UNCONFIRMED_MESSAGE : INVALID_DATA_MESSAGE };
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase.rpc("transfer_workspace_ownership", {
+    p_workspace_id: guard.ctx.workspaceId,
+    p_target_membership_id: parsed.data.membershipId,
   });
   if (error) return { ok: false, error: toUserMessage(error) };
 
