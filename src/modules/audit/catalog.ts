@@ -75,6 +75,13 @@ export const AUDIT_ACTION_GROUPS: readonly AuditActionGroup[] = [
     ["activity.deleted", "Atividade excluída"],
     ["activity.auto_created", "Atividade criada automaticamente"],
   ]),
+  group("Automações", [
+    ["automation.rule_created", "Regra de automação criada"],
+    ["automation.rule_updated", "Regra de automação alterada"],
+    ["automation.rule_activated", "Regra de automação ativada"],
+    ["automation.rule_paused", "Regra de automação pausada"],
+    ["automation.rule_archived", "Regra de automação arquivada"],
+  ]),
   group("Clientes", [
     ["client.status_changed", "Status do cliente alterado"],
     ["client.owner_transferred", "Responsável do cliente transferido"],

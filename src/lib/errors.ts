@@ -189,6 +189,15 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   cannot_transfer_to_self: "Escolha outra pessoa: a posse não pode ser transferida para você mesmo.",
   membership_not_active: "Só é possível transferir a posse para um membro ativo da equipe.",
   ownership_transfer_failed: "Não foi possível transferir a posse. Nada foi alterado.",
+  // C1 — automações internas. automation_rule_not_found cobre regra inexistente
+  // e regra de outro workspace (o banco não distingue).
+  automation_rule_not_found: "Regra não encontrada.",
+  automation_rule_archived: "Esta regra está arquivada e não pode mais ser alterada.",
+  automation_simulation_required: "Simule a regra (versão atual) antes de ativá-la.",
+  invalid_automation_transition: "Esta mudança de estado não é permitida para a regra.",
+  invalid_automation_rule: "A regra está incompleta ou tem valores fora do permitido. Confira os campos.",
+  invalid_automation_stage: "Escolha uma etapa válida deste workspace (não vale etapa de ganho ou perda).",
+  invalid_automation_assignee: "Escolha uma pessoa ativa deste workspace como responsável.",
 };
 
 /** update_lead_basic_fields()/assign_lead()/set_lead_status()/set_lead_value()

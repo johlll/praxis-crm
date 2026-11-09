@@ -6,6 +6,7 @@ import { createServerSupabaseClient } from "@/server/supabase/server";
 import { requirePermissionSafe } from "@/server/authz/safe";
 import { DataLoadError, LOAD_ERROR_MESSAGE } from "@/server/data/load-error";
 import { toUserMessage } from "@/lib/errors";
+import { scheduleAutomationRun } from "@/modules/automations/run";
 import {
   createOpportunitySchema,
   moveOpportunityStageSchema,
@@ -128,6 +129,9 @@ export async function moveOpportunityStageAction(
   // ficava sem revalidação própria).
   const leadId = formData.get("leadId");
   if (typeof leadId === "string" && leadId) revalidatePath(`/leads/${leadId}`);
+  // C1: o evento de "mudou de etapa" já foi gravado junto da transição; isto só
+  // pede uma rodada, depois da resposta, sem nunca afetar o movimento.
+  scheduleAutomationRun(guard.ctx.workspaceId);
   return { ok: true, opportunityId: parsed.data.opportunityId };
 }
 

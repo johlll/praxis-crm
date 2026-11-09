@@ -155,7 +155,13 @@ export type Permission =
   // B5 — passar a posse do workspace a outro membro (docs/decisoes/b5-auditoria-posse.md).
   // Só o proprietário: nem admin transfere. O banco repete a regra
   // (transfer_workspace_ownership exige owner ATIVO).
-  | "workspace.transfer_ownership";
+  | "workspace.transfer_ownership"
+  // C1 — automações internas (docs/decisoes/c1-automacoes-minimas.md). Criar,
+  // editar, simular, ativar, pausar e arquivar regras: só owner/admin (uma regra
+  // ativa passa a criar atividades sozinha). Consultar regras e histórico:
+  // também manager. O banco repete as duas faixas.
+  | "automation.manage"
+  | "automation.view";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -198,6 +204,8 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "calendar.manage": new Set<Role>(["owner", "admin"]),
   "channel.manage": new Set<Role>(["owner", "admin"]),
   "workspace.transfer_ownership": new Set<Role>(["owner"]),
+  "automation.manage": new Set<Role>(["owner", "admin"]),
+  "automation.view": new Set<Role>(["owner", "admin", "manager"]),
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {
