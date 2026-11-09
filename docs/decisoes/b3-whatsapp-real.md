@@ -20,7 +20,10 @@ Status (08/11/2026):
   110) e implementada com o provedor simulado (§28.18). O **adaptador de envio da
   YCloud** (texto e template utility) está implementado, mas **não validado com a
   YCloud real** (§28.19); nenhum canal tem envio ligado e nenhuma chamada real
-  foi feita. A validação real continua pendente até 25/11/2026.
+  foi feita. O portão do banco passa a aceitar **só YCloud de Preview** com
+  `api_key` (§28.20, migration `20261109130000`, ainda sem ser aplicada no
+  hospedado); Production e o número da Vitória seguem bloqueados. A validação
+  real continua pendente até 25/11/2026.
 - **Provedor aprovado para o piloto:** YCloud, atrás de um adaptador próprio.
 - **Primeira validação:** número dedicado de teste, como aprovado.
 - **Portões do §6.7:** continuam valendo para credenciais e uso real.
@@ -7008,12 +7011,48 @@ formulário, do cliente ou da conta da Vitória, nem leitura direta de tabela. `
 `praxis.out.<outbox sem hífens>`, igual ao `wa_message_id` que o banco grava, sem telefone nem
 conteúdo.
 
-**Portão que continua fechado.** `whatsapp_enable_channel_send` segue recusando canal YCloud
-(`provider_send_not_available`) nesta PR; nenhum envio real é possível. A futura migration que o
-abrir liberará, **inicialmente, só canal YCloud de Preview**. Production e o número da Vitória
-continuam bloqueados. O contrato autenticado Praxis ↔ Vitória (§5.2) é exigido somente antes de
+**Portão.** Na PR do adaptador, `whatsapp_enable_channel_send` seguia recusando canal YCloud
+(`provider_send_not_available`); nenhum envio real era possível. A migration seguinte o abre
+**só para canal YCloud de Preview** (§28.20). Production e o número da Vitória continuam
+bloqueados. O contrato autenticado Praxis ↔ Vitória (§5.2) é exigido somente antes de
 permitir envio pelo número real da Vitória; **não** é necessário para habilitar o envio num canal
 YCloud isolado de Preview, com número dedicado de teste.
 
 **Não validado:** o formato exato da resposta e dos erros com a YCloud real; o comportamento
 dos limites; a aceitação de parâmetros de template pela conta real.
+
+### 28.20 B3.3 — portão do envio: canal YCloud de Preview (09/11/2026)
+
+**Escopo.** Migration `20261109130000_b3_3_portao_ycloud_preview.sql`: `create or replace` de
+`whatsapp_enable_channel_send` (mesma assinatura, SECURITY DEFINER, `search_path` vazio, EXECUTE
+só para `service_role`). Nenhuma tabela, coluna, índice, enum ou dado muda. Ligar o envio só
+altera uma linha do canal e escreve a auditoria (ambiente e provedor): **nenhuma chamada à
+YCloud**. É o último bloqueio de código da B3.3.
+
+**Regra exata.** O envio liga quando todas valem:
+- ambiente autenticado (cabeçalho assinado) e ambiente do canal = `preview`;
+- provedor `ycloud` (o `simulated` segue como antes, só no Preview, pela restrição
+  `whatsapp_channels_simulator_send_preview_only`);
+- canal do workspace e do ambiente autenticados, com status `active`;
+- ator `owner` ou `admin` com membership ativa no workspace;
+- existe a credencial `api_key` do mesmo canal, workspace, ambiente e provedor (o
+  `webhook_secret` não conta).
+
+**Continua recusado** (sempre um código simbólico, sem segredo no retorno, erro ou auditoria):
+YCloud em Production e Meta em qualquer ambiente (`provider_send_not_available`); canal pausado,
+desconectado ou desativado (`invalid_channel_state`); canal sem `api_key`, ou só com
+`webhook_secret` (`credential_not_found`); manager, lawyer, sales, viewer e quem é de outro
+workspace (`insufficient_permission`); ambiente ausente, inválido, vencido ou assinado por outra
+chave (`whatsapp_environment_required`); canal de outro ambiente (`channel_not_found`).
+Credencial de outro canal, workspace, ambiente ou provedor nem chega a ser gravada (chave
+estrangeira composta da tabela de credenciais).
+
+**Vitória.** A liberação é só técnica, para um futuro canal dedicado de teste. O número da
+Vitória continua proibido até existir o contrato autenticado Praxis ↔ Vitória (§5.2), exigido
+**somente** para esse número; não há cadastro, mecanismo de passagem nem alteração de conta,
+chave, webhook ou canal da Vitória.
+
+**Estado.** Nenhum canal, credencial, número, template, variável ou serviço externo foi criado ou
+alterado; a migration só vale no hospedado depois de aplicada com autorização explícita. Com ela
+aplicada, a B3 está pronta no código; a ativação real depende apenas da conta YCloud isolada e do
+número de teste, com validação até 25/11/2026.

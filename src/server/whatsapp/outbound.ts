@@ -32,8 +32,8 @@ import { resolveWhatsAppProvider } from "@/server/whatsapp/provider";
  * só o habilita. O simulado não usa rede. O da YCloud (§28.19) recebe a chave de
  * API do canal, lida só aqui, DEPOIS do `begin` e ANTES da rede: sem chave,
  * sem envio habilitado ou sem template aprovado e utility, a intenção é
- * recusada sem nenhuma chamada. Mesmo assim, o portão do banco continua
- * recusando ligar o envio de canal YCloud (`whatsapp_enable_channel_send`).
+ * recusada sem nenhuma chamada. O portão do banco (`whatsapp_enable_channel_send`,
+ * §28.20) só deixa ligar o envio de canal YCloud de Preview com `api_key`.
  */
 
 export type HumanSendParams = {
