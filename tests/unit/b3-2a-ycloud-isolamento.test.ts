@@ -37,14 +37,15 @@ describe("isolamento", () => {
     provider.verifyWebhook({ rawBody: bytes("{}"), headers: new Headers({ "YCloud-Signature": "lixo" }), secret: FICT.secret });
 
     const recipient = { kind: "phone" as const, phoneE164: FICT.customerPhone, bsuid: null };
+    // B3.3: o envio existe, mas sem credencial/canal válido recusa ANTES da rede.
     await expect(provider.sendText({ routingKey: "r", recipient, text: "x", correlationId: "c" })).resolves.toEqual({
       ok: false,
-      reason: "unsupported",
-      capability: "sendText",
+      reason: "rejected",
+      errorCode: "credential_unavailable",
     });
     await expect(
       provider.sendTemplate({ routingKey: "r", recipient, templateName: "t", templateLanguage: "pt_BR", parameters: [], correlationId: "c" }),
-    ).resolves.toEqual({ ok: false, reason: "unsupported", capability: "sendTemplate" });
+    ).resolves.toEqual({ ok: false, reason: "rejected", errorCode: "credential_unavailable" });
     await expect(provider.lookupMessage({ routingKey: "r", providerMessageId: "m" })).resolves.toEqual({
       ok: false,
       reason: "unsupported",
@@ -64,7 +65,7 @@ describe("isolamento", () => {
     const source = readFileSync(resolve(import.meta.dirname, "../../src/server/whatsapp/provider/ycloud.ts"), "utf8");
     const imports = [...source.matchAll(/from\s+"([^"]+)"/g)].map((m) => m[1]);
     for (const spec of imports) {
-      expect(spec).toMatch(/^(node:crypto|zod|@\/server\/whatsapp\/provider\/contract|@\/server\/whatsapp\/webhook)$/);
+      expect(spec).toMatch(/^(node:crypto|zod|@\/server\/whatsapp\/provider\/contract|@\/server\/whatsapp\/provider\/ycloud-send|@\/server\/whatsapp\/webhook)$/);
     }
     expect(source).not.toMatch(/\bfetch\s*\(|process\.env|console\./);
   });

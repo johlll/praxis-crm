@@ -51,8 +51,8 @@ describe("1. assinatura válida sobre os bytes recebidos", () => {
     expect(provider.describeCapabilities()).toEqual({
       verifyWebhook: true,
       normalizeEvents: true,
-      sendText: false,
-      sendTemplate: false,
+      sendText: true,
+      sendTemplate: true,
       lookupMessage: false,
       fetchMedia: false,
     });

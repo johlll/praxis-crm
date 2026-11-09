@@ -27,6 +27,7 @@ import {
   type WhatsAppContentKind,
   type WhatsAppProvider,
 } from "@/server/whatsapp/provider/contract";
+import { sendYCloudTemplate, sendYCloudText, type YCloudFetch } from "@/server/whatsapp/provider/ycloud-send";
 import { WHATSAPP_WEBHOOK_MAX_BYTES } from "@/server/whatsapp/webhook";
 
 /**
@@ -54,7 +55,9 @@ import { WHATSAPP_WEBHOOK_MAX_BYTES } from "@/server/whatsapp/webhook";
  * só uma candidata (`inbound`, `business_app` ou `external_api`, §15.10), e
  * o `externalId` é um valor opaco de correlação, nunca prova de remetente.
  *
- * Ainda não está ligado na resolução de provedor: a rota é da B3.2c.
+ * Envio (B3.3, §28.19): `sendText` e `sendTemplate` delegam a
+ * `provider/ycloud-send.ts`, o único lugar com chamada HTTP. Este arquivo
+ * continua sem rede, sem leitura de ambiente e sem log.
  */
 
 export const YCLOUD_SIGNATURE_HEADER = "YCloud-Signature";
@@ -77,8 +80,8 @@ export const YCLOUD_EVENT_API_VERSION = "v2";
 const CAPABILITIES: WhatsAppCapabilities = Object.freeze({
   verifyWebhook: true,
   normalizeEvents: true,
-  sendText: false,
-  sendTemplate: false,
+  sendText: true,
+  sendTemplate: true,
   lookupMessage: false,
   fetchMedia: false,
 });
@@ -458,9 +461,12 @@ function inspectYCloudEnvelope(json: unknown): InspectEnvelopeResult {
 export class YCloudWhatsAppProvider implements WhatsAppProvider {
   readonly kind = "ycloud" as const;
   readonly #toleranceSeconds: number;
+  readonly #fetch: YCloudFetch | undefined;
 
-  constructor(options: { signatureToleranceSeconds?: number | undefined } = {}) {
+  /** `fetch` só existe para teste (rede simulada); em produção usa o `fetch` global. */
+  constructor(options: { signatureToleranceSeconds?: number | undefined; fetch?: YCloudFetch | undefined } = {}) {
     this.#toleranceSeconds = signatureTolerance(options.signatureToleranceSeconds);
+    this.#fetch = options.fetch;
   }
 
   describeCapabilities(): WhatsAppCapabilities {
@@ -537,12 +543,12 @@ export class YCloudWhatsAppProvider implements WhatsAppProvider {
     }
   }
 
-  async sendText(_request: SendTextRequest): Promise<SendResult> {
-    return unsupported("sendText");
+  async sendText(request: SendTextRequest): Promise<SendResult> {
+    return sendYCloudText(request, this.#fetch);
   }
 
-  async sendTemplate(_request: SendTemplateRequest): Promise<SendResult> {
-    return unsupported("sendTemplate");
+  async sendTemplate(request: SendTemplateRequest): Promise<SendResult> {
+    return sendYCloudTemplate(request, this.#fetch);
   }
 
   async lookupMessage(_request: LookupMessageRequest): Promise<LookupMessageResult> {

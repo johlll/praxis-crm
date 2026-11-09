@@ -9,6 +9,7 @@ import {
   type ReserveContent,
   type WhatsAppSendContext,
 } from "@/server/whatsapp/admin/outbound";
+import { adminReadWhatsAppSendCredential } from "@/server/whatsapp/admin/channels";
 import { whatsappContactIdentity, type SendResult } from "@/server/whatsapp/provider/contract";
 import { resolveWhatsAppProvider } from "@/server/whatsapp/provider";
 
@@ -27,8 +28,12 @@ import { resolveWhatsAppProvider } from "@/server/whatsapp/provider";
  * por decisão humana, envia de novo. Nenhum log: nada de conteúdo, telefone ou
  * credencial sai daqui, e os erros são códigos simbólicos.
  *
- * Esta etapa só envia pelo adaptador SIMULADO (nenhuma rede). O adaptador é
- * escolhido pelo provedor GRAVADO NO CANAL; `WHATSAPP_PROVIDER` só o habilita.
+ * O adaptador é escolhido pelo provedor GRAVADO NO CANAL; `WHATSAPP_PROVIDER`
+ * só o habilita. O simulado não usa rede. O da YCloud (§28.19) recebe a chave de
+ * API do canal, lida só aqui, DEPOIS do `begin` e ANTES da rede: sem chave,
+ * sem envio habilitado ou sem template aprovado e utility, a intenção é
+ * recusada sem nenhuma chamada. Mesmo assim, o portão do banco continua
+ * recusando ligar o envio de canal YCloud (`whatsapp_enable_channel_send`).
  */
 
 export type HumanSendParams = {
@@ -59,6 +64,10 @@ function outcomeOf(result: SendResult): OutboxOutcome {
   if (result.reason === "rejected") return { outcome: "rejected", errorCode: safeRejectionCode(result.errorCode) };
   if (result.reason === "uncertain") return { outcome: "uncertain" };
   return { outcome: "rejected", errorCode: "send_unsupported" };
+}
+
+function isApprovedUtilityTemplate(context: Extract<WhatsAppSendContext, { route: "b3" }>, content: { name: string; language: string }): boolean {
+  return context.templates.some((t) => t.name === content.name && t.language === content.language);
 }
 
 function done(snapshot: OutboxSnapshot): HumanSendResult {
@@ -100,23 +109,44 @@ export async function sendWhatsAppHumanMessage(params: HumanSendParams): Promise
     outcome = { outcome: "rejected", errorCode: "recipient_unavailable" };
   } else if (begin.content.kind === "text" ? !capabilities.sendText : !capabilities.sendTemplate) {
     outcome = { outcome: "rejected", errorCode: "send_unsupported" };
+  } else if (begin.content.kind === "template" && !isApprovedUtilityTemplate(context, begin.content)) {
+    // Defesa em profundidade: só chega à rede o template que a leitura do
+    // contexto listou como aprovado e utility (o banco já recusou os demais).
+    outcome = { outcome: "rejected", errorCode: "template_not_approved" };
   } else {
-    try {
-      const result =
-        begin.content.kind === "text"
-          ? await adapter.sendText({ routingKey: begin.routingKey, recipient, text: begin.content.text, correlationId: reserved.outbox_id })
-          : await adapter.sendTemplate({
-              routingKey: begin.routingKey,
-              recipient,
-              templateName: begin.content.name,
-              templateLanguage: begin.content.language,
-              parameters: begin.content.params,
-              correlationId: reserved.outbox_id,
-            });
-      outcome = outcomeOf(result);
-    } catch {
-      // A chamada pode ter chegado ao provedor: incerto, nunca reenviado.
-      outcome = { outcome: "uncertain" };
+    // Chave do canal (só provedores com rede). Qualquer falha aqui acontece
+    // ANTES da chamada: recusada, nunca incerta.
+    let credential: string | undefined;
+    let credentialOk = true;
+    if (adapter.kind !== "simulated") {
+      try {
+        credential = await adminReadWhatsAppSendCredential({ workspaceId: params.workspaceId, provider: begin.provider, routingKey: begin.routingKey });
+      } catch {
+        credentialOk = false;
+      }
+    }
+
+    if (!credentialOk) {
+      outcome = { outcome: "rejected", errorCode: "credential_unavailable" };
+    } else {
+      try {
+        const result =
+          begin.content.kind === "text"
+            ? await adapter.sendText({ routingKey: begin.routingKey, recipient, text: begin.content.text, correlationId: reserved.outbox_id, credential })
+            : await adapter.sendTemplate({
+                routingKey: begin.routingKey,
+                recipient,
+                templateName: begin.content.name,
+                templateLanguage: begin.content.language,
+                parameters: begin.content.params,
+                correlationId: reserved.outbox_id,
+                credential,
+              });
+        outcome = outcomeOf(result);
+      } catch {
+        // A chamada pode ter chegado ao provedor: incerto, nunca reenviado.
+        outcome = { outcome: "uncertain" };
+      }
     }
   }
 

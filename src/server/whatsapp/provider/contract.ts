@@ -360,6 +360,10 @@ export type SendTextRequest = {
   text: string;
   /** Correlação com o registro interno. Não é chave de idempotência. */
   correlationId: string;
+  /** Credencial de API do canal, já decifrada pelo servidor (B3.3). Nunca vem
+   * do cliente nem de variável global; o adaptador não a registra nem a
+   * devolve. O simulado a ignora. */
+  credential?: string | undefined;
 };
 
 export type SendTemplateRequest = {
@@ -369,6 +373,8 @@ export type SendTemplateRequest = {
   templateLanguage: string;
   parameters: string[];
   correlationId: string;
+  /** Ver `SendTextRequest.credential`. */
+  credential?: string | undefined;
 };
 
 export type SendResult =
