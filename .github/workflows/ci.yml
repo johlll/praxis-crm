@@ -245,6 +245,15 @@ jobs:
         # roda antes dos passos que recriam o banco local.
         run: bash scripts/b5-last-owner-concurrency-check.sh
 
+      - name: Teste de concorrência real (C1 — processamento das automações)
+        # Quatro processadores soltos ao mesmo tempo sobre os mesmos eventos
+        # (uma atividade por evento + regra, nunca duas), um processador
+        # segurando a transação enquanto outro pula as linhas travadas sem
+        # esperar, e o reprocessamento que não cria nada — ver
+        # scripts/c1-automations-concurrency-check.sh. Workspace próprio;
+        # roda antes dos passos que recriam o banco local.
+        run: bash scripts/c1-automations-concurrency-check.sh
+
       - name: Atualização a partir da versão anterior (numeração de propostas)
         # "Aplicar migrations do zero" já valida a criação do banco; este
         # passo valida a ATUALIZAÇÃO com dados emitidos pela versão anterior.

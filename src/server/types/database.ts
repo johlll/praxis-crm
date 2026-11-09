@@ -182,6 +182,242 @@ export type Database = {
           },
         ]
       }
+      automation_events: {
+        Row: {
+          actor_user_id: string | null
+          event_type: string
+          from_stage_id: string | null
+          id: string
+          lead_id: string
+          lead_legal_area: string | null
+          lead_priority: Database["public"]["Enums"]["lead_priority"] | null
+          occurred_at: string
+          opportunity_id: string | null
+          processed_at: string | null
+          status: string
+          to_stage_id: string | null
+          transition_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          actor_user_id?: string | null
+          event_type: string
+          from_stage_id?: string | null
+          id?: string
+          lead_id: string
+          lead_legal_area?: string | null
+          lead_priority?: Database["public"]["Enums"]["lead_priority"] | null
+          occurred_at?: string
+          opportunity_id?: string | null
+          processed_at?: string | null
+          status?: string
+          to_stage_id?: string | null
+          transition_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          actor_user_id?: string | null
+          event_type?: string
+          from_stage_id?: string | null
+          id?: string
+          lead_id?: string
+          lead_legal_area?: string | null
+          lead_priority?: Database["public"]["Enums"]["lead_priority"] | null
+          occurred_at?: string
+          opportunity_id?: string | null
+          processed_at?: string | null
+          status?: string
+          to_stage_id?: string | null
+          transition_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "automation_events_lead_fkey"
+            columns: ["workspace_id", "lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "automation_events_opportunity_fkey"
+            columns: ["workspace_id", "opportunity_id", "lead_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["workspace_id", "id", "lead_id"]
+          },
+          {
+            foreignKeyName: "automation_events_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      automation_executions: {
+        Row: {
+          activity_id: string | null
+          attempt_count: number
+          created_at: string
+          error_code: string | null
+          event_id: string
+          finished_at: string | null
+          id: string
+          last_attempt_at: string | null
+          next_attempt_at: string
+          rule_id: string
+          rule_version: number
+          state: string
+          workspace_id: string
+        }
+        Insert: {
+          activity_id?: string | null
+          attempt_count?: number
+          created_at?: string
+          error_code?: string | null
+          event_id: string
+          finished_at?: string | null
+          id?: string
+          last_attempt_at?: string | null
+          next_attempt_at?: string
+          rule_id: string
+          rule_version: number
+          state?: string
+          workspace_id: string
+        }
+        Update: {
+          activity_id?: string | null
+          attempt_count?: number
+          created_at?: string
+          error_code?: string | null
+          event_id?: string
+          finished_at?: string | null
+          id?: string
+          last_attempt_at?: string | null
+          next_attempt_at?: string
+          rule_id?: string
+          rule_version?: number
+          state?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "automation_executions_activity_fkey"
+            columns: ["workspace_id", "activity_id"]
+            isOneToOne: false
+            referencedRelation: "activities"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "automation_executions_event_fkey"
+            columns: ["workspace_id", "event_id"]
+            isOneToOne: false
+            referencedRelation: "automation_events"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "automation_executions_rule_fkey"
+            columns: ["workspace_id", "rule_id"]
+            isOneToOne: false
+            referencedRelation: "automation_rules"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "automation_executions_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      automation_rules: {
+        Row: {
+          action_assignee_mode: string
+          action_assignee_user_id: string | null
+          action_due_days: number
+          action_priority: Database["public"]["Enums"]["lead_priority"]
+          action_title: string
+          activated_at: string | null
+          cond_from_stage_id: string | null
+          cond_legal_area: string | null
+          cond_priority: Database["public"]["Enums"]["lead_priority"] | null
+          cond_to_stage_id: string | null
+          created_at: string
+          created_by: string
+          id: string
+          name: string
+          simulated_at: string | null
+          simulated_count: number | null
+          simulated_version: number | null
+          status: string
+          trigger_type: string
+          updated_at: string
+          updated_by: string
+          version: number
+          workspace_id: string
+        }
+        Insert: {
+          action_assignee_mode: string
+          action_assignee_user_id?: string | null
+          action_due_days: number
+          action_priority?: Database["public"]["Enums"]["lead_priority"]
+          action_title: string
+          activated_at?: string | null
+          cond_from_stage_id?: string | null
+          cond_legal_area?: string | null
+          cond_priority?: Database["public"]["Enums"]["lead_priority"] | null
+          cond_to_stage_id?: string | null
+          created_at?: string
+          created_by: string
+          id?: string
+          name: string
+          simulated_at?: string | null
+          simulated_count?: number | null
+          simulated_version?: number | null
+          status?: string
+          trigger_type: string
+          updated_at?: string
+          updated_by: string
+          version?: number
+          workspace_id: string
+        }
+        Update: {
+          action_assignee_mode?: string
+          action_assignee_user_id?: string | null
+          action_due_days?: number
+          action_priority?: Database["public"]["Enums"]["lead_priority"]
+          action_title?: string
+          activated_at?: string | null
+          cond_from_stage_id?: string | null
+          cond_legal_area?: string | null
+          cond_priority?: Database["public"]["Enums"]["lead_priority"] | null
+          cond_to_stage_id?: string | null
+          created_at?: string
+          created_by?: string
+          id?: string
+          name?: string
+          simulated_at?: string | null
+          simulated_count?: number | null
+          simulated_version?: number | null
+          status?: string
+          trigger_type?: string
+          updated_at?: string
+          updated_by?: string
+          version?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "automation_rules_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       calendar_connections: {
         Row: {
           access_token_ciphertext: string | null
@@ -4556,6 +4792,23 @@ export type Database = {
         }
         Returns: string
       }
+      create_automation_rule: {
+        Args: {
+          p_action_assignee_mode: string
+          p_action_assignee_user_id?: string
+          p_action_due_days: number
+          p_action_priority: Database["public"]["Enums"]["lead_priority"]
+          p_action_title: string
+          p_cond_from_stage_id?: string
+          p_cond_legal_area?: string
+          p_cond_priority?: Database["public"]["Enums"]["lead_priority"]
+          p_cond_to_stage_id?: string
+          p_name: string
+          p_trigger_type: string
+          p_workspace_id: string
+        }
+        Returns: string
+      }
       create_calendar_event_link: {
         Args: {
           p_activity_id: string
@@ -4997,6 +5250,14 @@ export type Database = {
           items: Json
         }[]
       }
+      list_automation_executions: {
+        Args: { p_limit?: number; p_rule_id?: string; p_workspace_id: string }
+        Returns: Json
+      }
+      list_automation_rules: {
+        Args: { p_workspace_id: string }
+        Returns: Json
+      }
       list_calendar_connections: {
         Args: { p_workspace_id: string }
         Returns: Json
@@ -5218,6 +5479,14 @@ export type Database = {
           workspace_name: string
         }[]
       }
+      process_automation_events: {
+        Args: { p_limit?: number; p_workspace_id: string }
+        Returns: Json
+      }
+      process_automation_events_system: {
+        Args: { p_limit?: number }
+        Returns: Json
+      }
       process_form_event: {
         Args: { p_input: Json; p_webhook_event_id: string }
         Returns: Json
@@ -5401,6 +5670,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      set_automation_rule_status: {
+        Args: { p_rule_id: string; p_status: string }
+        Returns: undefined
+      }
       set_calendar_connection_calendar: {
         Args: {
           p_actor_user_id: string
@@ -5470,6 +5743,10 @@ export type Database = {
           p_title: string
         }
         Returns: string
+      }
+      simulate_automation_rule: {
+        Args: { p_rule_id: string }
+        Returns: Json
       }
       simulate_inbound_whatsapp_message: {
         Args: {
@@ -5546,6 +5823,23 @@ export type Database = {
           p_priority?: Database["public"]["Enums"]["lead_priority"]
           p_title?: string
           p_type?: Database["public"]["Enums"]["activity_type"]
+        }
+        Returns: undefined
+      }
+      update_automation_rule: {
+        Args: {
+          p_action_assignee_mode: string
+          p_action_assignee_user_id?: string
+          p_action_due_days: number
+          p_action_priority: Database["public"]["Enums"]["lead_priority"]
+          p_action_title: string
+          p_cond_from_stage_id?: string
+          p_cond_legal_area?: string
+          p_cond_priority?: Database["public"]["Enums"]["lead_priority"]
+          p_cond_to_stage_id?: string
+          p_name: string
+          p_rule_id: string
+          p_trigger_type: string
         }
         Returns: undefined
       }

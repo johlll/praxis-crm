@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/server/supabase/server";
 import { requirePermissionSafe } from "@/server/authz/safe";
 import { toUserMessage } from "@/lib/errors";
+import { scheduleAutomationRun } from "@/modules/automations/run";
 import { assignLeadSchema, createLeadSchema, setLeadStatusSchema, updateLeadBasicFieldsSchema } from "./schema";
 
 export type LeadActionState = {
@@ -52,6 +53,9 @@ export async function createLeadAction(
   }
 
   revalidatePath("/leads");
+  // C1: o evento de "lead criado" já foi gravado junto do lead; isto só pede uma
+  // rodada, depois da resposta, sem nunca afetar a criação.
+  scheduleAutomationRun(ctx.workspaceId);
   redirect(`/leads/${data}`);
 }
 
