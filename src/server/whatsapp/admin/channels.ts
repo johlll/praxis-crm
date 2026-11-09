@@ -595,26 +595,36 @@ export async function adminResolveWhatsAppWebhookChannel(params: {
 }
 
 /**
- * Chave de API para UM envio humano (B3.3, §28.19). O envio só conhece o
- * provedor e a routing key que o banco devolveu no `begin`; o canal é
- * resolvido de novo pelo caminho já confiável da B3.2 (a mesma resolução do
- * webhook, que também decifra o segredo do webhook — usado só aqui dentro e
- * descartado) e conferido contra o workspace da sessão. O banco só entrega a
- * chave de API de canal ATIVO com envio habilitado: sem isso, `null` →
- * `credential_not_found`, antes de qualquer rede. Nunca há chave global, do
- * formulário ou do cliente. O retorno nunca pode ir para log, erro ou resposta.
+ * Chave de API para UM envio humano (B3.3, §28.19). Pede e decifra
+ * EXCLUSIVAMENTE `api_key`: o segredo do webhook não é solicitado, lido nem
+ * decifrado aqui, e nenhum resolvedor do webhook participa.
+ *
+ * `channelId`, `provider` e `routingKey` vêm do `begin` da outbox (o banco os
+ * leu da própria intenção); o chamador não os fornece. O contexto confiável é
+ * montado aqui com o ambiente autenticado, e `whatsapp_get_channel_credential`
+ * confere no banco canal + workspace + ambiente + provedor + routing key: qualquer
+ * divergência é recusada e canal sem envio habilitado e ativo devolve vazio.
+ * Sem `channelId` (banco anterior à migration), falha fechada, sem outro
+ * resolvedor. Nunca há chave global, do formulário ou do cliente. O retorno
+ * nunca pode ir para log, erro ou resposta.
  */
 export async function adminReadWhatsAppSendCredential(params: {
   workspaceId: string;
+  channelId: string | null;
   provider: WhatsAppProviderKind;
   routingKey: string;
   env?: WhatsAppProviderEnv | undefined;
 }): Promise<string> {
-  const resolved = await adminResolveWhatsAppWebhookChannel({ provider: params.provider, routingKey: params.routingKey, env: params.env });
-  if (!resolved) throw new WhatsAppChannelStoreError("channel_not_found");
-  if (resolved.channel.workspaceId !== params.workspaceId) throw new WhatsAppChannelStoreError("channel_context_mismatch");
-  if (resolved.status !== "active") throw new WhatsAppChannelStoreError("invalid_channel_state");
-  const { credential } = await adminPrepareWhatsAppChannelCall({ channel: resolved.channel, purpose: "api_key", env: params.env });
+  const channelId = uuidSchema.safeParse(params.channelId);
+  if (!channelId.success) throw new WhatsAppChannelStoreError("channel_not_found");
+  const channel = resolvedContext({
+    channelId: channelId.data,
+    workspaceId: params.workspaceId,
+    environment: getWhatsAppEnvironment(),
+    provider: params.provider,
+    routingKey: params.routingKey,
+  });
+  const { credential } = await adminPrepareWhatsAppChannelCall({ channel, purpose: "api_key", env: params.env });
   return credential;
 }
 

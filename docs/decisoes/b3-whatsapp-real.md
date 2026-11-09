@@ -11,9 +11,11 @@ Status (08/11/2026):
   Niero. Retomada prevista até 25/11/2026; entrega final do CRM em 05/12/2026.
 - **Production:** desligada, sem nenhuma `WHATSAPP_*`.
 - **Preview:** sem configuração ativa.
-- **Vitória (chatbot) e conta "Marketing Vizentini":** intocados. O envio no
-  número da Vitória continua **proibido** até existir o contrato autenticado de
-  passagem entre o Praxis e a Vitória (§5.2).
+- **Vitória (chatbot) e conta "Marketing Vizentini":** intocados. O contrato
+  autenticado de passagem entre o Praxis e a Vitória (§5.2) é exigido **somente
+  para enviar pelo número da Vitória**, que continua **proibido** até ele existir.
+  Ele não bloqueia o futuro envio num canal YCloud isolado de Preview, com número
+  dedicado de teste.
 - **B3.3:** instalada no Supabase hospedado (migration `20261108120000`, ledger
   110) e implementada com o provedor simulado (§28.18). O **adaptador de envio da
   YCloud** (texto e template utility) está implementado, mas **não validado com a
@@ -6940,7 +6942,8 @@ bloqueado, composer de template fora da janela e rótulo "Envio incerto". Canal 
 não muda.
 
 **Limitações que seguem:**
-- o envio real exige o adaptador YCloud e o contrato autenticado de passagem com a Vitória;
+- o envio real exige o adaptador YCloud (§28.19) e a liberação do portão do banco; o contrato
+  autenticado com a Vitória só vale para o número da Vitória (§28.19);
 - os templates entram por uma operação do servidor (`adminUpsertWhatsAppTemplate`), sem
   tela, sem espelho dos eventos de revisão do provedor;
 - o instante exato do evento recebido não fica na mensagem (a janela usa o instante em que o
@@ -6951,9 +6954,10 @@ não muda.
 
 **Escopo.** `sendText` e `sendTemplate` do adaptador da YCloud (`provider/ycloud-send.ts`,
 chamado por `provider/ycloud.ts`). Sem mídia, marketing, campanha, sincronização de templates,
-reconciliação por consulta ou contrato com a Vitória. **Sem migration.** Nenhuma chamada real,
-nenhuma credencial real, nenhuma configuração externa; a conta "Marketing Vizentini" e a
-Vitória não foram tocadas.
+reconciliação por consulta ou contrato com a Vitória. **Uma única migration mínima**
+(`20261109120000_b3_3_begin_channel_id.sql`, ver "Chave"). Nenhuma chamada real, nenhuma
+credencial real, nenhuma configuração externa; a conta "Marketing Vizentini" e a Vitória não
+foram tocadas.
 
 **Contrato oficial usado** (docs.ycloud.com, conferido em 08/11/2026; a especificação
 completa dos componentes de template não estava legível na página de referência, então os
@@ -6989,15 +6993,27 @@ parâmetros seguem o exemplo oficial do guia "Send a WhatsApp message"):
 contexto não lista como aprovado e utility; `send_enabled=false` (o banco nem entrega a chave
 de API); provedor do canal diferente do adaptador ou da variável `WHATSAPP_PROVIDER`.
 
-**Chave.** Lida no servidor só depois do `begin`, do canal resolvido pelo caminho confiável da
-B3.2 (conferido contra o workspace da sessão, canal ativo, `purpose = api_key`). Nunca vem do
-formulário, de variável global nem da conta da Vitória. `externalId` =
+**Chave** (só `api_key`). O envio pede e decifra **exclusivamente** a `api_key`, por
+`whatsapp_get_channel_credential(..., 'api_key')`; o `webhook_secret` não é solicitado, lido,
+decifrado nem mantido em memória, e nenhum resolvedor do webhook participa. Para isso a
+migration `20261109120000` faz `create or replace` de `whatsapp_outbox_begin` (mesma assinatura,
+SECURITY DEFINER, `search_path` vazio, EXECUTE só para `service_role`) e acrescenta ao retorno o
+`channel_id`, lido pelo banco da própria outbox: o chamador não o fornece. Nenhuma tabela, coluna,
+índice, enum ou dado muda. O servidor monta o contexto confiável com o que o `begin` confirmou
+(canal, workspace da sessão, ambiente autenticado, provedor, routing key) e o banco confere tudo
+de novo. **Falha fechada:** banco anterior à migration (sem `channel_id`), `channel_id` malformado
+ou divergente, canal sem envio habilitado e ativo, ou só `webhook_secret` cadastrado →
+`credential_unavailable`, sem rede e sem tentar outro resolvedor. Nunca há chave global, do
+formulário, do cliente ou da conta da Vitória, nem leitura direta de tabela. `externalId` =
 `praxis.out.<outbox sem hífens>`, igual ao `wa_message_id` que o banco grava, sem telefone nem
 conteúdo.
 
 **Portão que continua fechado.** `whatsapp_enable_channel_send` segue recusando canal YCloud
-(`provider_send_not_available`). Abri-lo exige uma migration pequena e a decisão sobre o
-contrato com a Vitória (§5.2); fica para a retomada da validação real.
+(`provider_send_not_available`) nesta PR; nenhum envio real é possível. A futura migration que o
+abrir liberará, **inicialmente, só canal YCloud de Preview**. Production e o número da Vitória
+continuam bloqueados. O contrato autenticado Praxis ↔ Vitória (§5.2) é exigido somente antes de
+permitir envio pelo número real da Vitória; **não** é necessário para habilitar o envio num canal
+YCloud isolado de Preview, com número dedicado de teste.
 
 **Não validado:** o formato exato da resposta e dos erros com a YCloud real; o comportamento
 dos limites; a aceitação de parâmetros de template pela conta real.

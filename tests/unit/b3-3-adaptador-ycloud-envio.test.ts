@@ -16,18 +16,15 @@ import { resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const h = vi.hoisted(() => ({ rpc: vi.fn(), credential: vi.fn() }));
+const h = vi.hoisted(() => ({ rpc: vi.fn() }));
 
 vi.mock("@/server/whatsapp/admin/supabase", () => ({ createWhatsAppAdminSupabaseClient: () => ({ rpc: h.rpc }) }));
-vi.mock("@/server/whatsapp/admin/channels", async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  adminReadWhatsAppSendCredential: h.credential,
-}));
 
 const { YCloudWhatsAppProvider } = await import("@/server/whatsapp/provider/ycloud");
 const { YCLOUD_SEND_TIMEOUT_MS, YCLOUD_SEND_URL, ycloudExternalId } = await import("@/server/whatsapp/provider/ycloud-send");
 const { sendWhatsAppHumanMessage } = await import("@/server/whatsapp/outbound");
 const { WhatsAppOutboundError } = await import("@/server/whatsapp/admin/outbound");
+const { encryptWhatsAppCredential } = await import("@/server/whatsapp/credential-crypto");
 
 const API_KEY = "yc-chave-ficticia-0123456789abcdef";
 const PHONE = "+5511900001111";
@@ -43,6 +40,9 @@ const CONV = "62000000-0000-0000-0000-00000000000a";
 const K1 = "63000000-0000-0000-0000-000000000001";
 const K2 = "63000000-0000-0000-0000-000000000002";
 const TEMPLATE_ID = "65000000-0000-0000-0000-00000000000a";
+const CHANNEL = "60000000-0000-0000-0000-0000000000c1";
+const OTHER_CHANNEL = "60000000-0000-0000-0000-0000000000c2";
+const WEBHOOK_SECRET = "segredo-webhook-ficticio-9876543210";
 
 const recipient = { kind: "phone" as const, phoneE164: PHONE, bsuid: null };
 const textRequest = (over: Record<string, unknown> = {}) => ({ routingKey: ROUTING, recipient, text: TEXT, correlationId: OUTBOX, credential: API_KEY, ...over });
@@ -81,7 +81,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   h.rpc.mockReset();
-  h.credential.mockReset();
 });
 
 /** Nenhum dado sensível pode aparecer em nada que o adaptador devolve. */
@@ -348,6 +347,12 @@ let rows: Map<string, Row>;
 let reserveError: string | null;
 let sendDisabledAtBegin: boolean;
 let counter: number;
+// Canal e credenciais cifradas do banco simulado (a semântica de `whatsapp_get_channel_credential`).
+let channel: { id: string; workspace: string; provider: string; routing: string; status: string; sendEnabled: boolean };
+let stored: { api_key: string | null; webhook_secret: string | null };
+let beginChannelId: string | null | undefined;
+let credentialRequests: Array<Record<string, unknown>>;
+let forbiddenCalls: string[];
 
 const APPROVED = { id: TEMPLATE_ID, name: "lembrete_audiencia", language: "pt_BR", body_text: "Olá {{1}}, sua audiência é em {{2}}.", param_count: 2 };
 
@@ -362,6 +367,26 @@ function snapshot(r: Row, dup: boolean) {
 function installFakeDatabase() {
   h.rpc.mockImplementation(async (fn: string, args: Record<string, unknown>) => {
     if (fn === "whatsapp_send_context") return { data: context, error: null };
+    // O envio NUNCA pode usar estes caminhos (resolvedor do webhook, leituras de gestão).
+    if (["whatsapp_resolve_webhook_channel", "whatsapp_resolve_webhook_route", "whatsapp_get_channel_state", "whatsapp_list_channels"].includes(fn)) {
+      forbiddenCalls.push(fn);
+      return { data: null, error: { message: "unknown" } };
+    }
+    if (fn === "whatsapp_get_channel_credential") {
+      credentialRequests.push(args);
+      const purpose = args.p_purpose as "api_key" | "webhook_secret";
+      // Mesma checagem do banco: canal + workspace + provedor + routing key precisam bater.
+      if (args.p_channel_id !== channel.id || args.p_workspace_id !== channel.workspace || args.p_provider !== channel.provider || args.p_routing_key !== channel.routing) {
+        return { data: null, error: { message: "channel_not_found" } };
+      }
+      if (purpose === "api_key" && !(channel.sendEnabled && channel.status === "active")) return { data: [], error: null };
+      const cipher = stored[purpose];
+      if (cipher === null) return { data: [], error: null };
+      return {
+        data: [{ channel_id: channel.id, workspace_id: channel.workspace, environment: "preview", provider: channel.provider, routing_key: channel.routing, purpose, ciphertext: cipher, key_version: "v1" }],
+        error: null,
+      };
+    }
     if (fn === "whatsapp_reserve_send") {
       const key = args.p_client_dedupe_key as string;
       const existing = rows.get(key);
@@ -390,7 +415,8 @@ function installFakeDatabase() {
       const isText = r.kind === "text";
       return {
         data: {
-          ...snapshot(r, false), outcome: "begin", kind: r.kind, provider: "ycloud", routing_key: ROUTING, recipient_phone: PHONE,
+          ...snapshot(r, false), outcome: "begin", kind: r.kind, ...(beginChannelId === undefined ? {} : { channel_id: beginChannelId }),
+          provider: "ycloud", routing_key: ROUTING, recipient_phone: PHONE,
           text: isText ? r.body : null, template_name: isText ? null : APPROVED.name, template_language: isText ? null : APPROVED.language, template_params: isText ? null : ["Maria", "12/12"],
         },
         error: null,
@@ -427,7 +453,17 @@ describe("fluxo do CRM com canal YCloud", () => {
     reserveError = null;
     sendDisabledAtBegin = false;
     context = { route: "b3", provider: "ycloud", blocked_reason: null, window_open: true, window_expires_at: "2026-11-09T11:00:00Z", case_linked: true, templates: [APPROVED] };
-    h.credential.mockResolvedValue(API_KEY);
+    vi.stubEnv("WHATSAPP_CREDENTIAL_ACTIVE_KEY_VERSION", "v1");
+    vi.stubEnv("WHATSAPP_CREDENTIAL_KEY_VERSIONS", JSON.stringify({ v1: Buffer.alloc(32, 7).toString("base64") }));
+    channel = { id: CHANNEL, workspace: WS, provider: "ycloud", routing: ROUTING, status: "active", sendEnabled: true };
+    const aad = (purpose: "api_key" | "webhook_secret") => ({ environment: "preview" as const, workspaceId: WS, channelId: CHANNEL, provider: "ycloud" as const, purpose });
+    stored = {
+      api_key: encryptWhatsAppCredential(API_KEY, aad("api_key")).ciphertextBase64,
+      webhook_secret: encryptWhatsAppCredential(WEBHOOK_SECRET, aad("webhook_secret")).ciphertextBase64,
+    };
+    beginChannelId = CHANNEL;
+    credentialRequests = [];
+    forbiddenCalls = [];
     installFakeDatabase();
   });
 
@@ -443,7 +479,9 @@ describe("fluxo do CRM com canal YCloud", () => {
     const body = JSON.parse(init.body as string);
     expect(body).toMatchObject({ from: BUSINESS, to: PHONE, type: "text", externalId: `praxis.out.${rows.get(K1)!.outbox_id.replaceAll("-", "")}` });
     // A chave vem do canal da sessão: workspace da sessão, provedor e routing key do banco.
-    expect(h.credential).toHaveBeenCalledExactlyOnceWith({ workspaceId: WS, provider: "ycloud", routingKey: ROUTING });
+    // Só a api_key foi pedida, do canal que o begin devolveu, no workspace da sessão.
+    expect(credentialRequests).toEqual([{ p_channel_id: CHANNEL, p_workspace_id: WS, p_provider: "ycloud", p_routing_key: ROUTING, p_purpose: "api_key" }]);
+    expect(forbiddenCalls).toEqual([]);
     expect(JSON.stringify(result)).not.toContain(API_KEY);
   });
 
@@ -464,7 +502,7 @@ describe("fluxo do CRM com canal YCloud", () => {
       await expect(humanTemplate(`63000000-0000-0000-0000-00000000010${code.length}`)).rejects.toMatchObject({ code });
     }
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(h.credential).not.toHaveBeenCalled();
+    expect(credentialRequests).toEqual([]);
 
     // Defesa em profundidade: mesmo que o banco deixasse passar, um template que o contexto
     // não lista como aprovado + utility é recusado depois do begin, ANTES de ler a chave.
@@ -474,7 +512,7 @@ describe("fluxo do CRM com canal YCloud", () => {
     const result = await humanTemplate(K2);
     expect(result).toMatchObject({ state: "rejected", errorCode: "template_not_approved" });
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(h.credential).not.toHaveBeenCalled();
+    expect(credentialRequests).toEqual([]);
   });
 
   it("texto fora da janela é recusado pelo banco, sem rede", async () => {
@@ -493,11 +531,11 @@ describe("fluxo do CRM com canal YCloud", () => {
     const result = await humanText(K2);
     expect(result).toMatchObject({ state: "rejected", errorCode: "send_disabled" });
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(h.credential).not.toHaveBeenCalled();
+    expect(credentialRequests).toEqual([]);
   });
 
   it("chave indisponível (envio desligado no banco, canal inativo, outro workspace): recusada, sem rede e sem vazar o erro", async () => {
-    h.credential.mockRejectedValue(new Error(`${API_KEY} ${PHONE} ${TEXT}`));
+    channel.sendEnabled = false; // o banco não entrega a chave de API de canal sem envio habilitado
     const result = await humanText();
     expect(result).toMatchObject({ state: "rejected", errorCode: "credential_unavailable" });
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -516,7 +554,7 @@ describe("fluxo do CRM com canal YCloud", () => {
     await expect(humanText()).rejects.toMatchObject({ code: "whatsapp_provider_unavailable" });
     expect(reserveCalls()).toBe(0);
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(h.credential).not.toHaveBeenCalled();
+    expect(credentialRequests).toEqual([]);
   });
 
   it("begin devolve outro provedor que o do adaptador: recusado sem rede", async () => {
@@ -529,7 +567,7 @@ describe("fluxo do CRM com canal YCloud", () => {
     const result = await humanText();
     expect(result).toMatchObject({ state: "rejected", errorCode: "recipient_unavailable" });
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(h.credential).not.toHaveBeenCalled();
+    expect(credentialRequests).toEqual([]);
   });
 
   it("repetir a MESMA intenção nunca faz uma segunda chamada (aceita)", async () => {
@@ -538,7 +576,7 @@ describe("fluxo do CRM com canal YCloud", () => {
     expect(again.row.duplicate_submit).toBe(true);
     expect(again.state).toBe("accepted");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(h.credential).toHaveBeenCalledTimes(1);
+    expect(credentialRequests).toHaveLength(1);
   });
 
   it("resultado incerto (429, 5xx, timeout, resposta inválida): fica 'Envio incerto' e NUNCA é reenviado", async () => {
@@ -596,5 +634,118 @@ describe("fluxo do CRM com canal YCloud", () => {
     await humanText(K1);
     await humanTemplate(K2);
     for (const [url] of fetchSpy.mock.calls as Array<[string]>) expect(new URL(url).host).toBe("api.ycloud.com");
+  });
+
+  // -------------------------------------------------------------------
+  // Separação das credenciais: o envio só pede e decifra a api_key
+  // -------------------------------------------------------------------
+
+  it("o envio solicita SOMENTE api_key — webhook_secret nunca é pedido, lido nem decifrado", async () => {
+    // Se o código tentasse decifrar o segredo do webhook, falharia aqui (texto adulterado).
+    stored.webhook_secret = "AAAA-adulterado-nao-decifra";
+    const result = await humanText();
+    expect(result.state).toBe("accepted");
+    expect(credentialRequests.map((r) => r.p_purpose)).toEqual(["api_key"]);
+    expect(forbiddenCalls).toEqual([]);
+    expect(h.rpc.mock.calls.map(([fn]) => fn)).toEqual(["whatsapp_send_context", "whatsapp_reserve_send", "whatsapp_outbox_begin", "whatsapp_get_channel_credential", "whatsapp_outbox_finish"]);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("só o webhook_secret cadastrado NÃO habilita o envio (sem api_key: recusado antes da rede)", async () => {
+    stored.api_key = null;
+    const result = await humanText();
+    expect(result).toMatchObject({ state: "rejected", errorCode: "credential_unavailable" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(credentialRequests.map((r) => r.p_purpose)).toEqual(["api_key"]); // e a tentativa nem olhou o webhook_secret
+    expect(forbiddenCalls).toEqual([]);
+  });
+
+  it("canal inativo ou com envio desligado no banco: sem api_key, sem rede", async () => {
+    for (const change of [() => { channel.status = "paused"; }, () => { channel.sendEnabled = false; }]) {
+      rows.clear();
+      credentialRequests = [];
+      channel = { id: CHANNEL, workspace: WS, provider: "ycloud", routing: ROUTING, status: "active", sendEnabled: true };
+      change();
+      const result = await humanText(`63000000-0000-0000-0000-0000000003${credentialRequests.length}${Math.floor(Math.random() * 90 + 10)}`);
+      expect(result).toMatchObject({ state: "rejected", errorCode: "credential_unavailable" });
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("begin sem channel_id (banco antigo) ou com channel_id nulo: credential_unavailable, sem rede e SEM outro resolvedor", async () => {
+    for (const value of [undefined, null]) {
+      rows.clear();
+      credentialRequests = [];
+      beginChannelId = value;
+      const result = await humanText(`63000000-0000-0000-0000-0000000004${value === null ? "01" : "00"}`);
+      expect(result).toMatchObject({ state: "rejected", errorCode: "credential_unavailable" });
+      expect(credentialRequests).toEqual([]); // nem o banco foi consultado
+      expect(forbiddenCalls).toEqual([]); // nem webhook_route_id, nem routing key como prova do canal
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("channel_id divergente (de outro canal) ou malformado: o banco recusa e nada vai à rede", async () => {
+    beginChannelId = OTHER_CHANNEL;
+    expect(await humanText(K1)).toMatchObject({ state: "rejected", errorCode: "credential_unavailable" });
+    expect(credentialRequests.map((r) => r.p_channel_id)).toEqual([OTHER_CHANNEL]);
+
+    beginChannelId = "nao-e-uuid";
+    expect(await humanText(K2)).toMatchObject({ state: "rejected", errorCode: "credential_unavailable" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("o chamador não escolhe o channel_id: um campo extra é ignorado, vale o do begin", async () => {
+    const hostile = { workspaceId: WS, actorUserId: USER, conversationId: CONV, clientDedupeKey: K1, content: { kind: "text" as const, text: TEXT }, channelId: OTHER_CHANNEL, channel_id: OTHER_CHANNEL, credential: "chave-do-chamador-0000" };
+    const result = await sendWhatsAppHumanMessage(hostile);
+    expect(result.state).toBe("accepted");
+    expect(credentialRequests.map((r) => r.p_channel_id)).toEqual([CHANNEL]);
+    expect((fetchSpy.mock.calls[0]![1] as RequestInit).headers).toMatchObject({ "X-API-Key": API_KEY });
+
+    const root = resolve(import.meta.dirname, "../..");
+    const actions = readFileSync(resolve(root, "src/modules/conversations/actions.ts"), "utf8");
+    const sendActions = actions.slice(actions.indexOf("export async function sendMessageAction"), actions.indexOf("export async function resolveConversationLinkAction"));
+    expect(sendActions.length).toBeGreaterThan(500);
+    expect(sendActions).not.toMatch(/channelId|channel_id/);
+    const schema = readFileSync(resolve(root, "src/modules/conversations/schema.ts"), "utf8");
+    expect(schema.slice(schema.indexOf("export const sendTemplateSchema"), schema.indexOf("export const resolveConversationLinkSchema"))).not.toMatch(/channelId|channel_id/);
+    for (const file of ["src/modules/conversations/whatsapp-send.ts", "src/components/conversations/whatsapp-composer.tsx"]) {
+      expect(readFileSync(resolve(root, file), "utf8"), file).not.toMatch(/channelId|channel_id/);
+    }
+  });
+
+  it("workspace e ambiente continuam isolados: outro workspace ou Production não recebem a chave", async () => {
+    channel.workspace = "10000000-0000-0000-0000-0000000000ff"; // o canal é de outro workspace
+    expect(await humanText(K1)).toMatchObject({ state: "rejected", errorCode: "credential_unavailable" });
+
+    channel.workspace = WS;
+    vi.stubEnv("VERCEL_ENV", "production"); // a chave guardada é do ambiente preview (AAD)
+    expect(await humanText(K2)).toMatchObject({ state: "rejected", errorCode: "credential_unavailable" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("nenhum segredo (api_key, webhook_secret) em retorno ou erro, aceito ou recusado", async () => {
+    const accepted = await humanText(K1);
+    stored.api_key = null;
+    const refused = await humanText(K2);
+    for (const value of [accepted, refused]) {
+      const text = JSON.stringify(value);
+      expect(text).not.toContain(API_KEY);
+      expect(text).not.toContain(WEBHOOK_SECRET);
+      expect(text).not.toMatch(/ciphertext|key_version|X-API-Key/);
+    }
+  });
+
+  it("estático: o leitor da chave de envio só conhece api_key e nenhum resolvedor do webhook", () => {
+    const root = resolve(import.meta.dirname, "../..");
+    const channels = readFileSync(resolve(root, "src/server/whatsapp/admin/channels.ts"), "utf8");
+    const start = channels.indexOf("export async function adminReadWhatsAppSendCredential");
+    const fn = channels.slice(start, start + channels.slice(start).search(/\r?\n}\r?\n/));
+    expect(fn).toContain('purpose: "api_key"');
+    expect(fn).not.toMatch(/webhook_secret|adminResolveWhatsAppWebhook|whatsapp_resolve_webhook|webhookRouteId/);
+    const outbound = readFileSync(resolve(root, "src/server/whatsapp/outbound.ts"), "utf8");
+    expect(outbound).not.toMatch(/adminResolveWhatsAppWebhook|webhook_secret|webhookSecret|\.from\(/);
+    const admin = readFileSync(resolve(root, "src/server/whatsapp/admin/outbound.ts"), "utf8");
+    expect(admin).not.toMatch(/\.from\(|webhook_secret/);
   });
 });

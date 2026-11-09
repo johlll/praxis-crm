@@ -120,7 +120,12 @@ export async function sendWhatsAppHumanMessage(params: HumanSendParams): Promise
     let credentialOk = true;
     if (adapter.kind !== "simulated") {
       try {
-        credential = await adminReadWhatsAppSendCredential({ workspaceId: params.workspaceId, provider: begin.provider, routingKey: begin.routingKey });
+        credential = await adminReadWhatsAppSendCredential({
+          workspaceId: params.workspaceId,
+          channelId: begin.channelId,
+          provider: begin.provider,
+          routingKey: begin.routingKey,
+        });
       } catch {
         credentialOk = false;
       }
