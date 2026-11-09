@@ -2,7 +2,7 @@
 -- (docs/decisoes/b3-whatsapp-real.md §28.18).
 --
 -- Prova: ambiente assinado obrigatório; owner/admin ligam o envio só de canal
--- ativo e simulado (YCloud e Production recusados); send_enabled=false bloqueia;
+-- ativo e simulado (Production recusado; o YCloud de Preview é provado no 44); send_enabled=false bloqueia;
 -- papel, workspace, acesso à conversa, vínculo e consentimento; texto livre só
 -- dentro da janela; template só aprovado, utility e com caso vinculado
 -- (marketing bloqueado); mensagem do CRM nasce com origin=crm e
@@ -161,7 +161,7 @@ select throws_ok(
 );
 select throws_ok(
   format($i$ select whatsapp_enable_channel_send(%L::uuid, %L::uuid, %L::uuid) $i$, :'ch_yc', :'ws_um', :'ana'),
-  'P0001', 'provider_send_not_available', 'canal YCloud não liga o envio nesta etapa'
+  'P0001', 'invalid_channel_state', 'canal YCloud pausado (como nasce) não liga o envio; o portão do YCloud de Preview está em 44_b3_3_portao_ycloud_preview'
 );
 select throws_ok(
   format($i$ select whatsapp_enable_channel_send(%L::uuid, %L::uuid, %L::uuid) $i$, :'ch_paus', :'ws_um', :'ana'),

@@ -267,7 +267,7 @@ async function changeState(rpc: StateRpc, params: ChannelRef): Promise<SafeWhats
 export const adminPauseWhatsAppChannel = (params: ChannelRef) => changeState("whatsapp_pause_channel", params);
 export const adminReactivateWhatsAppChannel = (params: ChannelRef) => changeState("whatsapp_reactivate_channel", params);
 export const adminDisableWhatsAppChannelSend = (params: ChannelRef) => changeState("whatsapp_disable_channel_send", params);
-/** B3.3: liga o envio de um canal ATIVO e SIMULADO; YCloud e Meta são recusados pelo banco. */
+/** B3.3 (§28.20): liga o envio de canal ATIVO, simulado ou YCloud de Preview com `api_key`; o banco recusa o resto (YCloud em Production, Meta, outros papéis, sem chave). */
 export const adminEnableWhatsAppChannelSend = (params: ChannelRef) => changeState("whatsapp_enable_channel_send", params);
 
 const templateRowSchema = z.object({
