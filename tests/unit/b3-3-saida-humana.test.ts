@@ -218,7 +218,9 @@ describe("bloqueios vindos do banco", () => {
 
 describe("template", () => {
   it("template utility aprovado fora da janela: uma tentativa, com nome, idioma e parâmetros", async () => {
-    context = { ...(context as Extract<Ctx, { route: "b3" }>), window_open: false };
+    // O contexto lista o template aprovado + utility (B3.3, §28.19: só ele chega ao provedor).
+    const approved = { id: TEMPLATE, name: "lembrete_audiencia", language: "pt_BR", body_text: "Olá {{1}}, sua audiência é em {{2}}.", param_count: 2 };
+    context = { ...(context as Extract<Ctx, { route: "b3" }>), window_open: false, templates: [approved] };
     const result = await sendWhatsAppTemplateAction(CONV, TEMPLATE, ["Maria", "12/12"], K2);
     expect(result).toMatchObject({ ok: true, message: { status: "accepted", bodyText: "Olá Maria, sua audiência é em 12/12." } });
     expect(sendTemplateSpy).toHaveBeenCalledTimes(1);

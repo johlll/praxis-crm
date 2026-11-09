@@ -193,6 +193,9 @@ export async function adminReserveWhatsAppSend(
 const beginExtraSchema = z.object({
   outcome: z.enum(["begin", "in_progress", "done"]),
   kind: z.enum(["text", "template"]).optional(),
+  /** Canal da intenção, lido pelo banco da própria outbox (migration 20261109120000).
+   * Banco antigo não devolve: fica `null` e o envio com rede falha fechado. */
+  channel_id: z.string().max(64).nullish(),
   provider: z.enum(["simulated", "ycloud", "meta"]).optional(),
   routing_key: z.string().optional(),
   recipient_phone: z.string().optional(),
@@ -207,6 +210,8 @@ export type OutboxBegin =
   | {
       outcome: "begin";
       snapshot: OutboxSnapshot;
+      /** Vem só do banco (`begin`); nunca da tela, do formulário ou do chamador. */
+      channelId: string | null;
       provider: "simulated" | "ycloud" | "meta";
       routingKey: string;
       recipientPhone: string;
@@ -230,12 +235,13 @@ export async function adminBeginWhatsAppOutboxSend(outboxId: string): Promise<Ou
   if (!e.provider || !e.routing_key || !e.recipient_phone || !e.kind) throw new WhatsAppOutboundError("unknown");
   if (e.kind === "text") {
     if (typeof e.text !== "string") throw new WhatsAppOutboundError("unknown");
-    return { outcome: "begin", snapshot, provider: e.provider, routingKey: e.routing_key, recipientPhone: e.recipient_phone, content: { kind: "text", text: e.text } };
+    return { outcome: "begin", snapshot, channelId: e.channel_id ?? null, provider: e.provider, routingKey: e.routing_key, recipientPhone: e.recipient_phone, content: { kind: "text", text: e.text } };
   }
   if (!e.template_name || !e.template_language || !e.template_params) throw new WhatsAppOutboundError("unknown");
   return {
     outcome: "begin",
     snapshot,
+    channelId: e.channel_id ?? null,
     provider: e.provider,
     routingKey: e.routing_key,
     recipientPhone: e.recipient_phone,

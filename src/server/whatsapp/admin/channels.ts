@@ -594,6 +594,40 @@ export async function adminResolveWhatsAppWebhookChannel(params: {
   return { adapter, channel, status: row.status, webhookSecret };
 }
 
+/**
+ * Chave de API para UM envio humano (B3.3, §28.19). Pede e decifra
+ * EXCLUSIVAMENTE `api_key`: o segredo do webhook não é solicitado, lido nem
+ * decifrado aqui, e nenhum resolvedor do webhook participa.
+ *
+ * `channelId`, `provider` e `routingKey` vêm do `begin` da outbox (o banco os
+ * leu da própria intenção); o chamador não os fornece. O contexto confiável é
+ * montado aqui com o ambiente autenticado, e `whatsapp_get_channel_credential`
+ * confere no banco canal + workspace + ambiente + provedor + routing key: qualquer
+ * divergência é recusada e canal sem envio habilitado e ativo devolve vazio.
+ * Sem `channelId` (banco anterior à migration), falha fechada, sem outro
+ * resolvedor. Nunca há chave global, do formulário ou do cliente. O retorno
+ * nunca pode ir para log, erro ou resposta.
+ */
+export async function adminReadWhatsAppSendCredential(params: {
+  workspaceId: string;
+  channelId: string | null;
+  provider: WhatsAppProviderKind;
+  routingKey: string;
+  env?: WhatsAppProviderEnv | undefined;
+}): Promise<string> {
+  const channelId = uuidSchema.safeParse(params.channelId);
+  if (!channelId.success) throw new WhatsAppChannelStoreError("channel_not_found");
+  const channel = resolvedContext({
+    channelId: channelId.data,
+    workspaceId: params.workspaceId,
+    environment: getWhatsAppEnvironment(),
+    provider: params.provider,
+    routingKey: params.routingKey,
+  });
+  const { credential } = await adminPrepareWhatsAppChannelCall({ channel, purpose: "api_key", env: params.env });
+  return credential;
+}
+
 const routeRowSchema = z.object({
   channel_id: uuidSchema,
   workspace_id: uuidSchema,

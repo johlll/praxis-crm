@@ -178,6 +178,7 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   send_rejected: "O WhatsApp recusou a mensagem.",
   send_unsupported: "Este provedor não aceita este tipo de envio.",
   send_in_progress: "O envio desta mensagem ainda está em andamento.",
+  credential_unavailable: "A credencial de envio deste canal não está disponível. Fale com um administrador.",
   // B3.2d-2b1 — identidades internas do WhatsApp.
   invalid_internal_identity: "Informe um nome e um telefone (formato internacional) ou um BSUID válidos.",
   internal_identity_taken: "Este número ou BSUID já está cadastrado como interno neste canal.",
@@ -225,6 +226,8 @@ export function toUserMessage(error: unknown): string {
   if (error && typeof error === "object" && "message" in error) {
     const raw = String((error as { message?: unknown }).message ?? "");
     if (raw.startsWith("undo_conflict")) return UNDO_CONFLICT_MESSAGE;
+    // B3.3 — rejeição definitiva da YCloud: só o código simbólico sanitizado chega aqui.
+    if (/^ycloud_[a-z0-9_]{1,56}$/.test(raw)) return "O WhatsApp (YCloud) recusou a mensagem.";
     if (raw === "lead_conflict") return LEAD_CONFLICT_MESSAGE;
     if (raw === "opportunity_conflict") return OPPORTUNITY_CONFLICT_MESSAGE;
     if (raw === "activity_conflict") return ACTIVITY_CONFLICT_MESSAGE;

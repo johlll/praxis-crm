@@ -12,7 +12,7 @@
 -- da B3. Nenhuma chave real e nenhuma rede: valores de teste, só desta transação.
 
 begin;
-select plan(95);
+select plan(100);
 
 \set ana     '20000000-0000-0000-0000-000000000001'
 \set bruno   '20000000-0000-0000-0000-000000000002'
@@ -341,6 +341,28 @@ select ok(
   (:'b1'::jsonb) ->> 'text' = 'Olá, tudo bem?' and (:'b1'::jsonb) ->> 'recipient_phone' = '+5511900005001'
     and (:'b1'::jsonb) ->> 'routing_key' = 'b33-sim' and (:'b1'::jsonb) ->> 'provider' = 'simulated',
   'begin devolve o que o provedor precisa, para o servidor'
+);
+-- 20261109120000: o begin devolve o canal da intenção, para o envio pedir SÓ a api_key dele.
+select is(
+  (:'b1'::jsonb) ->> 'channel_id',
+  (select o.channel_id::text from public.whatsapp_outbox o where o.id = ((:'r1'::jsonb) ->> 'outbox_id')::uuid),
+  'begin devolve o channel_id lido da própria outbox'
+);
+select is((:'b1'::jsonb) ->> 'channel_id', :'ch_sim', 'e é o canal da conversa da intenção');
+select is(
+  (select pg_get_function_identity_arguments(p.oid) from pg_proc p where p.oid = 'public.whatsapp_outbox_begin(uuid, integer)'::regprocedure),
+  'p_outbox_id uuid, p_lease_seconds integer',
+  'o chamador não tem como informar canal: só a intenção e a lease'
+);
+select is(
+  (select count(*)::int from jsonb_object_keys(:'b1'::jsonb) k where k ~* '(credential|secret|token|cipher|api_?key|password|webhook)'),
+  0,
+  'o retorno do begin não tem nenhuma chave de credencial ou segredo'
+);
+select is(
+  (select count(*)::int from public.whatsapp_channel_credentials c where position(c.ciphertext in (:'b1'::jsonb)::text) > 0),
+  0,
+  'o retorno do begin não contém texto cifrado de nenhuma credencial'
 );
 select is((select attempts from public.whatsapp_outbox where id = ((:'r1'::jsonb) ->> 'outbox_id')::uuid), 1, 'uma tentativa registrada');
 select whatsapp_outbox_begin(((:'r1'::jsonb) ->> 'outbox_id')::uuid, 60) as b1b \gset
