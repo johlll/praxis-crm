@@ -1,8 +1,10 @@
 -- B5 mínima — tela de auditoria (somente leitura) e transferência de posse.
 --
--- Migration NOVA e ADITIVA: duas funções públicas e um auxiliar privado. Não
--- cria tabela, coluna, índice, enum nem dado, e não toca em nenhuma função,
--- policy ou grant existente.
+-- Migration NOVA, ainda não aplicada em lugar nenhum: duas funções públicas e
+-- um auxiliar privado (itens 1 e 2) e a substituição, por CREATE OR REPLACE,
+-- de duas funções da A2 para fechar uma corrida do último owner (item 3).
+-- Não cria tabela, coluna, índice, enum nem dado, e não muda nenhuma policy
+-- nem grant.
 --
 -- 1) list_audit_log — leitura da trilha para a tela de Configurações.
 --
@@ -39,8 +41,12 @@
 --    falha depois disso desfaz a função inteira, então o workspace nunca fica
 --    sem owner nem com os papéis pela metade. Grava UMA linha de auditoria
 --    (`workspace.ownership_transferred`), só com ids e papéis — sem e-mail nem
---    nome. Não substitui update_membership_role/remove_membership, que seguem
---    iguais.
+--    nome.
+--
+-- 3) update_membership_role e remove_membership — o último owner sob
+--    concorrência. Mesma assinatura, retorno, códigos de erro, permissões e
+--    comportamento da A2 fora da concorrência; a diferença está no fim do
+--    arquivo.
 
 -- ---------------------------------------------------------------------
 -- private.audit_log_safe_details — a lista de permissão da projeção.
@@ -310,3 +316,182 @@ comment on function public.transfer_workspace_ownership(uuid, uuid) is
 
 revoke all on function public.transfer_workspace_ownership(uuid, uuid) from public, anon;
 grant execute on function public.transfer_workspace_ownership(uuid, uuid) to authenticated;
+
+-- ---------------------------------------------------------------------
+-- update_membership_role e remove_membership — o último owner sob
+-- concorrência.
+--
+-- A versão da A2 travava só a membership ALVO (`for update`) e depois contava
+-- os outros owners sem trava. Dois owners que se rebaixam (ou se removem) ao
+-- mesmo tempo travavam linhas DIFERENTES, cada um via o outro ainda como owner
+-- e os dois concluíam: o workspace ficava sem nenhum owner.
+--
+-- Agora, nas duas funções:
+--   1. lê o workspace do alvo SEM travar;
+--   2. recusa quem não é owner/admin desse workspace antes de tocar em
+--      qualquer trava (quem é de fora recebe o mesmo erro de sempre, sem
+--      esperar nem sondar o que acontece lá dentro);
+--   3. trava TODAS as memberships do workspace numa única instrução, sempre
+--      em ordem de id: duas operações nunca esperam uma pela outra em ordem
+--      inversa, então não há deadlock (a transferência de posse, acima, trava
+--      um subconjunto na mesma ordem);
+--   4. só depois das travas relê o alvo e a permissão de quem chama — a outra
+--      operação pode ter removido o alvo ou rebaixado quem chama enquanto esta
+--      esperava — e conta os owners restantes. Com tudo travado, a contagem
+--      não muda até o fim da transação.
+-- Resultado: das duas operações simultâneas, uma conclui e a outra é recusada
+-- como se tivesse chegado depois; o workspace nunca fica sem owner ativo.
+--
+-- Assinaturas, retornos, códigos de erro, SECURITY DEFINER e search_path são
+-- os da A2. CREATE OR REPLACE preserva as permissões da função (os GRANTs
+-- existentes) e os comentários; por isso não há revoke/grant aqui.
+-- ---------------------------------------------------------------------
+
+create or replace function public.update_membership_role(p_membership_id uuid, p_new_role public.membership_role)
+returns public.memberships
+language plpgsql
+security definer
+set search_path = ''
+as $body$
+declare
+  v_actor uuid := auth.uid();
+  v_workspace_id uuid;
+  v_membership public.memberships;
+  v_old_role public.membership_role;
+  v_remaining_owners int;
+begin
+  if v_actor is null then
+    raise exception 'authentication_required';
+  end if;
+
+  select m.workspace_id into v_workspace_id from public.memberships m where m.id = p_membership_id;
+
+  if v_workspace_id is null then
+    raise exception 'membership_not_found';
+  end if;
+
+  if not private.has_workspace_role(v_workspace_id, array['owner', 'admin']::public.membership_role[]) then
+    raise exception 'insufficient_permission';
+  end if;
+
+  -- Todas as memberships do workspace, numa instrução só e em ordem de id.
+  perform 1
+  from public.memberships m
+  where m.workspace_id = v_workspace_id
+  order by m.id
+  for update;
+
+  -- Daqui em diante tudo é decidido com o estado já travado e atual.
+  select * into v_membership from public.memberships where id = p_membership_id;
+
+  if v_membership.id is null then
+    raise exception 'membership_not_found';
+  end if;
+
+  if not private.has_workspace_role(v_membership.workspace_id, array['owner', 'admin']::public.membership_role[]) then
+    raise exception 'insufficient_permission';
+  end if;
+
+  v_old_role := v_membership.role;
+
+  -- Mesma restrição da criação de convite: promover alguém A owner exige
+  -- que quem está promovendo já seja owner — admin não promove a owner.
+  if p_new_role = 'owner' and v_old_role <> 'owner'
+     and not private.has_workspace_role(v_membership.workspace_id, array['owner']::public.membership_role[]) then
+    raise exception 'insufficient_permission';
+  end if;
+
+  if v_old_role = 'owner' and p_new_role <> 'owner' then
+    select count(*) into v_remaining_owners
+      from public.memberships
+      where workspace_id = v_membership.workspace_id
+        and role = 'owner'
+        and status = 'active'
+        and id <> v_membership.id;
+
+    if v_remaining_owners = 0 then
+      raise exception 'cannot_demote_last_owner';
+    end if;
+  end if;
+
+  update public.memberships
+    set role = p_new_role
+    where id = p_membership_id
+    returning * into v_membership;
+
+  insert into public.audit_logs (workspace_id, actor_user_id, action, resource_type, resource_id, metadata)
+  values (
+    v_membership.workspace_id, v_actor, 'membership.role_changed', 'membership', p_membership_id,
+    jsonb_build_object('from_role', v_old_role, 'to_role', p_new_role)
+  );
+
+  return v_membership;
+end;
+$body$;
+
+create or replace function public.remove_membership(p_membership_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $body$
+declare
+  v_actor uuid := auth.uid();
+  v_workspace_id uuid;
+  v_membership public.memberships;
+  v_remaining_owners int;
+begin
+  if v_actor is null then
+    raise exception 'authentication_required';
+  end if;
+
+  select m.workspace_id into v_workspace_id from public.memberships m where m.id = p_membership_id;
+
+  if v_workspace_id is null then
+    raise exception 'membership_not_found';
+  end if;
+
+  if not private.has_workspace_role(v_workspace_id, array['owner', 'admin']::public.membership_role[]) then
+    raise exception 'insufficient_permission';
+  end if;
+
+  -- Todas as memberships do workspace, numa instrução só e em ordem de id.
+  perform 1
+  from public.memberships m
+  where m.workspace_id = v_workspace_id
+  order by m.id
+  for update;
+
+  -- Daqui em diante tudo é decidido com o estado já travado e atual.
+  select * into v_membership from public.memberships where id = p_membership_id;
+
+  if v_membership.id is null then
+    raise exception 'membership_not_found';
+  end if;
+
+  if not private.has_workspace_role(v_membership.workspace_id, array['owner', 'admin']::public.membership_role[]) then
+    raise exception 'insufficient_permission';
+  end if;
+
+  if v_membership.role = 'owner' then
+    select count(*) into v_remaining_owners
+      from public.memberships
+      where workspace_id = v_membership.workspace_id
+        and role = 'owner'
+        and status = 'active'
+        and id <> v_membership.id;
+
+    if v_remaining_owners = 0 then
+      raise exception 'cannot_remove_last_owner';
+    end if;
+  end if;
+
+  delete from public.memberships where id = p_membership_id;
+
+  insert into public.audit_logs (workspace_id, actor_user_id, action, resource_type, resource_id, metadata)
+  values (
+    v_membership.workspace_id, v_actor, 'membership.removed', 'membership', p_membership_id,
+    jsonb_build_object('removed_user_id', v_membership.user_id, 'role', v_membership.role)
+  );
+end;
+$body$;

@@ -44,20 +44,32 @@ const outside = parts
   .filter((_, i) => i % 2 === 0)
   .join(" ")
   .replace(/--[^\n]*/g, "");
-const [safeDetailsBody, listBody, transferBody] = bodies as [string, string, string];
+// O SQL sem comentários: os testes de GRANT olham o código, não o que os comentários dizem.
+const code = sql.replace(/--[^\n]*/g, "");
+const [safeDetailsBody, listBody, transferBody, updateRoleBody, removeBody] = bodies as [
+  string,
+  string,
+  string,
+  string,
+  string,
+];
 
-describe("migration da B5: aditiva e fechada", () => {
-  it("três funções (um auxiliar privado e duas públicas) e nada além disso", () => {
-    expect(bodies).toHaveLength(3);
+describe("migration da B5: fechada", () => {
+  it("três funções novas (um auxiliar privado e duas públicas) e a substituição das duas funções da A2, nada além disso", () => {
+    expect(bodies).toHaveLength(5);
     expect((sql.match(/create function /g) ?? []).length).toBe(3);
-    expect(sql).not.toMatch(/create or replace function/);
+    // Única alteração de objetos existentes: as duas funções do último owner (item 3 do cabeçalho).
+    expect([...sql.matchAll(/create or replace function ([a-z_.]+)\(/g)].map((m) => m[1])).toEqual([
+      "public.update_membership_role",
+      "public.remove_membership",
+    ]);
     expect(outside).not.toMatch(/\b(create|alter|drop)\s+(table|index|type|trigger|policy|schema|extension|constraint|view)\b/i);
     expect(outside).not.toMatch(/\b(insert|update|delete|truncate)\b/i);
     expect(outside).not.toMatch(/\balter\b/i);
   });
 
   it("todas travam o search_path; as públicas são SECURITY DEFINER", () => {
-    expect((sql.match(/set search_path = ''/g) ?? []).length).toBe(3);
+    expect((sql.match(/set search_path = ''/g) ?? []).length).toBe(5);
     expect(sql).toMatch(/function public\.list_audit_log\([\s\S]*?language plpgsql\s+security definer\s+stable\s+set search_path = ''/);
     expect(sql).toMatch(/function public\.transfer_workspace_ownership\([\s\S]*?language plpgsql\s+security definer\s+set search_path = ''/);
   });
@@ -70,10 +82,10 @@ describe("migration da B5: aditiva e fechada", () => {
       expect(sql).toContain(`grant execute on function ${sig} to authenticated;`);
     }
     expect(sql).toContain("revoke all on function private.audit_log_safe_details(jsonb) from public, anon, authenticated;");
-    expect(sql).not.toMatch(/grant[^;]*audit_log_safe_details/i);
+    expect(code).not.toMatch(/grant[^;]*audit_log_safe_details/i);
     // Nada concedido a anon/public, e audit_logs continua sem grant de tabela.
-    expect(sql).not.toMatch(/grant\s[^;]*\bto\s+[^;]*\b(anon|public)\b/i);
-    expect(sql).not.toMatch(/grant\s[^;]*\bon\s+(table\s+)?(public\.)?audit_logs\b/i);
+    expect(code).not.toMatch(/grant\s[^;]*\bto\s+[^;]*\b(anon|public)\b/i);
+    expect(code).not.toMatch(/grant\s[^;]*\bon\s+(table\s+)?(public\.)?audit_logs\b/i);
   });
 });
 
@@ -166,5 +178,75 @@ describe("tipos gerados espelham as assinaturas SQL", () => {
     const ts = block("transfer_workspace_ownership");
     expect(ts).toContain("Args: { p_target_membership_id: string; p_workspace_id: string }");
     expect(ts).toContain("Returns: undefined");
+  });
+});
+
+describe("update_membership_role e remove_membership: o último owner sob concorrência", () => {
+  // A prova de concorrência é scripts/b5-last-owner-concurrency-check.sh (sessões reais);
+  // aqui se fixa a FORMA que a torna verdadeira e que nada fora dela mudou em relação à A2.
+  const a2 = read("supabase/migrations/20260907120300_a2_business_functions.sql");
+  const bodyOf = (src: string, fn: string) => {
+    const start = src.indexOf(`function public.${fn}(`);
+    const open = src.indexOf("$body$", start) + "$body$".length;
+    return src.slice(open, src.indexOf("$body$", open));
+  };
+  const tailFrom = (body: string, marker: string) => body.slice(body.indexOf(marker));
+
+  it("mesma assinatura, retorno e atributos da A2; CREATE OR REPLACE não mexe nos GRANTs", () => {
+    expect(code).toMatch(
+      /create or replace function public\.update_membership_role\(p_membership_id uuid, p_new_role public\.membership_role\)\s+returns public\.memberships\s+language plpgsql\s+security definer\s+set search_path = ''/,
+    );
+    expect(code).toMatch(
+      /create or replace function public\.remove_membership\(p_membership_id uuid\)\s+returns void\s+language plpgsql\s+security definer\s+set search_path = ''/,
+    );
+    // Os mesmos atributos da A2 (a A2 é a fonte da assinatura).
+    expect(a2).toMatch(/create function public\.update_membership_role\(p_membership_id uuid, p_new_role public\.membership_role\)\s+returns public\.memberships\s+language plpgsql\s+security definer\s+set search_path = ''/);
+    expect(a2).toMatch(/create function public\.remove_membership\(p_membership_id uuid\)\s+returns void\s+language plpgsql\s+security definer\s+set search_path = ''/);
+    // Nenhum revoke/grant sobre elas: as permissões continuam exatamente as existentes.
+    expect(code).not.toMatch(/\b(grant|revoke)\b[^;]*\b(update_membership_role|remove_membership)\b/i);
+  });
+
+  it.each([
+    ["update_membership_role", updateRoleBody, "cannot_demote_last_owner", /update public\.memberships\s+set role = p_new_role/],
+    ["remove_membership", removeBody, "cannot_remove_last_owner", /delete from public\.memberships where id = p_membership_id;/],
+  ] as const)(
+    "%s: lê sem travar, recusa quem é de fora, trava o workspace inteiro em ordem de id e só então decide",
+    (_name, body, lastOwnerCode, write) => {
+      const where = {
+        firstRead: body.search(/select m\.workspace_id into v_workspace_id from public\.memberships m where m\.id = p_membership_id;/),
+        gate: body.search(/private\.has_workspace_role\(v_workspace_id, array\['owner', 'admin'\]/),
+        lock: body.search(/perform 1\s+from public\.memberships m\s+where m\.workspace_id = v_workspace_id\s+order by m\.id\s+for update;/),
+        reread: body.search(/select \* into v_membership from public\.memberships where id = p_membership_id;/),
+        recheck: body.search(/private\.has_workspace_role\(v_membership\.workspace_id, array\['owner', 'admin'\]/),
+        count: body.search(/select count\(\*\) into v_remaining_owners/),
+        refuse: body.indexOf(`raise exception '${lastOwnerCode}'`),
+        write: body.search(write),
+        audit: body.search(/insert into public\.audit_logs/),
+      };
+      for (const [step, at] of Object.entries(where)) expect(at, step).toBeGreaterThanOrEqual(0);
+      const order = Object.values(where);
+      expect(order, "ordem dos passos").toEqual([...order].sort((a, b) => a - b));
+      // Uma única trava, no workspace inteiro: nenhuma trava só na linha alvo e nenhuma leitura travada fora dela.
+      expect((body.match(/for update/g) ?? []).length).toBe(1);
+      expect(body).not.toMatch(/where id = p_membership_id\s+for update/);
+    },
+  );
+
+  it("fora da concorrência, a decisão e os efeitos são byte a byte os da A2", () => {
+    // Do ponto em que o estado já está travado e relido em diante, o texto é o da A2.
+    expect(tailFrom(updateRoleBody, "  v_old_role := v_membership.role;")).toBe(
+      tailFrom(bodyOf(a2, "update_membership_role"), "  v_old_role := v_membership.role;"),
+    );
+    expect(tailFrom(removeBody, "  if v_membership.role = 'owner' then")).toBe(
+      tailFrom(bodyOf(a2, "remove_membership"), "  if v_membership.role = 'owner' then"),
+    );
+  });
+
+  it("os códigos de erro são os da A2 (nenhum novo, nenhum a menos)", () => {
+    const codes = (body: string) => [...new Set([...body.matchAll(/raise exception '([a-z_]+)'/g)].map((m) => m[1]))].sort();
+    expect(codes(updateRoleBody)).toEqual(codes(bodyOf(a2, "update_membership_role")));
+    expect(codes(removeBody)).toEqual(codes(bodyOf(a2, "remove_membership")));
+    expect(codes(updateRoleBody)).toEqual(["authentication_required", "cannot_demote_last_owner", "insufficient_permission", "membership_not_found"]);
+    expect(codes(removeBody)).toEqual(["authentication_required", "cannot_remove_last_owner", "insufficient_permission", "membership_not_found"]);
   });
 });

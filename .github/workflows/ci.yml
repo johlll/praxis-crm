@@ -236,6 +236,15 @@ jobs:
         # roda antes do passo que recria o banco local.
         run: bash scripts/b3-2e-inbox-reconciler-concurrency-check.sh
 
+      - name: Teste de concorrência real (B5 — último owner)
+        # Duas operações simultâneas de rebaixar/remover owner nunca deixam o
+        # workspace sem owner: com uma transação segurada (a segunda espera e
+        # é recusada), com largada simultânea nas duas ordens de id (sem
+        # deadlock) e com isolamento entre workspaces — ver
+        # scripts/b5-last-owner-concurrency-check.sh. Workspaces próprios;
+        # roda antes dos passos que recriam o banco local.
+        run: bash scripts/b5-last-owner-concurrency-check.sh
+
       - name: Atualização a partir da versão anterior (numeração de propostas)
         # "Aplicar migrations do zero" já valida a criação do banco; este
         # passo valida a ATUALIZAÇÃO com dados emitidos pela versão anterior.

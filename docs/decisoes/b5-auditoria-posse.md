@@ -1,8 +1,8 @@
 # B5 mínima — auditoria somente leitura e transferência de posse
 
 Entregue em 09/11/2026. Migration: `20261109140000_b5_auditoria_e_posse.sql`
-(aditiva; **só vale depois de aplicada no hospedado** — sem ela a tela mostra
-erro tratado e a transferência recusa com mensagem genérica, nada mais).
+(sem tabela nova; **só vale depois de aplicada no hospedado** — sem ela a tela
+mostra erro tratado e a transferência recusa com mensagem genérica, nada mais).
 
 ## Comportamento final
 
@@ -39,8 +39,14 @@ erro tratado e a transferência recusa com mensagem genérica, nada mais).
   (`insufficient_permission`); o destinatário da posse é procurado **dentro** do
   workspace da sessão.
 - Uma permissão nova e específica, `workspace.transfer_ownership` (só owner). A
-  matriz existente não mudou. Papéis, convites, troca de papel e remoção de
-  membros ficaram como estavam.
+  matriz existente não mudou. Papéis e convites ficaram como estavam.
+- **Rebaixar e remover owner são serializados** para o workspace nunca ficar
+  sem owner. `update_membership_role` e `remove_membership` (da A2) travavam só
+  a linha alvo, então dois owners que se rebaixavam ou se removiam ao mesmo
+  tempo deixavam zero owners. Agora travam todas as memberships do workspace,
+  em ordem de id, antes de decidir: uma operação conclui e a outra é recusada
+  como se viesse depois. Assinatura, erros e permissões iguais; prova em
+  `scripts/b5-last-owner-concurrency-check.sh` e no pgTAP 46.
 
 ## Limites conhecidos (não são bloqueios)
 
