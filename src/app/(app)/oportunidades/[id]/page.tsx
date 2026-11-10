@@ -10,6 +10,8 @@ import { getOpportunity } from "@/modules/opportunities/queries";
 import { listAllActivities } from "@/modules/activities/queries";
 import { listTeamMembers } from "@/modules/team/queries";
 import { OpportunityDetailPanel } from "@/components/pipeline/opportunity-detail-panel";
+import { RecordCustomFieldsForm } from "@/components/custom-fields/record-custom-fields-form";
+import { getCustomFieldsForRecord } from "@/modules/custom-fields/queries";
 
 export async function generateMetadata({
   params,
@@ -36,6 +38,7 @@ export default async function OportunidadeDetalhePage({ params }: { params: Prom
 
   const canEdit = roleHasPermission(user.role, "opportunity.edit");
   const canEditActivities = roleHasPermission(user.role, "activity.edit");
+  const customFields = await getCustomFieldsForRecord(workspaceId, "opportunity", id);
 
   const [{ items: activities }, members] = await Promise.all([
     // Todas as pendentes: a seção de atividades não pagina, então a primeira
@@ -64,6 +67,7 @@ export default async function OportunidadeDetalhePage({ params }: { params: Prom
             members={members}
             canEditActivities={canEditActivities}
           />
+          <RecordCustomFieldsForm entityType="opportunity" recordId={id} fields={customFields} canEdit={canEdit} />
         </div>
       </main>
     </>

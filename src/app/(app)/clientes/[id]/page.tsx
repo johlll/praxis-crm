@@ -11,6 +11,8 @@ import { listTeamMembers } from "@/modules/team/queries";
 import { ClientStatusForm } from "@/components/clients/client-status-form";
 import { TransferClientOwnerForm } from "@/components/clients/transfer-client-owner-form";
 import { ClientHistoryList } from "@/components/clients/client-history-list";
+import { RecordCustomFieldsForm } from "@/components/custom-fields/record-custom-fields-form";
+import { getCustomFieldsForRecord } from "@/modules/custom-fields/queries";
 
 const STATUS_LABEL: Record<ClientStatus, string> = {
   ativo: "Ativo",
@@ -50,6 +52,7 @@ export default async function ClienteDetalhePage({ params }: { params: Promise<{
 
   const canManage = roleHasPermission(user.role, "client.manage");
   const members = canManage ? await listTeamMembers(workspaceId, user.id) : [];
+  const customFields = await getCustomFieldsForRecord(workspaceId, "client", id);
 
   // Resolvida no servidor a partir do primeiro handoff de verdade —
   // NUNCA history[0] (achado da revisão pré-merge: o histórico já vem
@@ -96,6 +99,8 @@ export default async function ClienteDetalhePage({ params }: { params: Promise<{
               ) : null}
             </dl>
           </section>
+
+          <RecordCustomFieldsForm entityType="client" recordId={id} fields={customFields} canEdit={canManage} />
 
           {canManage ? (
             <section className="rounded-lg border border-border bg-surface p-4">

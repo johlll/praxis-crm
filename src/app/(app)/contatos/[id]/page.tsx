@@ -10,6 +10,9 @@ import { ContactPhonesList } from "@/components/contacts/contact-phones-list";
 import { ContactEmailsList } from "@/components/contacts/contact-emails-list";
 import { ContactSensitiveSection } from "@/components/contacts/contact-sensitive-section";
 import { ContactMergeHistory } from "@/components/contacts/contact-merge-history";
+import { RecordCustomFieldsForm } from "@/components/custom-fields/record-custom-fields-form";
+import { getCustomFieldsForRecord } from "@/modules/custom-fields/queries";
+import { requireWorkspace } from "@/server/authz/permissions";
 
 export async function generateMetadata({
   params,
@@ -28,12 +31,15 @@ export default async function ContatoDetalhePage({
 }) {
   const { id } = await params;
   const { user } = await getShellContext();
+  const workspaceId = await requireWorkspace();
   const contact = await getContactDetail(id);
 
   if (!contact) notFound();
 
   const mergeHistory = await listContactMergeHistory(id);
   const canUndoMerge = roleHasPermission(user.role, "contact.merge");
+  const canEdit = roleHasPermission(user.role, "contact.edit");
+  const customFields = await getCustomFieldsForRecord(workspaceId, "contact", id);
 
   return (
     <>
@@ -44,6 +50,8 @@ export default async function ContatoDetalhePage({
             <h2 className="mb-3 text-body font-semibold text-text">Dados básicos</h2>
             <ContactBasicFieldsForm contact={contact} />
           </section>
+
+          <RecordCustomFieldsForm entityType="contact" recordId={id} fields={customFields} canEdit={canEdit} />
 
           <section className="rounded-lg border border-border bg-surface p-4">
             <h2 className="mb-3 text-body font-semibold text-text">Telefones</h2>

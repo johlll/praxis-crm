@@ -38,6 +38,8 @@ import { LeadProfileTabs } from "@/components/leads/lead-profile-tabs";
 import { AttributionPanel } from "@/components/leads/attribution-panel";
 import { getLeadAttribution } from "@/modules/attribution/queries";
 import { EmptyState } from "@/components/feedback/empty-state";
+import { RecordCustomFieldsForm } from "@/components/custom-fields/record-custom-fields-form";
+import { getCustomFieldsForRecord } from "@/modules/custom-fields/queries";
 
 export async function generateMetadata({
   params,
@@ -76,6 +78,7 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
   // B1: mais restrito que proposal.edit — quem gera/baixa/envia o PDF
   // precisa enxergar o valor exato (sales fica de fora, ver src/lib/roles.ts).
   const canManageProposalDocuments = roleHasPermission(user.role, "proposal_document.manage");
+  const customFields = await getCustomFieldsForRecord(workspaceId, "lead", id);
 
   const [
     members,
@@ -177,6 +180,8 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
             <h2 className="mb-3 text-body font-semibold text-text">Dados do lead</h2>
             <LeadBasicFieldsForm lead={lead} readOnly={!canEdit} />
           </section>
+
+          <RecordCustomFieldsForm entityType="lead" recordId={id} fields={customFields} canEdit={canEdit} />
 
           {canEdit ? (
             <section className="rounded-lg border border-border bg-surface p-4">

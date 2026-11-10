@@ -1789,6 +1789,202 @@ export type Database = {
           },
         ]
       }
+      custom_field_definitions: {
+        Row: {
+          created_at: string
+          created_by: string
+          entity_type: Database["public"]["Enums"]["custom_field_entity"]
+          field_type: Database["public"]["Enums"]["custom_field_type"]
+          id: string
+          name: string
+          position: number
+          status: Database["public"]["Enums"]["custom_field_status"]
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          entity_type: Database["public"]["Enums"]["custom_field_entity"]
+          field_type: Database["public"]["Enums"]["custom_field_type"]
+          id?: string
+          name: string
+          position?: number
+          status?: Database["public"]["Enums"]["custom_field_status"]
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          entity_type?: Database["public"]["Enums"]["custom_field_entity"]
+          field_type?: Database["public"]["Enums"]["custom_field_type"]
+          id?: string
+          name?: string
+          position?: number
+          status?: Database["public"]["Enums"]["custom_field_status"]
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "custom_field_definitions_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "custom_field_definitions_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      custom_field_options: {
+        Row: {
+          created_at: string
+          definition_id: string
+          id: string
+          label: string
+          position: number
+          status: Database["public"]["Enums"]["custom_field_status"]
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          definition_id: string
+          id?: string
+          label: string
+          position?: number
+          status?: Database["public"]["Enums"]["custom_field_status"]
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          definition_id?: string
+          id?: string
+          label?: string
+          position?: number
+          status?: Database["public"]["Enums"]["custom_field_status"]
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "custom_field_options_definition_fkey"
+            columns: ["workspace_id", "definition_id"]
+            isOneToOne: false
+            referencedRelation: "custom_field_definitions"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
+      custom_field_values: {
+        Row: {
+          boolean_value: boolean | null
+          client_id: string | null
+          contact_id: string | null
+          created_at: string
+          date_value: string | null
+          definition_id: string
+          id: string
+          lead_id: string | null
+          number_value: number | null
+          opportunity_id: string | null
+          option_id: string | null
+          text_value: string | null
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          boolean_value?: boolean | null
+          client_id?: string | null
+          contact_id?: string | null
+          created_at?: string
+          date_value?: string | null
+          definition_id: string
+          id?: string
+          lead_id?: string | null
+          number_value?: number | null
+          opportunity_id?: string | null
+          option_id?: string | null
+          text_value?: string | null
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          boolean_value?: boolean | null
+          client_id?: string | null
+          contact_id?: string | null
+          created_at?: string
+          date_value?: string | null
+          definition_id?: string
+          id?: string
+          lead_id?: string | null
+          number_value?: number | null
+          opportunity_id?: string | null
+          option_id?: string | null
+          text_value?: string | null
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "custom_field_values_client_fkey"
+            columns: ["workspace_id", "client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "custom_field_values_contact_fkey"
+            columns: ["workspace_id", "contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "custom_field_values_definition_fkey"
+            columns: ["workspace_id", "definition_id"]
+            isOneToOne: false
+            referencedRelation: "custom_field_definitions"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "custom_field_values_lead_fkey"
+            columns: ["workspace_id", "lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "custom_field_values_opportunity_fkey"
+            columns: ["workspace_id", "opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "custom_field_values_option_fkey"
+            columns: ["workspace_id", "definition_id", "option_id"]
+            isOneToOne: false
+            referencedRelation: "custom_field_options"
+            referencedColumns: ["workspace_id", "definition_id", "id"]
+          },
+          {
+            foreignKeyName: "custom_field_values_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       conversations: {
         Row: {
           channel_id: string
@@ -4613,6 +4809,10 @@ export type Database = {
         }
         Returns: Json
       }
+      archive_custom_field_definition: {
+        Args: { p_definition_id: string }
+        Returns: undefined
+      }
       assign_lead: {
         Args: {
           p_assigned_to?: string
@@ -4853,6 +5053,17 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      create_custom_field_definition: {
+        Args: {
+          p_entity_type: Database["public"]["Enums"]["custom_field_entity"]
+          p_field_type: Database["public"]["Enums"]["custom_field_type"]
+          p_name: string
+          p_options?: string[]
+          p_position: number
+          p_workspace_id: string
+        }
+        Returns: string
       }
       create_form_endpoint: {
         Args: {
@@ -5113,6 +5324,14 @@ export type Database = {
       }
       get_client: { Args: { p_client_id: string }; Returns: Json }
       get_conflict_check: { Args: { p_lead_id: string }; Returns: Json }
+      get_custom_fields_for_record: {
+        Args: {
+          p_entity_type: Database["public"]["Enums"]["custom_field_entity"]
+          p_record_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       get_contact_merge_history: {
         Args: { p_contact_id: string }
         Returns: {
@@ -5281,6 +5500,10 @@ export type Database = {
           items: Json
           total_count: number
         }[]
+      }
+      list_custom_field_definitions: {
+        Args: { p_workspace_id: string }
+        Returns: Json
       }
       list_conversation_messages: {
         Args: {
@@ -5689,6 +5912,23 @@ export type Database = {
         }
         Returns: undefined
       }
+      set_custom_field_value: {
+        Args: {
+          p_boolean_value?: boolean
+          p_date_value?: string
+          p_definition_id: string
+          p_number_value?: number
+          p_option_id?: string
+          p_record_id: string
+          p_text_value?: string
+          p_workspace_id: string
+        }
+        Returns: undefined
+      }
+      set_custom_field_values: {
+        Args: { p_record_id: string; p_values: Json; p_workspace_id: string }
+        Returns: undefined
+      }
       set_form_endpoint_status: {
         Args: {
           p_form_endpoint_id: string
@@ -5922,6 +6162,15 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      update_custom_field_definition: {
+        Args: {
+          p_definition_id: string
+          p_name: string
+          p_options?: Json
+          p_position: number
+        }
+        Returns: undefined
       }
       update_form_endpoint: {
         Args: {
@@ -6454,6 +6703,14 @@ export type Database = {
         | "formulario_contato"
       contact_channel: "whatsapp" | "email" | "telefone" | "presencial"
       contact_type: "pf" | "pj"
+      custom_field_entity: "contact" | "lead" | "opportunity" | "client"
+      custom_field_status: "active" | "archived"
+      custom_field_type:
+        | "short_text"
+        | "number"
+        | "date"
+        | "boolean"
+        | "single_select"
       duplicate_status: "pending" | "merged" | "dismissed"
       duplicate_tier: "strong" | "review" | "low"
       fee_model: "fixed" | "contingency" | "fixed_contingency"
@@ -6684,6 +6941,15 @@ export const Constants = {
       ],
       contact_channel: ["whatsapp", "email", "telefone", "presencial"],
       contact_type: ["pf", "pj"],
+      custom_field_entity: ["contact", "lead", "opportunity", "client"],
+      custom_field_status: ["active", "archived"],
+      custom_field_type: [
+        "short_text",
+        "number",
+        "date",
+        "boolean",
+        "single_select",
+      ],
       duplicate_status: ["pending", "merged", "dismissed"],
       duplicate_tier: ["strong", "review", "low"],
       fee_model: ["fixed", "contingency", "fixed_contingency"],

@@ -161,7 +161,10 @@ export type Permission =
   // ativa passa a criar atividades sozinha). Consultar regras e histórico:
   // também manager. O banco repete as duas faixas.
   | "automation.manage"
-  | "automation.view";
+  | "automation.view"
+  // C4 — administrar definições pode mudar os formulários de todo o
+  // workspace; só owner/admin. Valores reutilizam as permissões da entidade.
+  | "custom_field.manage";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -206,6 +209,7 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.transfer_ownership": new Set<Role>(["owner"]),
   "automation.manage": new Set<Role>(["owner", "admin"]),
   "automation.view": new Set<Role>(["owner", "admin", "manager"]),
+  "custom_field.manage": new Set<Role>(["owner", "admin"]),
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {
