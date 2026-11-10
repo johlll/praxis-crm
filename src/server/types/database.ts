@@ -2043,10 +2043,20 @@ export type Database = {
           },
           {
             foreignKeyName: "custom_field_values_definition_fkey"
-            columns: ["workspace_id", "definition_id", "entity_type", "field_type"]
+            columns: [
+              "workspace_id",
+              "definition_id",
+              "entity_type",
+              "field_type",
+            ]
             isOneToOne: false
             referencedRelation: "custom_field_definitions"
-            referencedColumns: ["workspace_id", "id", "entity_type", "field_type"]
+            referencedColumns: [
+              "workspace_id",
+              "id",
+              "entity_type",
+              "field_type",
+            ]
           },
           {
             foreignKeyName: "custom_field_values_lead_fkey"
