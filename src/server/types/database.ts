@@ -2999,6 +2999,64 @@ export type Database = {
           },
         ]
       }
+      privacy_exports: {
+        Row: {
+          contact_id: string
+          failure_code: string | null
+          finished_at: string | null
+          format_version: string
+          id: string
+          requested_at: string
+          requested_by: string | null
+          status: string
+          workspace_id: string
+        }
+        Insert: {
+          contact_id: string
+          failure_code?: string | null
+          finished_at?: string | null
+          format_version: string
+          id?: string
+          requested_at?: string
+          requested_by?: string | null
+          status?: string
+          workspace_id: string
+        }
+        Update: {
+          contact_id?: string
+          failure_code?: string | null
+          finished_at?: string | null
+          format_version?: string
+          id?: string
+          requested_at?: string
+          requested_by?: string | null
+          status?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "privacy_exports_contact_fkey"
+            columns: ["workspace_id", "contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "privacy_exports_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "privacy_exports_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       proposal_documents: {
         Row: {
           byte_size: number | null
@@ -5290,6 +5348,15 @@ export type Database = {
         }
         Returns: boolean
       }
+      finish_privacy_export: {
+        Args: {
+          p_actor_user_id: string
+          p_export_id: string
+          p_failure_code?: string
+          p_workspace_id: string
+        }
+        Returns: undefined
+      }
       flag_expiring_webhook_events: {
         Args: { p_days_before?: number; p_limit?: number }
         Returns: Json
@@ -5382,6 +5449,14 @@ export type Database = {
       }
       get_opportunity: { Args: { p_opportunity_id: string }; Returns: Json }
       get_pipeline_board: { Args: { p_pipeline_id: string }; Returns: Json }
+      get_privacy_export_payload: {
+        Args: {
+          p_actor_user_id: string
+          p_export_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       get_proposal: { Args: { p_proposal_id: string }; Returns: Json }
       get_proposal_document_for_download: {
         Args: { p_document_id: string }
@@ -5786,6 +5861,14 @@ export type Database = {
       reorder_pipeline_stages: {
         Args: { p_ordered_stage_ids: string[]; p_pipeline_id: string }
         Returns: undefined
+      }
+      request_privacy_export: {
+        Args: {
+          p_actor_user_id: string
+          p_contact_id: string
+          p_workspace_id: string
+        }
+        Returns: string
       }
       reschedule_activity: {
         Args: {
