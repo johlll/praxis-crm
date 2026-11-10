@@ -1789,6 +1789,100 @@ export type Database = {
           },
         ]
       }
+      conversations: {
+        Row: {
+          channel_id: string
+          contact_id: string | null
+          created_at: string
+          id: string
+          identity_id: string
+          last_message_at: string | null
+          lead_id: string | null
+          link_candidate_contact_ids: string[]
+          link_candidate_lead_ids: string[]
+          needs_link_review: boolean
+          opportunity_id: string | null
+          updated_at: string
+          wa_id: string | null
+          workspace_id: string
+        }
+        Insert: {
+          channel_id: string
+          contact_id?: string | null
+          created_at?: string
+          id?: string
+          identity_id: string
+          last_message_at?: string | null
+          lead_id?: string | null
+          link_candidate_contact_ids?: string[]
+          link_candidate_lead_ids?: string[]
+          needs_link_review?: boolean
+          opportunity_id?: string | null
+          updated_at?: string
+          wa_id?: string | null
+          workspace_id: string
+        }
+        Update: {
+          channel_id?: string
+          contact_id?: string | null
+          created_at?: string
+          id?: string
+          identity_id?: string
+          last_message_at?: string | null
+          lead_id?: string | null
+          link_candidate_contact_ids?: string[]
+          link_candidate_lead_ids?: string[]
+          needs_link_review?: boolean
+          opportunity_id?: string | null
+          updated_at?: string
+          wa_id?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversations_channel_same_workspace_fkey"
+            columns: ["workspace_id", "channel_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_channels"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "conversations_contact_same_workspace_fkey"
+            columns: ["workspace_id", "contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "conversations_identity_same_workspace_fkey"
+            columns: ["workspace_id", "identity_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_identities"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "conversations_lead_same_workspace_fkey"
+            columns: ["workspace_id", "lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "conversations_opportunity_same_workspace_fkey"
+            columns: ["workspace_id", "opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "conversations_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       custom_field_definitions: {
         Row: {
           created_at: string
@@ -1978,100 +2072,6 @@ export type Database = {
           },
           {
             foreignKeyName: "custom_field_values_workspace_id_fkey"
-            columns: ["workspace_id"]
-            isOneToOne: false
-            referencedRelation: "workspaces"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      conversations: {
-        Row: {
-          channel_id: string
-          contact_id: string | null
-          created_at: string
-          id: string
-          identity_id: string
-          last_message_at: string | null
-          lead_id: string | null
-          link_candidate_contact_ids: string[]
-          link_candidate_lead_ids: string[]
-          needs_link_review: boolean
-          opportunity_id: string | null
-          updated_at: string
-          wa_id: string | null
-          workspace_id: string
-        }
-        Insert: {
-          channel_id: string
-          contact_id?: string | null
-          created_at?: string
-          id?: string
-          identity_id: string
-          last_message_at?: string | null
-          lead_id?: string | null
-          link_candidate_contact_ids?: string[]
-          link_candidate_lead_ids?: string[]
-          needs_link_review?: boolean
-          opportunity_id?: string | null
-          updated_at?: string
-          wa_id?: string | null
-          workspace_id: string
-        }
-        Update: {
-          channel_id?: string
-          contact_id?: string | null
-          created_at?: string
-          id?: string
-          identity_id?: string
-          last_message_at?: string | null
-          lead_id?: string | null
-          link_candidate_contact_ids?: string[]
-          link_candidate_lead_ids?: string[]
-          needs_link_review?: boolean
-          opportunity_id?: string | null
-          updated_at?: string
-          wa_id?: string | null
-          workspace_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "conversations_channel_same_workspace_fkey"
-            columns: ["workspace_id", "channel_id"]
-            isOneToOne: false
-            referencedRelation: "whatsapp_channels"
-            referencedColumns: ["workspace_id", "id"]
-          },
-          {
-            foreignKeyName: "conversations_contact_same_workspace_fkey"
-            columns: ["workspace_id", "contact_id"]
-            isOneToOne: false
-            referencedRelation: "contacts"
-            referencedColumns: ["workspace_id", "id"]
-          },
-          {
-            foreignKeyName: "conversations_identity_same_workspace_fkey"
-            columns: ["workspace_id", "identity_id"]
-            isOneToOne: false
-            referencedRelation: "whatsapp_identities"
-            referencedColumns: ["workspace_id", "id"]
-          },
-          {
-            foreignKeyName: "conversations_lead_same_workspace_fkey"
-            columns: ["workspace_id", "lead_id"]
-            isOneToOne: false
-            referencedRelation: "leads"
-            referencedColumns: ["workspace_id", "id"]
-          },
-          {
-            foreignKeyName: "conversations_opportunity_same_workspace_fkey"
-            columns: ["workspace_id", "opportunity_id"]
-            isOneToOne: false
-            referencedRelation: "opportunities"
-            referencedColumns: ["workspace_id", "id"]
-          },
-          {
-            foreignKeyName: "conversations_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
@@ -5324,14 +5324,6 @@ export type Database = {
       }
       get_client: { Args: { p_client_id: string }; Returns: Json }
       get_conflict_check: { Args: { p_lead_id: string }; Returns: Json }
-      get_custom_fields_for_record: {
-        Args: {
-          p_entity_type: Database["public"]["Enums"]["custom_field_entity"]
-          p_record_id: string
-          p_workspace_id: string
-        }
-        Returns: Json
-      }
       get_contact_merge_history: {
         Args: { p_contact_id: string }
         Returns: {
@@ -5343,6 +5335,14 @@ export type Database = {
         }[]
       }
       get_conversation: { Args: { p_conversation_id: string }; Returns: Json }
+      get_custom_fields_for_record: {
+        Args: {
+          p_entity_type: Database["public"]["Enums"]["custom_field_entity"]
+          p_record_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       get_dashboard: {
         Args: {
           p_assigned_to?: string
@@ -5501,10 +5501,6 @@ export type Database = {
           total_count: number
         }[]
       }
-      list_custom_field_definitions: {
-        Args: { p_workspace_id: string }
-        Returns: Json
-      }
       list_conversation_messages: {
         Args: {
           p_before?: string
@@ -5528,6 +5524,10 @@ export type Database = {
           items: Json
           total_count: number
         }[]
+      }
+      list_custom_field_definitions: {
+        Args: { p_workspace_id: string }
+        Returns: Json
       }
       list_form_endpoints: { Args: { p_workspace_id: string }; Returns: Json }
       list_leads: {
