@@ -89,6 +89,11 @@ export const AUDIT_ACTION_GROUPS: readonly AuditActionGroup[] = [
     ["custom_field.restored", "Campo personalizado restaurado"],
     ["custom_field.value_set", "Valor de campo personalizado alterado"],
   ]),
+  group("Privacidade e LGPD", [
+    ["privacy.export_requested", "Exportação de dados do titular solicitada"],
+    ["privacy.export_generated", "Exportação de dados do titular gerada"],
+    ["privacy.export_failed", "Exportação de dados do titular falhou"],
+  ]),
   group("Clientes", [
     ["client.status_changed", "Status do cliente alterado"],
     ["client.owner_transferred", "Responsável do cliente transferido"],

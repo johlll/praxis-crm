@@ -115,7 +115,9 @@ export async function signInAction(
 
 export async function signOutAction(): Promise<void> {
   const supabase = await createServerSupabaseClient();
-  await supabase.auth.signOut();
+  // Escopo global explícito: encerra TODAS as sessões do usuário (refresh tokens),
+  // não só a deste navegador. O access token já emitido vale até expirar.
+  await supabase.auth.signOut({ scope: "global" });
   await clearActiveWorkspaceCookie();
   redirect("/entrar");
 }

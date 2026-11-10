@@ -198,6 +198,9 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   invalid_automation_rule: "A regra está incompleta ou tem valores fora do permitido. Confira os campos.",
   invalid_automation_stage: "Escolha uma etapa válida deste workspace (não vale etapa de ganho ou perda).",
   invalid_automation_assignee: "Escolha uma pessoa ativa deste workspace como responsável.",
+  // C3a — exportação de dados do titular. contact_not_found e insufficient_permission já existem.
+  privacy_export_not_found: "Exportação não encontrada ou já encerrada. Gere uma nova.",
+  privacy_export_failure_invalid: "Não foi possível concluir a exportação.",
   // C4 — campos personalizados. custom_field_not_found e custom_field_record_not_found
   // cobrem também definição/registro de outro workspace (nunca se distingue).
   custom_field_not_found: "Campo não encontrado.",

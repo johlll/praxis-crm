@@ -167,7 +167,10 @@ export type Permission =
   // permissão própria de propósito: seguem a permissão de leitura e de edição da
   // entidade (contact/lead/opportunity.view|edit; client.view|manage), com o mesmo
   // alcance por registro — campo personalizado nunca amplia acesso. O banco repete.
-  | "custom_field.manage";
+  | "custom_field.manage"
+  // C3a — exportar os dados de um titular (LGPD): arquivo com dados pessoais
+  // completos, só owner/admin. O banco repete a faixa.
+  | "privacy.manage";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -213,6 +216,7 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "automation.manage": new Set<Role>(["owner", "admin"]),
   "automation.view": new Set<Role>(["owner", "admin", "manager"]),
   "custom_field.manage": new Set<Role>(["owner", "admin"]),
+  "privacy.manage": new Set<Role>(["owner", "admin"]),
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {

@@ -10,6 +10,7 @@ import { ContactPhonesList } from "@/components/contacts/contact-phones-list";
 import { ContactEmailsList } from "@/components/contacts/contact-emails-list";
 import { ContactSensitiveSection } from "@/components/contacts/contact-sensitive-section";
 import { ContactMergeHistory } from "@/components/contacts/contact-merge-history";
+import { ContactPrivacySection } from "@/components/contacts/contact-privacy-section";
 import { CustomFieldsSection } from "@/components/custom-fields/custom-fields-section";
 
 export async function generateMetadata({
@@ -36,6 +37,7 @@ export default async function ContatoDetalhePage({
   const mergeHistory = await listContactMergeHistory(id);
   const canUndoMerge = roleHasPermission(user.role, "contact.merge");
   const canEditContact = roleHasPermission(user.role, "contact.edit");
+  const canExportPrivacy = roleHasPermission(user.role, "privacy.manage");
 
   return (
     <>
@@ -70,6 +72,8 @@ export default async function ContatoDetalhePage({
               <ContactMergeHistory contactId={contact.id} canUndo={canUndoMerge} history={mergeHistory} />
             </section>
           ) : null}
+
+          {canExportPrivacy ? <ContactPrivacySection contactId={contact.id} /> : null}
         </div>
       </main>
     </>
