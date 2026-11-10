@@ -1,6 +1,15 @@
 import Link from "next/link";
 import type { Metadata, Route } from "next";
-import { Users, Workflow, MessageCircle, Building2, CalendarDays, ScrollText, type LucideIcon } from "lucide-react";
+import {
+  Users,
+  Workflow,
+  MessageCircle,
+  Building2,
+  CalendarDays,
+  ScrollText,
+  SlidersHorizontal,
+  type LucideIcon,
+} from "lucide-react";
 
 import { Topbar } from "@/components/app-shell/topbar";
 import { getShellContext } from "@/modules/shell/queries";
@@ -26,6 +35,7 @@ export default async function ConfiguracoesPage() {
   const canManageLegalProfile = roleHasPermission(membership.role, "workspace_legal_profile.manage");
   const canConnectCalendar = roleHasPermission(membership.role, "calendar.connect_own");
   const canViewAudit = roleHasPermission(membership.role, "audit_log.view");
+  const canManageCustomFields = roleHasPermission(membership.role, "custom_field.manage");
 
   // "Pipelines" só aparece para quem tem a permissão — diferente das
   // seções de fase futura abaixo (que todo mundo vê como "ainda não
@@ -65,6 +75,16 @@ export default async function ConfiguracoesPage() {
             icon: Workflow,
             title: "Pipelines",
             description: "Etapas, requisitos de avanço e motivos de perda.",
+          },
+        ]
+      : []),
+    ...(canManageCustomFields
+      ? [
+          {
+            href: "/configuracoes/campos-personalizados" as Route,
+            icon: SlidersHorizontal,
+            title: "Campos personalizados",
+            description: "Campos próprios de contatos, leads, oportunidades e clientes.",
           },
         ]
       : []),

@@ -161,7 +161,13 @@ export type Permission =
   // ativa passa a criar atividades sozinha). Consultar regras e histórico:
   // também manager. O banco repete as duas faixas.
   | "automation.manage"
-  | "automation.view";
+  | "automation.view"
+  // C4 — campos personalizados (docs/decisoes/c4-campos-personalizados.md). Criar,
+  // editar e arquivar DEFINIÇÕES: só owner/admin. Ler e editar os VALORES não tem
+  // permissão própria de propósito: seguem a permissão de leitura e de edição da
+  // entidade (contact/lead/opportunity.view|edit; client.view|manage), com o mesmo
+  // alcance por registro — campo personalizado nunca amplia acesso. O banco repete.
+  | "custom_field.manage";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -206,6 +212,7 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.transfer_ownership": new Set<Role>(["owner"]),
   "automation.manage": new Set<Role>(["owner", "admin"]),
   "automation.view": new Set<Role>(["owner", "admin", "manager"]),
+  "custom_field.manage": new Set<Role>(["owner", "admin"]),
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {
