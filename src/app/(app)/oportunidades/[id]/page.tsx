@@ -10,6 +10,7 @@ import { getOpportunity } from "@/modules/opportunities/queries";
 import { listAllActivities } from "@/modules/activities/queries";
 import { listTeamMembers } from "@/modules/team/queries";
 import { OpportunityDetailPanel } from "@/components/pipeline/opportunity-detail-panel";
+import { CustomFieldsSection } from "@/components/custom-fields/custom-fields-section";
 
 export async function generateMetadata({
   params,
@@ -64,6 +65,7 @@ export default async function OportunidadeDetalhePage({ params }: { params: Prom
             members={members}
             canEditActivities={canEditActivities}
           />
+          <CustomFieldsSection entity="opportunity" recordId={opportunity.id} canEdit={canEdit} />
         </div>
       </main>
     </>

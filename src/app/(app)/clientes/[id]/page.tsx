@@ -11,6 +11,7 @@ import { listTeamMembers } from "@/modules/team/queries";
 import { ClientStatusForm } from "@/components/clients/client-status-form";
 import { TransferClientOwnerForm } from "@/components/clients/transfer-client-owner-form";
 import { ClientHistoryList } from "@/components/clients/client-history-list";
+import { CustomFieldsSection } from "@/components/custom-fields/custom-fields-section";
 
 const STATUS_LABEL: Record<ClientStatus, string> = {
   ativo: "Ativo",
@@ -96,6 +97,8 @@ export default async function ClienteDetalhePage({ params }: { params: Promise<{
               ) : null}
             </dl>
           </section>
+
+          <CustomFieldsSection entity="client" recordId={client.id} canEdit={canManage} />
 
           {canManage ? (
             <section className="rounded-lg border border-border bg-surface p-4">

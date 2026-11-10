@@ -38,6 +38,7 @@ import { LeadProfileTabs } from "@/components/leads/lead-profile-tabs";
 import { AttributionPanel } from "@/components/leads/attribution-panel";
 import { getLeadAttribution } from "@/modules/attribution/queries";
 import { EmptyState } from "@/components/feedback/empty-state";
+import { CustomFieldsSection } from "@/components/custom-fields/custom-fields-section";
 
 export async function generateMetadata({
   params,
@@ -178,6 +179,8 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
             <LeadBasicFieldsForm lead={lead} readOnly={!canEdit} />
           </section>
 
+          <CustomFieldsSection entity="lead" recordId={lead.id} canEdit={canEdit} />
+
           {canEdit ? (
             <section className="rounded-lg border border-border bg-surface p-4">
               <h2 className="mb-3 text-body font-semibold text-text">Responsável</h2>
@@ -225,6 +228,14 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
                     canEditActivities={canEditActivities}
                     showClientLink={false}
                     showActivities={false}
+                  />
+                ) : null}
+
+                {primaryOpportunity ? (
+                  <CustomFieldsSection
+                    entity="opportunity"
+                    recordId={primaryOpportunity.id}
+                    canEdit={canEditOpportunities}
                   />
                 ) : null}
 

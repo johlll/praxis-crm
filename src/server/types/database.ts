@@ -1883,6 +1883,204 @@ export type Database = {
           },
         ]
       }
+      custom_field_definitions: {
+        Row: {
+          archived_at: string | null
+          created_at: string
+          created_by: string | null
+          entity_type: string
+          field_type: string
+          id: string
+          name: string
+          position: number
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          archived_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          entity_type: string
+          field_type: string
+          id?: string
+          name: string
+          position?: number
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          archived_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          entity_type?: string
+          field_type?: string
+          id?: string
+          name?: string
+          position?: number
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "custom_field_definitions_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      custom_field_options: {
+        Row: {
+          created_at: string
+          definition_id: string
+          field_type: string
+          id: string
+          label: string
+          position: number
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          definition_id: string
+          field_type?: string
+          id?: string
+          label: string
+          position?: number
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          definition_id?: string
+          field_type?: string
+          id?: string
+          label?: string
+          position?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "custom_field_options_definition_fkey"
+            columns: ["workspace_id", "definition_id", "field_type"]
+            isOneToOne: false
+            referencedRelation: "custom_field_definitions"
+            referencedColumns: ["workspace_id", "id", "field_type"]
+          },
+        ]
+      }
+      custom_field_values: {
+        Row: {
+          client_id: string | null
+          contact_id: string | null
+          created_at: string
+          definition_id: string
+          entity_type: string
+          field_type: string
+          id: string
+          lead_id: string | null
+          opportunity_id: string | null
+          option_id: string | null
+          updated_at: string
+          updated_by: string | null
+          value_boolean: boolean | null
+          value_date: string | null
+          value_number: number | null
+          value_text: string | null
+          workspace_id: string
+        }
+        Insert: {
+          client_id?: string | null
+          contact_id?: string | null
+          created_at?: string
+          definition_id: string
+          entity_type: string
+          field_type: string
+          id?: string
+          lead_id?: string | null
+          opportunity_id?: string | null
+          option_id?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          value_boolean?: boolean | null
+          value_date?: string | null
+          value_number?: number | null
+          value_text?: string | null
+          workspace_id: string
+        }
+        Update: {
+          client_id?: string | null
+          contact_id?: string | null
+          created_at?: string
+          definition_id?: string
+          entity_type?: string
+          field_type?: string
+          id?: string
+          lead_id?: string | null
+          opportunity_id?: string | null
+          option_id?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          value_boolean?: boolean | null
+          value_date?: string | null
+          value_number?: number | null
+          value_text?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "custom_field_values_client_fkey"
+            columns: ["workspace_id", "client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "custom_field_values_contact_fkey"
+            columns: ["workspace_id", "contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "custom_field_values_definition_fkey"
+            columns: [
+              "workspace_id",
+              "definition_id",
+              "entity_type",
+              "field_type",
+            ]
+            isOneToOne: false
+            referencedRelation: "custom_field_definitions"
+            referencedColumns: [
+              "workspace_id",
+              "id",
+              "entity_type",
+              "field_type",
+            ]
+          },
+          {
+            foreignKeyName: "custom_field_values_lead_fkey"
+            columns: ["workspace_id", "lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "custom_field_values_opportunity_fkey"
+            columns: ["workspace_id", "opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "custom_field_values_option_fkey"
+            columns: ["workspace_id", "definition_id", "option_id"]
+            isOneToOne: false
+            referencedRelation: "custom_field_options"
+            referencedColumns: ["workspace_id", "definition_id", "id"]
+          },
+        ]
+      }
       duplicate_candidates: {
         Row: {
           contact_a_id: string
@@ -4854,6 +5052,17 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      create_custom_field: {
+        Args: {
+          p_entity_type: string
+          p_field_type: string
+          p_name: string
+          p_options?: Json
+          p_position?: number
+          p_workspace_id: string
+        }
+        Returns: string
+      }
       create_form_endpoint: {
         Args: {
           p_allowed_hostnames: string[]
@@ -5124,6 +5333,10 @@ export type Database = {
         }[]
       }
       get_conversation: { Args: { p_conversation_id: string }; Returns: Json }
+      get_custom_field_values: {
+        Args: { p_entity_type: string; p_record_id: string }
+        Returns: Json
+      }
       get_dashboard: {
         Args: {
           p_assigned_to?: string
@@ -5305,6 +5518,10 @@ export type Database = {
           items: Json
           total_count: number
         }[]
+      }
+      list_custom_field_definitions: {
+        Args: { p_workspace_id: string }
+        Returns: Json
       }
       list_form_endpoints: { Args: { p_workspace_id: string }; Returns: Json }
       list_leads: {
@@ -5689,6 +5906,14 @@ export type Database = {
         }
         Returns: undefined
       }
+      set_custom_field_archived: {
+        Args: { p_archived: boolean; p_definition_id: string }
+        Returns: undefined
+      }
+      set_custom_field_values: {
+        Args: { p_entity_type: string; p_record_id: string; p_values: Json }
+        Returns: number
+      }
       set_form_endpoint_status: {
         Args: {
           p_form_endpoint_id: string
@@ -5922,6 +6147,15 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      update_custom_field: {
+        Args: {
+          p_definition_id: string
+          p_name: string
+          p_options?: Json
+          p_position?: number
+        }
+        Returns: undefined
       }
       update_form_endpoint: {
         Args: {

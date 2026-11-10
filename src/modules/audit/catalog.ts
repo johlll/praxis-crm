@@ -82,6 +82,13 @@ export const AUDIT_ACTION_GROUPS: readonly AuditActionGroup[] = [
     ["automation.rule_paused", "Regra de automação pausada"],
     ["automation.rule_archived", "Regra de automação arquivada"],
   ]),
+  group("Campos personalizados", [
+    ["custom_field.created", "Campo personalizado criado"],
+    ["custom_field.updated", "Campo personalizado alterado"],
+    ["custom_field.archived", "Campo personalizado arquivado"],
+    ["custom_field.restored", "Campo personalizado restaurado"],
+    ["custom_field.value_set", "Valor de campo personalizado alterado"],
+  ]),
   group("Clientes", [
     ["client.status_changed", "Status do cliente alterado"],
     ["client.owner_transferred", "Responsável do cliente transferido"],

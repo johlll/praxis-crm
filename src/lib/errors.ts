@@ -198,6 +198,22 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   invalid_automation_rule: "A regra está incompleta ou tem valores fora do permitido. Confira os campos.",
   invalid_automation_stage: "Escolha uma etapa válida deste workspace (não vale etapa de ganho ou perda).",
   invalid_automation_assignee: "Escolha uma pessoa ativa deste workspace como responsável.",
+  // C4 — campos personalizados. custom_field_not_found e custom_field_record_not_found
+  // cobrem também definição/registro de outro workspace (nunca se distingue).
+  custom_field_not_found: "Campo não encontrado.",
+  custom_field_record_not_found: "Registro não encontrado.",
+  custom_field_invalid_entity: "Entidade inválida para campos personalizados.",
+  custom_field_invalid_type: "Tipo de campo inválido.",
+  custom_field_invalid_name: "Informe um nome de 1 a 80 caracteres.",
+  custom_field_invalid_position: "A posição precisa ser um número entre 0 e 1000.",
+  custom_field_invalid_options: "Confira as opções: de 1 a 30, sem repetir e com até 80 caracteres cada.",
+  custom_field_name_taken: "Já existe um campo ativo com esse nome nesta entidade.",
+  custom_field_limit_reached: "Esta entidade já tem 50 campos ativos. Arquive algum para criar outro.",
+  custom_field_archived: "Este campo está arquivado e não pode ser alterado.",
+  custom_field_immutable: "O tipo e a entidade de um campo não podem ser alterados.",
+  custom_field_option_in_use: "Há registros usando uma das opções que você tirou da lista. Mantenha essas opções.",
+  custom_field_invalid_value: "Algum valor não é válido para o tipo do campo. Confira os campos.",
+  custom_field_invalid_option: "Escolha uma das opções disponíveis para o campo.",
 };
 
 /** update_lead_basic_fields()/assign_lead()/set_lead_status()/set_lead_value()
