@@ -28,7 +28,9 @@ existindo, só com metadados: ids, tipo, estado, datas e valores estruturados):
 `leads.summary` · `leads.tags` · `opportunities.lost_note` · `opportunity_requirements.value_text`
 · `activities.title` · `activities.notes` · `proposals.decision_note` · `lead_notes.body` ·
 `conflict_checks.note` · `proposal_email_sends.to_email` (o endereço do destinatário; os
-e-mails do próprio titular já estão na seção de e-mails do contato).
+e-mails do próprio titular já estão na seção de e-mails do contato) ·
+`touchpoint_demand_links.reason` (motivo digitado pela equipe; o vínculo de atribuição
+continua com id, touchpoint, oportunidade, ação e data). **Onze campos** no total.
 
 Esses textos **continuam preservados no CRM**. Fornecê-los ao titular depende de **revisão
 humana e jurídica**. Isto **não é anonimização nem retenção** — isso é a C3b.
@@ -48,13 +50,15 @@ aprovadas). Sem ZIP.
   `anon`, `authenticated` e PUBLIC não executam. Nenhum cliente com sessão obtém payload,
   ciphertext, registro ou conclusão chamando o banco direto.
 - O servidor autoriza pela sessão (`requirePermissionSafe("privacy.manage")`), extrai o
-  **ator do contexto confiável** (nunca de formulário, URL ou corpo) e o envia como
-  `p_actor_user_id`, usando o cliente administrativo próprio da feature
+  **ator e o workspace ATIVO do contexto confiável** (nunca de formulário, URL ou corpo) e
+  os envia como `p_actor_user_id` e `p_workspace_id`, usando o cliente administrativo próprio da feature
   (`src/server/privacy/admin/supabase.ts`, protegido por lint como os da B1/B2/B3).
-- O banco confere **de novo**, em cada RPC: ator existente, membership ativa, papel
-  owner/admin no workspace **do contato**, registro do próprio ator e ainda aberto. O
-  workspace é sempre derivado do contato. Contato inexistente, de outro workspace ou
-  **mesclado** responde “não encontrado”; membro sem a faixa recebe permissão negada.
+- O banco confere **de novo**, em cada RPC: ator existente, membership ativa e papel
+  owner/admin **no workspace ativo informado pelo servidor**, contato e registro de exportação
+  pertencentes **exatamente a esse workspace**, registro do próprio ator e ainda aberto.
+  Quem é owner/admin em dois workspaces só exporta contatos do que está ativo. Contato
+  inexistente, de outro workspace (inclusive um onde o ator também é admin) ou **mesclado**
+  responde “não encontrado”; membro sem a faixa recebe permissão negada.
 - Os dados saem de **uma só leitura** (`STABLE`, uma instrução) — um único instantâneo.
 
 ## Entrega

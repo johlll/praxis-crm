@@ -10,7 +10,7 @@
 -- aparecer no arquivo automático.
 
 begin;
-select plan(75);
+select plan(87);
 
 \set ana    '20000000-0000-0000-0000-000000000001'
 \set bruno  '20000000-0000-0000-0000-000000000002'
@@ -152,7 +152,7 @@ insert into public.touchpoints (workspace_id, contact_id, lead_id, opportunity_i
   (:'ws_um'::uuid, (:'alfa')::uuid, (:'lead_alfa')::uuid, (:'opp_alfa')::uuid, now(), now(), now(), 'formulario', 1, 'google', 'Campanha ALFA', 'gclid-alfa')
   returning id as tp_alfa \gset
 insert into public.touchpoint_demand_links (workspace_id, touchpoint_id, opportunity_id, action, reason) values
-  (:'ws_um'::uuid, (:'tp_alfa')::uuid, (:'opp_alfa')::uuid, 'assign', 'Vínculo ALFA');
+  (:'ws_um'::uuid, (:'tp_alfa')::uuid, (:'opp_alfa')::uuid, 'assign', 'INTERNO-motivo-vinculo-ALFA');
 insert into public.continuity_references (workspace_id, token_hash, contact_id, lead_id, purpose, expires_at) values
   (:'ws_um'::uuid, decode(repeat('70', 32), 'hex'), (:'alfa')::uuid, (:'lead_alfa')::uuid, 'Retomada ALFA', now() + interval '7 days');
 
@@ -249,12 +249,12 @@ select ok(
 -- Nenhum cliente com sessão obtém payload, ciphertext, registro ou conclusão.
 set local role authenticated;
 select pg_temp.login(:'ana'::uuid);
-select throws_ok(format($q$select request_privacy_export(%L, %L)$q$, :'ana', :'alfa'), '42501', null, 'authenticated não abre o registro nem como owner');
-select throws_ok(format($q$select get_privacy_export_payload(%L, %L)$q$, :'ana', gen_random_uuid()), '42501', null, 'authenticated não lê o pacote (nem o ciphertext)');
-select throws_ok(format($q$select finish_privacy_export(%L, %L)$q$, :'ana', gen_random_uuid()), '42501', null, 'authenticated não conclui exportação');
+select throws_ok(format($q$select request_privacy_export(%L, %L, %L)$q$, :'ana', :'ws_um', :'alfa'), '42501', null, 'authenticated não abre o registro nem como owner');
+select throws_ok(format($q$select get_privacy_export_payload(%L, %L, %L)$q$, :'ana', :'ws_um', gen_random_uuid()), '42501', null, 'authenticated não lê o pacote (nem o ciphertext)');
+select throws_ok(format($q$select finish_privacy_export(%L, %L, %L)$q$, :'ana', :'ws_um', gen_random_uuid()), '42501', null, 'authenticated não conclui exportação');
 reset role;
 set local role anon;
-select throws_ok(format($q$select request_privacy_export(%L, %L)$q$, :'ana', :'alfa'), '42501', null, 'anon não abre o registro');
+select throws_ok(format($q$select request_privacy_export(%L, %L, %L)$q$, :'ana', :'ws_um', :'alfa'), '42501', null, 'anon não abre o registro');
 reset role;
 
 -- =====================================================================
@@ -262,39 +262,57 @@ reset role;
 -- =====================================================================
 
 set local role service_role;
-select request_privacy_export((:'ana')::uuid, (:'alfa')::uuid) as exp_ana \gset
+select request_privacy_export((:'ana')::uuid, (:'ws_um')::uuid, (:'alfa')::uuid) as exp_ana \gset
 select ok((:'exp_ana') is not null, 'owner abre a exportação');
-select request_privacy_export((:'bruno')::uuid, (:'alfa')::uuid) as exp_bruno \gset
+select request_privacy_export((:'bruno')::uuid, (:'ws_um')::uuid, (:'alfa')::uuid) as exp_bruno \gset
 select ok((:'exp_bruno') is not null, 'admin abre a exportação');
-select throws_ok(format($q$select request_privacy_export(%L, %L)$q$, :'daniel', :'alfa'), 'P0001', 'insufficient_permission', 'manager é recusado');
-select throws_ok(format($q$select request_privacy_export(%L, %L)$q$, :'carla', :'alfa'), 'P0001', 'insufficient_permission', 'advogado é recusado');
-select throws_ok(format($q$select request_privacy_export(%L, %L)$q$, :'elisa', :'alfa'), 'P0001', 'insufficient_permission', 'viewer é recusado');
-select throws_ok(format($q$select request_privacy_export(%L, %L)$q$, :'ana', :'gama'), 'P0001', 'contact_not_found', 'owner de outro workspace: contato não encontrado');
-select throws_ok(format($q$select request_privacy_export(%L, %L)$q$, :'ninguem', :'alfa'), 'P0001', 'contact_not_found', 'ator inexistente: não encontrado');
-select throws_ok(format($q$select request_privacy_export(%L, %L)$q$, :'ana', gen_random_uuid()), 'P0001', 'contact_not_found', 'contato inexistente: não encontrado');
-select throws_ok(format($q$select request_privacy_export(%L, %L)$q$, :'ana', :'mesclado'), 'P0001', 'contact_not_found', 'contato mesclado: não encontrado (comportamento existente)');
-select throws_ok(format($q$select request_privacy_export(null, %L)$q$, :'alfa'), 'P0001', 'authentication_required', 'sem ator: recusado');
+select throws_ok(format($q$select request_privacy_export(%L, %L, %L)$q$, :'daniel', :'ws_um', :'alfa'), 'P0001', 'insufficient_permission', 'manager é recusado');
+select throws_ok(format($q$select request_privacy_export(%L, %L, %L)$q$, :'carla', :'ws_um', :'alfa'), 'P0001', 'insufficient_permission', 'advogado é recusado');
+select throws_ok(format($q$select request_privacy_export(%L, %L, %L)$q$, :'elisa', :'ws_um', :'alfa'), 'P0001', 'insufficient_permission', 'viewer é recusado');
+select throws_ok(format($q$select request_privacy_export(%L, %L, %L)$q$, :'ana', :'ws_um', :'gama'), 'P0001', 'contact_not_found', 'owner de outro workspace: contato não encontrado');
+select throws_ok(format($q$select request_privacy_export(%L, %L, %L)$q$, :'ninguem', :'ws_um', :'alfa'), 'P0001', 'contact_not_found', 'ator inexistente: não encontrado');
+select throws_ok(format($q$select request_privacy_export(%L, %L, %L)$q$, :'ana', :'ws_um', gen_random_uuid()), 'P0001', 'contact_not_found', 'contato inexistente: não encontrado');
+select throws_ok(format($q$select request_privacy_export(%L, %L, %L)$q$, :'ana', :'ws_um', :'mesclado'), 'P0001', 'contact_not_found', 'contato mesclado: não encontrado (comportamento existente)');
+select throws_ok(format($q$select request_privacy_export(null, %L, %L)$q$, :'ws_um', :'alfa'), 'P0001', 'authentication_required', 'sem ator: recusado');
 reset role;
 
 -- Membership suspensa e papel rebaixado: o banco recusa mesmo com o ator "válido" para o servidor.
 update public.memberships set status = 'suspended' where workspace_id = (:'ws_um')::uuid and user_id = (:'bruno')::uuid;
 set local role service_role;
-select throws_ok(format($q$select request_privacy_export(%L, %L)$q$, :'bruno', :'alfa'), 'P0001', 'contact_not_found', 'membership suspensa: recusada');
-select throws_ok(format($q$select get_privacy_export_payload(%L, %L)$q$, :'bruno', :'exp_bruno'), 'P0001', 'privacy_export_not_found', 'membership suspensa não lê o pacote de um registro que abriu antes');
-select throws_ok(format($q$select finish_privacy_export(%L, %L)$q$, :'bruno', :'exp_bruno'), 'P0001', 'privacy_export_not_found', 'membership suspensa não conclui o registro');
+select throws_ok(format($q$select request_privacy_export(%L, %L, %L)$q$, :'bruno', :'ws_um', :'alfa'), 'P0001', 'contact_not_found', 'membership suspensa: recusada');
+select throws_ok(format($q$select get_privacy_export_payload(%L, %L, %L)$q$, :'bruno', :'ws_um', :'exp_bruno'), 'P0001', 'privacy_export_not_found', 'membership suspensa não lê o pacote de um registro que abriu antes');
+select throws_ok(format($q$select finish_privacy_export(%L, %L, %L)$q$, :'bruno', :'ws_um', :'exp_bruno'), 'P0001', 'privacy_export_not_found', 'membership suspensa não conclui o registro');
 reset role;
 update public.memberships set status = 'active', role = 'manager' where workspace_id = (:'ws_um')::uuid and user_id = (:'bruno')::uuid;
 set local role service_role;
-select throws_ok(format($q$select get_privacy_export_payload(%L, %L)$q$, :'bruno', :'exp_bruno'), 'P0001', 'privacy_export_not_found', 'papel rebaixado entre o pedido e a leitura: nada sai');
+select throws_ok(format($q$select get_privacy_export_payload(%L, %L, %L)$q$, :'bruno', :'ws_um', :'exp_bruno'), 'P0001', 'privacy_export_not_found', 'papel rebaixado entre o pedido e a leitura: nada sai');
 reset role;
 update public.memberships set role = 'admin' where workspace_id = (:'ws_um')::uuid and user_id = (:'bruno')::uuid;
+
+-- Workspace ativo confiável: Bruno é admin no Um e owner no Dois. O workspace que o servidor
+-- informa (o ATIVO) precisa ser o do contato, o do registro e o da membership.
+set local role service_role;
+select throws_ok(format($q$select request_privacy_export(%L, %L, %L)$q$, :'bruno', :'ws_um', :'gama'), 'P0001', 'contact_not_found', 'owner/admin nos workspaces A e B, com A ativo, não exporta contato de B');
+select throws_ok(format($q$select request_privacy_export(%L, %L, %L)$q$, :'bruno', :'ws_dois', :'alfa'), 'P0001', 'contact_not_found', 'com B ativo, também não exporta contato de A');
+select request_privacy_export((:'bruno')::uuid, (:'ws_dois')::uuid, (:'gama')::uuid) as exp_gama \gset
+select ok((:'exp_gama') is not null, 'o mesmo ator, com B ativo, exporta o contato de B');
+select get_privacy_export_payload((:'bruno')::uuid, (:'ws_dois')::uuid, (:'exp_gama')::uuid) as pacote_gama \gset
+select is(:'pacote_gama'::jsonb #>> '{data,contact,name}', 'Contato GAMA', 'e lê os dados do contato de B com B ativo');
+select request_privacy_export((:'bruno')::uuid, (:'ws_um')::uuid, (:'alfa')::uuid) as exp_cruz \gset
+select throws_ok(format($q$select get_privacy_export_payload(%L, %L, %L)$q$, :'bruno', :'ws_dois', :'exp_cruz'), 'P0001', 'privacy_export_not_found', 'exportação aberta em A não é lida passando B');
+select throws_ok(format($q$select finish_privacy_export(%L, %L, %L)$q$, :'bruno', :'ws_dois', :'exp_cruz'), 'P0001', 'privacy_export_not_found', 'exportação aberta em A não é concluída passando B');
+select throws_ok(format($q$select get_privacy_export_payload(%L, %L, %L)$q$, :'bruno', :'ws_um', :'exp_gama'), 'P0001', 'privacy_export_not_found', 'exportação aberta em B não é lida passando A');
+select throws_ok(format($q$select request_privacy_export(%L, %L, %L)$q$, :'ana', :'ws_dois', :'gama'), 'P0001', 'contact_not_found', 'quem não participa de B recebe "não encontrado" ao tentar B');
+select throws_ok(format($q$select request_privacy_export(%L, %L, %L)$q$, :'ana', :'ws_dois', :'alfa'), 'P0001', 'contact_not_found', 'e o contato de A pedido sob B também não é revelado');
+select throws_ok(format($q$select request_privacy_export(%L, null, %L)$q$, :'bruno', :'alfa'), 'P0001', 'contact_not_found', 'sem workspace informado: não encontrado');
+reset role;
 
 -- =====================================================================
 -- 3) Conteúdo: categorias, isolamento e itens deliberadamente fora
 -- =====================================================================
 
 set local role service_role;
-select get_privacy_export_payload((:'ana')::uuid, (:'exp_ana')::uuid) as pacote \gset
+select get_privacy_export_payload((:'ana')::uuid, (:'ws_um')::uuid, (:'exp_ana')::uuid) as pacote \gset
 reset role;
 
 select is(:'pacote'::jsonb #>> '{data,contact,name}', 'Titular ALFA', 'o contato do titular está no arquivo');
@@ -323,7 +341,20 @@ select is(:'pacote'::jsonb #>> '{data,messages,0,body_text}', 'Mensagem ALFA', '
 select is(jsonb_array_length(:'pacote'::jsonb #> '{data,message_status_events}'), 1, 'status das mensagens');
 select is(:'pacote'::jsonb #>> '{data,whatsapp_identities,0,phone}', '+5541999990001', 'identidade do WhatsApp');
 select is(:'pacote'::jsonb #>> '{data,attribution_touchpoints,0,campaign}', 'Campanha ALFA', 'atribuição (touchpoints)');
-select is(jsonb_array_length(:'pacote'::jsonb #> '{data,attribution_links}'), 1, 'vínculos de atribuição');
+select is(jsonb_array_length(:'pacote'::jsonb #> '{data,attribution_links}'), 1, 'vínculos de atribuição: a linha continua aparecendo');
+select ok(
+  (:'pacote'::jsonb #>> '{data,attribution_links,0,action}') = 'assign'
+  and (:'pacote'::jsonb #>> '{data,attribution_links,0,touchpoint_id}') = (:'tp_alfa')
+  and (:'pacote'::jsonb #>> '{data,attribution_links,0,opportunity_id}') = (:'opp_alfa')
+  and (:'pacote'::jsonb #>> '{data,attribution_links,0,id}') is not null
+  and (:'pacote'::jsonb #>> '{data,attribution_links,0,created_at}') is not null,
+  'vínculo de atribuição mantém id, touchpoint, oportunidade, ação e data'
+);
+select ok(
+  not (:'pacote'::jsonb #> '{data,attribution_links,0}' ? 'reason')
+  and (:'pacote'::jsonb -> 'data')::text not like '%motivo-vinculo%',
+  'o texto livre do vínculo (touchpoint_demand_links.reason) não sai no arquivo'
+);
 select is(jsonb_array_length(:'pacote'::jsonb #> '{data,continuity_references}'), 1, 'continuidade');
 
 select is(
@@ -379,27 +410,27 @@ select is(:'pacote'::jsonb #>> '{sensitive,key_version}', 'v1', 'o ciphertext do
 select is(pg_temp.n($$select count(*) from public.sensitive_data_access where contact_id = '$$ || :'alfa' || $$' and reason = 'exportacao_titular' and field = 'cpf_cnpj'$$), 1::bigint, 'a leitura do CPF entrou na trilha de dado sensível existente (sem o valor)');
 
 set local role service_role;
-select throws_ok(format($q$select get_privacy_export_payload(%L, %L)$q$, :'bruno', :'exp_ana'), 'P0001', 'privacy_export_not_found', 'outro ator não lê o pacote de um registro alheio');
-select throws_ok(format($q$select get_privacy_export_payload(%L, %L)$q$, :'ninguem', :'exp_ana'), 'P0001', 'privacy_export_not_found', 'ator inexistente não lê o pacote');
-select throws_ok(format($q$select finish_privacy_export(%L, %L)$q$, :'bruno', :'exp_ana'), 'P0001', 'privacy_export_not_found', 'outro ator não conclui o registro alheio');
-select throws_ok(format($q$select finish_privacy_export(%L, %L, 'qualquer')$q$, :'ana', :'exp_ana'), 'P0001', 'privacy_export_failure_invalid', 'código de falha fora da lista fechada é recusado');
-select lives_ok(format($q$select finish_privacy_export(%L, %L)$q$, :'ana', :'exp_ana'), 'concluir o registro');
-select throws_ok(format($q$select finish_privacy_export(%L, %L)$q$, :'ana', :'exp_ana'), 'P0001', 'privacy_export_not_found', 'registro fechado não fecha de novo');
-select throws_ok(format($q$select get_privacy_export_payload(%L, %L)$q$, :'ana', :'exp_ana'), 'P0001', 'privacy_export_not_found', 'registro fechado não entrega o pacote de novo');
+select throws_ok(format($q$select get_privacy_export_payload(%L, %L, %L)$q$, :'bruno', :'ws_um', :'exp_ana'), 'P0001', 'privacy_export_not_found', 'outro ator não lê o pacote de um registro alheio');
+select throws_ok(format($q$select get_privacy_export_payload(%L, %L, %L)$q$, :'ninguem', :'ws_um', :'exp_ana'), 'P0001', 'privacy_export_not_found', 'ator inexistente não lê o pacote');
+select throws_ok(format($q$select finish_privacy_export(%L, %L, %L)$q$, :'bruno', :'ws_um', :'exp_ana'), 'P0001', 'privacy_export_not_found', 'outro ator não conclui o registro alheio');
+select throws_ok(format($q$select finish_privacy_export(%L, %L, %L, 'qualquer')$q$, :'ana', :'ws_um', :'exp_ana'), 'P0001', 'privacy_export_failure_invalid', 'código de falha fora da lista fechada é recusado');
+select lives_ok(format($q$select finish_privacy_export(%L, %L, %L)$q$, :'ana', :'ws_um', :'exp_ana'), 'concluir o registro');
+select throws_ok(format($q$select finish_privacy_export(%L, %L, %L)$q$, :'ana', :'ws_um', :'exp_ana'), 'P0001', 'privacy_export_not_found', 'registro fechado não fecha de novo');
+select throws_ok(format($q$select get_privacy_export_payload(%L, %L, %L)$q$, :'ana', :'ws_um', :'exp_ana'), 'P0001', 'privacy_export_not_found', 'registro fechado não entrega o pacote de novo');
 reset role;
 
 select is(pg_temp.t($$select status || ':' || coalesce(failure_code, '-') from public.privacy_exports where id = '$$ || :'exp_ana' || $$'$$), 'completed:-', 'registro concluído');
 
 -- Falha: nunca vira "concluída".
 set local role service_role;
-select get_privacy_export_payload((:'bruno')::uuid, (:'exp_bruno')::uuid) is not null as ok_bruno \gset
-select finish_privacy_export((:'bruno')::uuid, (:'exp_bruno')::uuid, 'decryption_failed');
+select get_privacy_export_payload((:'bruno')::uuid, (:'ws_um')::uuid, (:'exp_bruno')::uuid) is not null as ok_bruno \gset
+select finish_privacy_export((:'bruno')::uuid, (:'ws_um')::uuid, (:'exp_bruno')::uuid, 'decryption_failed');
 reset role;
 select is(pg_temp.t($$select status || ':' || failure_code from public.privacy_exports where id = '$$ || :'exp_bruno' || $$'$$), 'failed:decryption_failed', 'falha fica registrada como falha, com código fechado');
 select is(pg_temp.n($$select count(*) from public.audit_logs where action = 'privacy.export_generated' and resource_id = '$$ || :'exp_bruno' || $$'$$), 0::bigint, 'falha não gera auditoria de "gerada"');
 select is(
   pg_temp.n($$select count(*) from public.audit_logs where action in ('privacy.export_requested','privacy.export_generated','privacy.export_failed')$$),
-  4::bigint, 'duas solicitadas, uma gerada e uma falha — as tentativas recusadas não deixam rastro'
+  6::bigint, 'quatro solicitadas, uma gerada e uma falha — as tentativas recusadas não deixam rastro'
 );
 
 select ok(
@@ -423,8 +454,8 @@ select ok(
 -- =====================================================================
 
 set local role service_role;
-select request_privacy_export((:'ana')::uuid, (:'vazio')::uuid) as exp_vazio \gset
-select get_privacy_export_payload((:'ana')::uuid, (:'exp_vazio')::uuid) as pacote_vazio \gset
+select request_privacy_export((:'ana')::uuid, (:'ws_um')::uuid, (:'vazio')::uuid) as exp_vazio \gset
+select get_privacy_export_payload((:'ana')::uuid, (:'ws_um')::uuid, (:'exp_vazio')::uuid) as pacote_vazio \gset
 reset role;
 select is(
   (select count(*) from jsonb_each(:'pacote_vazio'::jsonb -> 'data') e

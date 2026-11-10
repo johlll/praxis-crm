@@ -5353,6 +5353,7 @@ export type Database = {
           p_actor_user_id: string
           p_export_id: string
           p_failure_code?: string
+          p_workspace_id: string
         }
         Returns: undefined
       }
@@ -5449,7 +5450,11 @@ export type Database = {
       get_opportunity: { Args: { p_opportunity_id: string }; Returns: Json }
       get_pipeline_board: { Args: { p_pipeline_id: string }; Returns: Json }
       get_privacy_export_payload: {
-        Args: { p_actor_user_id: string; p_export_id: string }
+        Args: {
+          p_actor_user_id: string
+          p_export_id: string
+          p_workspace_id: string
+        }
         Returns: Json
       }
       get_proposal: { Args: { p_proposal_id: string }; Returns: Json }
@@ -5858,7 +5863,11 @@ export type Database = {
         Returns: undefined
       }
       request_privacy_export: {
-        Args: { p_actor_user_id: string; p_contact_id: string }
+        Args: {
+          p_actor_user_id: string
+          p_contact_id: string
+          p_workspace_id: string
+        }
         Returns: string
       }
       reschedule_activity: {

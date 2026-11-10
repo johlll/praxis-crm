@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const CONTACT = "c0000000-0000-4000-8000-000000000001";
 const EXPORT = "e0000000-0000-4000-8000-000000000001";
 const ACTOR = "a0000000-0000-4000-8000-000000000001";
+const WS = "b0000000-0000-4000-8000-0000000000b1";
 
 type RpcResult = { data: unknown; error: { message: string } | null };
 
@@ -57,7 +58,7 @@ let consoleSpies: Array<ReturnType<typeof vi.spyOn>> = [];
 beforeEach(() => {
   vi.clearAllMocks();
   state.clientThrows = false;
-  state.guard = { ctx: { userId: ACTOR, workspaceId: "w", role: "owner" } };
+  state.guard = { ctx: { userId: ACTOR, workspaceId: WS, role: "owner" } };
   decryptMock.mockReturnValue("12345678901");
   state.rpc = (fn) => {
     if (fn === "request_privacy_export") return { data: EXPORT, error: null };
@@ -83,10 +84,30 @@ describe("caminho feliz", () => {
   it("o ator é SEMPRE o do contexto confiável, nas três chamadas — nunca algo vindo da requisição", async () => {
     await exportSubjectData(CONTACT);
     expect(calls()).toEqual([
-      ["request_privacy_export", { p_actor_user_id: ACTOR, p_contact_id: CONTACT }],
-      ["get_privacy_export_payload", { p_actor_user_id: ACTOR, p_export_id: EXPORT }],
-      ["finish_privacy_export", { p_actor_user_id: ACTOR, p_export_id: EXPORT }],
+      ["request_privacy_export", { p_actor_user_id: ACTOR, p_workspace_id: WS, p_contact_id: CONTACT }],
+      ["get_privacy_export_payload", { p_actor_user_id: ACTOR, p_workspace_id: WS, p_export_id: EXPORT }],
+      ["finish_privacy_export", { p_actor_user_id: ACTOR, p_workspace_id: WS, p_export_id: EXPORT }],
     ]);
+  });
+
+  it("o workspace enviado às RPCs é exatamente o ATIVO confiável (guard.ctx.workspaceId) — nas três chamadas e em qualquer valor", async () => {
+    for (const workspaceId of [WS, "b0000000-0000-4000-8000-0000000000b2"]) {
+      rpcMock.mockClear();
+      state.guard = { ctx: { userId: ACTOR, workspaceId, role: "admin" } };
+      await exportSubjectData(CONTACT);
+      expect(calls()).toHaveLength(3);
+      for (const [, args] of calls()) expect(args.p_workspace_id).toBe(workspaceId);
+    }
+  });
+
+  it("a única entrada da requisição é o id do contato: não existe como informar workspace ou ator por fora", async () => {
+    expect(exportSubjectData.length).toBe(1);
+    state.guard = { ctx: { userId: ACTOR, workspaceId: WS, role: "owner" } };
+    // Mesmo que o "id do contato" venha carregando outro workspace, ele só é usado como p_contact_id.
+    await exportSubjectData(`${CONTACT}&p_workspace_id=00000000-0000-4000-8000-000000000bad`);
+    const first = calls()[0]![1];
+    expect(first.p_workspace_id).toBe(WS);
+    expect(first.p_contact_id).toBe(`${CONTACT}&p_workspace_id=00000000-0000-4000-8000-000000000bad`);
   });
 
   it("nenhuma RPC da exportação passa pela sessão do usuário", async () => {
@@ -136,7 +157,7 @@ describe("falha no meio: registro de falha e nenhum arquivo", () => {
     state.rpc = (fn) =>
       fn === "request_privacy_export" ? { data: EXPORT, error: null } : fn === "get_privacy_export_payload" ? { data: null, error: { message: "timeout" } } : { data: null, error: null };
     expect(await exportSubjectData(CONTACT)).toEqual(FAILED);
-    expect(finishCalls().map(([, a]) => a)).toEqual([{ p_actor_user_id: ACTOR, p_export_id: EXPORT, p_failure_code: "data_unavailable" }]);
+    expect(finishCalls().map(([, a]) => a)).toEqual([{ p_actor_user_id: ACTOR, p_workspace_id: WS, p_export_id: EXPORT, p_failure_code: "data_unavailable" }]);
     expect(decryptMock).not.toHaveBeenCalled();
   });
 
@@ -147,7 +168,7 @@ describe("falha no meio: registro de falha e nenhum arquivo", () => {
     const result = await exportSubjectData(CONTACT);
     expect(result).toEqual(FAILED);
     expect(JSON.stringify(result)).not.toContain("12345678901");
-    expect(finishCalls().map(([, a]) => a)).toEqual([{ p_actor_user_id: ACTOR, p_export_id: EXPORT, p_failure_code: "decryption_failed" }]);
+    expect(finishCalls().map(([, a]) => a)).toEqual([{ p_actor_user_id: ACTOR, p_workspace_id: WS, p_export_id: EXPORT, p_failure_code: "decryption_failed" }]);
   });
 
   it("estrutura incompleta → registro 'data_unavailable' (nada de arquivo parcial)", async () => {
@@ -159,7 +180,7 @@ describe("falha no meio: registro de falha e nenhum arquivo", () => {
           : { data: null, error: null };
     const result = await exportSubjectData(CONTACT);
     expect(result.ok).toBe(false);
-    expect(finishCalls().map(([, a]) => a)).toEqual([{ p_actor_user_id: ACTOR, p_export_id: EXPORT, p_failure_code: "data_unavailable" }]);
+    expect(finishCalls().map(([, a]) => a)).toEqual([{ p_actor_user_id: ACTOR, p_workspace_id: WS, p_export_id: EXPORT, p_failure_code: "data_unavailable" }]);
   });
 
   it("fechar como concluído devolve erro → o arquivo é DESCARTADO", async () => {
@@ -214,7 +235,7 @@ describe("exceções de transporte (Promise rejeitada) nunca escapam", () => {
     };
     const result = await exportSubjectData(CONTACT);
     expect(result).toEqual(FAILED);
-    expect(finishCalls().map(([, a]) => a)).toEqual([{ p_actor_user_id: ACTOR, p_export_id: EXPORT, p_failure_code: "internal_error" }]);
+    expect(finishCalls().map(([, a]) => a)).toEqual([{ p_actor_user_id: ACTOR, p_workspace_id: WS, p_export_id: EXPORT, p_failure_code: "internal_error" }]);
     expect(decryptMock).not.toHaveBeenCalled();
   });
 
@@ -230,8 +251,8 @@ describe("exceções de transporte (Promise rejeitada) nunca escapam", () => {
     expect(result).toEqual(FAILED);
     expect("body" in result).toBe(false);
     expect(finishCalls().map(([, a]) => a)).toEqual([
-      { p_actor_user_id: ACTOR, p_export_id: EXPORT },
-      { p_actor_user_id: ACTOR, p_export_id: EXPORT, p_failure_code: "internal_error" },
+      { p_actor_user_id: ACTOR, p_workspace_id: WS, p_export_id: EXPORT },
+      { p_actor_user_id: ACTOR, p_workspace_id: WS, p_export_id: EXPORT, p_failure_code: "internal_error" },
     ]);
   });
 

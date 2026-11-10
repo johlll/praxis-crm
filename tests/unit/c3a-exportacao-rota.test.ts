@@ -45,6 +45,23 @@ describe("resposta de sucesso", () => {
   });
 });
 
+describe("workspace nunca vem do navegador", () => {
+  it("query, cabeçalhos e corpo com workspace/ator não chegam ao orquestrador: só o id do contato", async () => {
+    const hostile = "00000000-0000-4000-8000-000000000bad";
+    const response = await POST(
+      new Request(`${ORIGIN}/api/privacy/contacts/${CONTACT}/export?workspaceId=${hostile}&workspace_id=${hostile}&actor=${hostile}`, {
+        method: "POST",
+        headers: { origin: ORIGIN, "x-workspace-id": hostile, "x-actor-user-id": hostile, "content-type": "application/json" },
+        body: JSON.stringify({ workspaceId: hostile, workspace_id: hostile, p_workspace_id: hostile, actor: hostile }),
+      }),
+      { params: Promise.resolve({ contactId: CONTACT }) },
+    );
+    expect(response.status).toBe(200);
+    expect(exportMock).toHaveBeenCalledTimes(1);
+    expect(exportMock.mock.calls[0]).toEqual([CONTACT]);
+  });
+});
+
 describe("origem: falha fechado, sem tocar no banco", () => {
   const refused: Array<[string, Record<string, string>, string?]> = [
     ["Origin ausente", {}],

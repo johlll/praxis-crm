@@ -48,7 +48,7 @@ describe("funções", () => {
   });
 
   it("ACL: as três RPCs só executam para service_role; nada para anon, authenticated ou PUBLIC", () => {
-    for (const fn of ["request_privacy_export(uuid, uuid)", "get_privacy_export_payload(uuid, uuid)", "finish_privacy_export(uuid, uuid, text)"]) {
+    for (const fn of ["request_privacy_export(uuid, uuid, uuid)", "get_privacy_export_payload(uuid, uuid, uuid)", "finish_privacy_export(uuid, uuid, uuid, text)"]) {
       expect(code).toContain(`revoke all on function public.${fn} from public, anon, authenticated;`);
       expect(code).toContain(`grant execute on function public.${fn} to service_role;`);
     }
@@ -58,9 +58,9 @@ describe("funções", () => {
   });
 
   it("o ator chega como parâmetro (vindo do servidor); nada depende de auth.uid() da sessão", () => {
-    expect(code).toContain("create function public.request_privacy_export(p_actor_user_id uuid, p_contact_id uuid)");
-    expect(code).toContain("create function public.get_privacy_export_payload(p_actor_user_id uuid, p_export_id uuid)");
-    expect(code).toContain("create function public.finish_privacy_export(p_actor_user_id uuid, p_export_id uuid, p_failure_code text default null)");
+    expect(code).toContain("create function public.request_privacy_export(p_actor_user_id uuid, p_workspace_id uuid, p_contact_id uuid)");
+    expect(code).toContain("create function public.get_privacy_export_payload(p_actor_user_id uuid, p_workspace_id uuid, p_export_id uuid)");
+    expect(code).toContain("create function public.finish_privacy_export(p_actor_user_id uuid, p_workspace_id uuid, p_export_id uuid, p_failure_code text default null)");
     expect(code).not.toContain("auth.uid()");
   });
 
@@ -76,9 +76,13 @@ describe("funções", () => {
     expect(code).toContain("m.status = 'active'");
     expect(code).toContain("if v_role not in ('owner', 'admin') then raise exception 'insufficient_permission'");
     expect(code.match(/if v_role is null or v_role not in \('owner', 'admin'\) then raise exception 'privacy_export_not_found'/g)).toHaveLength(2);
-    expect(code.match(/requested_by = p_actor_user_id and status = 'requested'/g)).toHaveLength(2);
-    expect(code).toContain("select c.workspace_id into v_workspace_id");
-    expect(code).not.toMatch(/create function public\.[a-z_]*privacy_export[a-z_]*\([^)]*p_workspace_id/);
+    expect(code.match(/requested_by = p_actor_user_id and workspace_id = p_workspace_id and status = 'requested'/g)).toHaveLength(2);
+    // Workspace ativo confiável (enviado pelo servidor) amarra contato, registro e membership.
+    expect(code).toContain("where c.id = p_contact_id and c.workspace_id = p_workspace_id and c.merged_into_contact_id is null");
+    expect(code).toContain("v_role := private.privacy_export_actor_role(p_actor_user_id, p_workspace_id);");
+    expect(code.match(/private\.privacy_export_actor_role\(p_actor_user_id, [a-z_.]*workspace_id\)/g)).toHaveLength(3);
+    expect(code).not.toMatch(/privacy_export_actor_role\(p_actor_user_id, v_export\.workspace_id\)/);
+    expect(code).not.toContain("select c.workspace_id into v_workspace_id");
   });
 
   it("contato mesclado = não encontrado (comportamento existente)", () => {
@@ -99,7 +103,7 @@ describe("o que NUNCA sai", () => {
   });
 
   // Texto livre interno do escritório e dado possivelmente de terceiro: fora do arquivo automático.
-  const livres = ["summary", "tags", "lost_note", "value_text", "title", "notes", "decision_note", "body", "note", "to_email"];
+  const livres = ["summary", "tags", "lost_note", "value_text", "title", "notes", "decision_note", "body", "note", "to_email", "reason"];
   it.each(livres)("texto livre interno / dado de terceiro %s não é projetado", (column) => {
     expect(payloadFn).not.toMatch(new RegExp(`\\bx\\.${column}\\b`));
   });
