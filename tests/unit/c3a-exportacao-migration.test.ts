@@ -41,14 +41,27 @@ describe("tabela de registro", () => {
 });
 
 describe("funções", () => {
-  it("todas SECURITY DEFINER com search_path vazio; públicas só para authenticated; a privada fechada", () => {
-    expect(code.match(/security definer/g)).toHaveLength(4);
-    expect(code.match(/set search_path = ''/g)).toHaveLength(4);
-    for (const fn of ["request_privacy_export(uuid)", "get_privacy_export_payload(uuid)", "finish_privacy_export(uuid, text)"]) {
-      expect(code).toContain(`revoke all on function public.${fn} from public, anon;`);
-      expect(code).toContain(`grant execute on function public.${fn} to authenticated;`);
+  it("todas SECURITY DEFINER com search_path vazio", () => {
+    // payload (privada), papel do ator (privada) e as três RPCs.
+    expect(code.match(/security definer/g)).toHaveLength(5);
+    expect(code.match(/set search_path = ''/g)).toHaveLength(5);
+  });
+
+  it("ACL: as três RPCs só executam para service_role; nada para anon, authenticated ou PUBLIC", () => {
+    for (const fn of ["request_privacy_export(uuid, uuid)", "get_privacy_export_payload(uuid, uuid)", "finish_privacy_export(uuid, uuid, text)"]) {
+      expect(code).toContain(`revoke all on function public.${fn} from public, anon, authenticated;`);
+      expect(code).toContain(`grant execute on function public.${fn} to service_role;`);
     }
+    expect(code).not.toMatch(/grant execute on function [^;]* to (authenticated|anon|public)/);
     expect(code).toContain("revoke all on function private.privacy_export_payload(uuid, uuid) from public, anon, authenticated;");
+    expect(code).toContain("revoke all on function private.privacy_export_actor_role(uuid, uuid) from public, anon, authenticated;");
+  });
+
+  it("o ator chega como parâmetro (vindo do servidor); nada depende de auth.uid() da sessão", () => {
+    expect(code).toContain("create function public.request_privacy_export(p_actor_user_id uuid, p_contact_id uuid)");
+    expect(code).toContain("create function public.get_privacy_export_payload(p_actor_user_id uuid, p_export_id uuid)");
+    expect(code).toContain("create function public.finish_privacy_export(p_actor_user_id uuid, p_export_id uuid, p_failure_code text default null)");
+    expect(code).not.toContain("auth.uid()");
   });
 
   it("a leitura é STABLE, em uma única instrução (um só instantâneo)", () => {
@@ -58,11 +71,14 @@ describe("funções", () => {
     expect(payloadFn).not.toMatch(/\bperform\b|\bbegin\b/i);
   });
 
-  it("papel de owner/admin conferido na abertura e de novo na leitura; workspace vem do contato", () => {
+  it("o banco confere de novo: ator existente, membership ativa, owner/admin, registro do ator e aberto; workspace vem do contato", () => {
+    expect(code).toContain("join public.memberships m on m.user_id = u.id");
+    expect(code).toContain("m.status = 'active'");
     expect(code).toContain("if v_role not in ('owner', 'admin') then raise exception 'insufficient_permission'");
-    expect(code).toContain("private.has_workspace_role(v_export.workspace_id, array['owner', 'admin']");
+    expect(code.match(/if v_role is null or v_role not in \('owner', 'admin'\) then raise exception 'privacy_export_not_found'/g)).toHaveLength(2);
+    expect(code.match(/requested_by = p_actor_user_id and status = 'requested'/g)).toHaveLength(2);
     expect(code).toContain("select c.workspace_id into v_workspace_id");
-    expect(code).not.toMatch(/request_privacy_export\([^)]*p_workspace_id/);
+    expect(code).not.toMatch(/create function public\.[a-z_]*privacy_export[a-z_]*\([^)]*p_workspace_id/);
   });
 
   it("contato mesclado = não encontrado (comportamento existente)", () => {
@@ -80,6 +96,12 @@ describe("o que NUNCA sai", () => {
   ];
   it.each(forbidden)("%s não é projetado", (column) => {
     expect(payloadFn).not.toContain(column);
+  });
+
+  // Texto livre interno do escritório e dado possivelmente de terceiro: fora do arquivo automático.
+  const livres = ["summary", "tags", "lost_note", "value_text", "title", "notes", "decision_note", "body", "note", "to_email"];
+  it.each(livres)("texto livre interno / dado de terceiro %s não é projetado", (column) => {
+    expect(payloadFn).not.toMatch(new RegExp(`\\bx\\.${column}\\b`));
   });
 
   it("o único ciphertext que sai é o do CPF/CNPJ, em chave separada do conteúdo", () => {
@@ -134,5 +156,41 @@ describe("tipos gerados e catálogo", () => {
     for (const action of ["privacy.export_requested", "privacy.export_generated", "privacy.export_failed"]) {
       expect(catalog).toContain(`"${action}"`);
     }
+  });
+});
+
+describe("código do servidor: fluxo exclusivo do servidor", () => {
+  const orchestrator = read("src/server/privacy/export-subject.ts");
+  const route = read("src/app/api/privacy/contacts/[contactId]/export/route.ts");
+  const adminClient = read("src/server/privacy/admin/supabase.ts");
+
+  it("as três RPCs passam pelo cliente administrativo da feature, nunca pela sessão do usuário", () => {
+    expect(orchestrator).toContain("createPrivacyAdminSupabaseClient");
+    expect(orchestrator).not.toContain("createServerSupabaseClient");
+    expect(route).not.toMatch(/supabase/i);
+    // Quatro pontos de chamada (abrir, ler, fechar como concluído e fechar como falha), três RPCs.
+    expect(orchestrator.match(/\.rpc\(/g)).toHaveLength(4);
+    expect(orchestrator.match(/admin\.rpc\(/g)).toHaveLength(4);
+    expect(new Set([...orchestrator.matchAll(/admin\.rpc\(\s*"([a-z_]+)"/g)].map((m) => m[1]))).toEqual(
+      new Set(["request_privacy_export", "get_privacy_export_payload", "finish_privacy_export"]),
+    );
+  });
+
+  it("o ator sai do contexto confiável (requirePermissionSafe), nunca da requisição", () => {
+    expect(orchestrator).toContain('requirePermissionSafe("privacy.manage")');
+    expect(orchestrator).toContain("guard.ctx.userId");
+    expect(orchestrator).not.toMatch(/formData|request\.|searchParams|headers\(/);
+  });
+
+  it("a rota não confia em cabeçalho do chamador para decidir a origem", () => {
+    const code = route.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    expect(code).not.toMatch(/x-forwarded|"host"/i);
+    expect(code).toContain("new URL(request.url).origin");
+  });
+
+  it("o cliente administrativo só valida o mínimo (URL e chave) e fica restrito por lint", () => {
+    expect(adminClient).toContain("SUPABASE_SECRET_KEY");
+    expect(adminClient).not.toMatch(/getIngestConfig|TURNSTILE|UPSTASH|INNGEST/);
+    expect(read("eslint.config.mjs")).toContain('files: ["src/server/privacy/**/*.{ts,tsx}"]');
   });
 });

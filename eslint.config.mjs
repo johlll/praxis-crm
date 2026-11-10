@@ -138,4 +138,29 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    /**
+     * C3a: `src/server/privacy/admin/supabase.ts` é o ÚNICO arquivo da exportação de
+     * dados do titular autorizado a construir um cliente `service_role` cru. As três
+     * RPCs da exportação têm EXECUTE só para service_role (a leitura devolve o conjunto
+     * completo e o ciphertext do CPF/CNPJ); nenhuma sessão de usuário as chama.
+     */
+    files: ["src/server/privacy/**/*.{ts,tsx}"],
+    ignores: ["src/server/privacy/admin/supabase.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@supabase/supabase-js"],
+              importNames: ["createClient"],
+              message:
+                "Não construa outro cliente service_role aqui — importe createPrivacyAdminSupabaseClient de ./admin/supabase.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 );

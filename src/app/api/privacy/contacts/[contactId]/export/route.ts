@@ -10,14 +10,17 @@ const NO_STORE = { "Cache-Control": "no-store" } as const;
 // Formato de UUID, sem exigir versão: o banco é quem decide se o contato existe.
 const contactIdSchema = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 
-/** Origin presente precisa ser o próprio host: o download tem efeito colateral
- * (registro e auditoria), então não pode ser disparado por outro site. */
+/**
+ * O download tem efeito colateral (registro e auditoria), então só a PRÓPRIA origem pode
+ * dispará-lo. Falha fechado: Origin ausente, malformado ou diferente = recusa. A origem
+ * esperada vem da URL da própria requisição — nunca de cabeçalho que o chamador controla
+ * (x-forwarded-host, host). Comparação exata: esquema + host + porta.
+ */
 function isSameOrigin(request: Request): boolean {
   const origin = request.headers.get("origin");
-  if (!origin) return true; // chamadas do próprio navegador sempre enviam Origin em POST; sem ele não há contexto cross-site
-  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+  if (!origin) return false;
   try {
-    return host !== null && new URL(origin).host === host;
+    return origin === new URL(request.url).origin;
   } catch {
     return false;
   }
@@ -40,7 +43,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ con
     return NextResponse.json({ error: "not_found" }, { status: 404, headers: NO_STORE });
   }
 
-  const result = await exportSubjectData(parsed.data);
+  let result: Awaited<ReturnType<typeof exportSubjectData>>;
+  try {
+    result = await exportSubjectData(parsed.data);
+  } catch {
+    // O orquestrador não lança; isto é só o último cinto. Sem detalhe, sem log.
+    return NextResponse.json({ error: "export_failed" }, { status: 500, headers: NO_STORE });
+  }
+
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: result.status, headers: NO_STORE });
   }

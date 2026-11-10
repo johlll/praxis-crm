@@ -49,7 +49,12 @@ revoke all on table public.privacy_exports from public, anon, authenticated;
 -- enxergam o mesmo instantâneo, sem misturar estados de momentos diferentes.
 -- Chamada só pela RPC pública abaixo, que faz a autorização.
 --
--- Deliberadamente NÃO projeta: chaves, segredos, tokens, hashes, blind
+-- Deliberadamente NÃO projeta TEXTO LIVRE INTERNO nem dado de terceiro (resumo e tags do
+-- lead, nota de perda, texto de requisito, título e notas de atividade, nota de decisão da
+-- proposta, corpo das notas, nota de conflito e e-mail do destinatário do envio): o arquivo
+-- automático pode ir ao titular. Tudo isso continua preservado no CRM; fornecê-lo depende de
+-- revisão humana e jurídica.
+-- Tampouco projeta: chaves, segredos, tokens, hashes, blind
 -- indexes, ciphertext (exceto o do CPF/CNPJ, que volta separado e é decifrado
 -- só no servidor), payload bruto de inbox/formulário, ids de provedor,
 -- chaves de idempotência, caminhos de armazenamento, usuários internos e
@@ -151,7 +156,6 @@ as $body$
     'leads', coalesce((
       select jsonb_agg(jsonb_build_object(
         'id', x.id, 'legal_area', x.legal_area, 'priority', x.priority, 'status', x.status,
-        'summary', x.summary, 'tags', x.tags,
         'estimated_value_cents', (select v.estimated_value_cents from public.lead_values v where v.lead_id = x.id),
         'created_at', x.created_at, 'updated_at', x.updated_at) order by x.created_at, x.id)
       from l x
@@ -165,7 +169,7 @@ as $body$
         'probability', x.probability, 'forecast_date', x.forecast_date, 'signed_at', x.signed_at,
         'won_at', x.won_at, 'stage_entered_at', x.stage_entered_at,
         'lost_reason', (select lr.label from public.lost_reasons lr where lr.id = x.lost_reason_id),
-        'lost_note', x.lost_note, 'lost_followup_date', x.lost_followup_date,
+        'lost_followup_date', x.lost_followup_date,
         'created_at', x.created_at, 'updated_at', x.updated_at) order by x.created_at, x.id)
       from o x
     ), '[]'::jsonb),
@@ -173,7 +177,7 @@ as $body$
       select jsonb_agg(jsonb_build_object(
         'opportunity_id', x.opportunity_id,
         'label', (select sr.label from public.stage_requirements sr where sr.id = x.requirement_id),
-        'value_text', x.value_text, 'value_bool', x.value_bool, 'filled_at', x.filled_at)
+        'value_bool', x.value_bool, 'filled_at', x.filled_at)
         order by x.opportunity_id, x.id)
       from public.opportunity_requirement_values x
       where x.workspace_id = p_workspace_id and x.opportunity_id in (select id from o)
@@ -191,7 +195,7 @@ as $body$
     'activities', coalesce((
       select jsonb_agg(jsonb_build_object(
         'id', x.id, 'lead_id', x.lead_id, 'opportunity_id', x.opportunity_id, 'type', x.type,
-        'title', x.title, 'notes', x.notes, 'status', x.status, 'priority', x.priority,
+        'status', x.status, 'priority', x.priority,
         'due_at', x.due_at, 'has_time', x.has_time, 'completed_at', x.completed_at,
         'source', x.source, 'created_at', x.created_at) order by x.created_at, x.id)
       from public.activities x
@@ -217,7 +221,7 @@ as $body$
         'id', x.id, 'lead_id', x.lead_id, 'opportunity_id', x.opportunity_id, 'number', x.number,
         'status', x.status, 'fee_model', x.fee_model, 'value_cents', x.value_cents,
         'sent_at', x.sent_at, 'sent_channels', x.sent_channels, 'decided_at', x.decided_at,
-        'decision_note', x.decision_note, 'created_at', x.created_at) order by x.created_at, x.id)
+        'created_at', x.created_at) order by x.created_at, x.id)
       from p x
     ), '[]'::jsonb),
     -- Só metadados do documento: nada de caminho de armazenamento, checksum ou conteúdo binário.
@@ -231,7 +235,7 @@ as $body$
     ), '[]'::jsonb),
     'proposal_email_sends', coalesce((
       select jsonb_agg(jsonb_build_object(
-        'id', x.id, 'proposal_id', x.proposal_id, 'document_id', x.document_id, 'to_email', x.to_email,
+        'id', x.id, 'proposal_id', x.proposal_id, 'document_id', x.document_id,
         'status', x.status, 'requested_at', x.requested_at, 'resolved_at', x.resolved_at)
         order by x.requested_at, x.id)
       from public.proposal_email_sends x
@@ -239,13 +243,13 @@ as $body$
     ), '[]'::jsonb),
     'lead_notes', coalesce((
       select jsonb_agg(jsonb_build_object(
-        'id', x.id, 'lead_id', x.lead_id, 'body', x.body, 'created_at', x.created_at)
+        'id', x.id, 'lead_id', x.lead_id, 'created_at', x.created_at)
         order by x.created_at, x.id)
       from public.lead_notes x where x.workspace_id = p_workspace_id and x.lead_id in (select id from l)
     ), '[]'::jsonb),
     'conflict_checks', coalesce((
       select jsonb_agg(jsonb_build_object(
-        'id', x.id, 'lead_id', x.lead_id, 'status', x.status, 'note', x.note,
+        'id', x.id, 'lead_id', x.lead_id, 'status', x.status,
         'checked_at', x.checked_at, 'created_at', x.created_at) order by x.created_at, x.id)
       from public.conflict_checks x where x.workspace_id = p_workspace_id and x.lead_id in (select id from l)
     ), '[]'::jsonb),
@@ -338,43 +342,65 @@ $body$;
 revoke all on function private.privacy_export_payload(uuid, uuid) from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------
--- RPCs públicas (SECURITY DEFINER, search_path vazio, EXECUTE só authenticated)
+-- RPCs — EXCLUSIVAS DO SERVIDOR (service_role)
+--
+-- Nenhuma é chamável com sessão de usuário: a leitura devolve o conjunto
+-- completo e o ciphertext do CPF/CNPJ, e só a rota de entrega (que decifra em
+-- Node, aplica as proteções de resposta e fecha o registro) pode obtê-los.
+--
+-- O ator NÃO vem de auth.uid(): o servidor o extrai da sessão já validada
+-- (requirePermissionSafe) e o envia como p_actor_user_id. Cada função confere
+-- DE NOVO, no banco: ator existente, membership ativa, papel owner/admin no
+-- workspace do contato/registro, registro do próprio ator e ainda aberto.
+-- O workspace continua derivado do contato — o chamador nunca o informa.
 -- ---------------------------------------------------------------------
 
--- 1) Abre o registro. Workspace vem do CONTATO, nunca do formulário.
--- Contato inexistente, mesclado ou de workspace do qual o ator não participa:
--- "não encontrado". Participante sem papel de owner/admin: permissão negada.
-create function public.request_privacy_export(p_contact_id uuid)
+-- Papel do ator no workspace; nulo se o ator não existe ou não tem membership ativa.
+create function private.privacy_export_actor_role(p_actor_user_id uuid, p_workspace_id uuid)
+returns public.membership_role
+language sql
+stable
+security definer
+set search_path = ''
+as $body$
+  select m.role
+  from public.users u
+  join public.memberships m on m.user_id = u.id
+  where u.id = p_actor_user_id and m.workspace_id = p_workspace_id and m.status = 'active';
+$body$;
+
+revoke all on function private.privacy_export_actor_role(uuid, uuid) from public, anon, authenticated;
+
+-- 1) Abre o registro. Contato inexistente, mesclado ou de workspace do qual o ator
+-- não participa: "não encontrado". Participante sem papel de owner/admin: permissão negada.
+create function public.request_privacy_export(p_actor_user_id uuid, p_contact_id uuid)
 returns uuid
 language plpgsql
 security definer
 set search_path = ''
 as $body$
 declare
-  v_actor uuid := auth.uid();
   v_workspace_id uuid;
   v_role public.membership_role;
   v_id uuid;
 begin
-  if v_actor is null then raise exception 'authentication_required'; end if;
+  if p_actor_user_id is null then raise exception 'authentication_required'; end if;
 
   select c.workspace_id into v_workspace_id
   from public.contacts c
   where c.id = p_contact_id and c.merged_into_contact_id is null;
 
-  select m.role into v_role
-  from public.memberships m
-  where m.workspace_id = v_workspace_id and m.user_id = v_actor and m.status = 'active';
+  v_role := private.privacy_export_actor_role(p_actor_user_id, v_workspace_id);
 
   if v_workspace_id is null or v_role is null then raise exception 'contact_not_found'; end if;
   if v_role not in ('owner', 'admin') then raise exception 'insufficient_permission'; end if;
 
   insert into public.privacy_exports (workspace_id, contact_id, requested_by, format_version)
-  values (v_workspace_id, p_contact_id, v_actor, 'praxis_data_subject_export_v1')
+  values (v_workspace_id, p_contact_id, p_actor_user_id, 'praxis_data_subject_export_v1')
   returning id into v_id;
 
   insert into public.audit_logs (workspace_id, actor_user_id, action, resource_type, resource_id, metadata)
-  values (v_workspace_id, v_actor, 'privacy.export_requested', 'privacy_export', v_id,
+  values (v_workspace_id, p_actor_user_id, 'privacy.export_requested', 'privacy_export', v_id,
           jsonb_build_object('contact_id', p_contact_id, 'format_version', 'praxis_data_subject_export_v1'));
 
   return v_id;
@@ -384,28 +410,28 @@ $body$;
 -- 2) Entrega os dados de um registro ABERTO do próprio ator. O ciphertext do
 -- CPF/CNPJ volta separado, só para o servidor decifrar; a leitura é registrada
 -- na trilha de dado sensível já existente (sem o valor).
-create function public.get_privacy_export_payload(p_export_id uuid)
+create function public.get_privacy_export_payload(p_actor_user_id uuid, p_export_id uuid)
 returns jsonb
 language plpgsql
 security definer
 set search_path = ''
 as $body$
 declare
-  v_actor uuid := auth.uid();
   v_export public.privacy_exports;
+  v_role public.membership_role;
   v_payload jsonb;
 begin
-  if v_actor is null then raise exception 'authentication_required'; end if;
+  if p_actor_user_id is null then raise exception 'authentication_required'; end if;
 
   select * into v_export from public.privacy_exports
-  where id = p_export_id and requested_by = v_actor and status = 'requested'
+  where id = p_export_id and requested_by = p_actor_user_id and status = 'requested'
   for update;
   if v_export.id is null then raise exception 'privacy_export_not_found'; end if;
 
-  -- O papel é conferido de novo: pode ter mudado entre o pedido e a leitura.
-  if not private.has_workspace_role(v_export.workspace_id, array['owner', 'admin']::public.membership_role[]) then
-    raise exception 'privacy_export_not_found';
-  end if;
+  -- O papel é conferido de novo: pode ter mudado (ou a membership ter sido suspensa)
+  -- entre o pedido e a leitura.
+  v_role := private.privacy_export_actor_role(p_actor_user_id, v_export.workspace_id);
+  if v_role is null or v_role not in ('owner', 'admin') then raise exception 'privacy_export_not_found'; end if;
 
   select private.privacy_export_payload(v_export.workspace_id, v_export.contact_id) into v_payload;
   if v_payload -> 'contact' is null or jsonb_typeof(v_payload -> 'contact') = 'null' then
@@ -414,7 +440,7 @@ begin
 
   if v_payload ->> '_sensitive' is not null then
     insert into public.sensitive_data_access (workspace_id, contact_id, actor_user_id, field, reason)
-    values (v_export.workspace_id, v_export.contact_id, v_actor, 'cpf_cnpj', 'exportacao_titular');
+    values (v_export.workspace_id, v_export.contact_id, p_actor_user_id, 'cpf_cnpj', 'exportacao_titular');
   end if;
 
   return jsonb_build_object('data', v_payload - '_sensitive', 'sensitive', v_payload -> '_sensitive');
@@ -422,26 +448,29 @@ end;
 $body$;
 
 -- 3) Fecha o registro: sem código = concluída; com código fechado = falha.
--- Só o autor do pedido, e só uma vez.
-create function public.finish_privacy_export(p_export_id uuid, p_failure_code text default null)
+-- Só o autor do pedido, com o papel ainda válido, e só uma vez.
+create function public.finish_privacy_export(p_actor_user_id uuid, p_export_id uuid, p_failure_code text default null)
 returns void
 language plpgsql
 security definer
 set search_path = ''
 as $body$
 declare
-  v_actor uuid := auth.uid();
   v_export public.privacy_exports;
+  v_role public.membership_role;
 begin
-  if v_actor is null then raise exception 'authentication_required'; end if;
+  if p_actor_user_id is null then raise exception 'authentication_required'; end if;
   if p_failure_code is not null and p_failure_code not in ('data_unavailable', 'decryption_failed', 'internal_error') then
     raise exception 'privacy_export_failure_invalid';
   end if;
 
   select * into v_export from public.privacy_exports
-  where id = p_export_id and requested_by = v_actor and status = 'requested'
+  where id = p_export_id and requested_by = p_actor_user_id and status = 'requested'
   for update;
   if v_export.id is null then raise exception 'privacy_export_not_found'; end if;
+
+  v_role := private.privacy_export_actor_role(p_actor_user_id, v_export.workspace_id);
+  if v_role is null or v_role not in ('owner', 'admin') then raise exception 'privacy_export_not_found'; end if;
 
   update public.privacy_exports
   set status = case when p_failure_code is null then 'completed' else 'failed' end,
@@ -450,7 +479,7 @@ begin
   where id = v_export.id;
 
   insert into public.audit_logs (workspace_id, actor_user_id, action, resource_type, resource_id, metadata)
-  values (v_export.workspace_id, v_actor,
+  values (v_export.workspace_id, p_actor_user_id,
           case when p_failure_code is null then 'privacy.export_generated' else 'privacy.export_failed' end,
           'privacy_export', v_export.id,
           jsonb_build_object('contact_id', v_export.contact_id, 'format_version', v_export.format_version)
@@ -459,11 +488,12 @@ begin
 end;
 $body$;
 
-revoke all on function public.request_privacy_export(uuid) from public, anon;
-grant execute on function public.request_privacy_export(uuid) to authenticated;
+-- ACL final: somente service_role (e o dono postgres). anon, authenticated e PUBLIC não executam.
+revoke all on function public.request_privacy_export(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.request_privacy_export(uuid, uuid) to service_role;
 
-revoke all on function public.get_privacy_export_payload(uuid) from public, anon;
-grant execute on function public.get_privacy_export_payload(uuid) to authenticated;
+revoke all on function public.get_privacy_export_payload(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.get_privacy_export_payload(uuid, uuid) to service_role;
 
-revoke all on function public.finish_privacy_export(uuid, text) from public, anon;
-grant execute on function public.finish_privacy_export(uuid, text) to authenticated;
+revoke all on function public.finish_privacy_export(uuid, uuid, text) from public, anon, authenticated;
+grant execute on function public.finish_privacy_export(uuid, uuid, text) to service_role;
