@@ -22,6 +22,10 @@ create function pg_temp.login(p_user uuid) returns void language sql as $f$
   select set_config('request.jwt.claims', json_build_object('sub', p_user, 'role', 'authenticated')::text, true)
 $f$;
 
+create function pg_temp.vcount(p_def uuid default null, p_contact uuid default null) returns bigint language sql security definer set search_path = '' as $f$ select count(*) from public.custom_field_values where (p_def is null or definition_id = p_def) and (p_contact is null or contact_id = p_contact) $f$;
+create function pg_temp.audit_leaks() returns boolean language sql security definer set search_path = '' as $f$ select exists(select 1 from public.audit_logs where metadata::text like '%SEGREDO-C4%' or metadata::text like '%advogado%') $f$;
+create function pg_temp.audit_shape_ok() returns boolean language sql security definer set search_path = '' as $f$ select coalesce(bool_and(metadata ? 'definition_id' and metadata ? 'entity'), false) from public.audit_logs where action like 'custom_field.%' $f$;
+
 insert into public.memberships (workspace_id, user_id, role, status) values
   (:'ws1', :'bruno', 'admin', 'active'),
   (:'ws1', :'daniel', 'manager', 'active');
@@ -84,7 +88,7 @@ select id as option1 from public.custom_field_options where definition_id = :'d_
 set local role authenticated;
 select pg_temp.login(:'ana');
 select lives_ok(format($q$select set_custom_field_value(%L,%L,%L,p_option_id=>%L)$q$, :'ws1', :'d_sel', :'c1', :'option1'), 'seleção aceita opção da própria definição');
-select is((select count(*) from public.custom_field_values where contact_id = :'c1'), 5::bigint, 'os cinco tipos foram persistidos em colunas tipadas');
+select is(pg_temp.vcount(null, :'c1'), 5::bigint, 'os cinco tipos foram persistidos em colunas tipadas');
 
 select throws_ok(format($q$select set_custom_field_value(%L,%L,%L,p_number_value=>2)$q$, :'ws1', :'d_text', :'c1'), 'P0001', 'custom_field_value_type_mismatch', 'texto recusa número');
 select throws_ok(format($q$select set_custom_field_value(%L,%L,%L,p_text_value=>'x')$q$, :'ws1', :'d_num', :'c1'), 'P0001', 'custom_field_value_type_mismatch', 'número recusa texto');
@@ -102,7 +106,7 @@ select throws_ok(format($q$select set_custom_field_value(%L,%L,%L,p_text_value=>
 select throws_ok(format($q$select set_custom_field_value(%L,%L,%L,p_text_value=>'x')$q$, :'ws1', :'d_text', :'c2'), 'P0001', 'custom_field_record_not_found', 'definição e registro de workspaces diferentes são recusados');
 
 select lives_ok(format($q$select set_custom_field_value(%L,%L,%L,p_text_value=>'novo')$q$, :'ws1', :'d_text', :'c1'), 'regravar a mesma definição atualiza');
-select is((select count(*) from public.custom_field_values where definition_id = :'d_text' and contact_id = :'c1'), 1::bigint, 'há no máximo um valor por definição e registro');
+select is(pg_temp.vcount(:'d_text', :'c1'), 1::bigint, 'há no máximo um valor por definição e registro');
 
 select pg_temp.login(:'elisa');
 select lives_ok(format($q$select get_custom_fields_for_record(%L,'contact',%L)$q$, :'ws1', :'c1'), 'viewer lê valores da entidade');
@@ -117,7 +121,7 @@ select pg_temp.login(:'ana');
 select throws_ok(format($q$select update_custom_field_definition(%L,'Origem própria',4,'[]')$q$, :'d_sel'), 'P0001', 'custom_field_option_in_use', 'opção usada não é removida silenciosamente');
 
 select lives_ok(format($q$select archive_custom_field_definition(%L)$q$, :'d_text'), 'owner arquiva definição');
-select is((select count(*) from public.custom_field_values where definition_id = :'d_text'), 1::bigint, 'arquivamento preserva o valor');
+select is(pg_temp.vcount(:'d_text'), 1::bigint, 'arquivamento preserva o valor');
 select is(jsonb_array_length(get_custom_fields_for_record(:'ws1','contact', :'c1')), 6, 'campo arquivado sai do formulário ativo');
 select throws_ok(format($q$select set_custom_field_value(%L,%L,%L,p_text_value=>'x')$q$, :'ws1', :'d_text', :'c1'), 'P0001', 'custom_field_definition_not_found', 'campo arquivado não aceita nova edição');
 
@@ -128,10 +132,10 @@ select throws_ok(format($q$select set_custom_field_values(%L, %L, %L::jsonb)$q$,
   jsonb_build_array(jsonb_build_object('definition_id', :'d_batch1', 'text_value', 'não pode ficar'),
                     jsonb_build_object('definition_id', :'d_batch2', 'text_value', 'tipo errado'))::text),
   'P0001', 'custom_field_value_type_mismatch', 'falha no lote desfaz tudo');
-select is((select count(*) from public.custom_field_values where definition_id = :'d_batch1'), 0::bigint, 'nenhum valor parcial ficou após a falha');
+select is(pg_temp.vcount(:'d_batch1'), 0::bigint, 'nenhum valor parcial ficou após a falha');
 
-select ok(not exists(select 1 from public.audit_logs where metadata::text like '%SEGREDO-C4%' or metadata::text like '%advogado%'), 'auditoria nunca contém o valor');
-select ok((select bool_and(metadata ? 'definition_id' and metadata ? 'entity') from public.audit_logs where action like 'custom_field.%'), 'auditoria contém somente metadados estruturais esperados');
+select ok(not pg_temp.audit_leaks(), 'auditoria nunca contém o valor');
+select ok(pg_temp.audit_shape_ok(), 'auditoria contém somente metadados estruturais esperados');
 select is(jsonb_array_length(get_custom_fields_for_record(:'ws1','opportunity', :'o1')), 1, 'oportunidade lista apenas seus campos ativos');
 select is(jsonb_array_length(get_custom_fields_for_record(:'ws1','client', :'cl1')), 1, 'cliente lista apenas seus campos ativos');
 select is(jsonb_array_length(get_custom_fields_for_record(:'ws1','lead', :'l1')), 1, 'lead lista apenas seus campos ativos');
