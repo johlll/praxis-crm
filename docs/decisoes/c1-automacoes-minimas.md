@@ -49,18 +49,31 @@ rota). Tela: `Automações` (`/automacoes`).
 - **Quem processa.** As telas pedem uma rodada do próprio workspace logo depois
   de criar um lead ou mover uma etapa (`after()`, melhor esforço); há o botão
   "Processar agora" e a rota `/api/cron/automations` (segredo `CRON_SECRET`,
-  todos os workspaces). **Nenhum agendador foi configurado nesta PR.**
+  todos os workspaces). O agendador periódico é a B6a (abaixo).
 
-## Agendamento periódico: obrigatório antes do uso real
+## Agendamento periódico (B6a)
 
-- O agendamento periódico da rota `/api/cron/automations` é **obrigatório antes
-  do uso real** e será fechado na **B6**. Sem ele, a primeira tentativa continua
-  em melhor esforço (logo depois da operação) e as novas tentativas só
-  acontecem numa nova rodada manual ("Processar agora") ou incidental (outra
-  criação de lead ou mudança de etapa).
-- Isso não impede o merge do código, mas **impede considerar a C1 operacional
-  em Production** enquanto o agendamento não existir. O cron também depende da
-  configuração de serviço da A11, ausente em Production.
+- **O que existe.** Uma função própria do Inngest, `c1-automations-scheduler`, no
+  app geral `praxis-crm` (`/api/inngest`), isolada do worker da A11. Cron
+  `*/2 * * * *` (a cada 2 minutos), concorrência 1 e `retries: 0`. Chama só
+  `process_automation_events_system`, com lote máximo de 100 por rodada (a sobra
+  fica para o ciclo seguinte), e devolve só `{ events, executions }`. Código em
+  `src/app/api/inngest/automations-scheduler.ts`.
+- **Tentativas ficam no banco.** O banco controla as 4 tentativas e a espera
+  (1, 5 e 30 minutos) e o dead-letter. Se uma execução da função falhar (a
+  falha sai só com código, sem mensagem do banco), **a próxima rodada de 2
+  minutos é a recuperação**: ela retoma tudo o que estiver vencido.
+- **Custo.** Cerca de 21.600 execuções por mês (30 por hora, 720 por dia), com
+  margem na franquia atual de 50.000 execuções do Inngest para A11, B2, B3 e as
+  execuções reais. Não passar para 1 minuto sem reavaliar o plano.
+- **Contingência.** `/api/cron/automations` continua como rodada manual
+  (`CRON_SECRET`), com o mesmo contrato.
+- **Ainda não operacional.** A função só passa a rodar depois que o app
+  `praxis-crm` for **sincronizado no Inngest** (etapa externa, não feita nesta
+  PR). Enquanto isso, a C1 não é operacional em Production: a primeira tentativa
+  segue em melhor esforço e os retries dependem de nova rodada manual ou
+  incidental. O app geral exige as variáveis da ingestão da A11
+  (`getIngestConfig`) e o cliente administrativo do Supabase.
 
 ## Limites conhecidos
 

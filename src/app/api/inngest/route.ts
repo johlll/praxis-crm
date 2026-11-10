@@ -5,11 +5,13 @@ import { getIngestConfig, IngestConfigError } from "@/server/ingest/config";
 import { FORM_EVENT_NAME, inngestClient } from "@/server/ingest/publisher";
 import { processWebhookEvent } from "@/server/ingest/worker";
 
+import { AUTOMATIONS_SCHEDULER_FUNCTION_CONFIG, handleAutomationsScheduler } from "./automations-scheduler";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Worker da A11.
+ * Worker da A11 (e, em função própria, o agendador periódico da C1).
  *
  * API conferida na documentação oficial do Inngest e no `.d.ts` do pacote
  * instalado antes de escrever: `serve({ client, functions })` de
@@ -74,8 +76,13 @@ const processFormSubmission = client.createFunction(
   },
 );
 
-// Só a A11. A agenda (B2) tem app próprio: `/api/inngest/calendar`.
-const handlers = serve({ client, functions: [processFormSubmission] });
+// Agendador da C1 (B6a): função própria, só por relógio, isolada do worker da A11
+// (ver ./automations-scheduler.ts). A agenda (B2) tem app próprio: `/api/inngest/calendar`.
+const automationsScheduler = client.createFunction(AUTOMATIONS_SCHEDULER_FUNCTION_CONFIG, async ({ step }) =>
+  handleAutomationsScheduler({ step }),
+);
+
+const handlers = serve({ client, functions: [processFormSubmission, automationsScheduler] });
 
 /**
  * Falha FECHADA por requisição: sem configuração obrigatória, a rota
