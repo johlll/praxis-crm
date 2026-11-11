@@ -1664,6 +1664,7 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          anonymized_at?: string | null
           city?: string | null
           created_at?: string
           created_by: string
@@ -4903,6 +4904,14 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      anonymize_privacy_contact: {
+        Args: {
+          p_actor_user_id: string
+          p_contact_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       apply_google_inbound_change: {
         Args: {
           p_actor_user_id: string
@@ -4936,14 +4945,6 @@ export type Database = {
           p_phone_number_id: string
           p_status: Database["public"]["Enums"]["message_status"]
           p_wa_message_id: string
-        }
-        Returns: Json
-      }
-      anonymize_privacy_contact: {
-        Args: {
-          p_actor_user_id: string
-          p_contact_id: string
-          p_workspace_id: string
         }
         Returns: Json
       }
@@ -5942,14 +5943,6 @@ export type Database = {
         }
         Returns: string
       }
-      relink_recovered_calendar_link: {
-        Args: {
-          p_actor_user_id: string
-          p_connection_id: string
-          p_link_id: string
-        }
-        Returns: string
-      }
       release_privacy_legal_hold: {
         Args: {
           p_actor_user_id: string
@@ -5957,6 +5950,14 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: undefined
+      }
+      relink_recovered_calendar_link: {
+        Args: {
+          p_actor_user_id: string
+          p_connection_id: string
+          p_link_id: string
+        }
+        Returns: string
       }
       remove_contact_email: { Args: { p_email_id: string }; Returns: undefined }
       remove_contact_phone: { Args: { p_phone_id: string }; Returns: undefined }
