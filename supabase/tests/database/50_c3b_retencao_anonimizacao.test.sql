@@ -731,7 +731,11 @@ drop trigger c3b_test_silencio on public.contact_phones;
 set local role service_role;
 select run_privacy_retention_batch(1) as lote_limite \gset
 reset role;
-select is((:'lote_limite'::jsonb ->> 'processed')::int + (:'lote_limite'::jsonb ->> 'failed')::int, 1, 'o limite do lote é respeitado');
+select is(
+  (:'lote_limite'::jsonb ->> 'processed')::int + (:'lote_limite'::jsonb ->> 'blocked')::int + (:'lote_limite'::jsonb ->> 'failed')::int,
+  1,
+  'o limite do lote vale para os avaliados (processados + bloqueados + falhos)'
+);
 
 set local role service_role;
 select run_privacy_retention_batch(50) as lote \gset
