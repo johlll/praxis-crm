@@ -254,6 +254,15 @@ jobs:
         # roda antes dos passos que recriam o banco local.
         run: bash scripts/c1-automations-concurrency-check.sh
 
+      - name: Teste de concorrência real (C3b — retenção e anonimização)
+        # Quatro lotes soltos ao mesmo tempo sobre os mesmos contatos vencidos
+        # (cada um anonimizado uma só vez), um lote segurando enquanto outro pula
+        # as linhas travadas, e a anonimização que ESPERA um lead reativado ou uma
+        # preservação legal em transação aberta, relê o estado e é recusada — ver
+        # scripts/c3b-retention-concurrency-check.sh. Workspace próprio; roda
+        # antes dos passos que recriam o banco local.
+        run: bash scripts/c3b-retention-concurrency-check.sh
+
       - name: Atualização a partir da versão anterior (numeração de propostas)
         # "Aplicar migrations do zero" já valida a criação do banco; este
         # passo valida a ATUALIZAÇÃO com dados emitidos pela versão anterior.
@@ -325,6 +334,14 @@ jobs:
         # scripts/check-upgrade-b3-2e-reconciliador.sh. Recria o banco local,
         # por isso roda por último.
         run: bash scripts/check-upgrade-b3-2e-reconciliador.sh
+
+      - name: Atualização a partir da versão anterior (C3b — retenção de 12 meses)
+        # Leads já arquivados antes da migration passam a contar os 12 meses a
+        # partir dela (nada vence por inferência retroativa), updated_at intacto,
+        # e o gatilho do marco segue valendo — ver
+        # scripts/check-upgrade-c3b-retencao.sh. Recria o banco local, por isso
+        # roda por último.
+        run: bash scripts/check-upgrade-c3b-retencao.sh
 
       - name: Publicar relatório do Playwright (só se algo falhar)
         if: failure()

@@ -24,7 +24,8 @@ describe("permissão e exibição", () => {
   it("a tela do contato só desenha a seção para quem tem a permissão", () => {
     const page = read("src/app/(app)/contatos/[id]/page.tsx");
     expect(page).toContain('roleHasPermission(user.role, "privacy.manage")');
-    expect(page).toMatch(/canExportPrivacy \? <ContactPrivacySection contactId=\{contact\.id\} \/> : null/);
+    // C3b acrescentou o estado da retenção como propriedade; a condição de exibição é a mesma.
+    expect(page).toMatch(/canExportPrivacy \? \(\s*<ContactPrivacySection contactId=\{contact\.id\} initialRetention=\{[^}]*\} \/>\s*\) : null/);
   });
 });
 

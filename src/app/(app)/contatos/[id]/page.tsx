@@ -11,6 +11,7 @@ import { ContactEmailsList } from "@/components/contacts/contact-emails-list";
 import { ContactSensitiveSection } from "@/components/contacts/contact-sensitive-section";
 import { ContactMergeHistory } from "@/components/contacts/contact-merge-history";
 import { ContactPrivacySection } from "@/components/contacts/contact-privacy-section";
+import { getRetentionStatus } from "@/server/privacy/retention";
 import { CustomFieldsSection } from "@/components/custom-fields/custom-fields-section";
 
 export async function generateMetadata({
@@ -38,6 +39,8 @@ export default async function ContatoDetalhePage({
   const canUndoMerge = roleHasPermission(user.role, "contact.merge");
   const canEditContact = roleHasPermission(user.role, "contact.edit");
   const canExportPrivacy = roleHasPermission(user.role, "privacy.manage");
+  // C3b — estado da retenção (só owner/admin). Sem conteúdo pessoal; falha vira aviso na seção.
+  const retention = canExportPrivacy ? await getRetentionStatus(contact.id) : null;
 
   return (
     <>
@@ -73,7 +76,9 @@ export default async function ContatoDetalhePage({
             </section>
           ) : null}
 
-          {canExportPrivacy ? <ContactPrivacySection contactId={contact.id} /> : null}
+          {canExportPrivacy ? (
+            <ContactPrivacySection contactId={contact.id} initialRetention={retention?.ok ? retention.status : null} />
+          ) : null}
         </div>
       </main>
     </>

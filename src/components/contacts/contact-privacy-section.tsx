@@ -4,6 +4,8 @@ import { useState } from "react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { ContactRetentionPanel } from "@/components/contacts/contact-retention-panel";
+import type { RetentionStatus } from "@/modules/privacy/retention";
 
 type Phase = "idle" | "confirming" | "processing" | "done" | "failed";
 
@@ -24,9 +26,19 @@ function fileNameFrom(response: Response): string {
  * a página nem renderiza para os demais papéis). O arquivo é baixado direto da
  * resposta e nunca fica guardado no servidor.
  */
-export function ContactPrivacySection({ contactId }: { contactId: string }) {
+export function ContactPrivacySection({
+  contactId,
+  initialRetention,
+}: {
+  contactId: string;
+  /** Estado da retenção (C3b). `null` = indisponível (aviso); omitido = painel não é exibido. */
+  initialRetention?: RetentionStatus | null;
+}) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [message, setMessage] = useState<string | null>(null);
+  const [retention, setRetention] = useState<RetentionStatus | null>(initialRetention ?? null);
+  // Depois de anonimizado não há o que exportar: o arquivo seria só o esqueleto.
+  const anonymized = retention?.state === "anonymized";
 
   async function generate() {
     setPhase("processing");
@@ -63,12 +75,14 @@ export function ContactPrivacySection({ contactId }: { contactId: string }) {
   return (
     <section className="rounded-lg border border-border bg-surface p-4">
       <h2 className="mb-2 text-body font-semibold text-text">Privacidade e LGPD</h2>
-      <p className="mb-3 text-small text-text-secondary">
-        Use esta exportação somente para atendimento de solicitação do titular. O arquivo pode conter dados pessoais e deve ser
-        armazenado e compartilhado com segurança.
-      </p>
+      {anonymized ? null : (
+        <p className="mb-3 text-small text-text-secondary">
+          Use esta exportação somente para atendimento de solicitação do titular. O arquivo pode conter dados pessoais e deve ser
+          armazenado e compartilhado com segurança.
+        </p>
+      )}
 
-      {phase === "confirming" ? (
+      {anonymized ? null : phase === "confirming" ? (
         <div className="flex flex-col gap-3">
           <Alert variant="warning">
             <AlertDescription>
@@ -106,6 +120,10 @@ export function ContactPrivacySection({ contactId }: { contactId: string }) {
           <AlertDescription>{message}</AlertDescription>
         </Alert>
       ) : null}
+
+      {initialRetention === undefined ? null : (
+        <ContactRetentionPanel contactId={contactId} status={retention} onStatus={setRetention} />
+      )}
     </section>
   );
 }
