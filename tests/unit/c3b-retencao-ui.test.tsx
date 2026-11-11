@@ -54,6 +54,25 @@ describe("exibição e permissão", () => {
   });
 });
 
+describe("contato anonimizado na tela do contato", () => {
+  it("a página esconde edição de dados básicos, telefones, e-mails, CPF/CNPJ, campos e mesclagens", () => {
+    const page = read("src/app/(app)/contatos/[id]/page.tsx");
+    expect(page).toContain("const anonymized = Boolean(contact.anonymizedAt);");
+    const anonymizedBranch = page.split("{anonymized ? (")[1]!.split(") : (")[0]!;
+    expect(anonymizedBranch).toContain("Contato anonimizado");
+    expect(anonymizedBranch).not.toMatch(/ContactBasicFieldsForm|ContactPhonesList|ContactEmailsList|ContactSensitiveSection|CustomFieldsSection/);
+    // E as seções de edição só existem no ramo do contato não anonimizado.
+    const rest = page.split("{anonymized ? (")[1]!.split(") : (")[1]!;
+    for (const edit of ["ContactBasicFieldsForm", "ContactPhonesList", "ContactEmailsList", "ContactSensitiveSection", "CustomFieldsSection", "ContactMergeHistory"]) {
+      expect(rest).toContain(edit);
+    }
+  });
+
+  it("a consulta traz a marca de anonimização", () => {
+    expect(read("src/modules/contacts/queries.ts")).toContain("anonymized_at");
+  });
+});
+
 describe("painel de retenção", () => {
   const fetchMock = vi.fn();
   beforeEach(() => {
@@ -82,6 +101,13 @@ describe("painel de retenção", () => {
     expect(screen.getByText(/Prazo de retenção de 12 meses em andamento; vence em 10\/03\/2027/)).toBeTruthy();
     expect(screen.getByText(/O contato é cliente/)).toBeTruthy();
     expect(screen.getByText(/PDF ou e-mail enviado, guardados fora do banco; é necessária revisão humana/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Anonimizar contato" })).toBeNull();
+  });
+
+  it("conversa de WhatsApp só pelo telefone: explica que precisa ser vinculada ou revisada, sem mostrar o número", () => {
+    render(<ContactPrivacySection contactId={CONTACT} initialRetention={blocked(["unlinked_whatsapp_conversation"])} />);
+    expect(screen.getByText(/Existe conversa de WhatsApp que precisa ser vinculada ou revisada antes da anonimização/)).toBeTruthy();
+    expect(document.body.textContent ?? "").not.toMatch(/[+]55[0-9]{8,}/);
     expect(screen.queryByRole("button", { name: "Anonimizar contato" })).toBeNull();
   });
 

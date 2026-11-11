@@ -32,6 +32,7 @@ todos arquivados com o prazo cumprido; **nenhum** destes bloqueios (códigos fec
 | `proposal_document_present` | proposta com PDF ou e-mail enviado: armazenamento externo, **sem exclusão distribuída** nesta PR |
 | `calendar_link_present` | atividade ligada a evento da agenda externa |
 | `pending_outbound_message` | mensagem de saída do WhatsApp ainda em andamento |
+| `unlinked_whatsapp_conversation` | existe conversa ou identidade de WhatsApp que só se acha pelo **telefone** do contato (`wa_id`, telefone da identidade ou o identificador `whatsapp` da B3), sem vínculo com o contato, lead ou oportunidade: **nada é apagado por inferência**; precisa ser vinculada ou revisada antes |
 
 Se qualquer dependência não puder ser tratada com atomicidade, a operação é **recusada com o código** —
 nunca há anonimização parcial. Outro workspace responde “não encontrado”.
@@ -62,10 +63,25 @@ idempotente.
   campos personalizados, `sensitive_data_access` (sem valor) e `privacy_exports`.
 - Uma **conferência final** desfaz tudo se algo previsto continuar acessível.
 - Idempotente: repetir devolve `already_anonymized` sem auditoria nova.
+- **Conversa só pelo telefone**: os telefones originais são lidos **antes** de qualquer exclusão, a busca da conversa solta se repete sob as travas da execução e a conferência final a prova de novo **com os telefones originais** — se uma conversa assim aparecer no meio, tudo é desfeito.
 
 **Conservador por escolha:** contatos com PDF/e-mail de proposta, mesclagem, evento de agenda, cliente
 ou preservação **não** são anonimizados — exigem revisão humana. O payload bruto da inbox do WhatsApp
 não é ligado ao contato; ele já é limitado a 30 dias por constraint e expurgado pelo mecanismo da B3.
+
+## Contato anonimizado é imutável para dados pessoais
+
+Depois de `contacts.anonymized_at`, **o banco** recusa (`contact_anonymized`, código fechado) qualquer escrita
+que reconecte a pessoa ao histórico preservado: nome, cidade, UF, canal ou tipo do contato; telefone, e-mail,
+identificador e CPF/CNPJ; consentimentos e evidências; lead novo ou texto/tags/área de lead preservado;
+oportunidade, requisito, nota, atividade, proposta, conflito, cliente, atribuição e continuidade vinculados;
+campos personalizados; conversas ligadas ao contato, lead ou oportunidade; e mesclagem em qualquer dos lados.
+Atualizações técnicas sem dado pessoal (estado, datas, `updated_at`) e exclusões seguem permitidas. A tela
+esconde as ações de edição, mas a proteção é do banco (gatilhos `*_anonymized_guard`).
+
+**Novo atendimento exige contato novo**: se a pessoa voltar, cadastre outro contato; o anonimizado não é
+ressuscitado (o novo pode até usar o mesmo telefone). Quem vem de outro workspace recebe a mesma resposta que
+receberia para qualquer contato comum — nunca “anonimizado”.
 
 ## Prévia e confirmação manual
 
@@ -77,7 +93,10 @@ reativado...), é **recusada** com os códigos. Na tela, a confirmação é fort
 ## Lote do sistema
 
 `run_privacy_retention_batch(p_limit)` — só `service_role`, sem ator humano, limite de 1 a 200
-(padrão 50). Seleciona contatos vencidos sem preservação com `for update … skip locked` (dois
+(padrão 50). **O limite vale para os candidatos avaliados** (`processed + blocked + failed` nunca passa de
+`p_limit`), não só para as conclusões; os que sobram ficam para a rodada seguinte por uma **rotação**
+(`privacy_retention_checks`: quem foi avaliado há mais tempo, ou nunca, vem primeiro), para que contatos
+bloqueados para sempre não ocupem todas as vagas e escondam os demais. Seleciona contatos vencidos sem preservação com `for update … skip locked` (dois
 processadores nunca pegam o mesmo; quem recebe a trava de um já concluído o relê e o ignora), confirma
 cada um sob trava e roda cada contato em **subtransação**: uma falha desfaz só ele e o lote segue.
 Devolve `{processed, blocked, failed}`; audita cada conclusão/falha (sem PII) e um resumo por workspace
@@ -95,7 +114,5 @@ e contato inexistente desfazem a chamada sem rastro. O texto de erro do banco nu
 
 ## Limites conhecidos
 
-- Edições feitas **depois** da anonimização (por exemplo, voltar a cadastrar um telefone no contato)
-  não são bloqueadas por esta etapa.
-- Conversa do WhatsApp sem vínculo com o contato (identificada só pelo telefone) não é encontrada.
+- Conversa de WhatsApp ligada **a outro contato** que só casa pelo telefone também bloqueia (revisão humana).
 - Anonimização de clientes, PDFs/armazenamento externo, mesclagens e agenda: fora desta PR.

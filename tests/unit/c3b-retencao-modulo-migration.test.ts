@@ -108,7 +108,7 @@ describe("marco da retenção", () => {
 
 describe("preservação legal", () => {
   it("tabela fechada, código fechado, sem texto livre", () => {
-    expect([...code.matchAll(/create table public\.([a-z_]+)/g)].map((m) => m[1])).toEqual(["privacy_legal_holds"]);
+    expect([...code.matchAll(/create table public\.([a-z_]+)/g)].map((m) => m[1])).toEqual(["privacy_legal_holds", "privacy_retention_checks"]);
     expect(code).toContain("alter table public.privacy_legal_holds enable row level security");
     expect(code).toContain("alter table public.privacy_legal_holds force row level security");
     expect(code).toContain("revoke all on table public.privacy_legal_holds from public, anon, authenticated");
@@ -122,9 +122,10 @@ describe("preservação legal", () => {
 
 describe("funções", () => {
   it("todas SECURITY DEFINER com search_path vazio (as públicas e as privadas com dados)", () => {
-    // 5 RPCs + assess + lock_subtree + anonymize (as SQL puras e o gatilho não são definer).
-    expect(code.match(/security definer/g)).toHaveLength(8);
-    expect(code.match(/set search_path = ''/g)!.length).toBeGreaterThanOrEqual(8);
+    // 5 RPCs + assess + lock_subtree + anonymize + chaves de telefone + conversa solta + 4 auxiliares
+    // da repersonalização + o gatilho de proteção (o gatilho do marco e as SQL puras não precisam).
+    expect(code.match(/security definer/g)).toHaveLength(15);
+    expect(code.match(/set search_path = ''/g)!.length).toBeGreaterThanOrEqual(15);
   });
 
   it("ACL: as RPCs só executam para service_role; nada para anon, authenticated ou PUBLIC", () => {
@@ -133,7 +134,7 @@ describe("funções", () => {
       expect(code).toContain(`grant execute on function public.${fn} to service_role;`);
     }
     expect(code).not.toMatch(/grant execute on function [^;]* to (authenticated|anon|public)/);
-    for (const fn of ["leads_retention_mark()", "privacy_retention_interval()", "privacy_retention_assess(uuid, uuid)", "privacy_lock_subtree(uuid, uuid)", "privacy_anonymize_contact(uuid, uuid)", "privacy_batch_count(jsonb, uuid, text)"]) {
+    for (const fn of ["leads_retention_mark()", "privacy_retention_interval()", "privacy_retention_assess(uuid, uuid)", "privacy_lock_subtree(uuid, uuid)", "privacy_anonymize_contact(uuid, uuid)", "privacy_batch_count(jsonb, uuid, text)", "privacy_contact_phone_keys(uuid, uuid)", "privacy_unlinked_whatsapp(uuid, text[], uuid[], uuid[])", "privacy_anonymized_guard()", "privacy_contact_anonymized(uuid)", "privacy_lead_anonymized(uuid)", "privacy_opportunity_anonymized(uuid)", "privacy_client_anonymized(uuid)"]) {
       expect(code).toContain(`revoke all on function private.${fn} from public, anon, authenticated, service_role;`);
     }
   });
@@ -151,6 +152,10 @@ describe("funções", () => {
     expect(batch).not.toContain("p_actor_user_id");
     expect(batch).toContain("least(coalesce(p_limit, 50), 200)");
     expect(batch).toContain("for update of c skip locked");
+    // O limite vale para os candidatos AVALIADOS, e a rotação passa por todos antes de repetir.
+    expect(batch).toContain("limit v_limit");
+    expect(batch).toContain("exit when v_examined >= v_limit;");
+    expect(batch).toContain("order by k.checked_at nulls first, c.workspace_id, c.id");
     expect(batch).toContain("exception when others then");
     expect(batch).toContain("return jsonb_build_object('processed', v_processed, 'blocked', v_blocked, 'failed', v_failures);");
   });
@@ -165,6 +170,42 @@ describe("funções", () => {
 
   it("a conferência final desfaz tudo se algo previsto continuar acessível", () => {
     expect(code).toContain("raise exception 'anonymization_incomplete';");
+  });
+});
+
+describe("contato anonimizado é imutável (C3b — correções)", () => {
+  const PROTECTED = [
+    "contacts", "contact_merges", "contact_phones", "contact_emails", "contact_identifiers", "contact_sensitive", "contact_consents",
+    "consent_evidence", "continuity_references", "touchpoints", "touchpoint_demand_links", "clients", "leads", "lead_notes",
+    "conflict_checks", "activities", "opportunities", "proposals", "opportunity_requirement_values", "custom_field_values", "conversations",
+  ];
+
+  it("há um gatilho de proteção em cada tabela que poderia reidentificar o esqueleto", () => {
+    for (const table of PROTECTED) {
+      expect(code).toMatch(new RegExp("create trigger " + table + "_anonymized_guard before (insert or update|update|insert) on public." + table));
+    }
+    expect([...code.matchAll(/create trigger ([a-z_]+)_anonymized_guard/g)].map((m) => m[1]).sort()).toEqual([...PROTECTED].sort());
+  });
+
+  it("código fechado e sem escrever nada do contato na mensagem", () => {
+    const guard = code.split("create function private.privacy_anonymized_guard")[1]!.split("$body$;")[0]!;
+    expect(guard).toContain("raise exception 'contact_anonymized';");
+    // A única mensagem possível é o código fechado, sem interpolar nada do registro.
+    expect(guard.match(/raise exception[^;]*;/g)).toEqual(["raise exception 'contact_anonymized';"]);
+  });
+
+  it("a anonimização grava ANTES da marca, para não esbarrar nos próprios gatilhos", () => {
+    const worker = code.split("create function private.privacy_anonymize_contact")[1]!.split("$body$;")[0]!;
+    expect(worker.indexOf("anonymized_at = now()")).toBeGreaterThan(worker.indexOf("update public.custom_field_values") === -1 ? worker.indexOf("delete from public.custom_field_values") : 0);
+    expect(worker.indexOf("set name = 'Contato anonimizado'")).toBeGreaterThan(worker.indexOf("delete from public.contact_phones"));
+  });
+
+  it("a conversa só pelo telefone: chaves lidas antes de apagar, repetidas sob trava e provadas na conferência final", () => {
+    const worker = code.split("create function private.privacy_anonymize_contact")[1]!.split("$body$;")[0]!;
+    expect(worker.indexOf("v_phone_keys := private.privacy_contact_phone_keys")).toBeLessThan(worker.indexOf("delete from public.contact_phones"));
+    expect(worker).toContain("raise exception 'unlinked_whatsapp_conversation';");
+    expect(worker.split("v_phone_keys, '{}'::uuid[], '{}'::uuid[]")).toHaveLength(2);
+    expect(worker.indexOf("v_phone_keys, '{}'::uuid[], '{}'::uuid[]")).toBeGreaterThan(worker.indexOf("raise exception 'anonymization_incomplete'") - 2500);
   });
 });
 

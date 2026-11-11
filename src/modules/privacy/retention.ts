@@ -23,6 +23,7 @@ export const BLOCK_REASON_CODES = [
   "proposal_document_present",
   "calendar_link_present",
   "pending_outbound_message",
+  "unlinked_whatsapp_conversation",
 ] as const;
 export type BlockReasonCode = (typeof BLOCK_REASON_CODES)[number];
 
@@ -109,6 +110,8 @@ export function describeBlockReason(code: BlockReasonCode, dueAt: string | null)
       return "Há proposta com PDF ou e-mail enviado, guardados fora do banco; é necessária revisão humana.";
     case "calendar_link_present":
       return "Há atividade ligada à agenda externa; é necessária revisão humana.";
+    case "unlinked_whatsapp_conversation":
+      return "Existe conversa de WhatsApp que precisa ser vinculada ou revisada antes da anonimização.";
     case "pending_outbound_message":
       return "Há mensagem de WhatsApp de saída ainda em andamento.";
   }

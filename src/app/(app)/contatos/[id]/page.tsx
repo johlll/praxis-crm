@@ -39,6 +39,9 @@ export default async function ContatoDetalhePage({
   const canUndoMerge = roleHasPermission(user.role, "contact.merge");
   const canEditContact = roleHasPermission(user.role, "contact.edit");
   const canExportPrivacy = roleHasPermission(user.role, "privacy.manage");
+  // C3b — contato anonimizado é imutável para dados pessoais: a tela esconde as ações de edição
+  // (o banco recusa de qualquer forma).
+  const anonymized = Boolean(contact.anonymizedAt);
   // C3b — estado da retenção (só owner/admin). Sem conteúdo pessoal; falha vira aviso na seção.
   const retention = canExportPrivacy ? await getRetentionStatus(contact.id) : null;
 
@@ -47,6 +50,16 @@ export default async function ContatoDetalhePage({
       <Topbar title={contact.name} subtitle={contact.type === "pf" ? "Pessoa física" : "Pessoa jurídica"} user={user} />
       <main className="flex-1 overflow-y-auto p-5">
         <div className="mx-auto flex max-w-[640px] flex-col gap-5">
+          {anonymized ? (
+            <section className="rounded-lg border border-border bg-surface p-4">
+              <h2 className="mb-2 text-body font-semibold text-text">Contato anonimizado</h2>
+              <p className="text-small text-text-secondary">
+                Os dados pessoais deste contato foram removidos e ele não aceita novos dados, para que o histórico preservado não volte
+                a identificar ninguém. Para um novo atendimento da mesma pessoa, cadastre um contato novo.
+              </p>
+            </section>
+          ) : (
+            <>
           <section className="rounded-lg border border-border bg-surface p-4">
             <h2 className="mb-3 text-body font-semibold text-text">Dados básicos</h2>
             <ContactBasicFieldsForm contact={contact} />
@@ -75,6 +88,8 @@ export default async function ContatoDetalhePage({
               <ContactMergeHistory contactId={contact.id} canUndo={canUndoMerge} history={mergeHistory} />
             </section>
           ) : null}
+            </>
+          )}
 
           {canExportPrivacy ? (
             <ContactPrivacySection contactId={contact.id} initialRetention={retention?.ok ? retention.status : null} />

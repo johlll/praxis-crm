@@ -3128,6 +3128,32 @@ export type Database = {
           },
         ]
       }
+      privacy_retention_checks: {
+        Row: {
+          checked_at: string
+          contact_id: string
+          workspace_id: string
+        }
+        Insert: {
+          checked_at?: string
+          contact_id: string
+          workspace_id: string
+        }
+        Update: {
+          checked_at?: string
+          contact_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "privacy_retention_checks_contact_fkey"
+            columns: ["workspace_id", "contact_id"]
+            isOneToOne: true
+            referencedRelation: "contacts"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
       proposal_documents: {
         Row: {
           byte_size: number | null

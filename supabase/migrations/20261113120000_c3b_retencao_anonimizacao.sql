@@ -101,6 +101,25 @@ alter table public.privacy_legal_holds enable row level security;
 alter table public.privacy_legal_holds force row level security;
 revoke all on table public.privacy_legal_holds from public, anon, authenticated;
 
+-- Controle de rotação do lote: quando cada contato foi avaliado pela última vez. Sem isto, os
+-- mesmos primeiros candidatos (por exemplo, bloqueados para sempre) ocupariam todas as vagas de
+-- toda rodada e os demais nunca seriam alcançados. Só ids e horário; fechada como as outras.
+create table public.privacy_retention_checks (
+  workspace_id uuid not null,
+  contact_id uuid not null,
+  checked_at timestamptz not null default now(),
+  primary key (workspace_id, contact_id),
+  constraint privacy_retention_checks_contact_fkey
+    foreign key (workspace_id, contact_id) references public.contacts (workspace_id, id) on delete cascade
+);
+
+comment on table public.privacy_retention_checks is
+  'C3b — última avaliação de retenção de cada contato (rotação justa do lote). Só ids e horário.';
+
+alter table public.privacy_retention_checks enable row level security;
+alter table public.privacy_retention_checks force row level security;
+revoke all on table public.privacy_retention_checks from public, anon, authenticated;
+
 -- ---------------------------------------------------------------------
 -- 4) Prazo e avaliação de elegibilidade
 -- ---------------------------------------------------------------------
@@ -116,13 +135,60 @@ $body$;
 
 revoke all on function private.privacy_retention_interval() from public, anon, authenticated, service_role;
 
+-- Chaves normalizadas que ligam o contato ao WhatsApp: os telefones (E.164) e o identificador
+-- "whatsapp" da B3 (o mesmo número sem o "+"). Lidas ANTES de qualquer exclusão e mantidas até a
+-- conferência final.
+create function private.privacy_contact_phone_keys(p_workspace_id uuid, p_contact_id uuid)
+returns text[]
+language sql
+stable
+security definer
+set search_path = ''
+as $body$
+  select coalesce(array_agg(distinct k), '{}'::text[])
+  from (
+    select value_normalized as k
+    from public.contact_phones
+    where workspace_id = p_workspace_id and contact_id = p_contact_id
+    union
+    select case when external_id like '+%' then external_id else '+' || external_id end
+    from public.contact_identifiers
+    where workspace_id = p_workspace_id and contact_id = p_contact_id and provider = 'whatsapp'
+  ) x;
+$body$;
+
+revoke all on function private.privacy_contact_phone_keys(uuid, uuid) from public, anon, authenticated, service_role;
+
+-- Existe conversa ou identidade do WhatsApp com alguma dessas chaves que NÃO esteja entre as do
+-- próprio contato (ligadas direto a ele, a um lead ou a uma oportunidade dele)? Se existir, nada
+-- é apagado por inferência: a operação bloqueia para revisão humana.
+create function private.privacy_unlinked_whatsapp(p_workspace_id uuid, p_keys text[], p_conv_ids uuid[], p_identity_ids uuid[])
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $body$
+  select cardinality(p_keys) > 0 and (
+    exists (
+      select 1 from public.conversations c
+      where c.workspace_id = p_workspace_id and c.wa_id = any(p_keys) and not (c.id = any(p_conv_ids)))
+    or exists (
+      select 1 from public.whatsapp_identities i
+      where i.workspace_id = p_workspace_id and i.phone_e164 = any(p_keys) and not (i.id = any(p_identity_ids)))
+  );
+$body$;
+
+revoke all on function private.privacy_unlinked_whatsapp(uuid, text[], uuid[], uuid[]) from public, anon, authenticated, service_role;
+
 -- Avalia o contato SEM devolver conteúdo pessoal: só estado, datas e códigos fechados.
 -- Nulo = contato inexistente, mesclado ou de outro workspace ("não encontrado").
 --
 -- Códigos de bloqueio (fechados):
 --   no_lead, active_lead, retention_period_open, client_present,
 --   open_or_won_opportunity, open_proposal, legal_hold_active, merge_history_present,
---   proposal_document_present, calendar_link_present, pending_outbound_message.
+--   proposal_document_present, calendar_link_present, pending_outbound_message,
+--   unlinked_whatsapp_conversation.
 --
 -- Chamada SEMPRE em instrução própria depois das travas (privacy_lock_subtree), para que a
 -- leitura veja o estado já confirmado — por isso não é STABLE.
@@ -144,6 +210,7 @@ declare
   v_activity_ids uuid[];
   v_proposal_ids uuid[];
   v_conv_ids uuid[];
+  v_identity_ids uuid[];
 begin
   select * into v_c from public.contacts
   where id = p_contact_id and workspace_id = p_workspace_id and merged_into_contact_id is null;
@@ -168,7 +235,8 @@ begin
   select coalesce(array_agg(id), '{}'::uuid[]) into v_proposal_ids
   from public.proposals
   where workspace_id = p_workspace_id and (lead_id = any(v_lead_ids) or opportunity_id = any(v_opp_ids));
-  select coalesce(array_agg(id), '{}'::uuid[]) into v_conv_ids
+  select coalesce(array_agg(id), '{}'::uuid[]), coalesce(array_agg(identity_id), '{}'::uuid[])
+    into v_conv_ids, v_identity_ids
   from public.conversations
   where workspace_id = p_workspace_id
     and (contact_id = p_contact_id or lead_id = any(v_lead_ids) or opportunity_id = any(v_opp_ids));
@@ -235,6 +303,13 @@ begin
   ) then
     v_reasons := array_append(v_reasons, 'pending_outbound_message');
   end if;
+  -- Conversa de WhatsApp que só se acha pelo telefone (sem vínculo com o contato, lead ou
+  -- oportunidade): pode ser da mesma pessoa, mas apagá-la seria inferência. Revisão humana.
+  if private.privacy_unlinked_whatsapp(
+    p_workspace_id, private.privacy_contact_phone_keys(p_workspace_id, p_contact_id), v_conv_ids, v_identity_ids
+  ) then
+    v_reasons := array_append(v_reasons, 'unlinked_whatsapp_conversation');
+  end if;
 
   return jsonb_build_object(
     'state', case when cardinality(v_reasons) = 0 then 'eligible' else 'blocked' end,
@@ -300,6 +375,7 @@ declare
   v_conv_ids uuid[];
   v_identity_ids uuid[];
   v_touch_ids uuid[];
+  v_phone_keys text[];
 begin
   select coalesce(array_agg(id), '{}'::uuid[]) into v_lead_ids
   from public.leads where workspace_id = p_workspace_id and contact_id = p_contact_id;
@@ -319,6 +395,13 @@ begin
   from public.touchpoints
   where workspace_id = p_workspace_id
     and (contact_id = p_contact_id or lead_id = any(v_lead_ids) or opportunity_id = any(v_opp_ids));
+
+  -- Os telefones originais são lidos AGORA, antes de qualquer exclusão, e guardados até a
+  -- conferência final. A checagem da avaliação se repete aqui, sob as travas da execução.
+  v_phone_keys := private.privacy_contact_phone_keys(p_workspace_id, p_contact_id);
+  if private.privacy_unlinked_whatsapp(p_workspace_id, v_phone_keys, v_conv_ids, v_identity_ids) then
+    raise exception 'unlinked_whatsapp_conversation';
+  end if;
 
   -- Identificação do contato.
   delete from public.contact_phones where workspace_id = p_workspace_id and contact_id = p_contact_id;
@@ -403,6 +486,8 @@ begin
      or exists (select 1 from public.lead_notes where workspace_id = p_workspace_id and lead_id = any(v_lead_ids))
      or exists (select 1 from public.conversations where workspace_id = p_workspace_id and id = any(v_conv_ids))
      or exists (select 1 from public.whatsapp_identities where workspace_id = p_workspace_id and id = any(v_identity_ids))
+     -- Com os telefones ORIGINAIS: nenhuma conversa ou identidade que os use pode ter sobrado.
+     or private.privacy_unlinked_whatsapp(p_workspace_id, v_phone_keys, '{}'::uuid[], '{}'::uuid[])
      or exists (select 1 from public.continuity_references where workspace_id = p_workspace_id and contact_id = p_contact_id)
      or exists (
        select 1 from public.custom_field_values
@@ -420,6 +505,228 @@ end;
 $body$;
 
 revoke all on function private.privacy_anonymize_contact(uuid, uuid) from public, anon, authenticated, service_role;
+
+-- ---------------------------------------------------------------------
+-- 5b) Contato anonimizado é IMUTÁVEL para dados pessoais
+--
+-- Depois de contacts.anonymized_at, nenhuma escrita pode voltar a identificar o contato nem o
+-- esqueleto histórico que ele preservou: cadastrar um telefone, e-mail ou texto reconectaria a
+-- pessoa ao histórico. Quem voltar a ser atendido ganha um contato NOVO. A proteção é do banco
+-- (gatilhos); a tela só esconde as ações. Atualizações técnicas que não reinserem dado pessoal
+-- (estado, datas, updated_at) seguem permitidas. O código é fechado e só aparece para quem já
+-- enxerga o registro (as funções da aplicação respondem "não encontrado" a outro workspace antes
+-- de chegar aqui). Apagar nunca é bloqueado. A anonimização em si grava ANTES da marca e por
+-- isso não esbarra nestes gatilhos.
+-- ---------------------------------------------------------------------
+
+create function private.privacy_contact_anonymized(p_contact_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $body$
+  select coalesce((select anonymized_at is not null from public.contacts where id = p_contact_id), false);
+$body$;
+
+create function private.privacy_lead_anonymized(p_lead_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $body$
+  select coalesce((
+    select c.anonymized_at is not null
+    from public.leads l join public.contacts c on c.id = l.contact_id and c.workspace_id = l.workspace_id
+    where l.id = p_lead_id), false);
+$body$;
+
+create function private.privacy_opportunity_anonymized(p_opportunity_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $body$
+  select coalesce((
+    select c.anonymized_at is not null
+    from public.opportunities o
+    join public.leads l on l.id = o.lead_id and l.workspace_id = o.workspace_id
+    join public.contacts c on c.id = l.contact_id and c.workspace_id = l.workspace_id
+    where o.id = p_opportunity_id), false);
+$body$;
+
+create function private.privacy_client_anonymized(p_client_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $body$
+  select coalesce((
+    select c.anonymized_at is not null
+    from public.clients cl join public.contacts c on c.id = cl.contact_id and c.workspace_id = cl.workspace_id
+    where cl.id = p_client_id), false);
+$body$;
+
+revoke all on function private.privacy_contact_anonymized(uuid) from public, anon, authenticated, service_role;
+revoke all on function private.privacy_lead_anonymized(uuid) from public, anon, authenticated, service_role;
+revoke all on function private.privacy_opportunity_anonymized(uuid) from public, anon, authenticated, service_role;
+revoke all on function private.privacy_client_anonymized(uuid) from public, anon, authenticated, service_role;
+
+create function private.privacy_anonymized_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $body$
+declare
+  v_hit boolean := false;
+begin
+  case tg_table_name
+    when 'contacts' then
+      -- Só UPDATE. Anonimizado: nome, cidade, UF, canal, tipo, mesclagem e a própria marca não mudam.
+      if old.anonymized_at is not null and (
+           new.name is distinct from old.name or new.city is distinct from old.city or new.uf is distinct from old.uf
+           or new.preferred_channel is distinct from old.preferred_channel or new.type is distinct from old.type
+           or new.merged_into_contact_id is distinct from old.merged_into_contact_id
+           or new.anonymized_at is distinct from old.anonymized_at) then
+        v_hit := true;
+      end if;
+      -- Ninguém é absorvido por um contato anonimizado.
+      if new.merged_into_contact_id is not null and new.merged_into_contact_id is distinct from old.merged_into_contact_id
+         and private.privacy_contact_anonymized(new.merged_into_contact_id) then
+        v_hit := true;
+      end if;
+
+    when 'contact_merges' then
+      v_hit := private.privacy_contact_anonymized(new.kept_contact_id) or private.privacy_contact_anonymized(new.merged_contact_id);
+
+    when 'contact_phones', 'contact_emails', 'contact_identifiers', 'contact_sensitive', 'contact_consents',
+         'consent_evidence', 'continuity_references', 'touchpoints', 'clients' then
+      v_hit := private.privacy_contact_anonymized(new.contact_id);
+      if not v_hit and tg_op = 'UPDATE' then v_hit := private.privacy_contact_anonymized(old.contact_id); end if;
+
+    when 'leads' then
+      if tg_op = 'INSERT' then
+        v_hit := private.privacy_contact_anonymized(new.contact_id);
+      elsif new.summary is distinct from old.summary or new.tags is distinct from old.tags
+            or new.legal_area is distinct from old.legal_area or new.contact_id is distinct from old.contact_id then
+        v_hit := private.privacy_contact_anonymized(old.contact_id) or private.privacy_contact_anonymized(new.contact_id);
+      end if;
+
+    when 'lead_notes' then
+      v_hit := private.privacy_lead_anonymized(new.lead_id);
+
+    when 'conflict_checks' then
+      if tg_op = 'INSERT' then
+        v_hit := private.privacy_lead_anonymized(new.lead_id);
+      elsif new.note is not null and new.note is distinct from old.note then
+        v_hit := private.privacy_lead_anonymized(new.lead_id);
+      end if;
+
+    when 'activities' then
+      if tg_op = 'INSERT' then
+        v_hit := private.privacy_lead_anonymized(new.lead_id);
+      elsif new.title is distinct from old.title or new.notes is distinct from old.notes then
+        v_hit := private.privacy_lead_anonymized(new.lead_id);
+      end if;
+
+    when 'opportunities' then
+      if tg_op = 'INSERT' then
+        v_hit := private.privacy_lead_anonymized(new.lead_id);
+      elsif (new.lost_note is not null and new.lost_note is distinct from old.lost_note)
+            or new.lead_id is distinct from old.lead_id then
+        v_hit := private.privacy_lead_anonymized(new.lead_id);
+      end if;
+
+    when 'proposals' then
+      if tg_op = 'INSERT' then
+        v_hit := private.privacy_lead_anonymized(new.lead_id);
+      elsif new.decision_note is not null and new.decision_note is distinct from old.decision_note then
+        v_hit := private.privacy_lead_anonymized(new.lead_id);
+      end if;
+
+    when 'opportunity_requirement_values' then
+      v_hit := private.privacy_opportunity_anonymized(new.opportunity_id);
+
+    when 'custom_field_values' then
+      v_hit := (new.contact_id is not null and private.privacy_contact_anonymized(new.contact_id))
+            or (new.lead_id is not null and private.privacy_lead_anonymized(new.lead_id))
+            or (new.opportunity_id is not null and private.privacy_opportunity_anonymized(new.opportunity_id))
+            or (new.client_id is not null and private.privacy_client_anonymized(new.client_id));
+
+    when 'conversations' then
+      if tg_op = 'INSERT'
+         or new.contact_id is distinct from old.contact_id or new.lead_id is distinct from old.lead_id
+         or new.opportunity_id is distinct from old.opportunity_id then
+        v_hit := (new.contact_id is not null and private.privacy_contact_anonymized(new.contact_id))
+              or (new.lead_id is not null and private.privacy_lead_anonymized(new.lead_id))
+              or (new.opportunity_id is not null and private.privacy_opportunity_anonymized(new.opportunity_id));
+      end if;
+
+    when 'touchpoint_demand_links' then
+      if new.reason is not null then
+        v_hit := coalesce((
+          select private.privacy_contact_anonymized(t.contact_id) from public.touchpoints t where t.id = new.touchpoint_id), false);
+      end if;
+
+    else
+      null;
+  end case;
+
+  if v_hit then
+    raise exception 'contact_anonymized';
+  end if;
+  return new;
+end;
+$body$;
+
+revoke all on function private.privacy_anonymized_guard() from public, anon, authenticated, service_role;
+
+create trigger contacts_anonymized_guard before update on public.contacts
+  for each row execute function private.privacy_anonymized_guard();
+create trigger contact_merges_anonymized_guard before insert on public.contact_merges
+  for each row execute function private.privacy_anonymized_guard();
+create trigger contact_phones_anonymized_guard before insert or update on public.contact_phones
+  for each row execute function private.privacy_anonymized_guard();
+create trigger contact_emails_anonymized_guard before insert or update on public.contact_emails
+  for each row execute function private.privacy_anonymized_guard();
+create trigger contact_identifiers_anonymized_guard before insert or update on public.contact_identifiers
+  for each row execute function private.privacy_anonymized_guard();
+create trigger contact_sensitive_anonymized_guard before insert or update on public.contact_sensitive
+  for each row execute function private.privacy_anonymized_guard();
+create trigger contact_consents_anonymized_guard before insert or update on public.contact_consents
+  for each row execute function private.privacy_anonymized_guard();
+create trigger consent_evidence_anonymized_guard before insert or update on public.consent_evidence
+  for each row execute function private.privacy_anonymized_guard();
+create trigger continuity_references_anonymized_guard before insert or update on public.continuity_references
+  for each row execute function private.privacy_anonymized_guard();
+create trigger touchpoints_anonymized_guard before insert or update on public.touchpoints
+  for each row execute function private.privacy_anonymized_guard();
+create trigger touchpoint_demand_links_anonymized_guard before insert or update on public.touchpoint_demand_links
+  for each row execute function private.privacy_anonymized_guard();
+create trigger clients_anonymized_guard before insert or update on public.clients
+  for each row execute function private.privacy_anonymized_guard();
+create trigger leads_anonymized_guard before insert or update on public.leads
+  for each row execute function private.privacy_anonymized_guard();
+create trigger lead_notes_anonymized_guard before insert or update on public.lead_notes
+  for each row execute function private.privacy_anonymized_guard();
+create trigger conflict_checks_anonymized_guard before insert or update on public.conflict_checks
+  for each row execute function private.privacy_anonymized_guard();
+create trigger activities_anonymized_guard before insert or update on public.activities
+  for each row execute function private.privacy_anonymized_guard();
+create trigger opportunities_anonymized_guard before insert or update on public.opportunities
+  for each row execute function private.privacy_anonymized_guard();
+create trigger proposals_anonymized_guard before insert or update on public.proposals
+  for each row execute function private.privacy_anonymized_guard();
+create trigger opportunity_requirement_values_anonymized_guard before insert or update on public.opportunity_requirement_values
+  for each row execute function private.privacy_anonymized_guard();
+create trigger custom_field_values_anonymized_guard before insert or update on public.custom_field_values
+  for each row execute function private.privacy_anonymized_guard();
+create trigger conversations_anonymized_guard before insert or update on public.conversations
+  for each row execute function private.privacy_anonymized_guard();
 
 -- ---------------------------------------------------------------------
 -- 6) RPCs — EXCLUSIVAS DO SERVIDOR (service_role), no padrão da C3a
@@ -648,6 +955,7 @@ declare
   v_row record;
   v_assess jsonb;
   v_failed boolean;
+  v_examined integer := 0;
   v_processed integer := 0;
   v_blocked integer := 0;
   v_failures integer := 0;
@@ -658,6 +966,7 @@ begin
   for v_row in
     select c.workspace_id, c.id
     from public.contacts c
+    left join public.privacy_retention_checks k on k.workspace_id = c.workspace_id and k.contact_id = c.id
     where c.merged_into_contact_id is null
       and c.anonymized_at is null
       and exists (select 1 from public.leads l where l.workspace_id = c.workspace_id and l.contact_id = c.id)
@@ -670,10 +979,19 @@ begin
       and not exists (
         select 1 from public.privacy_legal_holds h
         where h.workspace_id = c.workspace_id and h.contact_id = c.id and h.status = 'active')
-    order by c.workspace_id, c.id
+    -- Quem foi avaliado há mais tempo (ou nunca) vem primeiro: a rotação passa por todos.
+    order by k.checked_at nulls first, c.workspace_id, c.id
+    limit v_limit
     for update of c skip locked
   loop
-    exit when v_processed + v_failures >= v_limit;
+    -- O limite vale para os candidatos AVALIADOS (processados + bloqueados + falhos), não só
+    -- para as conclusões. O que sobrar fica para a rodada seguinte.
+    exit when v_examined >= v_limit;
+    v_examined := v_examined + 1;
+
+    insert into public.privacy_retention_checks (workspace_id, contact_id, checked_at)
+    values (v_row.workspace_id, v_row.id, clock_timestamp())
+    on conflict (workspace_id, contact_id) do update set checked_at = excluded.checked_at;
 
     perform private.privacy_lock_subtree(v_row.workspace_id, v_row.id);
     v_assess := private.privacy_retention_assess(v_row.workspace_id, v_row.id);
