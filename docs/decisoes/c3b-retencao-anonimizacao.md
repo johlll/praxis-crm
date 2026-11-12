@@ -114,8 +114,26 @@ bloqueados para sempre não ocupem todas as vagas e escondam os demais. Selecion
 processadores nunca pegam o mesmo; quem recebe a trava de um já concluído o relê e o ignora), confirma
 cada um sob trava e roda cada contato em **subtransação**: uma falha desfaz só ele e o lote segue.
 Devolve `{processed, blocked, failed}`; audita cada conclusão/falha (sem PII) e um resumo por workspace
-(só contagens). **Não há agendador**: a chamada periódica entra na B6/C5. “Processar agora” na tela não
-foi criado (a tela de privacidade é por contato; não há padrão de ação em lote por workspace).
+(só contagens). “Processar agora” na tela não foi criado (a tela de privacidade é por contato; não há
+padrão de ação em lote por workspace).
+
+### Agendamento diário (B6b)
+
+- **Quem chama:** a função `c3b-privacy-retention-scheduler` do app Inngest `praxis-crm`
+  (`src/app/api/inngest/privacy-retention-scheduler.ts`, registrada em `/api/inngest` ao lado da A11 e da C1,
+  que não mudaram). Gatilho **só o relógio**: cron `17 6 * * *` = **06:17 UTC (03:17 em Brasília)**, uma vez
+  por dia. Sem evento, sem rota nova, sem variável nova; usa o cliente administrativo já existente.
+- **Lote:** um único step chama **só** `run_privacy_retention_batch(50)`. **Concorrência 1, retries do Inngest 0.**
+  Retorna apenas `{processed, blocked, failed}` (inteiros não negativos; soma ≤ 50).
+- **Falhas visíveis, com código fechado** (nunca mensagem do banco, id, contato, motivo ou conteúdo; sem log
+  próprio): `privacy_retention_not_configured` (sem configuração; o banco não é tocado),
+  `privacy_retention_failed` (erro/ausência/resposta inválida) e `privacy_retention_batch_has_failures`
+  (`failed > 0`: o banco já desfez essas anonimizações; a execução fica vermelha no Inngest).
+- **Recuperação:** o ciclo do dia seguinte. O banco garante a idempotência (cada contato é anonimizado uma
+  vez, linhas travadas são puladas) e a rotação alcança quem sobrou; lotes maiores que 50 levam mais dias.
+- **Quando passa a valer:** a anonimização automática **só fica operacional depois do merge, do deploy e da
+  sincronização do app `praxis-crm` no Inngest** (etapa externa, fora do código). Até lá, nada roda sozinho; a
+  anonimização manual segue disponível para owner/admin.
 
 ## Segurança e auditoria
 

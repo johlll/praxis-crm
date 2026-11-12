@@ -6,12 +6,16 @@ import { FORM_EVENT_NAME, inngestClient } from "@/server/ingest/publisher";
 import { processWebhookEvent } from "@/server/ingest/worker";
 
 import { AUTOMATIONS_SCHEDULER_FUNCTION_CONFIG, handleAutomationsScheduler } from "./automations-scheduler";
+import {
+  handlePrivacyRetentionScheduler,
+  PRIVACY_RETENTION_SCHEDULER_FUNCTION_CONFIG,
+} from "./privacy-retention-scheduler";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Worker da A11 (e, em função própria, o agendador periódico da C1).
+ * Worker da A11 (e, em função própria, os agendadores periódicos da C1 e da C3b).
  *
  * API conferida na documentação oficial do Inngest e no `.d.ts` do pacote
  * instalado antes de escrever: `serve({ client, functions })` de
@@ -82,7 +86,13 @@ const automationsScheduler = client.createFunction(AUTOMATIONS_SCHEDULER_FUNCTIO
   handleAutomationsScheduler({ step }),
 );
 
-const handlers = serve({ client, functions: [processFormSubmission, automationsScheduler] });
+// Agendador da C3b (B6b): função própria, só por relógio (uma vez por dia), isolada da A11 e da C1
+// (ver ./privacy-retention-scheduler.ts).
+const privacyRetentionScheduler = client.createFunction(PRIVACY_RETENTION_SCHEDULER_FUNCTION_CONFIG, async ({ step }) =>
+  handlePrivacyRetentionScheduler({ step }),
+);
+
+const handlers = serve({ client, functions: [processFormSubmission, automationsScheduler, privacyRetentionScheduler] });
 
 /**
  * Falha FECHADA por requisição: sem configuração obrigatória, a rota
