@@ -10,7 +10,9 @@
 #     nunca viram argumento de comando.
 #   - Sem rastreamento de comandos do shell, em nenhum lugar (ele imprimiria URL e senha).
 
-PRAXIS_BACKUP_FORMAT="praxis-backup/v1"
+PRAXIS_BACKUP_FORMAT="praxis-backup/v2"
+# Declarado no manifesto: todo o pacote vem de UM snapshot REPEATABLE READ exportado (ver backup-db.sh).
+PRAXIS_BACKUP_SNAPSHOT="single-repeatable-read"
 PRAXIS_PG_MAJOR="17"
 # Arquivos do pacote, na ordem em que a restauração os aplica.
 PRAXIS_PKG_FILES=(

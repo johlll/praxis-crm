@@ -128,6 +128,8 @@ rm -f "$WORK/pacote.tar.gz"
 mv "$PKG/manifest.json" "$WORK/manifest.json"
 MANIFEST="$WORK/manifest.json"
 grep -q "\"format\": \"$PRAXIS_BACKUP_FORMAT\"" "$MANIFEST" || die "manifesto_invalido" 65
+# O pacote tem de declarar que veio de UM único snapshot (sem isso, não há garantia de consistência).
+grep -q "\"snapshot\": \"$PRAXIS_BACKUP_SNAPSHOT\"" "$MANIFEST" || die "manifesto_invalido" 65
 for arquivo in "${PRAXIS_PKG_FILES[@]}"; do
   linha="$(grep -F "\"$arquivo\":" "$MANIFEST" | tr -d '\r' || true)"
   esperado="${linha#*: \"}"

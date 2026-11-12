@@ -21,7 +21,42 @@ import { describe, expect, it } from "vitest";
 const RAIZ = process.cwd();
 const ler = (caminho: string) => readFileSync(join(RAIZ, caminho), "utf8").split("\r").join("");
 const MODELO = "docs/backup/modelo-repositorio-privado/.github/workflows/backup-diario.yml";
-const SCRIPTS = ["scripts/backup/lib.sh", "scripts/backup/backup-db.sh", "scripts/backup/restore-db.sh", "scripts/backup/check-backup-restore.sh"];
+const SCRIPTS = [
+  "scripts/backup/lib.sh",
+  "scripts/backup/backup-db.sh",
+  "scripts/backup/restore-db.sh",
+  "scripts/backup/check-backup-restore.sh",
+  "scripts/backup/check-backup-snapshot.sh",
+];
+
+/**
+ * Ações de terceiros que o modelo pode usar: só as duas oficiais aprovadas, cada uma com o commit COMPLETO
+ * (40 hex) da versão aprovada. Tag, branch e SHA abreviado não valem — são mutáveis ou ambíguos.
+ */
+const ACOES_APROVADAS: Record<string, { sha: string; versao: string }> = {
+  "actions/checkout": { sha: "fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09", versao: "v5.1.0" },
+  "actions/upload-artifact": { sha: "ea165f8d65b6e75b540449e92b4886f43607fa02", versao: "v4.6.2" },
+};
+
+/** Devolve um motivo para cada `uses:` que não é uma ação aprovada fixada por SHA completo. */
+function usosInvalidos(texto: string): string[] {
+  const problemas: string[] = [];
+  for (const linha of texto.split("\n")) {
+    const m = /^\s*(?:- )?uses:\s*(.*)$/.exec(linha);
+    if (!m) continue;
+    const valor = m[1]!;
+    const ref = /^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)@([0-9a-f]{40})(?: # (v\d+\.\d+\.\d+))?$/.exec(valor);
+    if (!ref) {
+      problemas.push(`${valor}: não está fixada por SHA completo de 40 caracteres`);
+      continue;
+    }
+    const aprovada = ACOES_APROVADAS[ref[1]!];
+    if (!aprovada) problemas.push(`${ref[1]}: ação não aprovada`);
+    else if (ref[2] !== aprovada.sha) problemas.push(`${ref[1]}: SHA diferente do aprovado`);
+    else if (ref[3] !== aprovada.versao) problemas.push(`${ref[1]}: falta o comentário com a versão ${aprovada.versao}`);
+  }
+  return problemas;
+}
 const workflow = ler(MODELO);
 
 /** Chaves de primeiro nível do workflow (`on`, `jobs`, ...), sem depender de um parser de YAML. */
@@ -96,9 +131,31 @@ describe("modelo: concorrência 1, tempo limite, permissões mínimas e versões
     expect(ci).toContain("postgresql-client-17");
   });
 
-  it("só duas ações de terceiros, com versão: checkout e upload-artifact", () => {
-    const usos = [...workflow.matchAll(/^\s*(?:- )?uses: (\S+)/gm)].map((m) => m[1]);
-    expect(usos.sort()).toEqual(["actions/checkout@v5", "actions/upload-artifact@v4"]);
+  it("só as duas ações oficiais aprovadas (checkout e upload-artifact), cada uma fixada por SHA completo", () => {
+    expect(usosInvalidos(workflow)).toEqual([]);
+    const usos = [...workflow.matchAll(/^\s*(?:- )?uses: (\S+)/gm)].map((m) => m[1]!.split("@")[0]);
+    expect(usos.sort()).toEqual(["actions/checkout", "actions/upload-artifact"]);
+    expect(workflow).toContain(`actions/checkout@${ACOES_APROVADAS["actions/checkout"]!.sha} # v5.1.0`);
+    expect(workflow).toContain(`actions/upload-artifact@${ACOES_APROVADAS["actions/upload-artifact"]!.sha} # v4.6.2`);
+    for (const { sha } of Object.values(ACOES_APROVADAS)) expect(sha).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it("o verificador de ações recusa tag, branch, SHA abreviado, ação não aprovada, local e docker (prova de que não é vácuo)", () => {
+    const co = ACOES_APROVADAS["actions/checkout"]!.sha;
+    const up = ACOES_APROVADAS["actions/upload-artifact"]!.sha;
+    expect(usosInvalidos(`- uses: actions/checkout@${co} # v5.1.0
+  uses: actions/upload-artifact@${up} # v4.6.2`)).toEqual([]);
+    expect(usosInvalidos("- uses: actions/checkout@v5")).toHaveLength(1);
+    expect(usosInvalidos("- uses: actions/upload-artifact@v4.6.2")).toHaveLength(1);
+    expect(usosInvalidos("- uses: actions/checkout@main")).toHaveLength(1);
+    expect(usosInvalidos(`- uses: actions/checkout@${co.slice(0, 7)} # v5.1.0`)).toHaveLength(1);
+    expect(usosInvalidos(`- uses: actions/checkout@${co.toUpperCase()} # v5.1.0`)).toHaveLength(1);
+    expect(usosInvalidos(`- uses: actions/checkout@${up} # v5.1.0`)).toHaveLength(1); // SHA de outra ação
+    expect(usosInvalidos(`- uses: actions/checkout@${co}`)).toHaveLength(1); // sem o comentário da versão
+    expect(usosInvalidos(`- uses: actions/setup-node@${co} # v5.0.0`)).toHaveLength(1); // não aprovada
+    expect(usosInvalidos("- uses: ./.github/actions/x")).toHaveLength(1);
+    expect(usosInvalidos("- uses: docker://alpine:3")).toHaveLength(1);
+    expect(usosInvalidos(`- uses: some-org/some-action@${co} # v1.0.0`)).toHaveLength(1);
   });
 
   it("falha se dump, criptografia, checksum ou upload falharem (sem continue-on-error)", () => {
@@ -117,7 +174,7 @@ describe("modelo: concorrência 1, tempo limite, permissões mínimas e versões
 describe("14. só o pacote criptografado e o checksum são enviados, por 30 dias", () => {
   it("um único upload, só *.tar.gz.age e *.tar.gz.age.sha256, retenção de 30 dias", () => {
     expect(workflow.match(/upload-artifact/g)).toHaveLength(1);
-    const bloco = workflow.slice(workflow.indexOf("uses: actions/upload-artifact@v4"));
+    const bloco = workflow.slice(workflow.indexOf("uses: actions/upload-artifact@"));
     const caminhos = [...bloco.matchAll(/^\s+(backup-out\/\S+)$/gm)].map((m) => m[1]);
     expect(caminhos).toEqual(["backup-out/*.tar.gz.age", "backup-out/*.tar.gz.age.sha256"]);
     expect(bloco).toContain("retention-days: 30");
@@ -159,9 +216,43 @@ describe("scripts: nada de xtrace, URL só por ambiente, chave pública no backu
     expect(fonte).toContain('rm -rf "$WORK"');
     expect(fonte).toContain('rm -f "${OUT_FILES[@]}"');
     expect(fonte).toContain('rm -rf "$PKG" "$WORK/pacote.tar.gz"');
-    expect(fonte.match(/2>"\$ERR"/g)!.length).toBeGreaterThanOrEqual(5);
+    expect(fonte.match(/2>"\$ERR"/g)!.length).toBeGreaterThanOrEqual(4);
+    expect(fonte).toContain('2>"$HOLDER_ERR"'); // a sessão do snapshot também manda o erro para um arquivo que ninguém lê
     expect(fonte).not.toMatch(/cat "\$ERR"|<"\$ERR"|\$\(cat "\$ERR/);
     expect(fonte).toContain("--exclude-extension='*'");
+  });
+
+  it("backup: UM snapshot exportado numa transação REPEATABLE READ somente leitura, usado por todos os dumps e pelo catálogo", () => {
+    const fonte = ler("scripts/backup/backup-db.sh");
+    expect(fonte).toContain("begin isolation level repeatable read read only;");
+    expect(fonte).toContain("pg_export_snapshot()");
+    // Toda chamada ao pg_dump passa pela função `dump`, que sempre leva --snapshot.
+    const chamadas = fonte.split("\n").filter((l) => /^\s*pg_dump\s/.test(l));
+    expect(chamadas).toHaveLength(1);
+    expect(chamadas[0]).toContain('--snapshot="$SNAPSHOT_ID"');
+    // A estrutura vem da sessão do snapshot (não de uma consulta solta depois dos dumps).
+    expect(fonte).toContain("STRUCT_FILE=\"$HOLDER_OUT\"");
+    expect(fonte.match(/\bpsql -X/g)!.length).toBe(2); // versão do servidor + sessão do snapshot
+    // Nada bloqueia escrita: a sessão é só leitura e não há LOCK nem modo exclusivo.
+    expect(fonte).not.toMatch(/\block\b|exclusive|--lock-wait|pg_terminate|pg_advisory/i);
+    expect(fonte).toContain("snapshot_falhou");
+    expect(fonte).toContain("snapshot_inconsistente");
+  });
+
+  it("o CI roda o teste real do snapshot (escritas concorrentes entre as etapas) contra o Postgres local", () => {
+    const ci = ler(".github/workflows/ci.yml");
+    expect(ci).toContain("run: bash scripts/backup/check-backup-snapshot.sh");
+    expect(ci).toContain("run: bash scripts/backup/check-backup-restore.sh");
+    const trecho = ci.slice(ci.indexOf("check-backup-snapshot.sh") - 700, ci.indexOf("check-backup-snapshot.sh") + 60);
+    expect(trecho).toContain("127.0.0.1:54322");
+    expect(trecho).not.toMatch(/supabase\.co|pooler|secrets\./);
+  });
+
+  it("formato v2: o manifesto declara o snapshot único e a restauração só aceita pacote que o declare", () => {
+    expect(ler("scripts/backup/lib.sh")).toContain('PRAXIS_BACKUP_FORMAT="praxis-backup/v2"');
+    expect(ler("scripts/backup/lib.sh")).toContain('PRAXIS_BACKUP_SNAPSHOT="single-repeatable-read"');
+    expect(ler("scripts/backup/backup-db.sh")).toContain('"snapshot": "%s"');
+    expect(ler("scripts/backup/restore-db.sh")).toContain('\\"snapshot\\": \\"$PRAXIS_BACKUP_SNAPSHOT\\"');
   });
 
   it("restauração: chave privada por caminho local, hash antes de descriptografar, destino recusado, nunca o hospedado", () => {

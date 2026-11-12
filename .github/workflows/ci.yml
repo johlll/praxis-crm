@@ -291,6 +291,16 @@ jobs:
           CHECK_RESTORE_SERVER_URL: postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres
         run: bash scripts/backup/check-backup-restore.sh
 
+      - name: Backup em UM snapshot, com escritas concorrentes (B6c — banco local sintético)
+        # Um backup real (pg_dump 17 + age) com escritas CONFIRMADAS entre as etapas: o pacote tem de
+        # representar um único instante (todo o anterior ou todo o posterior), restaurar sem órfãos e
+        # ficar idêntico ao estado de antes. Só o Postgres LOCAL do Supabase; desfaz as próprias escritas.
+        # Ver scripts/backup/check-backup-snapshot.sh.
+        env:
+          CHECK_BACKUP_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+          CHECK_RESTORE_SERVER_URL: postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres
+        run: bash scripts/backup/check-backup-snapshot.sh
+
       - name: Atualização a partir da versão anterior (numeração de propostas)
         # "Aplicar migrations do zero" já valida a criação do banco; este
         # passo valida a ATUALIZAÇÃO com dados emitidos pela versão anterior.

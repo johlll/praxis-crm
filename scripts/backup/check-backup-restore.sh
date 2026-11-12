@@ -96,7 +96,10 @@ cat >"$ROOT/shim/psql" <<SHIM
 #!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then exec "$(command -v psql)" --version; fi
 { printf 'PSQL_ARGV:'; printf ' [%s]' "\$@"; printf '\nPGHOST=%s PGUSER=%s PGDATABASE=%s\n' "\${PGHOST:-}" "\${PGUSER:-}" "\${PGDATABASE:-}"; } >> "$ROOT/argv-registro.txt"
-printf '17.6\n'
+case " \$* " in
+  *" -c "*) printf '17.6\n' ;;                                  # consulta de versão
+  *) cat >/dev/null; printf 'SNAPSHOT:00000003-00000002-1\nREADY\n'; exec sleep 30 ;; # sessão do snapshot
+esac
 SHIM
 chmod +x "$ROOT/shim/pg_dump" "$ROOT/shim/psql"
 rc=0; PATH="$ROOT/shim:$PATH" BACKUP_DATABASE_URL="$URL_SEGREDO" BACKUP_AGE_PUBLIC_KEY="$PUB1" BACKUP_OUTPUT_DIR="$ROOT/out2" bash "$BACKUP" >"$LOG" 2>&1 || rc=$?
@@ -154,7 +157,7 @@ mapfile -t CONTEUDO < <(tar -tzf "$ROOT/inspecao/p.tar.gz" | sort)
 ESPERADO=$(printf '%s\n' manifest.json "${PRAXIS_PKG_FILES[@]}" | sort | tr '\n' ' ')
 [ "$(printf '%s ' "${CONTEUDO[@]}")" = "$ESPERADO" ] && ok "o pacote contém exatamente: manifesto + 5 arquivos SQL" || bad "conteúdo do pacote: ${CONTEUDO[*]}"
 tar -C "$ROOT/inspecao" -xzf "$ROOT/inspecao/p.tar.gz" manifest.json
-grep -q '"format": "praxis-backup/v1"' "$ROOT/inspecao/manifest.json" && grep -q '"created_at_utc"' "$ROOT/inspecao/manifest.json" && grep -q '"postgres_server_version"' "$ROOT/inspecao/manifest.json" && grep -q '"pg_dump_version"' "$ROOT/inspecao/manifest.json" && ok "manifesto: formato, data UTC e versões do PostgreSQL" || bad "manifesto incompleto"
+grep -q '"format": "praxis-backup/v2"' "$ROOT/inspecao/manifest.json" && grep -q '"snapshot": "single-repeatable-read"' "$ROOT/inspecao/manifest.json" && grep -q '"created_at_utc"' "$ROOT/inspecao/manifest.json" && grep -q '"postgres_server_version"' "$ROOT/inspecao/manifest.json" && grep -q '"pg_dump_version"' "$ROOT/inspecao/manifest.json" && ok "manifesto: formato v2, snapshot único, data UTC e versões do PostgreSQL" || bad "manifesto incompleto"
 [ "$(grep -c '"0[1-5]-[a-z-]*\.sql": "[0-9a-f]\{64\}"' "$ROOT/inspecao/manifest.json")" = "5" ] && ok "manifesto: hash SHA-256 dos 5 arquivos" || bad "hashes do manifesto"
 rm -rf "$ROOT/inspecao"
 

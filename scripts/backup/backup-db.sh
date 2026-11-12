@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# B6c — backup lógico CRIPTOGRAFADO do banco do Praxis (formato praxis-backup/v1).
+# B6c — backup lógico CRIPTOGRAFADO do banco do Praxis (formato praxis-backup/v2).
 #
 # Entrada (somente variáveis de ambiente):
 #   BACKUP_DATABASE_URL    URL postgresql:// do banco de ORIGEM (segredo; nunca vira argumento nem log)
@@ -12,6 +12,13 @@
 #   01-schema-auth.sql, 02-schema-app.sql, 03-schema-auth-triggers.sql, 04-data-auth.sql, 05-data-app.sql
 # (auth.users e auth.identities + schemas public, private e supabase_migrations; Storage NÃO entra).
 #
+# UM ÚNICO SNAPSHOT: tudo o que entra no pacote (os 4 dumps, as contagens de estrutura e a conferência de
+# linhas do manifesto) enxerga exatamente o mesmo instante do banco. Uma sessão auxiliar abre uma
+# transação REPEATABLE READ, READ ONLY, exporta o snapshot (pg_export_snapshot) e o MANTÉM ABERTO; cada
+# pg_dump usa esse snapshot (--snapshot) e as consultas de catálogo rodam dentro dessa mesma transação.
+# Nenhuma escrita é bloqueada (a transação é só de leitura e só ela segura o snapshot; o pg_dump pega apenas
+# ACCESS SHARE) e a produção não é pausada.
+#
 # Nada de texto claro sobrevive: a pasta de trabalho é apagada ao terminar OU falhar, e uma falha
 # também remove qualquer saída parcial. Só imprime códigos fechados — nunca URL, senha, SQL ou dado.
 set -euo pipefail
@@ -22,11 +29,20 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/lib.sh"
 
 WORK=""
+HOLDER_PID=""
 OUT_FILES=()
 OK=0
+stop_holder() { # encerra a sessão que segura o snapshot (a transação some junto)
+  if [ -n "$HOLDER_PID" ]; then
+    kill "$HOLDER_PID" 2>/dev/null || true
+    wait "$HOLDER_PID" 2>/dev/null || true
+    HOLDER_PID=""
+  fi
+}
 cleanup() {
   local rc=$?
   trap - EXIT
+  stop_holder
   [ -n "$WORK" ] && rm -rf "$WORK"
   if [ "$OK" -ne 1 ]; then
     [ "${#OUT_FILES[@]}" -gt 0 ] && rm -f "${OUT_FILES[@]}"
@@ -68,11 +84,65 @@ SERVER_VERSION="$(psql -X -At -c 'show server_version' 2>"$ERR")" || die "conexa
 [[ "$SERVER_VERSION" =~ ^[0-9]+(\.[0-9]+)?([[:space:]].*)?$ ]] || die "conexao_falhou" 69
 PG_DUMP_VERSION="$(pg_dump --version | sed -e 's/^pg_dump (PostgreSQL) //')"
 
-# ---- 3. Dumps (qualquer falha para tudo) ---------------------------------------------------
-dump() { # $1 = etapa; resto = argumentos do pg_dump (a conexão vem do ambiente)
+# ---- 3. Snapshot único: a sessão auxiliar o exporta e o mantém aberto -------------------------
+# A mesma transação (REPEATABLE READ, READ ONLY) responde às consultas de catálogo e de contagem; os
+# dumps entram nela pelo snapshot exportado. Quem segura o snapshot não escreve nem trava ninguém.
+HOLDER_OUT="$WORK/.snapshot.out"
+HOLDER_ERR="$WORK/.snapshot.err" # nunca lido nem impresso
+: >"$HOLDER_OUT"
+psql -X -At -q -v ON_ERROR_STOP=1 >"$HOLDER_OUT" 2>"$HOLDER_ERR" <<'SQL' &
+begin isolation level repeatable read read only;
+set local statement_timeout = 0;
+set local idle_in_transaction_session_timeout = 0;
+select 'SNAPSHOT:' || pg_export_snapshot();
+with t as (
+  select c.oid, c.relname, n.nspname
+  from pg_class c join pg_namespace n on n.oid = c.relnamespace
+  where c.relkind in ('r', 'p')
+    and (n.nspname in ('public', 'private', 'supabase_migrations')
+         or (n.nspname = 'auth' and c.relname in ('users', 'identities')))
+)
+select 'tables=' || count(*) from t
+union all select 'constraints_p=' || count(*) from pg_constraint k join t on t.oid = k.conrelid where k.contype = 'p'
+union all select 'constraints_f=' || count(*) from pg_constraint k join t on t.oid = k.conrelid where k.contype = 'f'
+union all select 'constraints_u=' || count(*) from pg_constraint k join t on t.oid = k.conrelid where k.contype = 'u'
+union all select 'constraints_c=' || count(*) from pg_constraint k join t on t.oid = k.conrelid where k.contype = 'c'
+union all select 'rls_enabled=' || count(*) from pg_class c join t on t.oid = c.oid where c.relrowsecurity
+union all select 'rls_forced=' || count(*) from pg_class c join t on t.oid = c.oid where c.relforcerowsecurity
+union all select 'policies=' || count(*) from pg_policy p join t on t.oid = p.polrelid
+union all select 'triggers=' || count(*) from pg_trigger g join t on t.oid = g.tgrelid where not g.tgisinternal
+union all select 'functions=' || count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname in ('public', 'private', 'supabase_migrations')
+union all select 'ROWS:' || t.nspname || '.' || t.relname || ':'
+  || (xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I.%I', t.nspname, t.relname), false, true, '')))[1]::text
+  from t;
+select 'READY';
+select pg_sleep(14400);
+SQL
+HOLDER_PID=$!
+
+# Espera a sessão publicar o snapshot e as contagens (até ~2 min). Se ela morrer, o backup para.
+READY=0
+for _ in $(seq 1 600); do
+  if grep -q '^READY' "$HOLDER_OUT" 2>/dev/null; then READY=1; break; fi
+  kill -0 "$HOLDER_PID" 2>/dev/null || break
+  sleep 0.2
+done
+[ "$READY" -eq 1 ] || die "snapshot_falhou" 70
+
+SNAPSHOT_ID=""
+while IFS= read -r linha; do
+  linha="${linha%$'\r'}"
+  case "$linha" in SNAPSHOT:*) SNAPSHOT_ID="${linha#SNAPSHOT:}" ;; esac
+done <"$HOLDER_OUT"
+[[ "$SNAPSHOT_ID" =~ ^[0-9A-Fa-f]+(-[0-9A-Fa-f]+)+$ ]] || die "snapshot_falhou" 70
+
+# ---- 4. Dumps: todos no MESMO snapshot (qualquer falha para tudo) --------------------------------
+dump() { # $1 = etapa; $2 = arquivo; resto = argumentos do pg_dump (a conexão vem do ambiente)
   local etapa="$1" arquivo="$2"
   shift 2
-  pg_dump --no-owner --quote-all-identifiers --no-publications --no-subscriptions --file="$arquivo" "$@" 2>"$ERR" || die "dump_falhou:$etapa" 70
+  kill -0 "$HOLDER_PID" 2>/dev/null || die "snapshot_falhou" 70
+  pg_dump --snapshot="$SNAPSHOT_ID" --no-owner --quote-all-identifiers --no-publications --no-subscriptions --file="$arquivo" "$@" 2>"$ERR" || die "dump_falhou:$etapa" 70
   [ -s "$arquivo" ] || die "dump_falhou:$etapa" 70
 }
 
@@ -100,8 +170,12 @@ awk -v main="$PKG/01-schema-auth.sql" -v trg="$PKG/03-schema-auth-triggers.sql" 
 [ -s "$PKG/01-schema-auth.sql" ] || die "dump_falhou:schema_auth" 70
 rm -f "$WORK/auth-schema.full.sql"
 
-# ---- 4. Contagens para a validação da restauração (só números) -----------------------------
-# Linhas por tabela, tiradas do PRÓPRIO dump de dados (mesma foto do banco): cada bloco COPY.
+# O snapshot já não é necessário: a sessão que o segurava termina aqui (e só se ainda estava viva).
+kill -0 "$HOLDER_PID" 2>/dev/null || die "snapshot_falhou" 70
+stop_holder
+
+# ---- 4b. Contagens para a validação da restauração (só números) ----------------------------------
+# Linhas por tabela, tiradas do PRÓPRIO dump de dados (mesmo snapshot): cada bloco COPY.
 ROWS_FILE="$WORK/.linhas.tsv"
 awk '
   { sub(/\r$/, "") }
@@ -110,28 +184,22 @@ awk '
   incopy { n++ }
 ' "$PKG/04-data-auth.sql" "$PKG/05-data-app.sql" >"$ROWS_FILE" || die "manifesto_falhou" 70
 
-# Estrutura (catálogo), logo depois dos dumps.
-STRUCT_FILE="$WORK/.estrutura.txt"
-psql -X -At -v ON_ERROR_STOP=1 >"$STRUCT_FILE" 2>"$ERR" <<'SQL' || die "manifesto_falhou" 70
-with t as (
-  select c.oid, c.relname, n.nspname
-  from pg_class c join pg_namespace n on n.oid = c.relnamespace
-  where c.relkind in ('r', 'p')
-    and (n.nspname in ('public', 'private', 'supabase_migrations')
-         or (n.nspname = 'auth' and c.relname in ('users', 'identities')))
-)
-select 'tables=' || count(*) from t
-union all select 'constraints_p=' || count(*) from pg_constraint k join t on t.oid = k.conrelid where k.contype = 'p'
-union all select 'constraints_f=' || count(*) from pg_constraint k join t on t.oid = k.conrelid where k.contype = 'f'
-union all select 'constraints_u=' || count(*) from pg_constraint k join t on t.oid = k.conrelid where k.contype = 'u'
-union all select 'constraints_c=' || count(*) from pg_constraint k join t on t.oid = k.conrelid where k.contype = 'c'
-union all select 'rls_enabled=' || count(*) from pg_class c join t on t.oid = c.oid where c.relrowsecurity
-union all select 'rls_forced=' || count(*) from pg_class c join t on t.oid = c.oid where c.relforcerowsecurity
-union all select 'policies=' || count(*) from pg_policy p join t on t.oid = p.polrelid
-union all select 'triggers=' || count(*) from pg_trigger g join t on t.oid = g.tgrelid where not g.tgisinternal
-union all select 'functions=' || count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-  where n.nspname in ('public', 'private', 'supabase_migrations');
-SQL
+# Conferência cruzada: as linhas dos dumps têm de bater, tabela a tabela, com a contagem tirada DENTRO do
+# snapshot pela sessão auxiliar. Se algum dump tivesse lido outro instante, divergiria aqui.
+SNAP_ROWS="$WORK/.linhas-snapshot.tsv"
+awk '{ sub(/\r$/, "") } /^ROWS:/ { s = substr($0, 6); i = match(s, /:[0-9]+$/); if (i > 0) print substr(s, 1, i - 1) "\t" substr(s, i + 1) }' "$HOLDER_OUT" >"$SNAP_ROWS" || die "manifesto_falhou" 70
+[ -s "$SNAP_ROWS" ] || die "manifesto_falhou" 70
+awk -F'\t' '
+  NR == FNR { d[$1] = $2; next }
+  { s[$1] = $2 }
+  END {
+    for (k in d) if (!(k in s)) exit 1
+    for (k in s) { v = (k in d) ? d[k] : 0; if (v != s[k]) exit 1 }
+  }
+' "$ROWS_FILE" "$SNAP_ROWS" || die "snapshot_inconsistente" 70
+
+# Estrutura (catálogo): lida pela mesma sessão, dentro do MESMO snapshot.
+STRUCT_FILE="$HOLDER_OUT"
 
 # Lê cada contagem da estrutura para uma variável S_<chave> (no shell atual: se faltar, o script para).
 load_struct() { # $1 = chave
@@ -162,6 +230,7 @@ CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf '  "created_at_utc": "%s",\n' "$CREATED"
   printf '  "postgres_server_version": "%s",\n' "${SERVER_VERSION%% *}"
   printf '  "pg_dump_version": "%s",\n' "${PG_DUMP_VERSION%% *}"
+  printf '  "snapshot": "%s",\n' "$PRAXIS_BACKUP_SNAPSHOT"
   printf '  "schemas": ["public", "private", "supabase_migrations", "auth.users", "auth.identities"],\n'
   printf '  "files": {\n'
   i=0
@@ -206,7 +275,7 @@ age --encrypt --recipient "$RECIPIENT" --output "$WORK/pacote.tar.gz.age" "$WORK
 [ -s "$WORK/pacote.tar.gz.age" ] || die "criptografia_falhou" 70
 
 # O texto claro já não é mais necessário: sai agora, antes de qualquer outra coisa.
-rm -rf "$PKG" "$WORK/pacote.tar.gz" "$ROWS_FILE" "$STRUCT_FILE"
+rm -rf "$PKG" "$WORK/pacote.tar.gz" "$ROWS_FILE" "$SNAP_ROWS" "$HOLDER_OUT"
 
 # ---- 7. Saída: só o .age e o checksum do arquivo JÁ criptografado --------------------------
 mkdir -p "$OUT" || die "saida_falhou" 73
