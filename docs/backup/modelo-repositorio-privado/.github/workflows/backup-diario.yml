@@ -1,0 +1,104 @@
+# =====================================================================================================
+# MODELO — NÃO É UM WORKFLOW DESTE REPOSITÓRIO.
+#
+# Este arquivo mora em `docs/backup/modelo-repositorio-privado/` do repositório PÚBLICO do Praxis
+# justamente para NÃO rodar aqui (o GitHub só executa o que está em `.github/workflows/` na raiz).
+# Ele será copiado, DEPOIS DE APROVADO, para um repositório GitHub PRIVADO e SEPARADO, só de backups:
+#
+#   1. criar o repositório privado de backups (nunca público);
+#   2. copiar para ele este arquivo em `.github/workflows/backup-diario.yml` e a pasta
+#      `scripts/backup/` (lib.sh, backup-db.sh, restore-db.sh, restore-*.sql);
+#   3. configurar os dois secrets do repositório privado (nunca no público):
+#        BACKUP_DATABASE_URL    URL da conexão do banco (modo "Session pooler", porta 5432, com SSL)
+#        BACKUP_AGE_PUBLIC_KEY  chave PÚBLICA age (age1...). A chave PRIVADA fica só com João,
+#                               fora do GitHub, e nunca é cadastrada em lugar nenhum;
+#   4. rodar uma vez por "Run workflow" (workflow_dispatch) e conferir o artefato;
+#   5. só depois deixar o agendamento diário valer.
+#
+# O workflow tem guardas: não roda no repositório público do Praxis, nem em qualquer repositório que
+# não seja privado, e não responde a pull_request.
+# =====================================================================================================
+name: Backup diário do Praxis (modelo)
+
+on:
+  schedule:
+    # 07:30 UTC = 04:30 em Brasília, depois do lote diário de retenção da C3b (06:17 UTC).
+    - cron: "30 7 * * *"
+  workflow_dispatch:
+
+# Uma execução por vez; uma nova NÃO cancela a que está rodando.
+concurrency:
+  group: praxis-backup
+  cancel-in-progress: false
+
+# Nenhuma permissão de escrita: o artefato é enviado pelo próprio runner, sem token de escrita.
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    # Nunca no repositório público do Praxis (o segundo guarda, "privado", está no primeiro passo).
+    if: ${{ github.repository != 'johlll/praxis-crm' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Exigir repositório PRIVADO
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.private')" = "true"
+
+      - uses: actions/checkout@v5
+
+      - name: Instalar o cliente PostgreSQL 17 (fixado)
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+          /usr/lib/postgresql/17/bin/pg_dump --version | grep -q " 17\."
+
+      - name: Instalar o age (versão e SHA-256 fixados)
+        env:
+          AGE_VERSION: "1.3.2"
+          AGE_SHA256: "cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10"
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "$RUNNER_TEMP/age.tar.gz" "https://github.com/FiloSottile/age/releases/download/v${AGE_VERSION}/age-v${AGE_VERSION}-linux-amd64.tar.gz"
+          echo "${AGE_SHA256}  ${RUNNER_TEMP}/age.tar.gz" | sha256sum --check --status
+          sudo tar -xzf "$RUNNER_TEMP/age.tar.gz" -C /usr/local/bin --strip-components=1 age/age age/age-keygen
+          rm -f "$RUNNER_TEMP/age.tar.gz"
+          age --version
+
+      - name: Gerar o backup criptografado
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          BACKUP_AGE_PUBLIC_KEY: ${{ secrets.BACKUP_AGE_PUBLIC_KEY }}
+          BACKUP_OUTPUT_DIR: backup-out
+        run: bash scripts/backup/backup-db.sh
+
+      - name: Conferir a saída (só o pacote criptografado e o checksum)
+        run: |
+          set -euo pipefail
+          cd backup-out
+          test "$(ls -1 | wc -l)" -eq 2
+          test "$(ls -1 ./*.tar.gz.age | wc -l)" -eq 1
+          test "$(ls -1 ./*.tar.gz.age.sha256 | wc -l)" -eq 1
+          sha256sum --check --status ./*.tar.gz.age.sha256
+
+      - name: Enviar o pacote criptografado (retenção de 30 dias)
+        uses: actions/upload-artifact@v4
+        with:
+          name: praxis-backup-${{ github.run_id }}
+          path: |
+            backup-out/*.tar.gz.age
+            backup-out/*.tar.gz.age.sha256
+          retention-days: 30
+          if-no-files-found: error
