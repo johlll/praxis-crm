@@ -20,3 +20,9 @@ coverage/
 *.tsbuildinfo
 next-env.d.ts
 .vercel
+
+# B6c — saída do backup e chaves nunca vão para o repositório
+backup-out/
+*.age
+/id.txt
+/keys/

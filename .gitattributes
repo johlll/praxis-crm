@@ -1,0 +1,3 @@
+# Scripts de shell e SQL do backup precisam de fim de linha LF (o CI e o repositório privado de backups rodam em Linux)
+*.sh text eol=lf
+scripts/backup/*.sql text eol=lf
