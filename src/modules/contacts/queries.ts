@@ -119,6 +119,18 @@ export type ContactDetail = {
   hasSensitive: boolean;
 };
 
+/**
+ * C3b — o contato foi anonimizado? Sem linha (inexistente, mesclado ou de outro workspace, pela RLS)
+ * responde false: quem não enxerga o contato não descobre nada por aqui. As telas de lead e
+ * oportunidade usam isto só para ficarem somente leitura; a recusa de verdade é do banco.
+ */
+export async function isContactAnonymized(contactId: string): Promise<boolean> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.from("contacts").select("anonymized_at").eq("id", contactId).maybeSingle();
+  if (error) throw new DataLoadError(`o contato ${contactId}`, error);
+  return Boolean(data?.anonymized_at);
+}
+
 export async function getContactDetail(contactId: string): Promise<ContactDetail | null> {
   const supabase = await createServerSupabaseClient();
   const { data: contact, error: contactError } = await supabase

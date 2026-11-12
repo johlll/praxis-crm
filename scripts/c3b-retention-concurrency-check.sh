@@ -18,6 +18,10 @@
 #      anonimização manual espera, relê e é RECUSADA (legal_hold_active).
 #   5. Dupla confirmação. Duas anonimizações manuais do mesmo contato ao mesmo
 #      tempo: uma conclui, a outra encontra "já anonimizado"; uma só conclusão.
+#   6. Escrita durante a anonimização. Uma sessão anonimiza e segura a transação;
+#      uma atividade e um lead NOVOS para o mesmo contato chegam nesse intervalo:
+#      esperam o commit e são RECUSADOS (contact_anonymized); nada entra no
+#      esqueleto anonimizado.
 #
 # Usa um workspace próprio (criado aqui), usuários fictícios do seed e o
 # Postgres local do CI (que um passo seguinte recria). Nada de provedor, nada
@@ -223,6 +227,45 @@ JA="$(cat "$OUT_1" "$OUT_2" | grep -c '"result": "already_anonymized"' || true)"
 [ "$GANHOU" = "1" ] && [ "$JA" = "1" ] || bad "esperado 1 'anonymized' e 1 'already_anonymized'; veio $GANHOU e $JA: $(cat "$OUT_1" "$OUT_2")"
 [ "$(count "select count(*) from public.audit_logs where resource_id = '$K5' and action = 'privacy.anonymization_completed'")" = "1" ] || bad "o contato deveria ter exatamente 1 conclusão"
 [ "$FAILS" -eq "$ANTES" ] && echo "   ok: uma anonimizou, a outra encontrou 'já anonimizado'; 1 conclusão"
+
+echo "== 6. atividade e lead novos durante a anonimização: esperam o commit e são recusados"
+novo_contato "Corrida"
+K6="$CONTATO"; L6="$LEAD"
+ANTES="$FAILS"
+OUT_A6="$(mktemp)"
+psql_as c3b_anon6 > "$OUT_A6" 2>&1 <<SQL &
+begin;
+select public.anonymize_privacy_contact('$ANA'::uuid, '$WS'::uuid, '$K6'::uuid);
+select pg_sleep($HOLD);
+commit;
+SQL
+PID_A6=$!
+wait_sleeping c3b_anon6
+T0=$(date +%s%N)
+OUT_B1="$(mktemp)"; OUT_B2="$(mktemp)"
+RC_B1=0; RC_B2=0
+psql_as c3b_corrida_atividade > "$OUT_B1" 2>&1 <<SQL &
+insert into public.activities (workspace_id, lead_id, type, title, due_at, created_by)
+  values ('$WS', '$L6', 'call', 'Ligar para Fulano', now(), '$ANA');
+SQL
+PID_B1=$!
+psql_as c3b_corrida_lead > "$OUT_B2" 2>&1 <<SQL &
+insert into public.leads (workspace_id, contact_id, legal_area, created_by)
+  values ('$WS', '$K6', 'Área', '$ANA');
+SQL
+PID_B2=$!
+wait "$PID_B1" || RC_B1=$?
+wait "$PID_B2" || RC_B2=$?
+MS6=$(( ($(date +%s%N) - T0) / 1000000 ))
+A6_RC=0
+wait "$PID_A6" || A6_RC=$?
+[ "$A6_RC" -eq 0 ] || bad "a sessão que anonimizava falhou: $(cat "$OUT_A6")"
+grep -q '"result": "anonymized"' "$OUT_A6" || bad "a anonimização deveria concluir: $(cat "$OUT_A6")"
+[ "$MS6" -ge 1000 ] || bad "as escritas não esperaram a anonimização (${MS6} ms)"
+[ "$RC_B1" -ne 0 ] && grep -q 'contact_anonymized' "$OUT_B1" || bad "a atividade nova deveria ser recusada com contact_anonymized: $(cat "$OUT_B1")"
+[ "$RC_B2" -ne 0 ] && grep -q 'contact_anonymized' "$OUT_B2" || bad "o lead novo deveria ser recusado com contact_anonymized: $(cat "$OUT_B2")"
+[ "$(count "select (select count(*) from public.activities where lead_id = '$L6') + (select count(*) from public.leads where contact_id = '$K6')")" = "1" ] || bad "sobrou escrita nova no esqueleto anonimizado"
+[ "$FAILS" -eq "$ANTES" ] && echo "   ok: as escritas esperaram ${MS6} ms, foram recusadas (contact_anonymized) e nada novo entrou"
 
 if [ "$FAILS" -gt 0 ]; then
   fail "$FAILS verificação(ões) falharam — a anonimização pode duplicar ou decidir sobre estado superado sob concorrência"

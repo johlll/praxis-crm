@@ -135,6 +135,8 @@ export async function listContactOptions(workspaceId: string): Promise<ContactOp
       .select("id, name", { count: "exact" })
       .eq("workspace_id", workspaceId)
       .is("merged_into_contact_id", null)
+      // C3b — contato anonimizado é imutável: novo atendimento exige contato novo.
+      .is("anonymized_at", null)
       // id desempata nomes iguais: sem ele, a ordem entre páginas não é
       // estável e um contato poderia repetir ou sumir entre dois blocos.
       .order("name", { ascending: true })

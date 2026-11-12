@@ -7,6 +7,9 @@ import { getShellContext } from "@/modules/shell/queries";
 import { requireWorkspace } from "@/server/authz/permissions";
 import { roleHasPermission } from "@/lib/roles";
 import { getOpportunity } from "@/modules/opportunities/queries";
+import { getLeadDetail } from "@/modules/leads/queries";
+import { isContactAnonymized } from "@/modules/contacts/queries";
+import { AnonymizedRecordNotice } from "@/components/contacts/anonymized-record-notice";
 import { listAllActivities } from "@/modules/activities/queries";
 import { listTeamMembers } from "@/modules/team/queries";
 import { OpportunityDetailPanel } from "@/components/pipeline/opportunity-detail-panel";
@@ -35,8 +38,11 @@ export default async function OportunidadeDetalhePage({ params }: { params: Prom
   // sem responsável" — a página trata os três do mesmo jeito.
   if (!opportunity) notFound();
 
-  const canEdit = roleHasPermission(user.role, "opportunity.edit");
-  const canEditActivities = roleHasPermission(user.role, "activity.edit");
+  // C3b — contato anonimizado: histórico só para consulta (o banco recusa qualquer escrita).
+  const lead = await getLeadDetail(opportunity.leadId);
+  const anonymized = lead ? await isContactAnonymized(lead.contactId) : false;
+  const canEdit = !anonymized && roleHasPermission(user.role, "opportunity.edit");
+  const canEditActivities = !anonymized && roleHasPermission(user.role, "activity.edit");
 
   const [{ items: activities }, members] = await Promise.all([
     // Todas as pendentes: a seção de atividades não pagina, então a primeira
@@ -50,6 +56,7 @@ export default async function OportunidadeDetalhePage({ params }: { params: Prom
       <Topbar title={opportunity.contactName} subtitle={opportunity.legalArea} user={user} />
       <main className="flex-1 overflow-y-auto p-5">
         <div className="mx-auto flex max-w-[640px] flex-col gap-5">
+          {anonymized ? <AnonymizedRecordNotice /> : null}
           <div className="flex gap-3">
             <Link href={`/leads/${opportunity.leadId}`} className="text-meta text-primary hover:underline">
               Ver lead

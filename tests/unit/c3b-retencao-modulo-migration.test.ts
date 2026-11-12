@@ -122,10 +122,11 @@ describe("preservação legal", () => {
 
 describe("funções", () => {
   it("todas SECURITY DEFINER com search_path vazio (as públicas e as privadas com dados)", () => {
-    // 5 RPCs + assess + lock_subtree + anonymize + chaves de telefone + conversa solta + 4 auxiliares
-    // da repersonalização + o gatilho de proteção (o gatilho do marco e as SQL puras não precisam).
-    expect(code.match(/security definer/g)).toHaveLength(15);
-    expect(code.match(/set search_path = ''/g)!.length).toBeGreaterThanOrEqual(15);
+    // 5 RPCs + assess + lock_subtree + anonymize + chaves de telefone + conversa solta + 5 auxiliares
+    // da imutabilidade (contato, lead, oportunidade, cliente, proposta) + o gatilho de proteção (o gatilho
+    // do marco e as SQL puras não precisam).
+    expect(code.match(/security definer/g)).toHaveLength(16);
+    expect(code.match(/set search_path = ''/g)!.length).toBeGreaterThanOrEqual(16);
   });
 
   it("ACL: as RPCs só executam para service_role; nada para anon, authenticated ou PUBLIC", () => {
@@ -178,6 +179,8 @@ describe("contato anonimizado é imutável (C3b — correções)", () => {
     "contacts", "contact_merges", "contact_phones", "contact_emails", "contact_identifiers", "contact_sensitive", "contact_consents",
     "consent_evidence", "continuity_references", "touchpoints", "touchpoint_demand_links", "clients", "leads", "lead_notes",
     "conflict_checks", "activities", "opportunities", "proposals", "opportunity_requirement_values", "custom_field_values", "conversations",
+    // Esqueleto e histórico ligados ao contato: nada novo entra nem muda depois da anonimização.
+    "automation_events", "lead_values", "stage_transitions", "proposal_documents", "proposal_email_sends", "duplicate_candidates",
   ];
 
   it("há um gatilho de proteção em cada tabela que poderia reidentificar o esqueleto", () => {
@@ -185,6 +188,31 @@ describe("contato anonimizado é imutável (C3b — correções)", () => {
       expect(code).toMatch(new RegExp("create trigger " + table + "_anonymized_guard before (insert or update|update|insert) on public." + table));
     }
     expect([...code.matchAll(/create trigger ([a-z_]+)_anonymized_guard/g)].map((m) => m[1]).sort()).toEqual([...PROTECTED].sort());
+  });
+
+  it("sem exceção \"técnica\": todo INSERT e UPDATE é recusado, só o DELETE passa", () => {
+    // Só o contato é "apenas UPDATE" (um contato novo nasce sem marca); as demais tabelas guardam INSERT e UPDATE.
+    const triggers = [...code.matchAll(/create trigger ([a-z_]+)_anonymized_guard before ([a-z ]+) on public\.([a-z_]+)/g)];
+    expect(triggers.length).toBeGreaterThan(20);
+    for (const [, , events, table] of triggers) {
+      expect(events, table).toBe(table === "contacts" ? "update" : "insert or update");
+    }
+    expect(code).not.toMatch(/anonymized_guard[^;]* delete /);
+    const guard = code.split("create function private.privacy_anonymized_guard")[1]!.split("$body$;")[0]!;
+    // Nenhuma comparação de coluna libera a escrita: o contato anonimizado recusa qualquer UPDATE,
+    // e os registros ligados recusam por dono (novo e, em UPDATE, antigo).
+    expect(guard).toMatch(/if old\.anonymized_at is not null then\s+v_hit := true;/);
+    expect(guard).not.toMatch(/new\.(summary|tags|legal_area|title|notes|lost_note|decision_note|note|reason) is distinct from old\./);
+    expect(guard).toContain("tg_op = 'UPDATE'");
+  });
+
+  it("a leitura do contato trava a linha (FOR KEY SHARE): escrita concorrente espera o commit da anonimização", () => {
+    for (const fn of ["contact", "lead", "opportunity", "client", "proposal"]) {
+      const body = code.split(`create function private.privacy_${fn}_anonymized(`)[1]!.split("$body$;")[0]!;
+      expect(body, fn).toContain("volatile");
+      expect(body, fn).not.toContain("stable");
+      expect(body, fn).toMatch(/for key share of c\)/);
+    }
   });
 
   it("código fechado e sem escrever nada do contato na mensagem", () => {

@@ -507,45 +507,59 @@ $body$;
 revoke all on function private.privacy_anonymize_contact(uuid, uuid) from public, anon, authenticated, service_role;
 
 -- ---------------------------------------------------------------------
--- 5b) Contato anonimizado é IMUTÁVEL para dados pessoais
+-- 5b) Contato anonimizado e o ESQUELETO que ele preservou são IMUTÁVEIS
 --
--- Depois de contacts.anonymized_at, nenhuma escrita pode voltar a identificar o contato nem o
--- esqueleto histórico que ele preservou: cadastrar um telefone, e-mail ou texto reconectaria a
--- pessoa ao histórico. Quem voltar a ser atendido ganha um contato NOVO. A proteção é do banco
--- (gatilhos); a tela só esconde as ações. Atualizações técnicas que não reinserem dado pessoal
--- (estado, datas, updated_at) seguem permitidas. O código é fechado e só aparece para quem já
--- enxerga o registro (as funções da aplicação respondem "não encontrado" a outro workspace antes
--- de chegar aqui). Apagar nunca é bloqueado. A anonimização em si grava ANTES da marca e por
--- isso não esbarra nestes gatilhos.
+-- Depois de contacts.anonymized_at, nenhum INSERT nem UPDATE chega ao contato nem a qualquer
+-- registro ligado a ele: lead, oportunidade, atividade, proposta, verificação de conflito,
+-- requisitos, notas, campos personalizados, conversas, atribuição, consentimentos, valores e
+-- histórico. Nem mudança "técnica" (estado, responsável, prioridade, etapa, datas, versão,
+-- updated_at): reativar um lead, mover uma oportunidade ou concluir uma atividade reutilizaria o
+-- histórico de uma pessoa que já não pode ser identificada. Novo atendimento exige um contato
+-- NOVO. Só o DELETE (exclusão administrativa, em cascata) continua permitido. A proteção é do
+-- banco (gatilhos); a tela e as funções da aplicação apenas traduzem o código fechado
+-- `contact_anonymized`, que só aparece para quem já enxerga o registro (as funções da aplicação
+-- respondem "não encontrado" a outro workspace antes de chegar aqui). A anonimização em si grava
+-- ANTES da marca (e a marca é a última escrita), por isso não esbarra nestes gatilhos.
 -- ---------------------------------------------------------------------
+
+-- As leituras abaixo TRAVAM a linha do contato (FOR KEY SHARE) e por isso são VOLATILE: uma escrita que
+-- chega enquanto a anonimização ainda não confirmou (ela segura o contato FOR UPDATE) ESPERA o commit e
+-- relê o contato já anonimizado — sem isso, um lead ou atividade novo (ex.: a pessoa voltou a escrever no
+-- mesmo instante) entraria no esqueleto logo depois da anonimização. KEY SHARE não conflita com outras
+-- escritas comuns; só com a trava exclusiva da anonimização.
 
 create function private.privacy_contact_anonymized(p_contact_id uuid)
 returns boolean
 language sql
-stable
+volatile
 security definer
 set search_path = ''
 as $body$
-  select coalesce((select anonymized_at is not null from public.contacts where id = p_contact_id), false);
+  select coalesce((
+    select c.anonymized_at is not null
+    from public.contacts c
+    where c.id = p_contact_id
+    for key share of c), false);
 $body$;
 
 create function private.privacy_lead_anonymized(p_lead_id uuid)
 returns boolean
 language sql
-stable
+volatile
 security definer
 set search_path = ''
 as $body$
   select coalesce((
     select c.anonymized_at is not null
     from public.leads l join public.contacts c on c.id = l.contact_id and c.workspace_id = l.workspace_id
-    where l.id = p_lead_id), false);
+    where l.id = p_lead_id
+    for key share of c), false);
 $body$;
 
 create function private.privacy_opportunity_anonymized(p_opportunity_id uuid)
 returns boolean
 language sql
-stable
+volatile
 security definer
 set search_path = ''
 as $body$
@@ -554,26 +568,46 @@ as $body$
     from public.opportunities o
     join public.leads l on l.id = o.lead_id and l.workspace_id = o.workspace_id
     join public.contacts c on c.id = l.contact_id and c.workspace_id = l.workspace_id
-    where o.id = p_opportunity_id), false);
+    where o.id = p_opportunity_id
+    for key share of c), false);
 $body$;
 
 create function private.privacy_client_anonymized(p_client_id uuid)
 returns boolean
 language sql
-stable
+volatile
 security definer
 set search_path = ''
 as $body$
   select coalesce((
     select c.anonymized_at is not null
     from public.clients cl join public.contacts c on c.id = cl.contact_id and c.workspace_id = cl.workspace_id
-    where cl.id = p_client_id), false);
+    where cl.id = p_client_id
+    for key share of c), false);
 $body$;
 
 revoke all on function private.privacy_contact_anonymized(uuid) from public, anon, authenticated, service_role;
 revoke all on function private.privacy_lead_anonymized(uuid) from public, anon, authenticated, service_role;
 revoke all on function private.privacy_opportunity_anonymized(uuid) from public, anon, authenticated, service_role;
 revoke all on function private.privacy_client_anonymized(uuid) from public, anon, authenticated, service_role;
+
+create function private.privacy_proposal_anonymized(p_proposal_id uuid)
+returns boolean
+language sql
+volatile
+security definer
+set search_path = ''
+as $body$
+  select coalesce((
+    select c.anonymized_at is not null
+    from public.proposals p
+    join public.leads l on l.id = p.lead_id and l.workspace_id = p.workspace_id
+    join public.contacts c on c.id = l.contact_id and c.workspace_id = l.workspace_id
+    where p.id = p_proposal_id
+    for key share of c), false);
+$body$;
+
+revoke all on function private.privacy_proposal_anonymized(uuid) from public, anon, authenticated, service_role;
 
 create function private.privacy_anonymized_guard()
 returns trigger
@@ -584,92 +618,106 @@ as $body$
 declare
   v_hit boolean := false;
 begin
+  -- Regra única: depois de contacts.anonymized_at, NENHUM INSERT nem UPDATE chega ao contato nem a
+  -- qualquer registro ligado ao esqueleto que ele preservou (nem "técnico": updated_at, versão,
+  -- estado, datas). Só DELETE passa (estes gatilhos não o interceptam). Em UPDATE, o dono
+  -- ANTIGO também conta, para ninguém tirar um registro do esqueleto nem trocá-lo de dono.
   case tg_table_name
     when 'contacts' then
-      -- Só UPDATE. Anonimizado: nome, cidade, UF, canal, tipo, mesclagem e a própria marca não mudam.
-      if old.anonymized_at is not null and (
-           new.name is distinct from old.name or new.city is distinct from old.city or new.uf is distinct from old.uf
-           or new.preferred_channel is distinct from old.preferred_channel or new.type is distinct from old.type
-           or new.merged_into_contact_id is distinct from old.merged_into_contact_id
-           or new.anonymized_at is distinct from old.anonymized_at) then
+      -- Só UPDATE. A própria marca (nulo -> data) é a última escrita da anonimização e passa;
+      -- depois dela o contato inteiro é imutável.
+      if old.anonymized_at is not null then
         v_hit := true;
       end if;
       -- Ninguém é absorvido por um contato anonimizado.
-      if new.merged_into_contact_id is not null and new.merged_into_contact_id is distinct from old.merged_into_contact_id
-         and private.privacy_contact_anonymized(new.merged_into_contact_id) then
-        v_hit := true;
+      if not v_hit and new.merged_into_contact_id is not null
+         and new.merged_into_contact_id is distinct from old.merged_into_contact_id then
+        v_hit := private.privacy_contact_anonymized(new.merged_into_contact_id);
       end if;
 
     when 'contact_merges' then
       v_hit := private.privacy_contact_anonymized(new.kept_contact_id) or private.privacy_contact_anonymized(new.merged_contact_id);
+      if not v_hit and tg_op = 'UPDATE' then
+        v_hit := private.privacy_contact_anonymized(old.kept_contact_id) or private.privacy_contact_anonymized(old.merged_contact_id);
+      end if;
 
     when 'contact_phones', 'contact_emails', 'contact_identifiers', 'contact_sensitive', 'contact_consents',
-         'consent_evidence', 'continuity_references', 'touchpoints', 'clients' then
+         'consent_evidence', 'clients' then
       v_hit := private.privacy_contact_anonymized(new.contact_id);
       if not v_hit and tg_op = 'UPDATE' then v_hit := private.privacy_contact_anonymized(old.contact_id); end if;
 
+    when 'continuity_references' then
+      v_hit := private.privacy_contact_anonymized(new.contact_id)
+            or (new.lead_id is not null and private.privacy_lead_anonymized(new.lead_id));
+      if not v_hit and tg_op = 'UPDATE' then
+        v_hit := private.privacy_contact_anonymized(old.contact_id)
+              or (old.lead_id is not null and private.privacy_lead_anonymized(old.lead_id));
+      end if;
+
+    when 'touchpoints' then
+      -- O contato, o lead e a oportunidade: reaproveitar o histórico de um anonimizado num atendimento
+      -- novo (por um vínculo) também é reuso.
+      v_hit := private.privacy_contact_anonymized(new.contact_id)
+            or (new.lead_id is not null and private.privacy_lead_anonymized(new.lead_id))
+            or (new.opportunity_id is not null and private.privacy_opportunity_anonymized(new.opportunity_id));
+      if not v_hit and tg_op = 'UPDATE' then
+        v_hit := private.privacy_contact_anonymized(old.contact_id)
+              or (old.lead_id is not null and private.privacy_lead_anonymized(old.lead_id))
+              or (old.opportunity_id is not null and private.privacy_opportunity_anonymized(old.opportunity_id));
+      end if;
+
+    when 'touchpoint_demand_links' then
+      v_hit := coalesce((
+                 select private.privacy_contact_anonymized(t.contact_id) from public.touchpoints t where t.id = new.touchpoint_id), false)
+            or (new.opportunity_id is not null and private.privacy_opportunity_anonymized(new.opportunity_id));
+      if not v_hit and tg_op = 'UPDATE' then
+        v_hit := coalesce((
+                   select private.privacy_contact_anonymized(t.contact_id) from public.touchpoints t where t.id = old.touchpoint_id), false)
+              or (old.opportunity_id is not null and private.privacy_opportunity_anonymized(old.opportunity_id));
+      end if;
+
     when 'leads' then
-      if tg_op = 'INSERT' then
-        v_hit := private.privacy_contact_anonymized(new.contact_id);
-      elsif new.summary is distinct from old.summary or new.tags is distinct from old.tags
-            or new.legal_area is distinct from old.legal_area or new.contact_id is distinct from old.contact_id then
-        v_hit := private.privacy_contact_anonymized(old.contact_id) or private.privacy_contact_anonymized(new.contact_id);
-      end if;
+      v_hit := private.privacy_contact_anonymized(new.contact_id);
+      if not v_hit and tg_op = 'UPDATE' then v_hit := private.privacy_contact_anonymized(old.contact_id); end if;
 
-    when 'lead_notes' then
+    when 'lead_notes', 'conflict_checks', 'activities', 'proposals', 'lead_values', 'automation_events', 'opportunities' then
       v_hit := private.privacy_lead_anonymized(new.lead_id);
+      if not v_hit and tg_op = 'UPDATE' then v_hit := private.privacy_lead_anonymized(old.lead_id); end if;
 
-    when 'conflict_checks' then
-      if tg_op = 'INSERT' then
-        v_hit := private.privacy_lead_anonymized(new.lead_id);
-      elsif new.note is not null and new.note is distinct from old.note then
-        v_hit := private.privacy_lead_anonymized(new.lead_id);
-      end if;
-
-    when 'activities' then
-      if tg_op = 'INSERT' then
-        v_hit := private.privacy_lead_anonymized(new.lead_id);
-      elsif new.title is distinct from old.title or new.notes is distinct from old.notes then
-        v_hit := private.privacy_lead_anonymized(new.lead_id);
-      end if;
-
-    when 'opportunities' then
-      if tg_op = 'INSERT' then
-        v_hit := private.privacy_lead_anonymized(new.lead_id);
-      elsif (new.lost_note is not null and new.lost_note is distinct from old.lost_note)
-            or new.lead_id is distinct from old.lead_id then
-        v_hit := private.privacy_lead_anonymized(new.lead_id);
-      end if;
-
-    when 'proposals' then
-      if tg_op = 'INSERT' then
-        v_hit := private.privacy_lead_anonymized(new.lead_id);
-      elsif new.decision_note is not null and new.decision_note is distinct from old.decision_note then
-        v_hit := private.privacy_lead_anonymized(new.lead_id);
-      end if;
-
-    when 'opportunity_requirement_values' then
+    when 'opportunity_requirement_values', 'stage_transitions' then
       v_hit := private.privacy_opportunity_anonymized(new.opportunity_id);
+      if not v_hit and tg_op = 'UPDATE' then v_hit := private.privacy_opportunity_anonymized(old.opportunity_id); end if;
+
+    when 'proposal_documents', 'proposal_email_sends' then
+      v_hit := private.privacy_proposal_anonymized(new.proposal_id);
+      if not v_hit and tg_op = 'UPDATE' then v_hit := private.privacy_proposal_anonymized(old.proposal_id); end if;
+
+    when 'duplicate_candidates' then
+      v_hit := private.privacy_contact_anonymized(new.contact_a_id) or private.privacy_contact_anonymized(new.contact_b_id);
+      if not v_hit and tg_op = 'UPDATE' then
+        v_hit := private.privacy_contact_anonymized(old.contact_a_id) or private.privacy_contact_anonymized(old.contact_b_id);
+      end if;
 
     when 'custom_field_values' then
       v_hit := (new.contact_id is not null and private.privacy_contact_anonymized(new.contact_id))
             or (new.lead_id is not null and private.privacy_lead_anonymized(new.lead_id))
             or (new.opportunity_id is not null and private.privacy_opportunity_anonymized(new.opportunity_id))
             or (new.client_id is not null and private.privacy_client_anonymized(new.client_id));
-
-    when 'conversations' then
-      if tg_op = 'INSERT'
-         or new.contact_id is distinct from old.contact_id or new.lead_id is distinct from old.lead_id
-         or new.opportunity_id is distinct from old.opportunity_id then
-        v_hit := (new.contact_id is not null and private.privacy_contact_anonymized(new.contact_id))
-              or (new.lead_id is not null and private.privacy_lead_anonymized(new.lead_id))
-              or (new.opportunity_id is not null and private.privacy_opportunity_anonymized(new.opportunity_id));
+      if not v_hit and tg_op = 'UPDATE' then
+        v_hit := (old.contact_id is not null and private.privacy_contact_anonymized(old.contact_id))
+              or (old.lead_id is not null and private.privacy_lead_anonymized(old.lead_id))
+              or (old.opportunity_id is not null and private.privacy_opportunity_anonymized(old.opportunity_id))
+              or (old.client_id is not null and private.privacy_client_anonymized(old.client_id));
       end if;
 
-    when 'touchpoint_demand_links' then
-      if new.reason is not null then
-        v_hit := coalesce((
-          select private.privacy_contact_anonymized(t.contact_id) from public.touchpoints t where t.id = new.touchpoint_id), false);
+    when 'conversations' then
+      v_hit := (new.contact_id is not null and private.privacy_contact_anonymized(new.contact_id))
+            or (new.lead_id is not null and private.privacy_lead_anonymized(new.lead_id))
+            or (new.opportunity_id is not null and private.privacy_opportunity_anonymized(new.opportunity_id));
+      if not v_hit and tg_op = 'UPDATE' then
+        v_hit := (old.contact_id is not null and private.privacy_contact_anonymized(old.contact_id))
+              or (old.lead_id is not null and private.privacy_lead_anonymized(old.lead_id))
+              or (old.opportunity_id is not null and private.privacy_opportunity_anonymized(old.opportunity_id));
       end if;
 
     else
@@ -687,7 +735,7 @@ revoke all on function private.privacy_anonymized_guard() from public, anon, aut
 
 create trigger contacts_anonymized_guard before update on public.contacts
   for each row execute function private.privacy_anonymized_guard();
-create trigger contact_merges_anonymized_guard before insert on public.contact_merges
+create trigger contact_merges_anonymized_guard before insert or update on public.contact_merges
   for each row execute function private.privacy_anonymized_guard();
 create trigger contact_phones_anonymized_guard before insert or update on public.contact_phones
   for each row execute function private.privacy_anonymized_guard();
@@ -726,6 +774,18 @@ create trigger opportunity_requirement_values_anonymized_guard before insert or 
 create trigger custom_field_values_anonymized_guard before insert or update on public.custom_field_values
   for each row execute function private.privacy_anonymized_guard();
 create trigger conversations_anonymized_guard before insert or update on public.conversations
+  for each row execute function private.privacy_anonymized_guard();
+create trigger automation_events_anonymized_guard before insert or update on public.automation_events
+  for each row execute function private.privacy_anonymized_guard();
+create trigger lead_values_anonymized_guard before insert or update on public.lead_values
+  for each row execute function private.privacy_anonymized_guard();
+create trigger stage_transitions_anonymized_guard before insert or update on public.stage_transitions
+  for each row execute function private.privacy_anonymized_guard();
+create trigger proposal_documents_anonymized_guard before insert or update on public.proposal_documents
+  for each row execute function private.privacy_anonymized_guard();
+create trigger proposal_email_sends_anonymized_guard before insert or update on public.proposal_email_sends
+  for each row execute function private.privacy_anonymized_guard();
+create trigger duplicate_candidates_anonymized_guard before insert or update on public.duplicate_candidates
   for each row execute function private.privacy_anonymized_guard();
 
 -- ---------------------------------------------------------------------

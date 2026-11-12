@@ -225,8 +225,8 @@ select throws_ok(format($q$select update_contact_basic_fields(%L, 'Fulano', null
 select throws_ok(format($q$select merge_contacts(%L, %L)$q$, :'gama', :'alfa'), 'P0001', null, '6) outro workspace tentando mesclar: recusado sem revelar o registro');
 reset role;
 
--- O que NÃO reidentifica segue permitido: atualização técnica e o contato novo.
-select lives_ok(format($q$update public.contacts set updated_at = now() where id = %L$q$, :'alfa'), 'atualização técnica sem dado pessoal segue permitida');
+-- Nem a atualização "técnica" passa (esqueleto imutável — ver o teste 53); o contato novo funciona.
+select throws_ok(format($q$update public.contacts set updated_at = now() where id = %L$q$, :'alfa'), 'P0001', 'contact_anonymized', 'o contato anonimizado é imutável até para atualização técnica (esqueleto — teste 53)');
 set local role authenticated;
 select pg_temp.login(:'ana'::uuid);
 select lives_ok(format($q$select add_contact_phone(%L, '+5541999991001', true)$q$, :'novo'), '7) contato novo aceita até o telefone que o anonimizado teve');

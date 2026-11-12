@@ -69,19 +69,33 @@ idempotente.
 ou preservação **não** são anonimizados — exigem revisão humana. O payload bruto da inbox do WhatsApp
 não é ligado ao contato; ele já é limitado a 30 dias por constraint e expurgado pelo mecanismo da B3.
 
-## Contato anonimizado é imutável para dados pessoais
+## Contato anonimizado e o esqueleto que ele preservou são imutáveis
 
-Depois de `contacts.anonymized_at`, **o banco** recusa (`contact_anonymized`, código fechado) qualquer escrita
-que reconecte a pessoa ao histórico preservado: nome, cidade, UF, canal ou tipo do contato; telefone, e-mail,
-identificador e CPF/CNPJ; consentimentos e evidências; lead novo ou texto/tags/área de lead preservado;
-oportunidade, requisito, nota, atividade, proposta, conflito, cliente, atribuição e continuidade vinculados;
-campos personalizados; conversas ligadas ao contato, lead ou oportunidade; e mesclagem em qualquer dos lados.
-Atualizações técnicas sem dado pessoal (estado, datas, `updated_at`) e exclusões seguem permitidas. A tela
-esconde as ações de edição, mas a proteção é do banco (gatilhos `*_anonymized_guard`).
+Depois de `contacts.anonymized_at`, **o banco** recusa (`contact_anonymized`, código fechado, sem detalhe nem dado
+algum) **todo INSERT e todo UPDATE** no contato e nos registros ligados a ele: telefone, e-mail, identificador e
+CPF/CNPJ; consentimentos e evidências; lead, nota, verificação de conflito, valor estimado; oportunidade,
+requisito, histórico de etapas; atividade; proposta e seus documentos/e-mails; cliente; atribuição e vínculos de
+demanda; continuidade; campos personalizados; conversas; sugestões de duplicidade; eventos de automação; e
+mesclagem em qualquer dos lados. **Não há exceção “técnica”**: reativar um lead, trocar responsável ou
+prioridade, mover/reabrir/ganhar uma oportunidade, concluir/reatribuir/reagendar uma atividade, enviar ou
+decidir uma proposta, mudar `updated_at` ou a versão — tudo é recusado, porque reaproveitaria o histórico de
+uma pessoa que já não pode ser identificada. Em UPDATE, o dono **antigo** também conta (ninguém tira um
+registro do esqueleto nem o troca de dono). Só o **DELETE** (exclusão administrativa, em cascata) segue
+permitido. A anonimização em si grava **antes** da marca (a marca é a última escrita) e por isso não esbarra
+nos gatilhos `*_anonymized_guard`. Uma escrita que chega **enquanto a anonimização ainda não confirmou** (a
+pessoa voltou a escrever no mesmo instante) trava o contato com `FOR KEY SHARE`, espera o commit, relê o contato
+já anonimizado e é recusada — nada novo entra no esqueleto nessa janela.
+
+Na aplicação: as telas do contato, do lead e da oportunidade ficam **somente leitura** e explicam o motivo; o
+seletor de “novo lead” não oferece contato anonimizado; qualquer tentativa que chegue ao banco volta como
+mensagem genérica e clara (“cadastre um contato novo”). Processos técnicos que não usam o esqueleto (expurgo
+de payload, ledger do WhatsApp, B3, agenda) não precisaram de exceção: os dados que eles tocariam já saem na
+anonimização; a automação (C1) que tente criar tarefa para um lead anonimizado falha dentro da própria
+subtransação e vai para o ciclo normal de tentativas.
 
 **Novo atendimento exige contato novo**: se a pessoa voltar, cadastre outro contato; o anonimizado não é
 ressuscitado (o novo pode até usar o mesmo telefone). Quem vem de outro workspace recebe a mesma resposta que
-receberia para qualquer contato comum — nunca “anonimizado”.
+receberia para qualquer registro comum — nunca “anonimizado”.
 
 ## Prévia e confirmação manual
 
