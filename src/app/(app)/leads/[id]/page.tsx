@@ -7,6 +7,8 @@ import { getShellContext } from "@/modules/shell/queries";
 import { requireWorkspace } from "@/server/authz/permissions";
 import { roleHasPermission } from "@/lib/roles";
 import { getLeadDetail } from "@/modules/leads/queries";
+import { isContactAnonymized } from "@/modules/contacts/queries";
+import { AnonymizedRecordNotice } from "@/components/contacts/anonymized-record-notice";
 import { listTeamMembers } from "@/modules/team/queries";
 import { LeadBasicFieldsForm } from "@/components/leads/lead-basic-fields-form";
 import { AssignLeadForm } from "@/components/leads/assign-lead-form";
@@ -63,20 +65,25 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
   // existência a quem não deveria nem saber).
   if (!lead) notFound();
 
-  const canEdit = roleHasPermission(user.role, "lead.edit");
-  const canEditOpportunities = roleHasPermission(user.role, "opportunity.edit");
-  const canEditActivities = roleHasPermission(user.role, "activity.edit");
+  // C3b — contato anonimizado: o histórico fica só para consulta (o banco recusa qualquer escrita; a
+  // tela esconde as ações e explica, sem repetir dado nenhum do titular).
+  const anonymized = await isContactAnonymized(lead.contactId);
+  const may = (permission: Parameters<typeof roleHasPermission>[1]) => !anonymized && roleHasPermission(user.role, permission);
+
+  const canEdit = may("lead.edit");
+  const canEditOpportunities = may("opportunity.edit");
+  const canEditActivities = may("activity.edit");
   // Restaurar o valor do CRM num conflito de agenda (o servidor confere o resto).
-  const canRestoreCalendar = roleHasPermission(user.role, "calendar.connect_own");
-  const canEditProposals = roleHasPermission(user.role, "proposal.edit");
+  const canRestoreCalendar = may("calendar.connect_own");
+  const canEditProposals = may("proposal.edit");
   // A11: corrigir vínculo de atribuição é ação sensível (owner/admin/manager).
-  const canCorrectAttribution = roleHasPermission(user.role, "attribution.correct");
-  const canIssueContinuity = roleHasPermission(user.role, "continuity.issue");
-  const canEditConflictCheck = roleHasPermission(user.role, "conflict_check.edit");
-  const canEditLeadNotes = roleHasPermission(user.role, "lead_note.edit");
+  const canCorrectAttribution = may("attribution.correct");
+  const canIssueContinuity = may("continuity.issue");
+  const canEditConflictCheck = may("conflict_check.edit");
+  const canEditLeadNotes = may("lead_note.edit");
   // B1: mais restrito que proposal.edit — quem gera/baixa/envia o PDF
   // precisa enxergar o valor exato (sales fica de fora, ver src/lib/roles.ts).
-  const canManageProposalDocuments = roleHasPermission(user.role, "proposal_document.manage");
+  const canManageProposalDocuments = may("proposal_document.manage");
 
   const [
     members,
@@ -163,6 +170,7 @@ export default async function LeadDetalhePage({ params }: { params: Promise<{ id
       <Topbar title={lead.contactName} subtitle={lead.legalArea} user={user} />
       <main className="flex-1 overflow-y-auto p-5">
         <div className="mx-auto flex max-w-[640px] flex-col gap-5">
+          {anonymized ? <AnonymizedRecordNotice /> : null}
           <div className="flex items-center gap-3">
             <Link href={`/contatos/${lead.contactId}`} className="text-meta text-primary hover:underline">
               Ver contato

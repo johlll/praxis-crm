@@ -188,7 +188,7 @@ describe("integração nas telas existentes", () => {
   const page = (path: string) => read(path);
   const cases: Array<[string, string, string, string]> = [
     ["src/app/(app)/contatos/[id]/page.tsx", "contact", "contact.id", 'roleHasPermission(user.role, "contact.edit")'],
-    ["src/app/(app)/leads/[id]/page.tsx", "lead", "lead.id", 'roleHasPermission(user.role, "lead.edit")'],
+    ["src/app/(app)/leads/[id]/page.tsx", "lead", "lead.id", 'may("lead.edit")'],
     ["src/app/(app)/oportunidades/[id]/page.tsx", "opportunity", "opportunity.id", 'roleHasPermission(user.role, "opportunity.edit")'],
     ["src/app/(app)/clientes/[id]/page.tsx", "client", "client.id", 'roleHasPermission(user.role, "client.manage")'],
   ];

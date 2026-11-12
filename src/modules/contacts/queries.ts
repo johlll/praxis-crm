@@ -112,16 +112,30 @@ export type ContactDetail = {
   uf: string | null;
   preferredChannel: ContactChannel | null;
   createdAt: string;
+  /** C3b — preenchido quando o contato foi anonimizado (imutável para dados pessoais). */
+  anonymizedAt?: string | null;
   phones: { id: string; value: string; isPrimary: boolean }[];
   emails: { id: string; value: string; isPrimary: boolean }[];
   hasSensitive: boolean;
 };
 
+/**
+ * C3b — o contato foi anonimizado? Sem linha (inexistente, mesclado ou de outro workspace, pela RLS)
+ * responde false: quem não enxerga o contato não descobre nada por aqui. As telas de lead e
+ * oportunidade usam isto só para ficarem somente leitura; a recusa de verdade é do banco.
+ */
+export async function isContactAnonymized(contactId: string): Promise<boolean> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.from("contacts").select("anonymized_at").eq("id", contactId).maybeSingle();
+  if (error) throw new DataLoadError(`o contato ${contactId}`, error);
+  return Boolean(data?.anonymized_at);
+}
+
 export async function getContactDetail(contactId: string): Promise<ContactDetail | null> {
   const supabase = await createServerSupabaseClient();
   const { data: contact, error: contactError } = await supabase
     .from("contacts")
-    .select("id, workspace_id, name, type, city, uf, preferred_channel, created_at")
+    .select("id, workspace_id, name, type, city, uf, preferred_channel, created_at, anonymized_at")
     .eq("id", contactId)
     .is("merged_into_contact_id", null)
     .maybeSingle();
@@ -159,6 +173,7 @@ export async function getContactDetail(contactId: string): Promise<ContactDetail
     uf: contact.uf,
     preferredChannel: contact.preferred_channel,
     createdAt: contact.created_at,
+    anonymizedAt: contact.anonymized_at,
     phones: (phones ?? []).map((p) => ({ id: p.id, value: p.value_normalized, isPrimary: p.is_primary })),
     emails: (emails ?? []).map((e) => ({ id: e.id, value: e.value_normalized, isPrimary: e.is_primary })),
     hasSensitive: hasSensitive ?? false,

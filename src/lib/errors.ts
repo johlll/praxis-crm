@@ -201,6 +201,12 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   // C3a — exportação de dados do titular. contact_not_found e insufficient_permission já existem.
   privacy_export_not_found: "Exportação não encontrada ou já encerrada. Gere uma nova.",
   privacy_export_failure_invalid: "Não foi possível concluir a exportação.",
+  // C3b — retenção, preservação legal e anonimização. contact_not_found e insufficient_permission já existem.
+  legal_hold_not_found: "Preservação legal não encontrada.",
+  invalid_legal_hold_reason: "Escolha um motivo de preservação válido.",
+  contact_already_anonymized: "Este contato já foi anonimizado.",
+  contact_anonymized:
+    "Este registro pertence a um contato anonimizado e não pode ser alterado nem reaproveitado. Para um novo atendimento, cadastre um contato novo.",
   // C4 — campos personalizados. custom_field_not_found e custom_field_record_not_found
   // cobrem também definição/registro de outro workspace (nunca se distingue).
   custom_field_not_found: "Campo não encontrado.",

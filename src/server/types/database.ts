@@ -1648,6 +1648,7 @@ export type Database = {
       }
       contacts: {
         Row: {
+          anonymized_at: string | null
           city: string | null
           created_at: string
           created_by: string
@@ -1663,6 +1664,7 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          anonymized_at?: string | null
           city?: string | null
           created_at?: string
           created_by: string
@@ -1678,6 +1680,7 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          anonymized_at?: string | null
           city?: string | null
           created_at?: string
           created_by?: string
@@ -2367,6 +2370,7 @@ export type Database = {
       }
       leads: {
         Row: {
+          archived_at: string | null
           assigned_to: string | null
           contact_id: string
           created_at: string
@@ -2381,6 +2385,7 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
+          archived_at?: string | null
           assigned_to?: string | null
           contact_id: string
           created_at?: string
@@ -2395,6 +2400,7 @@ export type Database = {
           workspace_id: string
         }
         Update: {
+          archived_at?: string | null
           assigned_to?: string | null
           contact_id?: string
           created_at?: string
@@ -3054,6 +3060,97 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "workspaces"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      privacy_legal_holds: {
+        Row: {
+          contact_id: string
+          created_at: string
+          created_by: string | null
+          id: string
+          reason_code: string
+          released_at: string | null
+          released_by: string | null
+          status: string
+          workspace_id: string
+        }
+        Insert: {
+          contact_id: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          reason_code: string
+          released_at?: string | null
+          released_by?: string | null
+          status?: string
+          workspace_id: string
+        }
+        Update: {
+          contact_id?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          reason_code?: string
+          released_at?: string | null
+          released_by?: string | null
+          status?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "privacy_legal_holds_contact_fkey"
+            columns: ["workspace_id", "contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "privacy_legal_holds_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "privacy_legal_holds_released_by_fkey"
+            columns: ["released_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "privacy_legal_holds_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      privacy_retention_checks: {
+        Row: {
+          checked_at: string
+          contact_id: string
+          workspace_id: string
+        }
+        Insert: {
+          checked_at?: string
+          contact_id: string
+          workspace_id: string
+        }
+        Update: {
+          checked_at?: string
+          contact_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "privacy_retention_checks_contact_fkey"
+            columns: ["workspace_id", "contact_id"]
+            isOneToOne: true
+            referencedRelation: "contacts"
+            referencedColumns: ["workspace_id", "id"]
           },
         ]
       }
@@ -4833,6 +4930,14 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      anonymize_privacy_contact: {
+        Args: {
+          p_actor_user_id: string
+          p_contact_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       apply_google_inbound_change: {
         Args: {
           p_actor_user_id: string
@@ -4876,6 +4981,7 @@ export type Database = {
           p_lead_id: string
         }
         Returns: {
+          archived_at: string | null
           assigned_to: string | null
           contact_id: string
           created_at: string
@@ -5089,6 +5195,7 @@ export type Database = {
           p_workspace_id: string
         }
         Returns: {
+          anonymized_at: string | null
           city: string | null
           created_at: string
           created_by: string
@@ -5177,6 +5284,15 @@ export type Database = {
           p_name: string
           p_pipeline_id: string
           p_position?: number
+        }
+        Returns: string
+      }
+      create_privacy_legal_hold: {
+        Args: {
+          p_actor_user_id: string
+          p_contact_id: string
+          p_reason_code: string
+          p_workspace_id: string
         }
         Returns: string
       }
@@ -5457,6 +5573,14 @@ export type Database = {
         }
         Returns: Json
       }
+      get_privacy_retention_status: {
+        Args: {
+          p_actor_user_id: string
+          p_contact_id: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       get_proposal: { Args: { p_proposal_id: string }; Returns: Json }
       get_proposal_document_for_download: {
         Args: { p_document_id: string }
@@ -5726,6 +5850,7 @@ export type Database = {
           p_merged_contact_id: string
         }
         Returns: {
+          anonymized_at: string | null
           city: string | null
           created_at: string
           created_by: string
@@ -5844,6 +5969,14 @@ export type Database = {
         }
         Returns: string
       }
+      release_privacy_legal_hold: {
+        Args: {
+          p_actor_user_id: string
+          p_hold_id: string
+          p_workspace_id: string
+        }
+        Returns: undefined
+      }
       relink_recovered_calendar_link: {
         Args: {
           p_actor_user_id: string
@@ -5927,9 +6060,11 @@ export type Database = {
         Args: { p_form_endpoint_id: string; p_new_public_key: string }
         Returns: Json
       }
+      run_privacy_retention_batch: { Args: { p_limit?: number }; Returns: Json }
       search_contacts_by_cpf_cnpj: {
         Args: { p_blind_indexes_base64: string[]; p_workspace_id: string }
         Returns: {
+          anonymized_at: string | null
           city: string | null
           created_at: string
           created_by: string
@@ -6011,6 +6146,7 @@ export type Database = {
           p_status: Database["public"]["Enums"]["lead_status"]
         }
         Returns: {
+          archived_at: string | null
           assigned_to: string | null
           contact_id: string
           created_at: string
@@ -6095,6 +6231,7 @@ export type Database = {
       unmerge_contact: {
         Args: { p_merge_id: string }
         Returns: {
+          anonymized_at: string | null
           city: string | null
           created_at: string
           created_by: string
@@ -6162,6 +6299,7 @@ export type Database = {
           p_uf?: string
         }
         Returns: {
+          anonymized_at: string | null
           city: string | null
           created_at: string
           created_by: string
@@ -6266,6 +6404,7 @@ export type Database = {
           p_tags?: string[]
         }
         Returns: {
+          archived_at: string | null
           assigned_to: string | null
           contact_id: string
           created_at: string

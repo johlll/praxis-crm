@@ -93,6 +93,13 @@ export const AUDIT_ACTION_GROUPS: readonly AuditActionGroup[] = [
     ["privacy.export_requested", "Exportação de dados do titular solicitada"],
     ["privacy.export_generated", "Exportação de dados do titular gerada"],
     ["privacy.export_failed", "Exportação de dados do titular falhou"],
+    ["privacy.legal_hold_created", "Preservação legal criada"],
+    ["privacy.legal_hold_released", "Preservação legal encerrada"],
+    ["privacy.anonymization_requested", "Anonimização de contato solicitada"],
+    ["privacy.anonymization_completed", "Anonimização de contato concluída"],
+    ["privacy.anonymization_refused", "Anonimização de contato recusada"],
+    ["privacy.anonymization_failed", "Anonimização de contato falhou"],
+    ["privacy.retention_processed", "Retenção processada em lote"],
   ]),
   group("Clientes", [
     ["client.status_changed", "Status do cliente alterado"],
