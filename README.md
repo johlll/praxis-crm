@@ -75,3 +75,10 @@ atividades, WhatsApp, dashboard.
 - `docs/decisoes/versoes.md` — versões escolhidas (TypeScript 6.0.3 e não 7,
   ESLint 9 e não 10, `middleware.ts` → `proxy.ts` no Next 16.3.4) e a decisão
   de infraestrutura da A2 (Supabase hospedado para dev, Docker só no CI).
+
+## Operação e treinamento
+
+- `docs/operacao/guia-de-uso.md` — guia de uso para o Dr. Henrique e a equipe.
+- `docs/operacao/runbook-operacional.md` — verificações diárias e semanais, falhas e incidentes.
+- `docs/operacao/checklist-de-lancamento.md` — o que falta para a entrega final.
+- `docs/decisoes/b6c-backup-restauracao.md` — backup criptografado e restauração.
