@@ -63,11 +63,11 @@ s3_etag_norm() {
 # Traduz o ERRO do aws (arquivo $1, nunca impresso) em um código fechado.
 s3_error_code() {
   local f="$1"
-  if grep -q -i -E 'InvalidAccessKeyId|SignatureDoesNotMatch|AccessDenied|InvalidSignature|Unauthorized|Forbidden|\(403\)|\(401\)' "$f" 2>/dev/null; then
+  if grep -q -i -E 'InvalidAccessKeyId|SignatureDoesNotMatch|InvalidSignature|AccessDenied|Unauthorized|Forbidden|AuthorizationHeaderMalformed|ExpiredToken|InvalidToken|InvalidJWT|signature|access key|credentials|\(40[13]\)' "$f" 2>/dev/null; then
     printf 'credencial_invalida'
   elif grep -q -i -E 'NoSuchBucket|\(404\).*bucket' "$f" 2>/dev/null; then
     printf 'bucket_inexistente'
-  elif grep -q -i -E 'Could not connect|Connection refused|Could not resolve|Name or service|timed out|EndpointConnectionError|Connect timeout|SSL' "$f" 2>/dev/null; then
+  elif grep -q -i -E 'Could not connect|Connection refused|Could not resolve|Name or service|timed out|EndpointConnectionError|Connect timeout|Connection was closed|Connection reset|Connection aborted|Read timeout|SSL' "$f" 2>/dev/null; then
     printf 'conexao_falhou'
   else
     printf 'listagem_falhou'

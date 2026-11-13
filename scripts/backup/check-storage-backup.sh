@@ -123,6 +123,12 @@ run_restore() { # $1 = pacote; $2 = checksum; $3 = identidade; resto = argumento
     env "$@" bash "$RESTORE" --package "$pkg" --checksum "$sum" --identity "$id"
   ) >"$LOG" 2>&1
 }
+s3_code_of() { # só o identificador do erro do S3 (o que vem entre parênteses depois de "An error occurred")
+  sed -n 's/^.*An error occurred (\([A-Za-z0-9_]\{1,40\}\)).*$/\1/p' "$1" 2>/dev/null | head -n 1
+}
+erro_s3_mascarado() { # primeiras linhas do erro do aws; qualquer sequência longa (chave, segredo, token) vira [...]
+  head -n 3 "$1" 2>/dev/null | sed -E 's#[A-Za-z0-9/+=_-]{24,}#[...]#g' | cut -c1-220 | tr '\n' '|'
+}
 the_pkg() { ls -1 "$1"/*.tar.gz.age 2>/dev/null || true; }
 unpack() { # $1 = pacote .age (abre com a chave 1 em $ROOT/insp; quem chama apaga)
   rm -rf "$ROOT/insp" && mkdir -p "$ROOT/insp"
@@ -137,6 +143,15 @@ cat >"$ROOT/shim/aws" <<'SHIM'
 #!/usr/bin/env bash
 op="${2:-}"
 [ -z "${SHIM_ARGLOG:-}" ] || printf '%s\n' "$*" >>"$SHIM_ARGLOG"
+if [ -n "${SHIM_ERRLOG:-}" ]; then
+  # Só observa: o erro do aws chega ao script exatamente como viria sem o shim; uma cópia vai para o arquivo.
+  rc=0
+  "$REAL_AWS" "$@" 2>"$SHIM_ERRLOG.tmp" || rc=$?
+  cat "$SHIM_ERRLOG.tmp" >>"$SHIM_ERRLOG"
+  cat "$SHIM_ERRLOG.tmp" >&2
+  rm -f "$SHIM_ERRLOG.tmp"
+  exit "$rc"
+fi
 if [ "$op" = "get-object" ] && [ -n "${SHIM_MODE:-}" ]; then
   n=$(( $(cat "$SHIM_COUNTER" 2>/dev/null || echo 0) + 1 ))
   echo "$n" >"$SHIM_COUNTER"
@@ -216,9 +231,14 @@ done
 [ ! -e "$ROOT/o4" ] && tmp_empty && ok "nada criado" || bad "sobrou arquivo"
 
 echo "== 5. credencial inválida"
-rc=0; run_backup "$ROOT/o5" BACKUP_STORAGE_S3_SECRET_ACCESS_KEY="segredo-invalido-0123456789abcdef" || rc=$?
+rc=0; run_backup "$ROOT/o5" SHIM_ERRLOG="$ROOT/s5.err" PATH="$SHIMPATH" BACKUP_STORAGE_S3_SECRET_ACCESS_KEY="segredo-invalido-0123456789abcdef" || rc=$?
 expect_rc "segredo S3 inválido" 69 "$rc"
-log_has "ERRO: credencial_invalida" && ok "mensagem fechada: credencial_invalida" || bad "mensagem credencial_invalida ausente"
+if log_has "ERRO: credencial_invalida"; then
+  ok "mensagem fechada: credencial_invalida (o S3 respondeu: $(s3_code_of "$ROOT/s5.err"))"
+else
+  # Só o código fechado do script e o texto do erro do S3 com as sequências longas mascaradas (nada sensível).
+  bad "mensagem credencial_invalida ausente (o script disse: $(grep -h '^ERRO:' "$LOG" | head -n 1); o S3 respondeu: $(s3_code_of "$ROOT/s5.err"); texto: $(erro_s3_mascarado "$ROOT/s5.err"))"
+fi
 [ ! -e "$ROOT/o5" ] && tmp_empty && ok "nada criado" || bad "sobrou arquivo"
 
 echo "== 6. bucket diferente é recusado antes de qualquer chamada"
