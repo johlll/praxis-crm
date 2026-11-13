@@ -301,6 +301,25 @@ jobs:
           CHECK_RESTORE_SERVER_URL: postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres
         run: bash scripts/backup/check-backup-snapshot.sh
 
+      - name: Backup criptografado e restauração do Storage (C5a.1 — Supabase local, PDFs sintéticos)
+        # Backup SÓ de leitura (aws s3api: ListObjectsV2, HeadObject e GetObject) do bucket proposal-documents do
+        # Supabase LOCAL e restauração num bucket local esvaziado, com PDFs sintéticos sem PII e a chave S3 do
+        # Supabase local (nunca hospedada). Cobre paginação, bucket vazio, recusas, alteração/inclusão/remoção
+        # durante o backup, falhas que não deixam texto claro, checksum e chave errados e destino hospedado —
+        # ver scripts/backup/check-storage-backup.sh. Esvazia o bucket local ao terminar; roda antes dos passos
+        # que recriam o banco local.
+        run: |
+          set -euo pipefail
+          aws --version
+          jq --version
+          RAW="$(supabase status -o env)"
+          eval "$RAW"
+          export CHECK_S3_ENDPOINT="${STORAGE_S3_URL:-${API_URL:?API_URL vazio}/storage/v1/s3}"
+          export CHECK_S3_REGION="${S3_PROTOCOL_REGION:-local}"
+          export CHECK_S3_ACCESS_KEY_ID="${S3_PROTOCOL_ACCESS_KEY_ID:?S3_PROTOCOL_ACCESS_KEY_ID vazio — nome da variável mudou}"
+          export CHECK_S3_SECRET_ACCESS_KEY="${S3_PROTOCOL_ACCESS_KEY_SECRET:?S3_PROTOCOL_ACCESS_KEY_SECRET vazio — nome da variável mudou}"
+          bash scripts/backup/check-storage-backup.sh
+
       - name: Atualização a partir da versão anterior (numeração de propostas)
         # "Aplicar migrations do zero" já valida a criação do banco; este
         # passo valida a ATUALIZAÇÃO com dados emitidos pela versão anterior.

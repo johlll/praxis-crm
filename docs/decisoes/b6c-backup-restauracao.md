@@ -41,9 +41,48 @@ própria; sessões/tokens/configuração do Auth além de usuários e identidade
 **O Storage está em uso:** o bucket `proposal-documents` guarda os PDFs das propostas (B1). Os dados da proposta e
 os metadados dos documentos voltam com o banco, mas os **arquivos PDF não voltam**; uma proposta já decidida
 (aceita ou recusada) nem aceita PDF novo, então o arquivo enviado não pode ser refeito. **Os PDFs não estão
-protegidos pelo backup atual. Isso é uma pendência obrigatória antes do uso real com documentos importantes**, não
-uma melhoria opcional: será necessária uma **rotina separada e gratuita** para o Storage. Ela **não está
-implementada** e não faz parte desta entrega; fica para uma tarefa técnica separada.
+protegidos pelo backup ativo hoje. Isso é uma pendência obrigatória antes do uso real com documentos importantes**,
+não uma melhoria opcional. A rotina separada e gratuita para o Storage está **implementada (C5a.1), mas NÃO
+ativada**: veja a próxima seção. **O Storage continua desprotegido até a ativação.**
+
+## Backup do Storage (C5a.1) — implementado, NÃO ativado
+
+Implementar não é ativar: nesta etapa só existem scripts, testes, o modelo de workflow e este texto. Nenhuma chave foi
+criada, nenhum secret foi cadastrado, nada foi copiado do Storage hospedado e o repositório privado não foi alterado.
+
+- **Formato `praxis-storage-backup/v1`:** `praxis-storage-backup-<UTC>.tar.gz.age` + `.sha256` (SHA-256 do arquivo
+  já criptografado). Dentro, só `manifest.json` e `objects/<número de 8 dígitos>`, um arquivo por objeto do bucket
+  **`proposal-documents`** (o único aceito), byte a byte como veio, sem recompactar. O manifesto (versão, data UTC,
+  bucket, quantidade, total de bytes, e por objeto: caminho, tamanho, SHA-256 e tipo de conteúdo, mais a versão das
+  ferramentas) fica **só dentro do pacote criptografado**, porque os caminhos podem ser sensíveis. Bucket vazio gera
+  um pacote válido.
+- **Scripts:** `scripts/backup/backup-storage.sh`, `restore-storage.sh` e `lib-storage.sh`; o teste real é
+  `check-storage-backup.sh`, que o CI roda contra o **Supabase local** com PDFs sintéticos sem dado pessoal.
+- **Consistência:** lista tudo com paginação, baixa cada objeto **uma vez** conferindo tamanho e ETag, e lista de novo
+  no fim. Objeto alterado, removido ou incluído durante o backup falha fechado (`conjunto_alterado`). Nunca imprime
+  nome de objeto, endereço, segredo ou conteúdo, e nenhum texto claro sobra, nem em falha.
+- **Credencial: chave de acesso S3 dedicada** (Storage → S3 Configuration → Access keys). Verificado visualmente no
+  painel em 13/11/2026: protocolo S3 habilitado, endpoint e região `sa-east-1` disponíveis, botão para criar chave
+  habilitado, nenhuma chave existente e nenhum aviso de plano pago, cartão ou cobrança. **A chave S3 tem acesso
+  completo a todos os buckets e ignora o RLS; se for comprometida, quem a tiver pode ler, alterar ou apagar objetos.**
+  Por isso: será **um único par, exclusivo do backup e revogável** (apagar a chave no painel a invalida), guardado
+  **só como secret do repositório privado** e nunca reaproveitada de `service_role`, da chave secreta nem da Vercel.
+  Secrets futuros (só os nomes): `BACKUP_STORAGE_S3_ENDPOINT`, `BACKUP_STORAGE_S3_REGION`,
+  `BACKUP_STORAGE_S3_ACCESS_KEY_ID` e `BACKUP_STORAGE_S3_SECRET_ACCESS_KEY`.
+- **Só leitura no backup:** o caminho do backup usa somente **ListObjectsV2, HeadObject e GetObject**; PutObject,
+  DeleteObject ou qualquer alteração não existem nele (um teste estático garante). A restauração é a única que usa
+  PutObject, e **só contra destino local ou explicitamente descartável**: recusa projeto hospedado/Production antes
+  de descriptografar e exige o bucket de destino **vazio**.
+- **Ferramentas:** `aws` (cliente S3) e `jq` já vêm nos runners `ubuntu-24.04` e não são fixados por versão; a versão
+  usada fica registrada no manifesto.
+- **Modelo de workflow:** o mesmo `backup-diario.yml` passa a fazer o backup do banco **e** o do Storage na mesma
+  rodada e falha se qualquer um falhar. Envia só os **quatro** arquivos criptografados (banco e Storage, cada um com
+  o checksum). Cron `30 7 * * *`, concorrência 1, timeout, retenção de 30 dias e Actions fixadas continuam iguais.
+  **Não foi copiado para o repositório privado.**
+- **Para ativar (etapa futura, com ordem):** criar exatamente um par S3 dedicado, cadastrar os quatro secrets no
+  repositório privado, copiar o modelo e os scripts novos, rodar uma vez por `workflow_dispatch` e **restaurar de
+  verdade num destino local** antes de remover o bloqueio de lançamento. Os PDFs nunca aparecem em log nem em
+  artefato em texto claro.
 
 ## A chave privada (a parte que não pode falhar)
 

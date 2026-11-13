@@ -24,7 +24,7 @@ Um item pode ter dois rótulos: por exemplo, **PENDENTE** e **DEPENDE DO JOÃO**
 | 4 | YCloud e número de teste | **PENDENTE** | **DEPENDE DO JOÃO** · **DEPENDÊNCIA EXTERNA** (YCloud/Meta) |
 | 5 | Integração da Vitória, sem reconstrução | **PENDENTE** | **DEPENDE DO JOÃO** |
 | 6 | Treinamento | **PENDENTE** (material escrito, aguarda revisão) | **DEPENDE DO JOÃO** |
-| 7 | Backup | **CONCLUÍDO** (ativado) · **PENDENTE** (execução natural não comprovada) · **PENDÊNCIA OBRIGATÓRIA**: PDFs das propostas fora do backup | **DEPENDÊNCIA EXTERNA** (agendador do GitHub) · tarefa técnica separada (Storage) |
+| 7 | Backup | **CONCLUÍDO** (ativado) · **PENDENTE** (execução natural não comprovada) · **PENDÊNCIA OBRIGATÓRIA**: PDFs das propostas fora do backup | **DEPENDÊNCIA EXTERNA** (agendador do GitHub) · ativar a rotina do Storage (chave S3 dedicada) |
 | 8 | Restauração | **CONCLUÍDO** (local) · **PENDENTE** (projeto Supabase novo) | **DEPENDE DO JOÃO** (chave privada) |
 | 9 | Permissões | **CONCLUÍDO** (sistema) · **PENDENTE** (papéis reais) | **DEPENDE DO JOÃO** |
 | 10 | Teste ponta a ponta | **PENDENTE** | depende do item 1 |
@@ -110,9 +110,11 @@ entrada de dados reais** (`A11-HANDOFF.md` §18).
   tratado como confiável. **DEPENDÊNCIA EXTERNA:** o agendador do GitHub é de melhor esforço.
 - **PENDENTE — obrigatório antes do uso real com documentos importantes:** os PDFs das propostas (bucket
   `proposal-documents`, no Storage) **não estão protegidos pelo backup atual**. Os dados da proposta voltam com o
-  banco, mas os arquivos PDF não, e uma proposta já decidida nem aceita PDF novo. Será necessária uma **rotina
-  separada e gratuita** para o Storage. Ela **não está implementada** e é uma tarefa técnica separada. Não é
-  melhoria opcional (`docs/decisoes/b6c-backup-restauracao.md`).
+  banco, mas os arquivos PDF não, e uma proposta já decidida nem aceita PDF novo. A **rotina
+  separada e gratuita** para o Storage (C5a.1) está **implementada, mas NÃO ativada**: implementar não é ativar, e o
+  Storage continua desprotegido até lá. Falta criar a chave S3 dedicada (**DEPENDE DO JOÃO**), cadastrar os secrets
+  no repositório privado, rodar e **restaurar de verdade** antes de remover este bloqueio. Não é melhoria opcional
+  (`docs/decisoes/b6c-backup-restauracao.md`).
 
 ## 8. Restauração
 
@@ -156,7 +158,8 @@ entrada de dados reais** (`A11-HANDOFF.md` §18).
 
 - os itens 1 a 10 estão **concluídos** ou têm uma **decisão registrada de adiar** (com data);
 - a execução natural do backup foi comprovada e a primeira restauração em projeto novo foi feita;
-- a rotina separada e gratuita que protege os **PDFs de propostas** (Storage) está implementada e comprovada;
+- a rotina separada e gratuita que protege os **PDFs de propostas** (Storage) está **ativada** e a restauração real foi
+  validada;
 - foi decidido o que fazer com a tela de **Relatórios**, que hoje não tem relatórios;
 - a reconciliação da A11 cumpre a frequência configurada, se a captação de formulários for usada;
 - a primeira execução natural da rotina LGPD diária foi comprovada;

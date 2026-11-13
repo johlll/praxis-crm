@@ -26,8 +26,10 @@ Estas quatro coisas **não estão resolvidas**. Ficam registradas aqui para ning
   da proposta e os metadados dos documentos voltam com o banco; **os arquivos PDF não**.
 - Uma proposta já aceita ou recusada não aceita PDF novo, então o arquivo enviado **não pode ser refeito**.
 - É uma **pendência obrigatória antes do uso real com documentos importantes**. Não é melhoria opcional.
-- Será necessária uma **rotina separada e gratuita** para o Storage. Ela **não está implementada** e fica para uma
-  tarefa técnica separada, com ordem do João.
+- A **rotina separada e gratuita** para o Storage (C5a.1) está **implementada, mas NÃO ativada**: o Storage continua
+  desprotegido até a ativação. Usará uma chave S3 dedicada ao backup, revogável e guardada só no repositório privado;
+  ela tem acesso total ao Storage, então vazamento exige revogar a chave na hora. A restauração real será validada
+  antes de remover o bloqueio de lançamento. Detalhes em `docs/decisoes/b6c-backup-restauracao.md`.
 - Até lá, o CRM não pode ser o único lugar onde um documento importante existe.
 
 ### 2. A11: a reconciliação não cumpre a frequência configurada

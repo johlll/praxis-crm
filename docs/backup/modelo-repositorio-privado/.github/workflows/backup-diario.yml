@@ -7,11 +7,16 @@
 #
 #   1. criar o repositório privado de backups (nunca público);
 #   2. copiar para ele este arquivo em `.github/workflows/backup-diario.yml` e a pasta
-#      `scripts/backup/` (lib.sh, backup-db.sh, restore-db.sh, restore-*.sql);
-#   3. configurar os dois secrets do repositório privado (nunca no público):
+#      `scripts/backup/` (lib.sh, backup-db.sh, restore-db.sh, restore-*.sql e, para o Storage,
+#      lib-storage.sh, backup-storage.sh e restore-storage.sh);
+#   3. configurar os secrets do repositório privado (nunca no público):
 #        BACKUP_DATABASE_URL    URL da conexão do banco (modo "Session pooler", porta 5432, com SSL)
 #        BACKUP_AGE_PUBLIC_KEY  chave PÚBLICA age (age1...). A chave PRIVADA fica só com João,
 #                               fora do GitHub, e nunca é cadastrada em lugar nenhum;
+#      e, SÓ quando o backup do Storage for ativado (C5a.1), os quatro da chave S3 DEDICADA ao backup
+#      (um único par, criado só para isto e revogável; dá acesso total ao Storage, por isso só aqui):
+#        BACKUP_STORAGE_S3_ENDPOINT, BACKUP_STORAGE_S3_REGION,
+#        BACKUP_STORAGE_S3_ACCESS_KEY_ID, BACKUP_STORAGE_S3_SECRET_ACCESS_KEY;
 #   4. rodar uma vez por "Run workflow" (workflow_dispatch) e conferir o artefato;
 #   5. só depois deixar o agendamento diário valer.
 #
@@ -93,12 +98,39 @@ jobs:
           test "$(ls -1 ./*.tar.gz.age.sha256 | wc -l)" -eq 1
           sha256sum --check --status ./*.tar.gz.age.sha256
 
-      - name: Enviar o pacote criptografado (retenção de 30 dias)
+      - name: Conferir as ferramentas do backup do Storage (aws e jq)
+        run: |
+          set -euo pipefail
+          aws --version
+          jq --version
+
+      - name: Gerar o backup criptografado do Storage (bucket proposal-documents, só leitura)
+        env:
+          BACKUP_STORAGE_S3_ENDPOINT: ${{ secrets.BACKUP_STORAGE_S3_ENDPOINT }}
+          BACKUP_STORAGE_S3_REGION: ${{ secrets.BACKUP_STORAGE_S3_REGION }}
+          BACKUP_STORAGE_S3_ACCESS_KEY_ID: ${{ secrets.BACKUP_STORAGE_S3_ACCESS_KEY_ID }}
+          BACKUP_STORAGE_S3_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_STORAGE_S3_SECRET_ACCESS_KEY }}
+          BACKUP_AGE_PUBLIC_KEY: ${{ secrets.BACKUP_AGE_PUBLIC_KEY }}
+          BACKUP_OUTPUT_DIR: storage-out
+        run: bash scripts/backup/backup-storage.sh
+
+      - name: Conferir a saída do Storage (só o pacote criptografado e o checksum)
+        run: |
+          set -euo pipefail
+          cd storage-out
+          test "$(ls -1 | wc -l)" -eq 2
+          test "$(ls -1 ./*.tar.gz.age | wc -l)" -eq 1
+          test "$(ls -1 ./*.tar.gz.age.sha256 | wc -l)" -eq 1
+          sha256sum --check --status ./*.tar.gz.age.sha256
+
+      - name: Enviar os pacotes criptografados (retenção de 30 dias)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: praxis-backup-${{ github.run_id }}
           path: |
             backup-out/*.tar.gz.age
             backup-out/*.tar.gz.age.sha256
+            storage-out/*.tar.gz.age
+            storage-out/*.tar.gz.age.sha256
           retention-days: 30
           if-no-files-found: error
