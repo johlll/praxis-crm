@@ -19,12 +19,12 @@ Um item pode ter dois rótulos: por exemplo, **PENDENTE** e **DEPENDE DO JOÃO**
 | # | Item | Estado | Destrava com |
 |---|---|---|---|
 | 1 | Separação do Preview | **PENDENTE** (não iniciada) | **DEPENDE DO JOÃO** · **DEPENDÊNCIA EXTERNA** (Supabase) |
-| 2 | A11 (formulários do site e origem dos leads) | **PENDENTE** em Production | **DEPENDE DO JOÃO** · **DEPENDÊNCIA EXTERNA** (Cloudflare, Upstash, site) |
+| 2 | A11 (formulários do site e origem dos leads) | **PENDENTE** em Production · **bloqueio operacional**: a reconciliação não cumpre a frequência configurada | **DEPENDE DO JOÃO** · **DEPENDÊNCIA EXTERNA** (Cloudflare, Upstash, site) · tarefa técnica separada |
 | 3 | Google Agenda | **PENDENTE** em Production | **DEPENDE DO JOÃO** · **DEPENDÊNCIA EXTERNA** (Google) |
 | 4 | YCloud e número de teste | **PENDENTE** | **DEPENDE DO JOÃO** · **DEPENDÊNCIA EXTERNA** (YCloud/Meta) |
 | 5 | Integração da Vitória, sem reconstrução | **PENDENTE** | **DEPENDE DO JOÃO** |
 | 6 | Treinamento | **PENDENTE** (material escrito, aguarda revisão) | **DEPENDE DO JOÃO** |
-| 7 | Backup | **CONCLUÍDO** (ativado) · **PENDENTE** (execução natural não comprovada) | **DEPENDÊNCIA EXTERNA** (agendador do GitHub) |
+| 7 | Backup | **CONCLUÍDO** (ativado) · **PENDENTE** (execução natural não comprovada) · **PENDÊNCIA OBRIGATÓRIA**: PDFs das propostas fora do backup | **DEPENDÊNCIA EXTERNA** (agendador do GitHub) · tarefa técnica separada (Storage) |
 | 8 | Restauração | **CONCLUÍDO** (local) · **PENDENTE** (projeto Supabase novo) | **DEPENDE DO JOÃO** (chave privada) |
 | 9 | Permissões | **CONCLUÍDO** (sistema) · **PENDENTE** (papéis reais) | **DEPENDE DO JOÃO** |
 | 10 | Teste ponta a ponta | **PENDENTE** | depende do item 1 |
@@ -50,8 +50,13 @@ entrada de dados reais** (`A11-HANDOFF.md` §18).
 
 ## 2. A11 — formulários do site e origem dos leads
 
-- **CONCLUÍDO:** o código, as migrations e a validação em Preview (`A11-HANDOFF.md`). A reconciliação agendada
-  roda no GitHub (observado em 13/11/2026: execuções concluídas com sucesso), embora espaçada por horas.
+- **CONCLUÍDO:** o código, as migrations e a validação em Preview (`A11-HANDOFF.md`).
+- **PENDENTE — bloqueio operacional:** o workflow de reconciliação está configurado para rodar a cada **10
+  minutos**, mas nas 39 execuções agendadas de 3 a 13/11/2026 os intervalos reais variaram de **3,4 a 10,6 horas**
+  (28 de 38 entre 4 e 8 horas; 4 execuções nas 24 horas até 13/11 às 12:09 UTC, contra 144 esperadas). As execuções
+  que ocorreram terminaram com sucesso: o problema é a frequência. A frequência esperada **não está sendo
+  cumprida**, e isso impede considerar a A11 **plenamente ativa**. A conferência diária **não substitui** uma
+  execução confiável. A correção técnica é uma **tarefa separada**; o workflow não foi alterado nesta PR.
 - **PENDENTE:** ligar a captação pública em Production. A matriz de prontidão da A11 (`A11-HANDOFF.md` §18) lista o
   que é preciso: verificação anti-robô (Turnstile) com o domínio real, limitador de requisições (Upstash), chaves
   de cifra do conteúdo recebido, o endpoint de formulário cadastrado e o domínio do site autorizado. Confira o que
@@ -103,8 +108,11 @@ entrada de dados reais** (`A11-HANDOFF.md` §18).
 - **PENDENTE:** a **primeira execução natural** (disparada pelo próprio agendamento) **não foi comprovada**. A
   janela de 13/11 não gerou execução; a próxima é **14/11 às 07:30 UTC**. Só depois dela o agendamento pode ser
   tratado como confiável. **DEPENDÊNCIA EXTERNA:** o agendador do GitHub é de melhor esforço.
-- **PENDENTE (decisão):** os PDFs das propostas (bucket `proposal-documents`, no Storage) **não estão no backup**
-  (`docs/decisoes/b6c-backup-restauracao.md`).
+- **PENDENTE — obrigatório antes do uso real com documentos importantes:** os PDFs das propostas (bucket
+  `proposal-documents`, no Storage) **não estão protegidos pelo backup atual**. Os dados da proposta voltam com o
+  banco, mas os arquivos PDF não, e uma proposta já decidida nem aceita PDF novo. Será necessária uma **rotina
+  separada e gratuita** para o Storage. Ela **não está implementada** e é uma tarefa técnica separada. Não é
+  melhoria opcional (`docs/decisoes/b6c-backup-restauracao.md`).
 
 ## 8. Restauração
 
@@ -148,8 +156,10 @@ entrada de dados reais** (`A11-HANDOFF.md` §18).
 
 - os itens 1 a 10 estão **concluídos** ou têm uma **decisão registrada de adiar** (com data);
 - a execução natural do backup foi comprovada e a primeira restauração em projeto novo foi feita;
-- foi decidido o que fazer com os PDFs de propostas fora do backup e com a tela de **Relatórios**, que hoje não tem
-  relatórios;
+- a rotina separada e gratuita que protege os **PDFs de propostas** (Storage) está implementada e comprovada;
+- foi decidido o que fazer com a tela de **Relatórios**, que hoje não tem relatórios;
+- a reconciliação da A11 cumpre a frequência configurada, se a captação de formulários for usada;
+- a primeira execução natural da rotina LGPD diária foi comprovada;
 - ninguém usa dado real de clientes antes da separação do Preview.
 
 Registrar por escrito a data e quem aprovou.
@@ -164,5 +174,15 @@ Para não se perder de vista o que não precisa de nova ação:
 - Automações internas: operacionais em Production (rotina a cada 2 minutos). Na última conferência
   (9/11/2026) ainda não havia regra criada.
 - Campos personalizados: instalados. Na última conferência (10/11/2026) ainda não havia campo criado.
-- Exportação do titular e anonimização com preservação legal: instaladas. A rotina diária (03:17 em Brasília)
-  está configurada; a primeira execução natural não foi conferida nesta revisão.
+- Exportação do titular e anonimização com preservação legal: instaladas.
+
+## Rotina LGPD diária (C3b/B6b)
+
+Não está na lista dos 11 itens, mas precisa constar:
+
+- **CONCLUÍDO:** scheduler `c3b-privacy-retention-scheduler` **configurado e sincronizado** no Inngest (cron às
+  06:17 UTC, que são 03:17 em Brasília).
+- **CONCLUÍDO:** **execução manual controlada aprovada** (12/11/2026, sem nenhum contato vencido: nada foi
+  processado).
+- **PENDENTE:** a **primeira execução natural do cron ainda não foi comprovada**. A rotina diária **não** deve ser
+  tratada como comprovada antes dessa observação real.

@@ -16,6 +16,48 @@ Atualizado em 13/11/2026. Ver também: `docs/decisoes/b6c-backup-restauracao.md`
 5. Preview e Production **hoje usam o mesmo projeto Supabase**. Até a separação do Preview (checklist), um teste
    feito em Preview grava no mesmo banco de Production: use só dados fictícios.
 
+## Pendências obrigatórias conhecidas
+
+Estas quatro coisas **não estão resolvidas**. Ficam registradas aqui para ninguém assumir que estão cobertas.
+
+### 1. PDFs das propostas não estão protegidos pelo backup atual
+
+- O bucket `proposal-documents` (Supabase Storage) está **em uso** e fica **fora do backup lógico atual**. Os dados
+  da proposta e os metadados dos documentos voltam com o banco; **os arquivos PDF não**.
+- Uma proposta já aceita ou recusada não aceita PDF novo, então o arquivo enviado **não pode ser refeito**.
+- É uma **pendência obrigatória antes do uso real com documentos importantes**. Não é melhoria opcional.
+- Será necessária uma **rotina separada e gratuita** para o Storage. Ela **não está implementada** e fica para uma
+  tarefa técnica separada, com ordem do João.
+- Até lá, o CRM não pode ser o único lugar onde um documento importante existe.
+
+### 2. A11: a reconciliação não cumpre a frequência configurada
+
+- O workflow de reconciliação da A11 está configurado para rodar a cada **10 minutos** (`*/10 * * * *`).
+- Nas 39 execuções agendadas de 3 a 13/11/2026, os intervalos reais variaram de **3,4 a 10,6 horas** (mediana de
+  6,5 horas), e 28 dos 38 intervalos ficaram **entre 4 e 8 horas**. Nas 24 horas até a execução de 13/11 às
+  12:09 UTC houve **4 execuções, contra 144 esperadas**. As que ocorreram terminaram com sucesso: o problema é a
+  frequência, não o resultado.
+- A frequência esperada **não está sendo cumprida**. Isso é um **bloqueio operacional para considerar a A11
+  plenamente ativa**: com a captação de formulários ligada, um envio cuja publicação inicial falhar poderia esperar
+  horas para ser reprocessado.
+- A conferência diária **não substitui** uma execução confiável: ela só mostra que algo está atrasado, não faz o
+  trabalho da reconciliação.
+- A correção técnica fica para uma **tarefa separada**. O workflow **não foi alterado** nesta PR.
+
+### 3. Rotina LGPD diária (C3b/B6b)
+
+- O agendador `c3b-privacy-retention-scheduler` está **configurado e sincronizado** no Inngest (cron às 06:17 UTC,
+  que são 03:17 em Brasília).
+- Uma **execução manual controlada foi aprovada** (12/11/2026, sem nenhum contato vencido: nada foi processado).
+- A **primeira execução natural do cron ainda não foi comprovada.** Até ser observada de verdade, a rotina diária
+  não deve ser tratada como comprovada. Quando a execução das 06:17 UTC aparecer verde no Inngest pela primeira
+  vez, avise o João para registrar.
+
+### 4. Backup: primeira execução natural não comprovada
+
+A janela de 13/11 não gerou execução; a prova que falta é a de 14/11 às 07:30 UTC. Detalhes em
+`docs/decisoes/b6c-backup-restauracao.md`.
+
 ## Onde consultar cada coisa
 
 | Peça | O que faz | Onde ver as execuções |
@@ -38,14 +80,16 @@ Faça depois das **04:45 de Brasília**, quando o backup do dia já deveria ter 
    **artefato** `praxis-backup-…` anexado. Execução ausente, vermelha ou sem artefato = alerta (seção abaixo).
 2. **Aplicação.** O último deployment de **Production** está **Ready** e o CRM abre e deixa entrar.
 3. **Rotinas.** No Inngest, `c1-automations-scheduler` tem execuções recentes e verdes (uma a cada 2 minutos) e a
-   `c3b-privacy-retention-scheduler` do dia (06:17 UTC) está verde.
+   `c3b-privacy-retention-scheduler` do dia (06:17 UTC) aparece verde. Enquanto a primeira execução natural da rotina
+   LGPD não for comprovada (veja as pendências), anote o que vir e avise o João.
 4. **Automações no CRM** (tela Automações): nenhuma falha nova no histórico.
 
 ## O que verificar toda semana
 
 - **Backup:** há um artefato por dia nos últimos 7 dias, e o tamanho do pacote não mudou de forma brusca (hoje
   fica perto de 0,6 MB). Todo **mês**, a restauração de teste descrita no runbook do backup.
-- **CI:** o último CI da `main` está verde; a reconciliação da captação de formulários não tem falhas repetidas.
+- **CI:** o último CI da `main` está verde. A reconciliação da A11 segue com o bloqueio conhecido (frequência não
+  cumprida, veja as pendências): anote se piorar ou se alguma execução ficar vermelha.
 - **Supabase:** o projeto não foi **pausado** e o uso de banco e armazenamento do plano gratuito está longe do
   limite.
 - **Inngest:** o uso de execuções do mês está dentro da franquia (50.000). Só a rotina de 2 minutos já consome
@@ -63,10 +107,9 @@ Faça depois das **04:45 de Brasília**, quando o backup do dia já deveria ter 
 | **Inngest** | Execuções vermelhas; `c1-automations-scheduler` sem execução nos últimos minutos; no CRM, atividades automáticas deixam de aparecer e o histórico de Automações acumula falhas | Ler só o **código de erro** da execução. A rotina de automações se recupera sozinha na rodada seguinte (2 minutos). A rotina LGPD diária, se falhar, se recupera no dia seguinte (veja "Quando não repetir") |
 | **Backup** | Execução do dia ausente depois das 04:45 de Brasília, vermelha, ou sem artefato; pacote com tamanho muito diferente do normal | Anotar o horário e o endereço da execução, conferir a página de status do GitHub e **avisar o João**. Não disparar backup manual sem ordem dele. Se o backup mais recente passar de **24 horas**, o ponto de recuperação (RPO) estourou: trate como incidente |
 
-Observação sobre o agendamento: o GitHub **não garante o horário** das execuções agendadas. Em 13/11/2026, o
-workflow de reconciliação da captação de formulários, marcado para rodar a cada 10 minutos, rodou com intervalos de
-4 a 8 horas. Por isso a conferência diária do artefato do backup é obrigatória e a primeira execução natural do
-backup ainda precisa ser comprovada.
+Observação sobre o agendamento: o GitHub **não garante o horário** das execuções agendadas (os números da
+reconciliação da A11 estão na pendência 2). Por isso a conferência diária do artefato do backup é obrigatória, e a
+primeira execução natural do backup ainda precisa ser comprovada.
 
 ## Quando não repetir uma operação
 
@@ -75,7 +118,7 @@ backup ainda precisa ser comprovada.
 | **Backup manual** | Gasta minutos do plano gratuito, cria mais um pacote e não corrige a causa de um agendamento que falhou | Só com ordem do João, depois de entender o motivo |
 | **Exportação do titular** | Cada geração fica registrada na auditoria, e o arquivo tem dado pessoal | Se falhar, ler a mensagem e tentar **uma** vez; se repetir, parar |
 | **Anonimização** | É irreversível. Uma recusa mostra o motivo (por exemplo, cliente, caso em andamento, preservação legal) | Ler os motivos. Nunca insistir ou tentar contornar |
-| **Rotina LGPD diária** | O banco já desfaz sozinho qualquer anonimização que falhou, e a rotina do dia seguinte retoma | Não rodar à mão para "adiantar" |
+| **Rotina LGPD diária** | Pelo desenho, o banco desfaz sozinho qualquer anonimização que falhou e a rotina do dia seguinte retoma (a primeira execução natural ainda não foi comprovada) | Não rodar à mão para "adiantar" |
 | **Envio de proposta por e-mail** | Um novo clique envia **outro** e-mail ao cliente | Conferir o histórico de envios da proposta antes de clicar de novo |
 | **Convite de equipe** | Convites repetidos confundem quem recebe | Conferir os convites pendentes antes de reenviar |
 | **Migrations do banco** | Alteram o banco de Production | Só o João aplica, com o procedimento aprovado, uma execução por vez |

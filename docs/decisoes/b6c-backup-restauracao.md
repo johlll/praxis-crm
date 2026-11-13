@@ -40,7 +40,10 @@ idêntico ao estado de antes do backup, e a versão anterior (4 `pg_dump` indepe
 própria; sessões/tokens/configuração do Auth além de usuários e identidades; variáveis da Vercel/Inngest.
 **O Storage está em uso:** o bucket `proposal-documents` guarda os PDFs das propostas (B1). Os dados da proposta e
 os metadados dos documentos voltam com o banco, mas os **arquivos PDF não voltam**; uma proposta já decidida
-(aceita ou recusada) nem aceita PDF novo. Uma rotina própria para esse bucket é decisão em aberto.
+(aceita ou recusada) nem aceita PDF novo, então o arquivo enviado não pode ser refeito. **Os PDFs não estão
+protegidos pelo backup atual. Isso é uma pendência obrigatória antes do uso real com documentos importantes**, não
+uma melhoria opcional: será necessária uma **rotina separada e gratuita** para o Storage. Ela **não está
+implementada** e não faz parte desta entrega; fica para uma tarefa técnica separada.
 
 ## A chave privada (a parte que não pode falhar)
 
@@ -82,7 +85,8 @@ os metadados dos documentos voltam com o banco, mas os **arquivos PDF não volta
   qualquer repositório.
 - **Restauração em um projeto Supabase novo** (migrations primeiro, dados do pacote depois) **continua pendente**:
   entra junto da separação do Preview (B6d/C5b), que ainda não começou.
-- O que **não** está no backup: Storage do Supabase (ver acima). RPO ≈ **24 horas**: no pior caso, perde-se o que
+- O que **não** está no backup: Storage do Supabase, incluindo os **PDFs das propostas** (pendência obrigatória,
+  ver acima). RPO ≈ **24 horas**: no pior caso, perde-se o que
   foi gravado desde o último backup.
 
 ## Restauração manual

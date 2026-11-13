@@ -55,8 +55,8 @@ Detalhes completos, inclusive a pendência conhecida de configuração do
 Supabase Auth (Site URL/Redirect URLs): `A2-HANDOFF.md`.
 Arquitetura: `docs/arquitetura.md`. Segurança: `docs/seguranca.md`.
 
-**Ainda não implementado** (fases seguintes): leads, contatos, pipeline,
-atividades, WhatsApp, dashboard.
+**Implementado depois da A2** (um documento por fase em `docs/decisoes/`): contatos, leads, pipeline,
+atividades e dashboard; o WhatsApp existe só como simulador (o real ainda não está ligado).
 
 ### Fase A1 (concluída antes)
 

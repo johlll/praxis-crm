@@ -163,8 +163,9 @@ Fica na ficha do contato, em **Privacidade e LGPD → Retenção e anonimizaçã
 
 - **Prazo:** o contato só pode ser anonimizado quando **todos os leads dele estão arquivados** e o último
   arquivamento completou **12 meses**. O prazo é fixo no sistema.
-- **Automático:** uma vez por dia, de madrugada, o sistema anonimiza sozinho os contatos que já cumprem o prazo e
-  não têm nenhum bloqueio.
+- **Automático:** uma rotina diária, de madrugada, está **configurada** para anonimizar sozinha os contatos que já
+  cumprem o prazo e não têm nenhum bloqueio. Ela já foi testada uma vez de forma manual e controlada, mas a
+  **primeira execução natural, pelo relógio, ainda não foi comprovada**. Até isso acontecer, não conte com ela.
 - **Manual:** a tela mostra uma prévia do que bloqueia. Para confirmar, é preciso **digitar ANONIMIZAR**. A
   confirmação confere tudo de novo no momento do clique.
 - **É irreversível.** Telefones, e-mails, CPF/CNPJ, notas, conversas e textos livres são removidos; o nome vira
