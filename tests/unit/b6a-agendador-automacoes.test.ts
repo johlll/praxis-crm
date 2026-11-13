@@ -35,6 +35,7 @@ const URL_ROTA = `${BASE}/api/inngest`;
 const FN_C1 = "praxis-crm-c1-automations-scheduler";
 const FN_A11 = "praxis-crm-a11-process-form-submission";
 const FN_C3B = "praxis-crm-c3b-privacy-retention-scheduler";
+const FN_RECONCILIADOR = "praxis-crm-a11-reconciler-scheduler";
 const SEGREDO_NO_ERRO = "senha=segredo-ficticio +5511999990000 maria@exemplo.com payload={cpf:123}";
 const RAIZ = process.cwd();
 const A11_ENV = [
@@ -106,9 +107,9 @@ async function funcoesSincronizadas(): Promise<SyncedFunction[]> {
 }
 
 describe("1–4. o payload real da sincronização", () => {
-  it("registra a função da C1 no app praxis-crm, ao lado da A11 e da C3b (B6b)", async () => {
+  it("registra a função da C1 no app praxis-crm, ao lado da A11, da C3b (B6b) e do reconciliador da A11", async () => {
     const functions = await funcoesSincronizadas();
-    expect(functions.map((fn) => fn.id).sort()).toEqual([FN_A11, FN_C1, FN_C3B].sort());
+    expect(functions.map((fn) => fn.id).sort()).toEqual([FN_A11, FN_C1, FN_C3B, FN_RECONCILIADOR].sort());
   });
 
   it("cron exatamente `*/2 * * * *`, e nenhum outro gatilho", async () => {
@@ -275,10 +276,12 @@ describe("12–13. isolamento e nenhuma chamada externa", () => {
     expect(imports.join(" ")).not.toMatch(/calendar|whatsapp|ingest\//i);
   });
 
-  it("a rota geral continua sem referência ao WhatsApp e soma as funções da C1 e da C3b (B6b)", () => {
+  it("a rota geral continua sem referência ao WhatsApp e soma as funções da C1, da C3b (B6b) e do reconciliador da A11", () => {
     const rota = readFileSync(join(RAIZ, "src/app/api/inngest/route.ts"), "utf8");
     expect(rota).not.toMatch(/whatsapp/i);
-    expect(rota).toContain("functions: [processFormSubmission, automationsScheduler, privacyRetentionScheduler]");
+    expect(rota).toContain(
+      "functions: [processFormSubmission, automationsScheduler, privacyRetentionScheduler, a11ReconcilerScheduler]",
+    );
     expect(rota).toContain("concurrency: { limit: 5 }");
     expect(rota).toContain("retries: A11_INGEST_MAX_RETRIES");
     expect(rota).toContain("triggers: [{ event: FORM_EVENT_NAME }]");

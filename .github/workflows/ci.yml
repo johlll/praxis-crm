@@ -91,6 +91,20 @@ jobs:
           SUPABASE_SECRET_KEY="${SERVICE_ROLE_KEY:-${SECRET_KEY:?SERVICE_ROLE_KEY/SECRET_KEY vazio}}" \
             node scripts/a11-outbox-resolve-concurrency-check.mjs
 
+      - name: Teste de concorrência real (A11 — reconciliador do workflow e do Inngest ao mesmo tempo)
+        # Durante a transição do agendamento (workflow do GitHub -> função do Inngest), as duas pontas chamam a
+        # MESMA operação (src/server/ingest/outbox-reconciler.ts) e podem rodar juntas. Aqui duas execuções
+        # simultâneas, sobre mais linhas pendentes do que cabem num lote, não podem publicar nenhum evento duas
+        # vezes — a garantia é do banco (claim_outbox_batch) — ver scripts/a11-reconciler-concurrency-check.mjs.
+        # O Inngest é substituído por um publicador em memória; dados fictícios, no Postgres descartado ao fim.
+        run: |
+          RAW="$(supabase status -o env)"
+          eval "$RAW"
+          NEXT_PUBLIC_SUPABASE_URL="${API_URL:?API_URL vazio}" \
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="${PUBLISHABLE_KEY:?PUBLISHABLE_KEY vazio}" \
+          SUPABASE_SECRET_KEY="${SERVICE_ROLE_KEY:-${SECRET_KEY:?SERVICE_ROLE_KEY/SECRET_KEY vazio}}" \
+            node scripts/a11-reconciler-concurrency-check.mjs
+
       - name: Exportar credenciais do Supabase local para o build/e2e
         run: |
           # Escreve .env.local de verdade em vez de só exportar em

@@ -35,6 +35,7 @@ const URL_ROTA = `${BASE}/api/inngest`;
 const FN_C1 = "praxis-crm-c1-automations-scheduler";
 const FN_A11 = "praxis-crm-a11-process-form-submission";
 const FN_C3B = "praxis-crm-c3b-privacy-retention-scheduler";
+const FN_RECONCILIADOR = "praxis-crm-a11-reconciler-scheduler";
 const SEGREDO_NO_ERRO = "senha=segredo-ficticio +5511999990000 maria@exemplo.com payload={cpf:123}";
 const RAIZ = process.cwd();
 const A11_ENV = [
@@ -128,10 +129,10 @@ async function executarNoSdk(eventId: string, runId: string) {
 }
 
 describe("1–4 e 13. o payload real da sincronização", () => {
-  it("1/13. serve exatamente as três funções esperadas: A11, C1 e C3b", async () => {
+  it("1/13. serve exatamente as quatro funções esperadas: A11, C1, C3b e o reconciliador da A11", async () => {
     const functions = await funcoesSincronizadas();
-    expect(functions.map((fn) => fn.id).sort()).toEqual([FN_A11, FN_C1, FN_C3B].sort());
-    expect(functions).toHaveLength(3);
+    expect(functions.map((fn) => fn.id).sort()).toEqual([FN_A11, FN_C1, FN_C3B, FN_RECONCILIADOR].sort());
+    expect(functions).toHaveLength(4);
   });
 
   it("2. a A11 permanece com o mesmo evento, concorrência e retries", async () => {
@@ -370,7 +371,9 @@ describe("11–12. isolamento, nenhuma chamada externa, nenhum log", () => {
   it("a rota geral soma só a função da C3b e mantém a A11 e a C1 como estavam", () => {
     const rota = readFileSync(join(RAIZ, "src/app/api/inngest/route.ts"), "utf8");
     expect(rota).not.toMatch(/whatsapp/i);
-    expect(rota).toContain("functions: [processFormSubmission, automationsScheduler, privacyRetentionScheduler]");
+    expect(rota).toContain(
+      "functions: [processFormSubmission, automationsScheduler, privacyRetentionScheduler, a11ReconcilerScheduler]",
+    );
     expect(rota).toContain("concurrency: { limit: 5 }");
     expect(rota).toContain("retries: A11_INGEST_MAX_RETRIES");
     expect(rota).toContain("triggers: [{ event: FORM_EVENT_NAME }]");
