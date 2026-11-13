@@ -165,8 +165,16 @@ describe("modelo: concorrência 1, tempo limite, permissões mínimas e versões
   });
 
   it("os secrets entram só como variáveis de ambiente do passo do backup", () => {
-    const usosDeSecret = [...workflow.matchAll(/secrets\.([A-Z_]+)/g)].map((m) => m[1]).sort();
-    expect(usosDeSecret).toEqual(["BACKUP_AGE_PUBLIC_KEY", "BACKUP_DATABASE_URL"]);
+    const usosDeSecret = [...new Set([...workflow.matchAll(/secrets\.([A-Z0-9_]+)/g)].map((m) => m[1]))].sort();
+    // Banco (C5a) + os quatro da chave S3 dedicada do Storage (C5a.1, só quando o Storage for ativado).
+    expect(usosDeSecret).toEqual([
+      "BACKUP_AGE_PUBLIC_KEY",
+      "BACKUP_DATABASE_URL",
+      "BACKUP_STORAGE_S3_ACCESS_KEY_ID",
+      "BACKUP_STORAGE_S3_ENDPOINT",
+      "BACKUP_STORAGE_S3_REGION",
+      "BACKUP_STORAGE_S3_SECRET_ACCESS_KEY",
+    ]);
     expect(workflow).not.toMatch(/AGE-SECRET|PRIVATE|identity|\.txt/);
   });
 });
@@ -175,8 +183,14 @@ describe("14. só o pacote criptografado e o checksum são enviados, por 30 dias
   it("um único upload, só *.tar.gz.age e *.tar.gz.age.sha256, retenção de 30 dias", () => {
     expect(workflow.match(/upload-artifact/g)).toHaveLength(1);
     const bloco = workflow.slice(workflow.indexOf("uses: actions/upload-artifact@"));
-    const caminhos = [...bloco.matchAll(/^\s+(backup-out\/\S+)$/gm)].map((m) => m[1]);
-    expect(caminhos).toEqual(["backup-out/*.tar.gz.age", "backup-out/*.tar.gz.age.sha256"]);
+    const caminhos = [...bloco.matchAll(/^\s+((?:backup|storage)-out\/\S+)$/gm)].map((m) => m[1]);
+    // Os quatro arquivos criptografados: banco e Storage, cada um com o seu checksum.
+    expect(caminhos).toEqual([
+      "backup-out/*.tar.gz.age",
+      "backup-out/*.tar.gz.age.sha256",
+      "storage-out/*.tar.gz.age",
+      "storage-out/*.tar.gz.age.sha256",
+    ]);
     expect(bloco).toContain("retention-days: 30");
     expect(bloco).not.toMatch(/path: \.|path: backup-out\/?\s*$|\*\*|\.sql|\.json|\.tar\.gz\s*$/m);
   });
