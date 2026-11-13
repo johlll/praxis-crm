@@ -56,7 +56,7 @@ Supabase Auth (Site URL/Redirect URLs): `A2-HANDOFF.md`.
 Arquitetura: `docs/arquitetura.md`. Segurança: `docs/seguranca.md`.
 
 **Implementado depois da A2** (um documento por fase em `docs/decisoes/`): contatos, leads, pipeline,
-atividades e dashboard; o WhatsApp existe só como simulador (o real ainda não está ligado).
+atividades e dashboard; o WhatsApp está implementado no código e no banco, com simulador e suporte à YCloud; a integração real ainda não está ativada.
 
 ### Fase A1 (concluída antes)
 
