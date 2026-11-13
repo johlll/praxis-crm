@@ -123,11 +123,11 @@ run_restore() { # $1 = pacote; $2 = checksum; $3 = identidade; resto = argumento
     env "$@" bash "$RESTORE" --package "$pkg" --checksum "$sum" --identity "$id"
   ) >"$LOG" 2>&1
 }
-s3_code_of() { # só o identificador do erro do S3 (o que vem entre parênteses depois de "An error occurred")
-  sed -n 's/^.*An error occurred (\([A-Za-z0-9_]\{1,40\}\)).*$/\1/p' "$1" 2>/dev/null | head -n 1
+s3_code_of() { # só os identificadores dos erros do S3 (o que vem entre parênteses depois de "An error occurred")
+  sed -n 's/^.*An error occurred (\([A-Za-z0-9_]\{1,40\}\)).*$/\1/p' "$1" 2>/dev/null | head -n 4 | tr '\n' ' '
 }
 erro_s3_mascarado() { # primeiras linhas do erro do aws; qualquer sequência longa (chave, segredo, token) vira [...]
-  head -n 3 "$1" 2>/dev/null | sed -E 's#[A-Za-z0-9/+=_-]{24,}#[...]#g' | cut -c1-220 | tr '\n' '|'
+  head -n 6 "$1" 2>/dev/null | sed -E 's#[A-Za-z0-9/+=_-]{24,}#[...]#g' | cut -c1-220 | tr '\n' '|'
 }
 the_pkg() { ls -1 "$1"/*.tar.gz.age 2>/dev/null || true; }
 unpack() { # $1 = pacote .age (abre com a chave 1 em $ROOT/insp; quem chama apaga)

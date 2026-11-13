@@ -60,6 +60,24 @@ s3_etag_norm() {
   printf '%s' "$v"
 }
 
+# O Supabase às vezes devolve o erro SEM código nem mensagem ("An error occurred () when calling..."; visto no
+# Supabase local), e então o texto do aws não distingue nada. O status HTTP distingue: um HeadObject (resposta sem
+# corpo, então o aws mostra o status) de uma chave que NÃO existe dá 404 com credencial boa e 401/403 com
+# credencial recusada. Só leitura (HeadObject); o resultado da sonda nunca é impresso. Precisa de WORK e BUCKET.
+s3_probe_denied() {
+  local pf="$WORK/.sonda.log"
+  if aws s3api head-object --bucket "$BUCKET" --key ".praxis-sonda-inexistente" >/dev/null 2>"$pf"; then
+    rm -f "$pf"
+    return 1
+  fi
+  if grep -q -E '\(40[13]\)' "$pf" 2>/dev/null; then
+    rm -f "$pf"
+    return 0
+  fi
+  rm -f "$pf"
+  return 1
+}
+
 # Traduz o ERRO do aws (arquivo $1, nunca impresso) em um código fechado.
 s3_error_code() {
   local f="$1"
@@ -69,6 +87,8 @@ s3_error_code() {
     printf 'bucket_inexistente'
   elif grep -q -i -E 'Could not connect|Connection refused|Could not resolve|Name or service|timed out|EndpointConnectionError|Connect timeout|Connection was closed|Connection reset|Connection aborted|Read timeout|SSL' "$f" 2>/dev/null; then
     printf 'conexao_falhou'
+  elif grep -q -E 'An error occurred \(\)' "$f" 2>/dev/null && s3_probe_denied; then
+    printf 'credencial_invalida'
   else
     printf 'listagem_falhou'
   fi

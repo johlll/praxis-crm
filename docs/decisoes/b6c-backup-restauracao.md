@@ -73,6 +73,11 @@ criada, nenhum secret foi cadastrado, nada foi copiado do Storage hospedado e o 
   DeleteObject ou qualquer alteração não existem nele (um teste estático garante). A restauração é a única que usa
   PutObject, e **só contra destino local ou explicitamente descartável**: recusa projeto hospedado/Production antes
   de descriptografar e exige o bucket de destino **vazio**.
+- **Falha de credencial vira código fechado:** o log mostra só `ERRO: credencial_invalida` (ou `listagem_falhou`,
+  `conexao_falhou`, `bucket_inexistente`), nunca o texto do `aws`. O Supabase local devolve o erro **sem código nem
+  mensagem**; então, só nesse caso, o script faz **uma** consulta extra de leitura (HeadObject de uma chave que não
+  existe) só para ler o status HTTP: 401/403 = credencial recusada; 404 = credencial boa. Chave revogada no painel
+  aparece como `credencial_invalida`.
 - **Ferramentas:** `aws` (cliente S3) e `jq` já vêm nos runners `ubuntu-24.04` e não são fixados por versão; a versão
   usada fica registrada no manifesto.
 - **Modelo de workflow:** o mesmo `backup-diario.yml` passa a fazer o backup do banco **e** o do Storage na mesma
