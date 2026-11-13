@@ -82,23 +82,23 @@ s3_list_all() {
   : >"$WORK/items.ndjson"
   while :; do
     page=$((page + 1))
-    [ "$page" -le 100000 ] || die "listagem_invalida" 70
+    [ "$page" -le 100000 ] || die "listagem_paginas_demais" 70
     args=(s3api list-objects-v2 --bucket "$BUCKET" --max-keys "$PAGE" --output json --no-paginate)
     [ -z "$token" ] || args+=(--continuation-token "$token")
     aws "${args[@]}" >"$WORK/page.json" 2>"$ERR" || die "$(s3_error_code "$ERR")" 69
-    jq -c '(.Contents // [])[] | {k: .Key, s: .Size, e: (.ETag // ""), m: (.LastModified // "")}' "$WORK/page.json" >>"$WORK/items.ndjson" 2>"$ERR" || die "listagem_invalida" 70
-    trunc="$(jq -r '.IsTruncated // false' "$WORK/page.json" 2>"$ERR")" || die "listagem_invalida" 70
+    jq -c '(.Contents // [])[] | {k: .Key, s: .Size, e: (.ETag // ""), m: (.LastModified // "")}' "$WORK/page.json" >>"$WORK/items.ndjson" 2>"$ERR" || die "listagem_pagina_invalida" 70
+    trunc="$(jq -r '.IsTruncated // false' "$WORK/page.json" 2>"$ERR")" || die "listagem_pagina_invalida" 70
     if [ "$trunc" = "true" ]; then
-      token="$(jq -r '.NextContinuationToken // ""' "$WORK/page.json" 2>"$ERR")" || die "listagem_invalida" 70
-      [ -n "$token" ] || die "listagem_invalida" 70
+      token="$(jq -r '.NextContinuationToken // ""' "$WORK/page.json" 2>"$ERR")" || die "listagem_pagina_invalida" 70
+      [ -n "$token" ] || die "listagem_token_ausente" 70
     else
       break
     fi
   done
-  jq -s -c 'sort_by(.k)' "$WORK/items.ndjson" >"$out" 2>"$ERR" || die "listagem_invalida" 70
+  jq -s -c 'sort_by(.k)' "$WORK/items.ndjson" >"$out" 2>"$ERR" || die "listagem_pagina_invalida" 70
   rm -f "$WORK/items.ndjson" "$WORK/page.json"
-  # Formato e unicidade: chave sem caracteres de controle, tamanho inteiro >= 0, sem chave repetida.
+  # Formato: chave sem caracteres de controle e tamanho inteiro >= 0; e unicidade: sem chave repetida.
   jq -e 'all(.[]; (.k | type == "string" and length > 0 and (test("[[:cntrl:]]") | not))
-                  and (.s | type == "number" and . >= 0 and . == floor))
-         and ((map(.k) | unique | length) == length)' "$out" >/dev/null 2>"$ERR" || die "listagem_invalida" 70
+                  and (.s | type == "number" and . >= 0 and . == floor))' "$out" >/dev/null 2>"$ERR" || die "listagem_formato_invalido" 70
+  jq -e '(map(.k) | unique | length) == length' "$out" >/dev/null 2>"$ERR" || die "listagem_chave_repetida" 70
 }

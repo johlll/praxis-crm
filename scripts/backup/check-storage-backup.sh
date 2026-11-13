@@ -82,7 +82,15 @@ RESTORE="$HERE/restore-storage.sh"
 
 tmp_empty() { [ -z "$(ls -A "$TMPDIR")" ]; }
 log_has() { grep -q -- "$1" "$LOG"; }
-expect_rc() { [ "$3" = "$2" ] && ok "$1 (código $3)" || bad "$1: esperava código $2, veio $3"; }
+expect_rc() {
+  if [ "$3" = "$2" ]; then
+    ok "$1 (código $3)"
+  else
+    # O log dos scripts só tem códigos fechados ("ERRO: <codigo>") e contagens: é seguro mostrar.
+    bad "$1: esperava código $2, veio $3 ($(grep -h '^ERRO:' "$LOG" | head -n 2 | tr '
+' ' '))"
+  fi
+}
 mk_pdf() { # $1 = arquivo; $2 = número
   printf '%%PDF-1.4\n%% sintetico %s\n' "$2" >"$1"
   head -c $((200 + $2 * 37)) /dev/urandom >>"$1"
@@ -115,7 +123,7 @@ run_restore() { # $1 = pacote; $2 = checksum; $3 = identidade; resto = argumento
     env "$@" bash "$RESTORE" --package "$pkg" --checksum "$sum" --identity "$id"
   ) >"$LOG" 2>&1
 }
-the_pkg() { ls -1 "$1"/*.tar.gz.age; }
+the_pkg() { ls -1 "$1"/*.tar.gz.age 2>/dev/null || true; }
 unpack() { # $1 = pacote .age (abre com a chave 1 em $ROOT/insp; quem chama apaga)
   rm -rf "$ROOT/insp" && mkdir -p "$ROOT/insp"
   age --decrypt --identity "$ROOT/keys/id1.txt" --output "$ROOT/insp.tar.gz" "$1"
