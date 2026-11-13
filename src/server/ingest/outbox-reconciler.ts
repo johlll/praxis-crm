@@ -10,7 +10,7 @@ import type { Database } from "@/server/types/database";
  * (`src/app/api/inngest/a11-reconciler-scheduler.ts`). Nenhum dos dois tem lógica própria: se a operação
  * mudar, muda para os dois. Por isso este arquivo NÃO importa o cliente `service_role` nem o publicador
  * (que exige configuração): recebe os dois por parâmetro, e só tipos são importados — o que também deixa o
- * arquivo executável direto pelo Node (teste de concorrência real, scripts/a11-reconciler-concurrency-check.mjs).
+ * arquivo executável direto pelo Node (teste de concorrência real, scripts/a11-schedulers-concurrency-check.mjs).
  *
  * O que faz: primeiro converge outbox órfã (evento já terminal por outro caminho — processado, expirado sem
  * processamento ou purgado — que nunca seria republicada); depois reserva a outbox pendente ou travada que

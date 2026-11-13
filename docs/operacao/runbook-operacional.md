@@ -44,18 +44,22 @@ Estas quatro coisas **não estão resolvidas**. Ficam registradas aqui para ning
   horas para ser reprocessado.
 - A conferência diária **não substitui** uma execução confiável: ela só mostra que algo está atrasado, não faz o
   trabalho da reconciliação.
-- **Correção preparada, ainda NÃO ativada.** O código já tem a função `a11-reconciler-scheduler` do Inngest (cron de
-  10 em 10 minutos, concorrência 1, sem nova tentativa), que roda **a mesma operação** da rota `/api/cron/outbox`
-  (uma só implementação, `src/server/ingest/outbox-reconciler.ts`). Ela só passa a rodar depois do merge, do deploy e
-  da **sincronização do app `praxis-crm` no Inngest** — nada disso foi feito.
+- **Correção preparada, ainda NÃO ativada — as DUAS rotinas do workflow têm substituta.** O mesmo workflow chama duas
+  rotas, e cada uma ganhou uma função própria no Inngest (cron de 10 em 10 minutos, concorrência 1, sem nova
+  tentativa), que roda **a mesma operação** da rota correspondente (uma só implementação de cada):
+  - `a11-reconciler-scheduler` ← `/api/cron/outbox` (republicar a captação de formulários que não chegou ao Inngest;
+    `src/server/ingest/outbox-reconciler.ts`);
+  - `a11-retention-scheduler` ← `/api/cron/retention` (retenção e alertas dos eventos recebidos: eventos travados,
+    aviso antecipado de vencimento e a expiração dos 30 dias; `src/server/ingest/retention-maintenance.ts`).
+  São funções **separadas**: falha em uma não impede a outra, e cada uma aparece à parte no Inngest. As duas só passam
+  a rodar depois do merge, do deploy e da **sincronização do app `praxis-crm` no Inngest** — nada disso foi feito.
 - **O workflow antigo continua em funcionamento** e **não foi alterado**. A ativação depende de, nesta ordem:
-  (1) merge e deploy; (2) sincronizar o app `praxis-crm`; (3) observar **pelo menos duas execuções naturais** do
-  Inngest; (4) confirmar que o workflow antigo rodando junto não duplica efeito (o banco reserva cada linha uma só
-  vez; há teste de concorrência real no CI); (5) **só depois**, em PR separada, retirar o `schedule` do GitHub e
-  manter o `workflow_dispatch` como contingência. Até lá o bloqueio acima continua valendo.
-- **Atenção ao passo 5:** o mesmo workflow chama também `/api/cron/retention` (retenção e alertas da A11: eventos
-  travados, aviso de vencimento e expiração de 30 dias), que a nova função **não cobre**. Antes de retirar o
-  `schedule`, decidir como essa rotina continua (função própria no Inngest ou manter o workflow só para ela).
+  (1) merge e deploy; (2) sincronizar o app `praxis-crm` (as duas funções novas); (3) observar **pelo menos dois
+  ciclos naturais de AMBAS** no Inngest; (4) confirmar que o workflow antigo rodando junto não duplica efeito (o banco
+  reserva cada linha uma só vez; há teste de concorrência real no CI, com as três pontas largando juntas); (5) **só
+  depois**, em PR separada, retirar o `schedule` do GitHub e manter o `workflow_dispatch` como contingência para as
+  duas operações. Até lá o bloqueio acima continua valendo, e o `schedule` antigo **não** pode ser retirado antes de
+  ver as DUAS funções rodando.
 
 ### 3. Rotina LGPD diária (C3b/B6b)
 
@@ -77,7 +81,7 @@ A janela de 13/11 não gerou execução; a prova que falta é a de 14/11 às 07:
 |---|---|---|
 | Aplicação (Vercel) | Serve o CRM. Production: `https://praxis-crm-eight.vercel.app` | [Deployments do projeto](https://vercel.com/johllls-projects/praxis-crm/deployments) |
 | Banco e login (Supabase) | Dados e autenticação (projeto `rgoeppjwnltcbeqipovh`) | [Painel do projeto](https://supabase.com/dashboard/project/rgoeppjwnltcbeqipovh) · [Logs](https://supabase.com/dashboard/project/rgoeppjwnltcbeqipovh/logs/explorer) · [Migrations](https://supabase.com/dashboard/project/rgoeppjwnltcbeqipovh/database/migrations) |
-| Rotinas (Inngest) | App `praxis-crm`, três funções sincronizadas hoje (uma quarta, `a11-reconciler-scheduler`, a cada 10 min, está no código e **ainda não foi sincronizada**): `c1-automations-scheduler` (a cada 2 min), `c3b-privacy-retention-scheduler` (06:17 UTC = 03:17 em Brasília) e `a11-process-form-submission` (só quando há envio de formulário) | [Painel do Inngest](https://app.inngest.com) → app `praxis-crm` → Runs |
+| Rotinas (Inngest) | App `praxis-crm`, três funções sincronizadas hoje (mais duas, `a11-reconciler-scheduler` e `a11-retention-scheduler`, a cada 10 min cada uma, estão no código e **ainda não foram sincronizadas**): `c1-automations-scheduler` (a cada 2 min), `c3b-privacy-retention-scheduler` (06:17 UTC = 03:17 em Brasília) e `a11-process-form-submission` (só quando há envio de formulário) | [Painel do Inngest](https://app.inngest.com) → app `praxis-crm` → Runs |
 | CI e reconciliação (GitHub) | Testes de cada PR; reconciliação agendada da captação de formulários | [Actions do repositório](https://github.com/johlll/praxis-crm/actions) |
 | Backup (GitHub, repositório **privado**) | Backup diário às 07:30 UTC (04:30 em Brasília) | [Actions dos backups](https://github.com/johlll/praxis-crm-backups/actions) (só quem tem acesso ao repositório privado) |
 
@@ -106,10 +110,11 @@ Faça depois das **04:45 de Brasília**, quando o backup do dia já deveria ter 
 - **Supabase:** o projeto não foi **pausado** e o uso de banco e armazenamento do plano gratuito está longe do
   limite.
 - **Inngest:** o uso de execuções do mês está dentro da franquia (50.000). Só a rotina de 2 minutos já consome
-  cerca de 21.600 por mês: não encurte esse intervalo sem reavaliar o plano. Com a rotina de 10 minutos da A11
-  ativada, o total periódico estimado fica em cerca de **25.951 por mês** (C1 ~21.600 + A11 ~4.320 + C3b ~31), fora
-  as execuções por evento da A11, da agenda e do WhatsApp: abaixo da franquia conhecida de 50.000, mas precisa ser
-  acompanhado. Nenhum plano pago foi habilitado e o limite de gastos não foi alterado.
+  cerca de 21.600 por mês: não encurte esse intervalo sem reavaliar o plano. Com as duas rotinas de 10 minutos da
+  A11 ativadas, o total periódico estimado fica em cerca de **30.271 por mês** (C1 ~21.600 + A11 reconciliador
+  ~4.320 + A11 retenção ~4.320 + C3b ~31), **fora** as execuções por evento da A11, da agenda e do WhatsApp: abaixo
+  da franquia conhecida de 50.000, mas a margem (~19.700) precisa ser acompanhada **antes de ativar a Agenda e o
+  WhatsApp**. Nenhum plano pago foi habilitado e o limite de gastos não foi alterado.
 - **Auditoria do CRM** (Configurações → Auditoria): olhe convites, mudanças de papel, exportações e
   anonimizações. Algo que ninguém reconhece é motivo para o procedimento de incidente.
 - **Equipe:** quem saiu do escritório foi removido; os papéis estão certos.

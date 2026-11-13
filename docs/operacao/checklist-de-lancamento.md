@@ -19,7 +19,7 @@ Um item pode ter dois rótulos: por exemplo, **PENDENTE** e **DEPENDE DO JOÃO**
 | # | Item | Estado | Destrava com |
 |---|---|---|---|
 | 1 | Separação do Preview | **PENDENTE** (não iniciada) | **DEPENDE DO JOÃO** · **DEPENDÊNCIA EXTERNA** (Supabase) |
-| 2 | A11 (formulários do site e origem dos leads) | **PENDENTE** em Production · **bloqueio operacional**: a reconciliação não cumpre a frequência configurada (correção preparada, **ainda não ativada**) | **DEPENDE DO JOÃO** · **DEPENDÊNCIA EXTERNA** (Cloudflare, Upstash, site) · tarefa técnica separada |
+| 2 | A11 (formulários do site e origem dos leads) | **PENDENTE** em Production · **bloqueio operacional**: a reconciliação não cumpre a frequência configurada (duas funções do Inngest preparadas, **ainda não ativadas**) | **DEPENDE DO JOÃO** · **DEPENDÊNCIA EXTERNA** (Cloudflare, Upstash, site) · tarefa técnica separada |
 | 3 | Google Agenda | **PENDENTE** em Production | **DEPENDE DO JOÃO** · **DEPENDÊNCIA EXTERNA** (Google) |
 | 4 | YCloud e número de teste | **PENDENTE** | **DEPENDE DO JOÃO** · **DEPENDÊNCIA EXTERNA** (YCloud/Meta) |
 | 5 | Integração da Vitória, sem reconstrução | **PENDENTE** | **DEPENDE DO JOÃO** |
@@ -56,11 +56,13 @@ entrada de dados reais** (`A11-HANDOFF.md` §18).
   (28 de 38 entre 4 e 8 horas; 4 execuções nas 24 horas até 13/11 às 12:09 UTC, contra 144 esperadas). As execuções
   que ocorreram terminaram com sucesso: o problema é a frequência. A frequência esperada **não está sendo
   cumprida**, e isso impede considerar a A11 **plenamente ativa**. A conferência diária **não substitui** uma
-  execução confiável. A correção está **preparada, mas ainda não ativada**: a função `a11-reconciler-scheduler` do
-  Inngest (a cada 10 minutos, mesma operação da rota atual) já está no código, e o **workflow antigo continua em
-  funcionamento**, sem alteração. A ativação depende de merge, deploy, sincronização do app `praxis-crm` no Inngest
-  e **duas execuções naturais observadas**; o `schedule` antigo só será retirado depois dessa validação, em PR
-  separada (atenção: o mesmo workflow também chama `/api/cron/retention`, que a nova função não cobre).
+  execução confiável. A correção está **preparada, mas ainda não ativada**, e cobre as **duas** rotinas que o workflow
+  chama: `a11-reconciler-scheduler` (reconciliação da outbox) e `a11-retention-scheduler` (retenção e alertas dos
+  eventos recebidos: travados, aviso de vencimento e expiração de 30 dias), ambas no Inngest, a cada 10 minutos, com a
+  mesma operação das rotas atuais. O **workflow antigo continua em funcionamento**, sem alteração. A ativação depende
+  de merge, deploy, sincronização do app `praxis-crm` no Inngest e **dois ciclos naturais observados de AMBAS as
+  funções**; o `schedule` antigo só será retirado depois dessa validação, em PR separada (mantendo o
+  `workflow_dispatch` como contingência para as duas operações).
 - **PENDENTE:** ligar a captação pública em Production. A matriz de prontidão da A11 (`A11-HANDOFF.md` §18) lista o
   que é preciso: verificação anti-robô (Turnstile) com o domínio real, limitador de requisições (Upstash), chaves
   de cifra do conteúdo recebido, o endpoint de formulário cadastrado e o domínio do site autorizado. Confira o que

@@ -91,19 +91,20 @@ jobs:
           SUPABASE_SECRET_KEY="${SERVICE_ROLE_KEY:-${SECRET_KEY:?SERVICE_ROLE_KEY/SECRET_KEY vazio}}" \
             node scripts/a11-outbox-resolve-concurrency-check.mjs
 
-      - name: Teste de concorrência real (A11 — reconciliador do workflow e do Inngest ao mesmo tempo)
-        # Durante a transição do agendamento (workflow do GitHub -> função do Inngest), as duas pontas chamam a
-        # MESMA operação (src/server/ingest/outbox-reconciler.ts) e podem rodar juntas. Aqui duas execuções
-        # simultâneas, sobre mais linhas pendentes do que cabem num lote, não podem publicar nenhum evento duas
-        # vezes — a garantia é do banco (claim_outbox_batch) — ver scripts/a11-reconciler-concurrency-check.mjs.
-        # O Inngest é substituído por um publicador em memória; dados fictícios, no Postgres descartado ao fim.
+      - name: Teste de concorrência real (A11 — workflow antigo, reconciliador e retenção do Inngest ao mesmo tempo)
+        # Durante a transição do agendamento (workflow do GitHub -> funções do Inngest), as três pontas chamam as
+        # MESMAS duas operações (src/server/ingest/outbox-reconciler.ts e retention-maintenance.ts) e podem rodar
+        # juntas. Aqui rodadas simultâneas, sobre mais linhas do que cabem num lote, não podem republicar nenhum
+        # evento nem duplicar alerta, expiração ou auditoria — a garantia é do banco (claim_outbox_batch e as RPCs de
+        # retenção, com for update skip locked) — ver scripts/a11-schedulers-concurrency-check.mjs. O Inngest é
+        # substituído por um publicador em memória; dados fictícios, no Postgres descartado ao fim.
         run: |
           RAW="$(supabase status -o env)"
           eval "$RAW"
           NEXT_PUBLIC_SUPABASE_URL="${API_URL:?API_URL vazio}" \
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="${PUBLISHABLE_KEY:?PUBLISHABLE_KEY vazio}" \
           SUPABASE_SECRET_KEY="${SERVICE_ROLE_KEY:-${SECRET_KEY:?SERVICE_ROLE_KEY/SECRET_KEY vazio}}" \
-            node scripts/a11-reconciler-concurrency-check.mjs
+            node scripts/a11-schedulers-concurrency-check.mjs
 
       - name: Exportar credenciais do Supabase local para o build/e2e
         run: |

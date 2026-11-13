@@ -8,13 +8,13 @@
  *
  *  A. a rota `/api/cron/outbox` (usada pelo workflow) se comporta como antes da extração da operação
  *     compartilhada: mesmos limites, mesma ordem de chamadas, mesmas respostas e mesmos códigos fechados;
- *  B. o payload real da sincronização (SDK real, sem rede) tem EXATAMENTE quatro funções; a nova leva só o cron
+ *  B. o payload real da sincronização (SDK real, sem rede) tem EXATAMENTE cinco funções; a nova leva só o cron
  *     de 10 em 10 minutos, concorrência 1 e 0 retries; A11 (evento), C1 e C3b ficam iguais;
  *  C. a função chama a MESMA operação da rota (uma vez), com os mesmos limites, e devolve só contagens;
  *  D. configuração ausente falha antes do banco; erro do banco ou resposta inválida falham com código fechado,
  *     sem mensagem original, payload, dado pessoal, segredo ou log;
  *  E. execução simultânea com a rota existente não duplica nenhuma publicação (as garantias do banco são
- *     reaproveitadas; a prova no banco real fica em scripts/a11-reconciler-concurrency-check.mjs, no CI);
+ *     reaproveitadas; a prova no banco real fica em scripts/a11-schedulers-concurrency-check.mjs, no CI);
  *  F. nenhum módulo da agenda, do WhatsApp ou da Vitória, e nenhuma chamada externa própria.
  *
  * Chaves fictícias. O banco é simulado no cliente do Supabase (claim atômico, como o `skip locked`).
@@ -42,6 +42,7 @@ const FN_A11 = "praxis-crm-a11-process-form-submission";
 const FN_C1 = "praxis-crm-c1-automations-scheduler";
 const FN_C3B = "praxis-crm-c3b-privacy-retention-scheduler";
 const FN_RECONCILIADOR = "praxis-crm-a11-reconciler-scheduler";
+const FN_RETENCAO = "praxis-crm-a11-retention-scheduler";
 const SEGREDO_NO_ERRO = "senha=segredo-ficticio +5511999990000 maria@exemplo.com payload={cpf:123}";
 const RAIZ = process.cwd();
 const A11_ENV = [
@@ -292,10 +293,10 @@ describe("A. a rota /api/cron/outbox (usada pelo workflow) continua como estava"
 
 // ---------------------------------------------------------------------------------------------------------
 describe("B. o payload real da sincronização", () => {
-  it("1/15. serve EXATAMENTE quatro funções: A11 (evento), C1, C3b e o reconciliador novo", async () => {
+  it("1/15. serve EXATAMENTE cinco funções: A11 (evento), C1, C3b, o reconciliador novo e a retenção da A11", async () => {
     const functions = await funcoesSincronizadas();
-    expect(functions.map((fn) => fn.id).sort()).toEqual([FN_A11, FN_C1, FN_C3B, FN_RECONCILIADOR].sort());
-    expect(functions).toHaveLength(4);
+    expect(functions.map((fn) => fn.id).sort()).toEqual([FN_A11, FN_C1, FN_C3B, FN_RECONCILIADOR, FN_RETENCAO].sort());
+    expect(functions).toHaveLength(5);
   });
 
   it("2–3. cron exatamente `*/10 * * * *` e nenhum outro gatilho (nenhum evento)", async () => {
@@ -641,16 +642,16 @@ describe("17. execução simultânea com o reconciliador existente", () => {
   });
 
   it("no banco real (CI): o teste de concorrência usa a MESMA operação, duas execuções simultâneas e nenhum segredo", () => {
-    const script = lerFonte("scripts/a11-reconciler-concurrency-check.mjs");
+    const script = lerFonte("scripts/a11-schedulers-concurrency-check.mjs");
     const ci = lerFonte(".github/workflows/ci.yml");
     expect(script).toContain('import { reconcileOutbox } from "../src/server/ingest/outbox-reconciler.ts";');
-    expect(script).toContain("Promise.all([");
+    expect(script).toContain("Promise.allSettled([");
     expect(script).toMatch(/reconcileOutbox\(admin, publisher\("workflow"\)\)/);
     expect(script).toMatch(/reconcileOutbox\(admin, publisher\("inngest"\)\)/);
     expect(script).not.toMatch(/inngestPublisher|INNGEST_|sb_secret|eyJ[A-Za-z0-9_-]{20,}/);
-    expect(ci).toContain("node scripts/a11-reconciler-concurrency-check.mjs");
+    expect(ci).toContain("node scripts/a11-schedulers-concurrency-check.mjs");
     // o passo vem DEPOIS de o Supabase local subir e usa só a chave do Supabase local
-    expect(ci.indexOf("node scripts/a11-reconciler-concurrency-check.mjs")).toBeGreaterThan(ci.indexOf("supabase start"));
+    expect(ci.indexOf("node scripts/a11-schedulers-concurrency-check.mjs")).toBeGreaterThan(ci.indexOf("supabase start"));
   });
 
   it("a segunda rodada seguinte não republica o que já foi publicado", async () => {
@@ -692,7 +693,7 @@ describe("16. isolamento: nada da agenda, do WhatsApp ou da Vitória, e nenhuma 
     const rota = lerFonte("src/app/api/inngest/route.ts");
     expect(rota).not.toMatch(/whatsapp/i);
     expect(rota).toContain(
-      "functions: [processFormSubmission, automationsScheduler, privacyRetentionScheduler, a11ReconcilerScheduler]",
+      "functions: [processFormSubmission, automationsScheduler, privacyRetentionScheduler, a11ReconcilerScheduler, a11RetentionScheduler]",
     );
     expect(rota).toContain("concurrency: { limit: 5 }");
     expect(rota).toContain("retries: A11_INGEST_MAX_RETRIES");
