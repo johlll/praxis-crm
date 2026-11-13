@@ -47,7 +47,7 @@ REAL_AGE="$(command -v age)"
 
 ROOT="$(mktemp -d)"
 export TMPDIR="$ROOT/tmp" # tudo o que os scripts criarem de temporário cai aqui: tem de voltar vazio
-mkdir -p "$TMPDIR" "$ROOT/keys" "$ROOT/shim" "$ROOT/src" "$ROOT/insp"
+mkdir -p "$TMPDIR" "$ROOT/keys" "$ROOT/shim" "$ROOT/shimage" "$ROOT/src" "$ROOT/insp"
 BUCKET="$PRAXIS_STORAGE_BUCKET"
 LOG="$ROOT/log.txt"
 ARGLOG="$ROOT/args.txt"
@@ -157,13 +157,14 @@ if [ "$op" = "get-object" ] && [ -n "${SHIM_MODE:-}" ]; then
 fi
 exec "$REAL_AWS" "$@"
 SHIM
-cat >"$ROOT/shim/age" <<'SHIM'
+cat >"$ROOT/shimage/age" <<'SHIM'
 #!/usr/bin/env bash
 case "${1:-}" in --encrypt) exit 1 ;; esac
 exec "$REAL_AGE" "$@"
 SHIM
-chmod +x "$ROOT/shim/aws" "$ROOT/shim/age"
-SHIMPATH="$ROOT/shim:$PATH"
+chmod +x "$ROOT/shim/aws" "$ROOT/shimage/age"
+SHIMPATH="$ROOT/shim:$PATH"       # só o aws com registro/injeção de falhas
+AGEPATH="$ROOT/shimage:$PATH"     # só o age que falha ao criptografar
 
 echo "== 1. bucket vazio gera um pacote válido"
 rc=0; run_backup "$ROOT/o1" || rc=$?
@@ -251,7 +252,7 @@ log_has "ERRO: download_falhou" && ok "mensagem fechada: download_falhou" || bad
 [ ! -e "$ROOT/o8" ] && tmp_empty && ok "nenhum texto claro nem saída restou" || bad "sobrou arquivo"
 
 echo "== 9. falha do age limpa o texto claro e não deixa saída"
-rc=0; run_backup "$ROOT/o9" PATH="$SHIMPATH" || rc=$?
+rc=0; run_backup "$ROOT/o9" PATH="$AGEPATH" || rc=$?
 expect_rc "age falhou" 70 "$rc"
 log_has "ERRO: criptografia_falhou" && ok "mensagem fechada: criptografia_falhou" || bad "mensagem criptografia_falhou ausente"
 [ ! -e "$ROOT/o9" ] && tmp_empty && ok "nenhum texto claro nem saída restou" || bad "sobrou arquivo"
