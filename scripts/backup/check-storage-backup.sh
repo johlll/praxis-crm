@@ -147,9 +147,9 @@ if [ "$op" = "get-object" ] && [ -n "${SHIM_MODE:-}" ]; then
       mutate_after_get)
         "$REAL_AWS" "$@" || exit $?
         case "$action" in
-          overwrite) "$REAL_AWS" s3api put-object --bucket proposal-documents --key "$SHIM_MUT_KEY" --body "$SHIM_MUT_BODY" >/dev/null ;;
-          add) "$REAL_AWS" s3api put-object --bucket proposal-documents --key "$SHIM_MUT_KEY.novo" --body "$SHIM_MUT_BODY" >/dev/null ;;
-          delete) "$REAL_AWS" s3api delete-object --bucket proposal-documents --key "$SHIM_MUT_KEY" >/dev/null ;;
+          overwrite) "$REAL_AWS" s3api put-object --bucket proposal-documents --key "$SHIM_MUT_KEY" --body "$SHIM_MUT_BODY" --content-type application/pdf >/dev/null 2>"$SHIM_COUNTER.err" || echo "mutacao_falhou" >>"$SHIM_COUNTER.err" ;;
+          add) "$REAL_AWS" s3api put-object --bucket proposal-documents --key "$SHIM_MUT_KEY.novo" --body "$SHIM_MUT_BODY" --content-type application/pdf >/dev/null 2>"$SHIM_COUNTER.err" || echo "mutacao_falhou" >>"$SHIM_COUNTER.err" ;;
+          delete) "$REAL_AWS" s3api delete-object --bucket proposal-documents --key "$SHIM_MUT_KEY" >/dev/null 2>"$SHIM_COUNTER.err" || echo "mutacao_falhou" >>"$SHIM_COUNTER.err" ;;
         esac
         exit 0 ;;
     esac
@@ -262,6 +262,7 @@ sleep 1.2
 mk_pdf "$ROOT/src/alterado.pdf" 77
 rc=0; run_backup "$ROOT/o10" PATH="$SHIMPATH" SHIM_MODE="mutate_after_get:2:overwrite" SHIM_COUNTER="$ROOT/c10" \
   SHIM_MUT_KEY="$(key_of 1)" SHIM_MUT_BODY="$ROOT/src/alterado.pdf" || rc=$?
+[ ! -s "$ROOT/c10.err" ] && ok "a sobrescrita injetada aconteceu de verdade" || bad "a sobrescrita injetada falhou: $(head -c 300 "$ROOT/c10.err")"
 expect_rc "objeto sobrescrito durante o backup" 70 "$rc"
 log_has "ERRO: conjunto_alterado" && ok "mensagem fechada: conjunto_alterado" || bad "mensagem conjunto_alterado ausente"
 [ ! -e "$ROOT/o10" ] && tmp_empty && ok "nenhuma saída e nenhum texto claro" || bad "sobrou arquivo"
@@ -271,11 +272,13 @@ echo "== 11. inclusão e remoção DURANTE o backup são detectadas"
 sleep 1.2
 rc=0; run_backup "$ROOT/o11a" PATH="$SHIMPATH" SHIM_MODE="mutate_after_get:2:add" SHIM_COUNTER="$ROOT/c11a" \
   SHIM_MUT_KEY="$(key_of 1)" SHIM_MUT_BODY="$ROOT/src/alterado.pdf" || rc=$?
+[ ! -s "$ROOT/c11a.err" ] && ok "a inclusão injetada aconteceu de verdade" || bad "a inclusão injetada falhou: $(head -c 300 "$ROOT/c11a.err")"
 expect_rc "objeto incluído durante o backup" 70 "$rc"
 log_has "ERRO: conjunto_alterado" && ok "inclusão detectada" || bad "inclusão não detectada"
 s3 s3api delete-object --bucket "$BUCKET" --key "$(key_of 1).novo" >/dev/null
 rc=0; run_backup "$ROOT/o11b" PATH="$SHIMPATH" SHIM_MODE="mutate_after_get:2:delete" SHIM_COUNTER="$ROOT/c11b" \
   SHIM_MUT_KEY="$(key_of 1)" || rc=$?
+[ ! -s "$ROOT/c11b.err" ] && ok "a remoção injetada aconteceu de verdade" || bad "a remoção injetada falhou"
 expect_rc "objeto removido durante o backup" 70 "$rc"
 log_has "ERRO: conjunto_alterado" && ok "remoção detectada" || bad "remoção não detectada"
 [ ! -e "$ROOT/o11a" ] && [ ! -e "$ROOT/o11b" ] && tmp_empty && ok "nenhuma saída e nenhum texto claro" || bad "sobrou arquivo"
