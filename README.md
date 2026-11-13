@@ -55,8 +55,8 @@ Detalhes completos, inclusive a pendência conhecida de configuração do
 Supabase Auth (Site URL/Redirect URLs): `A2-HANDOFF.md`.
 Arquitetura: `docs/arquitetura.md`. Segurança: `docs/seguranca.md`.
 
-**Ainda não implementado** (fases seguintes): leads, contatos, pipeline,
-atividades, WhatsApp, dashboard.
+**Implementado depois da A2** (um documento por fase em `docs/decisoes/`): contatos, leads, pipeline,
+atividades e dashboard; o WhatsApp está implementado no código e no banco, com simulador e suporte à YCloud; a integração real ainda não está ativada.
 
 ### Fase A1 (concluída antes)
 
@@ -75,3 +75,10 @@ atividades, WhatsApp, dashboard.
 - `docs/decisoes/versoes.md` — versões escolhidas (TypeScript 6.0.3 e não 7,
   ESLint 9 e não 10, `middleware.ts` → `proxy.ts` no Next 16.3.4) e a decisão
   de infraestrutura da A2 (Supabase hospedado para dev, Docker só no CI).
+
+## Operação e treinamento
+
+- `docs/operacao/guia-de-uso.md` — guia de uso para o Dr. Henrique e a equipe.
+- `docs/operacao/runbook-operacional.md` — verificações diárias e semanais, falhas e incidentes.
+- `docs/operacao/checklist-de-lancamento.md` — o que falta para a entrega final.
+- `docs/decisoes/b6c-backup-restauracao.md` — backup criptografado e restauração.
