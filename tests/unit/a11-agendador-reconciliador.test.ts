@@ -321,11 +321,11 @@ describe("B. o payload real da sincronização", () => {
     expect(Object.values(fn?.steps ?? {}).map((s) => s.retries)).toEqual([{ attempts: 9 }]);
   });
 
-  it("14. a C1 e a C3b permanecem iguais", async () => {
+  it("14. a C1 (agora a cada 10 minutos) e a C3b permanecem iguais nos demais campos", async () => {
     const functions = await funcoesSincronizadas();
     const c1 = functions.find((f) => f.id === FN_C1);
     const c3b = functions.find((f) => f.id === FN_C3B);
-    expect(c1?.triggers).toEqual([{ cron: "*/2 * * * *" }]);
+    expect(c1?.triggers).toEqual([{ cron: "*/10 * * * *" }]);
     expect(c1?.concurrency).toEqual({ limit: 1 });
     expect(Object.values(c1?.steps ?? {}).map((s) => s.retries)).toEqual([{ attempts: 0 }]);
     expect(c3b?.triggers).toEqual([{ cron: "17 6 * * *" }]);
@@ -700,7 +700,7 @@ describe("16. isolamento: nada da agenda, do WhatsApp ou da Vitória, e nenhuma 
     expect(rota).toContain("triggers: [{ event: FORM_EVENT_NAME }]");
     expect(rota).toContain("export const A11_INGEST_MAX_RETRIES = 9;");
     const c1 = lerFonte("src/app/api/inngest/automations-scheduler.ts");
-    expect(c1).toContain('triggers: [{ cron: "*/2 * * * *" }]');
+    expect(c1).toContain('triggers: [{ cron: "*/10 * * * *" }]');
     const c3b = lerFonte("src/app/api/inngest/privacy-retention-scheduler.ts");
     expect(c3b).toContain('triggers: [{ cron: "17 6 * * *" }]');
   });

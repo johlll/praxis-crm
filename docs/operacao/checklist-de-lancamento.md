@@ -19,7 +19,7 @@ Um item pode ter dois rótulos: por exemplo, **PENDENTE** e **DEPENDE DO JOÃO**
 | # | Item | Estado | Destrava com |
 |---|---|---|---|
 | 1 | Separação do Preview | **PENDENTE** (não iniciada) | **DEPENDE DO JOÃO** · **DEPENDÊNCIA EXTERNA** (Supabase) |
-| 2 | A11 (formulários do site e origem dos leads) | **PENDENTE** em Production · **bloqueio operacional**: a reconciliação não cumpre a frequência configurada (duas funções do Inngest preparadas, **ainda não ativadas**) | **DEPENDE DO JOÃO** · **DEPENDÊNCIA EXTERNA** (Cloudflare, Upstash, site) · tarefa técnica separada |
+| 2 | A11 (formulários do site e origem dos leads) | **PENDENTE** em Production · **bloqueio operacional**: a reconciliação do workflow não cumpre a frequência configurada (duas funções do Inngest **ativadas em 13/11/2026**; o `schedule` antigo ainda não foi retirado) | **DEPENDE DO JOÃO** · **DEPENDÊNCIA EXTERNA** (Cloudflare, Upstash, site) · tarefa técnica separada |
 | 3 | Google Agenda | **PENDENTE** em Production | **DEPENDE DO JOÃO** · **DEPENDÊNCIA EXTERNA** (Google) |
 | 4 | YCloud e número de teste | **PENDENTE** | **DEPENDE DO JOÃO** · **DEPENDÊNCIA EXTERNA** (YCloud/Meta) |
 | 5 | Integração da Vitória, sem reconstrução | **PENDENTE** | **DEPENDE DO JOÃO** |
@@ -56,13 +56,20 @@ entrada de dados reais** (`A11-HANDOFF.md` §18).
   (28 de 38 entre 4 e 8 horas; 4 execuções nas 24 horas até 13/11 às 12:09 UTC, contra 144 esperadas). As execuções
   que ocorreram terminaram com sucesso: o problema é a frequência. A frequência esperada **não está sendo
   cumprida**, e isso impede considerar a A11 **plenamente ativa**. A conferência diária **não substitui** uma
-  execução confiável. A correção está **preparada, mas ainda não ativada**, e cobre as **duas** rotinas que o workflow
-  chama: `a11-reconciler-scheduler` (reconciliação da outbox) e `a11-retention-scheduler` (retenção e alertas dos
-  eventos recebidos: travados, aviso de vencimento e expiração de 30 dias), ambas no Inngest, a cada 10 minutos, com a
-  mesma operação das rotas atuais. O **workflow antigo continua em funcionamento**, sem alteração. A ativação depende
-  de merge, deploy, sincronização do app `praxis-crm` no Inngest e **dois ciclos naturais observados de AMBAS as
-  funções**; o `schedule` antigo só será retirado depois dessa validação, em PR separada (mantendo o
-  `workflow_dispatch` como contingência para as duas operações).
+  execução confiável. A correção foi **ativada em 13/11/2026** (65 de 65 execuções de cada função, sem falha nem
+  duplicação) e cobre as **duas** rotinas que o workflow chama: `a11-reconciler-scheduler` (reconciliação da outbox,
+  a cada 10 minutos) e `a11-retention-scheduler` (retenção e alertas dos eventos recebidos: travados, aviso de
+  vencimento e expiração de 30 dias; **de hora em hora, no minuto 23**, depois do próximo Resync), ambas no Inngest,
+  com a mesma operação das rotas atuais. O **workflow antigo continua em funcionamento**, sem alteração. Falta: Resync
+  depois do deploy da mudança de frequência, observar a C1 (agora a cada 10 minutos), a retenção no próximo minuto 23 e
+  o reconciliador, conferir o consumo no painel e confirmar a ausência de duplicação quando o workflow antigo
+  coincidir; o `schedule` antigo só será retirado depois disso, em PR separada (mantendo o `workflow_dispatch` como
+  contingência para as duas operações).
+- **Inngest — franquia gratuita (Hobby, 50.000 execuções por mês).** O Inngest cobra 3 execuções por run de um
+  passo: o total periódico é de **28.170 por mês** (C1 a cada 10 min 12.960 + reconciliador 12.960 + retenção horária
+  2.160 + C3b 90), com margem de cerca de **21.830** para os eventos. A estimativa anterior (~30.271) estava errada
+  porque contava runs. **Agenda e WhatsApp não podem ser ativados sem novo cálculo**; atingir o limite pausa as
+  funções, e nenhuma cobrança foi autorizada. Detalhes no runbook ("Consumo do Inngest").
 - **PENDENTE:** ligar a captação pública em Production. A matriz de prontidão da A11 (`A11-HANDOFF.md` §18) lista o
   que é preciso: verificação anti-robô (Turnstile) com o domínio real, limitador de requisições (Upstash), chaves
   de cifra do conteúdo recebido, o endpoint de formulário cadastrado e o domínio do site autorizado. Confira o que
@@ -180,7 +187,8 @@ Para não se perder de vista o que não precisa de nova ação:
 - Acesso, workspaces, equipe, convites e posse; contatos, duplicidades e dados sensíveis; leads e Perfil 360;
   pipeline e oportunidades; atividades e agenda interna; clientes; propostas em PDF; Visão geral;
   conversas com simulador; auditoria.
-- Automações internas: operacionais em Production (rotina a cada 2 minutos). Na última conferência
+- Automações internas: operacionais em Production (rotina a cada 10 minutos; o processamento é pedido na hora ao
+  criar lead ou mover etapa, e a rotina é a recuperação). Na última conferência
   (9/11/2026) ainda não havia regra criada.
 - Campos personalizados: instalados. Na última conferência (10/11/2026) ainda não havia campo criado.
 - Exportação do titular e anonimização com preservação legal: instaladas.

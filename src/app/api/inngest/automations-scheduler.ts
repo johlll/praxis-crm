@@ -4,7 +4,7 @@ import { createAdminSupabaseClient } from "@/server/supabase/admin";
 
 /**
  * Agendador periódico das automações (B6a) — roda a rodada do sistema da C1
- * (`process_automation_events_system`) a cada 2 minutos, no app geral do
+ * (`process_automation_events_system`) a cada 10 minutos, no app geral do
  * Inngest (`praxis-crm`, `/api/inngest`), em função PRÓPRIA e isolada do worker
  * da A11. Fica nesta pasta porque o cliente service_role só pode ser
  * importado por `src/app/api/inngest/**` (eslint.config.mjs).
@@ -20,10 +20,19 @@ import { createAdminSupabaseClient } from "@/server/supabase/admin";
  * Uma rodada processa UM lote (`AUTOMATIONS_SCHEDULER_BATCH_LIMIT`); a sobra
  * fica para o ciclo seguinte.
  *
- * Capacidade: a cada 2 minutos são 30 execuções por hora, 720 por dia e cerca
- * de 21.600 por mês (30 dias) — margem na franquia de 50.000 execuções mensais
- * do plano atual, dividida com a A11, a agenda, o WhatsApp e as execuções
- * reais. NÃO reduzir para 1 minuto sem reavaliar o plano do Inngest.
+ * Por que 10 minutos: o processamento é pedido NA HORA pelas operações de lead e de
+ * mudança de etapa (`scheduleAutomationRun`, depois da resposta), pelo botão
+ * "Processar agora" e, como contingência, pela rota `/api/cron/automations`. O
+ * relógio aqui é só recuperação e processamento das novas tentativas (1/5/30 min
+ * no banco); um atraso máximo de 10 minutos é suficiente para o MVP.
+ *
+ * Capacidade (franquia do plano Hobby: 50.000 EXECUÇÕES por mês): o Inngest cobra
+ * 3 execuções por run de um passo (o run, o passo e a finalização). A cada 10
+ * minutos são 144 runs por dia, 4.320 por mês e 12.960 execuções por mês (30
+ * dias) — dividida com a A11, a agenda, o WhatsApp e as execuções reais. A
+ * C1 a cada 2 minutos custava ~64.800 por mês e estourava a franquia sozinha. NÃO
+ * encurtar o intervalo sem recalcular o consumo; no Hobby, atingir o limite PAUSA
+ * as funções (inclusive a A11 por evento).
  *
  * Só o código sanitizado sai daqui: nunca a mensagem do banco, payload, dado
  * pessoal ou segredo. Sem log.
@@ -37,7 +46,7 @@ export const AUTOMATIONS_SCHEDULER_FUNCTION_CONFIG = {
   name: "C1 — processar automações",
   concurrency: { limit: 1 },
   retries: 0 as const,
-  triggers: [{ cron: "*/2 * * * *" }],
+  triggers: [{ cron: "*/10 * * * *" }],
 };
 
 export type AutomationsSchedulerFailureCode = "automations_scheduler_not_configured" | "automations_scheduler_failed";

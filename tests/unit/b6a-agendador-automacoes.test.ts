@@ -5,7 +5,7 @@
  * `/api/inngest`). Só as proteções essenciais:
  *
  *  - o payload real da sincronização (SDK real, sem rede) leva a função da C1
- *    com cron de 2 em 2 minutos, concorrência 1 e 0 retries, e a da A11 intacta;
+ *    com cron de 10 em 10 minutos (era 2 em 2; franquia do Inngest), concorrência 1 e 0 retries, e a da A11 intacta;
  *  - a função chama só `process_automation_events_system`, com lote 100, e
  *    devolve só `{ events, executions }`;
  *  - erro do banco falha a execução com código fixo, sem mensagem original,
@@ -113,9 +113,9 @@ describe("1–4. o payload real da sincronização", () => {
     expect(functions.map((fn) => fn.id).sort()).toEqual([FN_A11, FN_C1, FN_C3B, FN_RECONCILIADOR, FN_RETENCAO].sort());
   });
 
-  it("cron exatamente `*/2 * * * *`, e nenhum outro gatilho", async () => {
+  it("cron exatamente `*/10 * * * *`, e nenhum outro gatilho", async () => {
     const fn = (await funcoesSincronizadas()).find((f) => f.id === FN_C1);
-    expect(fn?.triggers).toEqual([{ cron: "*/2 * * * *" }]);
+    expect(fn?.triggers).toEqual([{ cron: "*/10 * * * *" }]);
   });
 
   it("concorrência exatamente 1", async () => {
@@ -139,7 +139,7 @@ describe("1–4. o payload real da sincronização", () => {
   it("o gatilho é só o relógio: o agendador não escuta nem publica evento", () => {
     const fonte = readFileSync(join(RAIZ, "src/app/api/inngest/automations-scheduler.ts"), "utf8");
     expect(fonte).not.toMatch(/event:\s*["'`A-Z]|\.send\(|inngestClient|publisher/);
-    expect(fonte).toContain('triggers: [{ cron: "*/2 * * * *" }]');
+    expect(fonte).toContain('triggers: [{ cron: "*/10 * * * *" }]');
   });
 });
 
@@ -202,8 +202,8 @@ describe("5–9. a execução", () => {
     h.rpc.mockResolvedValue({ data: null, error: { message: SEGREDO_NO_ERRO } });
     const route = await import("@/app/api/inngest/route");
     const body = JSON.stringify({
-      event: { name: "inngest/scheduled.timer", data: { cron: "*/2 * * * *" }, id: "evt-1", ts: Date.now() },
-      events: [{ name: "inngest/scheduled.timer", data: { cron: "*/2 * * * *" }, id: "evt-1", ts: Date.now() }],
+      event: { name: "inngest/scheduled.timer", data: { cron: "*/10 * * * *" }, id: "evt-1", ts: Date.now() },
+      events: [{ name: "inngest/scheduled.timer", data: { cron: "*/10 * * * *" }, id: "evt-1", ts: Date.now() }],
       steps: {},
       ctx: { run_id: "run-1", attempt: 0, disable_immediate_execution: false, use_api: false, stack: { stack: [], current: 0 }, fn_id: FN_C1 },
       version: 1,
@@ -234,8 +234,8 @@ describe("5–9. a execução", () => {
     h.rpc.mockResolvedValue({ data: { events: 1, executions: 1 }, error: null });
     const route = await import("@/app/api/inngest/route");
     const body = JSON.stringify({
-      event: { name: "inngest/scheduled.timer", data: { cron: "*/2 * * * *" }, id: "evt-2", ts: Date.now() },
-      events: [{ name: "inngest/scheduled.timer", data: { cron: "*/2 * * * *" }, id: "evt-2", ts: Date.now() }],
+      event: { name: "inngest/scheduled.timer", data: { cron: "*/10 * * * *" }, id: "evt-2", ts: Date.now() },
+      events: [{ name: "inngest/scheduled.timer", data: { cron: "*/10 * * * *" }, id: "evt-2", ts: Date.now() }],
       steps: {},
       ctx: { run_id: "run-2", attempt: 0, disable_immediate_execution: false, use_api: false, stack: { stack: [], current: 0 }, fn_id: FN_C1 },
       version: 1,

@@ -143,9 +143,9 @@ describe("1–4 e 13. o payload real da sincronização", () => {
     expect(Object.values(fn?.steps ?? {}).map((step) => step.retries)).toEqual([{ attempts: 9 }]);
   });
 
-  it("3. a C1 permanece com cron de 2 minutos, concorrência 1 e 0 retries", async () => {
+  it("3. a C1 tem cron de 10 minutos (era 2; franquia do Inngest), concorrência 1 e 0 retries", async () => {
     const fn = (await funcoesSincronizadas()).find((f) => f.id === FN_C1);
-    expect(fn?.triggers).toEqual([{ cron: "*/2 * * * *" }]);
+    expect(fn?.triggers).toEqual([{ cron: "*/10 * * * *" }]);
     expect(fn?.concurrency).toEqual({ limit: 1 });
     expect(Object.values(fn?.steps ?? {}).map((step) => step.retries)).toEqual([{ attempts: 0 }]);
   });
@@ -380,7 +380,7 @@ describe("11–12. isolamento, nenhuma chamada externa, nenhum log", () => {
     expect(rota).toContain("triggers: [{ event: FORM_EVENT_NAME }]");
     expect(rota).toContain("export const A11_INGEST_MAX_RETRIES = 9;");
     const c1 = readFileSync(join(RAIZ, "src/app/api/inngest/automations-scheduler.ts"), "utf8");
-    expect(c1).toContain('triggers: [{ cron: "*/2 * * * *" }]');
+    expect(c1).toContain('triggers: [{ cron: "*/10 * * * *" }]');
     expect(c1).toContain("concurrency: { limit: 1 }");
     expect(c1).toContain("retries: 0 as const");
   });
