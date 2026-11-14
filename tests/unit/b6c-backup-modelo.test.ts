@@ -27,6 +27,7 @@ const SCRIPTS = [
   "scripts/backup/restore-db.sh",
   "scripts/backup/check-backup-restore.sh",
   "scripts/backup/check-backup-snapshot.sh",
+  "scripts/backup/check-backup-sessao.sh",
 ];
 
 /**
@@ -58,6 +59,11 @@ function usosInvalidos(texto: string): string[] {
   return problemas;
 }
 const workflow = ler(MODELO);
+const semComentariosSh = (texto: string) =>
+  texto
+    .split("\n")
+    .filter((linha) => !linha.trim().startsWith("#"))
+    .join("\n");
 
 /** Chaves de primeiro nível do workflow (`on`, `jobs`, ...), sem depender de um parser de YAML. */
 function secaoOn(texto: string): string {
@@ -69,17 +75,20 @@ function secaoOn(texto: string): string {
 }
 
 describe("12–13. o modelo só agenda o diário e o manual, e nunca roda em pull request", () => {
-  it("12. gatilhos: exatamente schedule (07:30 UTC) e workflow_dispatch", () => {
+  it("12. gatilhos: exatamente schedule (quatro janelas diárias em UTC) e workflow_dispatch", () => {
     const on = secaoOn(workflow);
     const gatilhos = [...on.matchAll(/^ {2}([a-z_]+):/gm)].map((m) => m[1]);
     expect(gatilhos).toEqual(["schedule", "workflow_dispatch"]);
-    expect([...on.matchAll(/- cron: "([^"]+)"/g)].map((m) => m[1])).toEqual(["30 7 * * *"]);
+    // 07:30, 11:30, 15:30 e 19:30 UTC: várias oportunidades, porque o GitHub pode atrasar ou descartar uma delas.
+    expect([...on.matchAll(/- cron: "([^"]+)"/g)].map((m) => m[1])).toEqual(["30 7 * * *", "30 11 * * *", "30 15 * * *", "30 19 * * *"]);
   });
 
-  it("12. roda depois do lote de retenção da C3b (06:17 UTC)", () => {
+  it("12. todas as janelas rodam depois do lote de retenção da C3b (06:17 UTC)", () => {
     const retencao = ler("src/app/api/inngest/privacy-retention-scheduler.ts");
     expect(retencao).toContain('cron: "17 6 * * *"');
-    expect(workflow).toContain('cron: "30 7 * * *"');
+    const horas = [...secaoOn(workflow).matchAll(/- cron: "30 (\d+) \* \* \*"/g)].map((m) => Number(m[1]));
+    expect(horas).toEqual([7, 11, 15, 19]);
+    for (const hora of horas) expect(hora * 60 + 30).toBeGreaterThan(6 * 60 + 17);
   });
 
   it("13. nenhum outro evento: nem pull_request, nem pull_request_target, nem push", () => {
@@ -87,7 +96,10 @@ describe("12–13. o modelo só agenda o diário e o manual, e nunca roda em pul
       .split("\n")
       .filter((linha) => !linha.trim().startsWith("#"))
       .join("\n");
-    expect(semComentarios).not.toMatch(/pull_request|pull_request_target|\bpush:|workflow_run|repository_dispatch|issue_comment/);
+    expect(semComentarios).not.toMatch(/pull_request|pull_request_target|\bpush:|repository_dispatch|issue_comment/);
+    // `workflow_run` como GATILHO: só a seção `on:` conta (o campo `.workflow_run.id` da API de artefatos, lido pela
+    // janela, é outra coisa).
+    expect(secaoOn(workflow)).not.toMatch(/workflow_run/);
   });
 
   it("13. nunca no repositório público do Praxis e só em repositório privado", () => {
@@ -112,10 +124,13 @@ describe("modelo: concorrência 1, tempo limite, permissões mínimas e versões
     expect(workflow).toMatch(/timeout-minutes: \d+/);
   });
 
-  it("nenhuma permissão de escrita: só contents: read", () => {
-    expect(workflow).toMatch(/permissions:\n {2}contents: read\n/);
+  it("nenhuma permissão de escrita: contents: read no workflow e actions: read só no job da janela (metadados dos artefatos)", () => {
+    expect(workflow).toMatch(/\npermissions:\n {2}contents: read\n/);
     expect(workflow).not.toMatch(/: write\b/);
-    expect(workflow.match(/^\s*permissions:/gm)).toHaveLength(1);
+    // Dois blocos: o do workflow e o do job `janela` (contents: read + actions: read). O job do backup, que guarda os
+    // secrets, fica só com o do workflow.
+    expect(workflow.match(/^\s*permissions:/gm)).toHaveLength(2);
+    expect(workflow.match(/actions: read/g)).toHaveLength(1);
   });
 
   it("PostgreSQL client 17 e age com versão e SHA-256 fixados, runner fixo", () => {
@@ -246,11 +261,72 @@ describe("scripts: nada de xtrace, URL só por ambiente, chave pública no backu
     expect(chamadas[0]).toContain('--snapshot="$SNAPSHOT_ID"');
     // A estrutura vem da sessão do snapshot (não de uma consulta solta depois dos dumps).
     expect(fonte).toContain("STRUCT_FILE=\"$HOLDER_OUT\"");
-    expect(fonte.match(/\bpsql -X/g)!.length).toBe(2); // versão do servidor + sessão do snapshot
-    // Nada bloqueia escrita: a sessão é só leitura e não há LOCK nem modo exclusivo.
-    expect(fonte).not.toMatch(/\block\b|exclusive|--lock-wait|pg_terminate|pg_advisory/i);
+    // Quatro usos do psql: versão do servidor, a sessão do snapshot, a conferência de que ela existe e o último recurso.
+    expect(fonte.match(/\bpsql -X/g)!.length).toBe(4);
+    // Nada bloqueia escrita: a sessão é só leitura, sem LOCK TABLE, modo exclusivo nem advisory lock.
+    const codigo = semComentariosSh(fonte);
+    expect(codigo).not.toMatch(/lock\s+table|--lock-wait|pg_advisory|\bexclusive\b/i);
+    // O ÚNICO pg_terminate_backend é o último recurso, preso à identidade exata da própria sessão (teste abaixo).
+    expect(codigo.match(/pg_terminate_backend/g)).toHaveLength(1);
     expect(fonte).toContain("snapshot_falhou");
     expect(fonte).toContain("snapshot_inconsistente");
+  });
+
+  it("sessão do segurador: sem pg_sleep de horas, rótulo exclusivo, teto de ociosidade e encerramento explícito ANTES do sucesso", () => {
+    const fonte = ler("scripts/backup/backup-db.sh");
+    const codigo = semComentariosSh(fonte);
+    // Não depende de um sleep de quatro horas (nem de nenhum pg_sleep): a espera é do CLIENTE e o servidor fica ocioso.
+    expect(codigo).not.toMatch(/pg_sleep/);
+    expect(codigo).toContain("set local application_name = 'praxis-backup-snapshot';");
+    expect(codigo).toMatch(/set local idle_in_transaction_session_timeout = '\d+min';/);
+    expect(codigo).toMatch(/set local statement_timeout = '\d+min';/);
+    expect(codigo).toMatch(/set local lock_timeout = '\d+(s|min)';/);
+    expect(codigo).not.toMatch(/(idle_in_transaction_session_timeout|statement_timeout|lock_timeout) = 0/);
+    // Batimento: a sessão ociosa nunca fica calada (evita expirar por ociosidade no pooler ou na rede).
+    expect(codigo).toContain("select 'PING';");
+    // O COMMIT e o fim da sessão vêm antes do manifesto, da criptografia e de `OK=1`.
+    const encerra = fonte.indexOf("release_holder || RELEASE_RC=$?");
+    expect(encerra).toBeGreaterThan(-1);
+    expect(encerra).toBeLessThan(fonte.indexOf("# ---- 5. Manifesto"));
+    expect(encerra).toBeLessThan(fonte.indexOf("OK=1"));
+    expect(fonte).toContain('die "segurador_nao_encerrado" 70');
+    // Qualquer saída (falha, sinal ou sucesso) passa pela limpeza, que também encerra o segurador.
+    const limpeza = fonte.slice(fonte.indexOf("cleanup() {"), fonte.indexOf("trap cleanup EXIT"));
+    expect(limpeza).toContain("release_holder");
+    expect(fonte).toContain("trap 'exit 143' TERM");
+    // A queda inesperada da sessão falha fechado: confere antes de cada dump e antes de encerrar.
+    expect(fonte).toContain('holder_present || die "snapshot_falhou" 70');
+    expect(fonte.match(/holder_present \|\| die "snapshot_falhou" 70/g)!.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("o último recurso só atinge a identidade exata do segurador: PID + rótulo + banco + usuário + início da transação", () => {
+    const fonte = ler("scripts/backup/backup-db.sh");
+    const inicio = fonte.indexOf('HOLDER_WHERE="pid');
+    expect(inicio).toBeGreaterThan(-1);
+    const identidade = fonte.slice(inicio, fonte.indexOf("\n", inicio));
+    for (const trecho of [
+      "pid = ${HOLDER_BACKEND_PID}",
+      "application_name = '${HOLDER_APP}'",
+      "datname = current_database()",
+      "usename = current_user",
+      "backend_type = 'client backend'",
+      "to_char(xact_start at time zone 'UTC'",
+      "= '${HOLDER_XACT_START}'",
+    ]) {
+      expect(identidade, trecho).toContain(trecho);
+    }
+    expect(fonte).toContain('HOLDER_APP="praxis-backup-snapshot"');
+    // PID e início da transação só entram no SQL depois de validados (dígitos e timestamp), sem ir para o log.
+    expect(fonte).toContain('[[ "$pid" =~ ^[0-9]+$ ]]');
+    expect(fonte).toMatch(/\^\[0-9\]\{4\}-\[0-9\]\{2\}-\[0-9\]\{2\}T\[0-9\]\{2\}:\[0-9\]\{2\}:\[0-9\]\{2\}\\\.\[0-9\]\{6\}\$/);
+    const terminar = fonte.slice(fonte.indexOf("terminate_holder() {"));
+    expect(terminar).toContain("select pg_terminate_backend(pid) from pg_stat_activity where $HOLDER_WHERE");
+    // Nunca imprime PID, snapshot, identidade ou saída interna das ferramentas.
+    const impressoes = semComentariosSh(fonte)
+      .split("\n")
+      .filter((l) => /\b(echo|printf)\b/.test(l));
+    expect(impressoes.length).toBeGreaterThan(0);
+    for (const l of impressoes) expect(l).not.toMatch(/HOLDER_BACKEND_PID|HOLDER_XACT_START|HOLDER_PID|HOLDER_WHERE|SNAPSHOT_ID|HOLDER_OUT|HOLDER_ERR|\$ERR/);
   });
 
   it("o CI roda o teste real do snapshot (escritas concorrentes entre as etapas) contra o Postgres local", () => {
@@ -259,6 +335,15 @@ describe("scripts: nada de xtrace, URL só por ambiente, chave pública no backu
     expect(ci).toContain("run: bash scripts/backup/check-backup-restore.sh");
     const trecho = ci.slice(ci.indexOf("check-backup-snapshot.sh") - 700, ci.indexOf("check-backup-snapshot.sh") + 60);
     expect(trecho).toContain("127.0.0.1:54322");
+    expect(trecho).not.toMatch(/supabase\.co|pooler|secrets\./);
+  });
+
+  it("o CI também roda o teste real do ciclo de vida da sessão do snapshot (sucesso, falhas, sinal, queda) no Postgres local", () => {
+    const ci = ler(".github/workflows/ci.yml");
+    expect(ci).toContain("run: bash scripts/backup/check-backup-sessao.sh");
+    const trecho = ci.slice(ci.indexOf("check-backup-sessao.sh") - 900, ci.indexOf("check-backup-sessao.sh") + 60);
+    expect(trecho).toContain("CHECK_BACKUP_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres");
+    expect(trecho).toContain("CHECK_RESTORE_SERVER_URL: postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres");
     expect(trecho).not.toMatch(/supabase\.co|pooler|secrets\./);
   });
 

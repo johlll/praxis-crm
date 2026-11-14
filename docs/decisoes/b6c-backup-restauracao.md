@@ -1,9 +1,10 @@
 # B6c — backup lógico criptografado e restauração testável (plano Free, sem custo)
 
-Estado (atualizado em 13/11/2026): **backup criptografado ATIVADO.** O repositório privado de backups existe, os
+Estado (atualizado em 14/11/2026): **backup criptografado ATIVADO.** O repositório privado de backups existe, os
 dois secrets estão cadastrados, o agendamento diário está ligado, o primeiro backup e a **restauração local real**
-foram aprovados. **Ainda pendente:** a **primeira execução natural** (disparada pelo próprio agendamento, sem
-ninguém clicar) **não foi comprovada** — veja "Registro e pendências" abaixo.
+foram aprovados, e a janela natural de 14/11 rodou (**com quase 7 horas de atraso**). **Correção de confiabilidade
+PREPARADA, NÃO ativada:** encerramento explícito da sessão que segura o snapshot e quatro janelas por dia com trava
+de 20 horas — veja "Confiabilidade do backup" abaixo e "Registro e pendências".
 
 ## O que existe e por quê
 
@@ -28,8 +29,8 @@ falhar). A restauração só aceita `v2` com o snapshot declarado.
 Tudo o que entra no pacote — os 4 dumps, as contagens de estrutura (tabelas, constraints, RLS, políticas,
 gatilhos, funções) e a conferência de linhas do manifesto — vem do **mesmo snapshot**. Mecanismo: uma sessão
 auxiliar abre uma transação `REPEATABLE READ, READ ONLY`, exporta o snapshot (`pg_export_snapshot()`) e **a
-mantém aberta**; cada `pg_dump` roda com `--snapshot=<id>` e as consultas de catálogo/contagem rodam dentro dessa
-mesma transação. Depois dos dumps, as linhas de cada tabela nos dumps são **conferidas com a contagem tirada
+mantém aberta só enquanto os dumps rodam** (o encerramento dela é explicado em "Confiabilidade do backup"); cada
+`pg_dump` roda com `--snapshot=<id>` e as consultas de catálogo/contagem rodam dentro dessa mesma transação. Depois dos dumps, as linhas de cada tabela nos dumps são **conferidas com a contagem tirada
 dentro do snapshot** (`snapshot_inconsistente` se divergir). Se a sessão cair, o backup falha fechado
 (`snapshot_falhou`). Nenhuma escrita é bloqueada e a produção não é pausada (a transação só lê; o `pg_dump` toma
 apenas `ACCESS SHARE`, que não conflita com INSERT/UPDATE/DELETE). Foi provado com escritas confirmadas **entre**
@@ -82,12 +83,73 @@ criada, nenhum secret foi cadastrado, nada foi copiado do Storage hospedado e o 
   usada fica registrada no manifesto.
 - **Modelo de workflow:** o mesmo `backup-diario.yml` passa a fazer o backup do banco **e** o do Storage na mesma
   rodada e falha se qualquer um falhar. Envia só os **quatro** arquivos criptografados (banco e Storage, cada um com
-  o checksum). Cron `30 7 * * *`, concorrência 1, timeout, retenção de 30 dias e Actions fixadas continuam iguais.
-  **Não foi copiado para o repositório privado.**
+  o checksum). Cron `30 7 * * *`, concorrência 1, timeout, retenção de 30 dias e Actions fixadas continuam iguais
+  (a correção de confiabilidade de 14/11 acrescentou três janelas e a trava de 20 horas: veja "Confiabilidade do
+  backup" abaixo). **Não foi copiado para o repositório privado.**
 - **Para ativar (etapa futura, com ordem):** criar exatamente um par S3 dedicado, cadastrar os quatro secrets no
   repositório privado, copiar o modelo e os scripts novos, rodar uma vez por `workflow_dispatch` e **restaurar de
   verdade num destino local** antes de remover o bloqueio de lançamento. Os PDFs nunca aparecem em log nem em
   artefato em texto claro.
+
+## Confiabilidade do backup: sessão do snapshot e agendamento — PREPARADO, NÃO ativado
+
+Dois defeitos reais apareceram em 14/11/2026, **sem perda de dado**. A correção está no código e no modelo, mas
+**não foi copiada para o repositório privado nem confirmada por um backup natural**: até isso acontecer, o backup ativo
+continua sendo o anterior (uma janela às 07:30 UTC e o segurador antigo).
+
+**1. A sessão que segura o snapshot ficava órfã.** A versão anterior mantinha a transação com `select
+pg_sleep(14400)` e, no fim, só matava o `psql` local. O servidor não percebe que o cliente morreu enquanto executa uma
+consulta; a sessão ficou até 4 horas com a transação aberta e centenas de `ACCESS SHARE LOCK` (que **bloqueiam
+migrations**). Foi vista no banco hospedado depois do backup natural de 14/11 e reproduzida em conexão direta no
+Postgres local. Agora:
+
+- a sessão leva o `application_name` exclusivo `praxis-backup-snapshot` (só durante a transação) e fica **ociosa** no
+  servidor — nada de `pg_sleep`. Um laço do cliente manda um batimento a cada 10 s, e o servidor tem tetos
+  (`idle_in_transaction_session_timeout` de 5 min, `statement_timeout` de 10 min, `lock_timeout` de 1 min): se o
+  cliente sumir sem avisar, o próprio Postgres derruba a sessão em minutos;
+- no **sucesso**, antes de declarar o backup concluído: `COMMIT` e fim da sessão, **conferidos por uma segunda
+  conexão** (`snapshot_falhou` se ela já tinha caído; `segurador_nao_encerrado` se não houve como encerrá-la);
+- em **qualquer falha ou sinal** (dump, criptografia, manifesto, TERM), a limpeza faz o mesmo; uma queda inesperada da
+  sessão falha fechada (conferida antes de cada dump e antes de encerrar);
+- **último recurso**, só se a sessão não encerrar sozinha em cerca de 15 s: `pg_terminate_backend` preso à
+  identidade exata dela (PID do backend + rótulo + banco + usuário + início da transação), que nunca atinge outra
+  sessão (testado com sessões-isca, uma delas com o mesmo rótulo). O log registra só `AVISO:
+  segurador_encerrado_por_fallback`;
+- nunca imprime PID, snapshot, URL, senha ou saída das ferramentas; o formato `praxis-backup/v2` e a restauração
+  **não mudaram**;
+- com o **Session pooler** do Supabase, o servidor pode manter a conexão ociosa no pool depois do fim da sessão; o
+  que não pode restar é transação aberta, `PgSleep`, o rótulo do segurador e travas. Isso só se confirma num backup
+  natural real.
+
+**2. O agendamento diário atrasou quase 7 horas.** O GitHub não garante o horário (e pode descartar a execução). O
+modelo passa a ter **quatro oportunidades por dia** — 07:30, 11:30, 15:30 e 19:30 UTC (04:30, 08:30, 12:30 e 16:30 em
+Brasília) — mas **no máximo um backup completo a cada 20 horas**:
+
+- o job `janela` roda primeiro e consulta **só metadados** dos artefatos do próprio repositório, com o
+  `GITHUB_TOKEN` efêmero (`actions` somente leitura **só neste job**; `contents` somente leitura; nenhuma permissão
+  de escrita, nenhum secret, nenhuma ferramenta instalada);
+- execução **agendada** com backup **completo e bem-sucedido** com menos de 20 horas: encerra com sucesso e o job
+  `backup` (o único com secrets) é **pulado** — sem tocar em banco, Storage ou secrets;
+- "completo e bem-sucedido": artefato `praxis-backup-<id da execução>` não expirado, não vazio, ligado à execução que
+  o nome indica, cuja execução terminou com `success` **neste mesmo workflow**. Falhou, foi cancelada ou ainda roda:
+  não conta;
+- sem backup recente (ausente, antigo ou inválido): executa banco e Storage normalmente;
+- **`workflow_dispatch` sempre executa**, sem a trava e sem consultar a API;
+- se a consulta ao GitHub falhar, a janela **falha fechada** (job vermelho, backup não roda): nunca presume que há
+  backup recente;
+- só código fechado e idade agregada no log (`janela: backup_recente idade_horas=N limite_horas=20 ->
+  nao_executar`); nada de nome de arquivo, endereço ou token;
+- continuam: concorrência 1, timeout de 30 minutos, retenção de 30 dias, `checkout` e `upload-artifact` nos SHAs já
+  aprovados, nenhuma Action nova, nenhum `pull_request`.
+
+O objetivo é ter várias oportunidades, mas produzir no máximo um backup completo por janela de 20 horas: o **RPO
+continua em aproximadamente 24 horas** (com janelas perdidas, até a próxima oportunidade).
+
+**Para ativar (etapa futura, com ordem de João):** copiar `backup-diario.yml` e a pasta `scripts/backup/` para o
+repositório privado — atenção: o modelo atual **também faz o backup do Storage**, que exige os quatro secrets
+`BACKUP_STORAGE_S3_*`; sem eles o passo do Storage falha e nenhum artefato é gerado; rodar um `workflow_dispatch`;
+deixar uma janela **natural** rodar; conferir, no banco hospedado e só em leitura, que não sobrou nenhuma sessão
+`praxis-backup-snapshot`, `PgSleep` ou transação aberta. **Só depois disso** a correção conta como ativada.
 
 ## A chave privada (a parte que não pode falhar)
 
@@ -121,10 +183,11 @@ criada, nenhum secret foi cadastrado, nada foi copiado do Storage hospedado e o 
 | 13/11/2026, logo após o 1º backup | **Restauração local real** desse pacote (PostgreSQL 17 descartável, apagado ao fim) | `restauracao_validada`: 77 tabelas, 221 FKs, 635 constraints; ledger de migrations 117, última `20261113120000`; contagens de linhas por tabela **idênticas** às de Production |
 | 13/11/2026 07:30 | **Primeira janela natural** | **não gerou execução** (causa não determinada) |
 | 13/11/2026 12:38 | Backup **manual de proteção** (run 43426917896), depois de regravar o workflow com o comentário YAML para registrar de novo o agendamento | sucesso em 153 s; 595.535 bytes; checksum conferido; **não** restaurado |
-| 14/11/2026 07:30 | **Próxima janela natural** — é a prova que falta | **aguardando comprovação** |
+| 14/11/2026 14:22 | **Janela natural de 07:30** (run 43604486303, por `schedule`) | **rodou com ~6 h 52 min de atraso**; sucesso em 2 min 28 s; a sessão do snapshot ficou órfã no banco (ver "Confiabilidade do backup") |
 
-- A primeira execução natural **ainda não foi comprovada**. Até ser, não se deve tratar o agendamento como
-  confiável; o RPO de ~24 h só vale enquanto houver um backup novo por dia.
+- A primeira execução natural **foi comprovada, mas atrasada** (a de 13/11 nem ocorreu). O agendamento do GitHub não é
+  confiável quanto ao horário: o RPO de ~24 h só vale enquanto houver um backup novo por dia. A correção preparada
+  (quatro janelas com trava de 20 h) reduz esse risco, mas **só vale depois de ativada**.
 - Os dois pacotes manuais ficaram guardados criptografados (com o checksum) no computador de João, fora de
   qualquer repositório.
 - **Restauração em um projeto Supabase novo** (migrations primeiro, dados do pacote depois) **continua pendente**:

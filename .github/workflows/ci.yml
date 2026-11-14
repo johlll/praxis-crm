@@ -316,6 +316,16 @@ jobs:
           CHECK_RESTORE_SERVER_URL: postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres
         run: bash scripts/backup/check-backup-snapshot.sh
 
+      - name: Sessão do snapshot do backup — encerramento em toda saída (B6c — banco local sintético)
+        # A sessão que segura o snapshot exportado tem de sumir (transação, backend e travas) em TODA saída do backup:
+        # sucesso, falha de dump, de criptografia e do manifesto, sinal, queda da sessão, morte do cliente (kill -9)
+        # e sessão presa no servidor (último recurso preso à identidade exata, poupando sessões-isca). O log só pode
+        # ter códigos fechados. Só o Postgres LOCAL do Supabase — ver scripts/backup/check-backup-sessao.sh.
+        env:
+          CHECK_BACKUP_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+          CHECK_RESTORE_SERVER_URL: postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres
+        run: bash scripts/backup/check-backup-sessao.sh
+
       - name: Backup criptografado e restauração do Storage (C5a.1 — Supabase local, PDFs sintéticos)
         # Backup SÓ de leitura (aws s3api: ListObjectsV2, HeadObject e GetObject) do bucket proposal-documents do
         # Supabase LOCAL e restauração num bucket local esvaziado, com PDFs sintéticos sem PII e a chave S3 do

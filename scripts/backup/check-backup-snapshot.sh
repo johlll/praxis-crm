@@ -159,7 +159,7 @@ cat >"$ROOT/shim/psql" <<SHIM
 #!/usr/bin/env bash
 case " \$* " in
   *" -c "*|*" --version "*) exec "$REAL_PSQL" "\$@" ;;
-  *) cat >/dev/null; exit 1 ;;   # a sessão do snapshot cai logo no início
+  *) exit 1 ;;   # a sessão do snapshot cai logo no início (sem ler a entrada, como um psql que não conecta)
 esac
 SHIM
 chmod +x "$ROOT/shim/psql"
