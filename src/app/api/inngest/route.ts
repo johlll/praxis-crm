@@ -96,15 +96,15 @@ const privacyRetentionScheduler = client.createFunction(PRIVACY_RETENTION_SCHEDU
 );
 
 // Agendador do reconciliador da outbox da A11: função própria, só por relógio (a cada 10 minutos), que roda a
-// MESMA operação da rota `/api/cron/outbox` (ver ./a11-reconciler-scheduler.ts). Preparada, não ativada: só
-// passa a rodar quando o app for sincronizado no Inngest; o workflow do GitHub continua valendo até lá.
+// MESMA operação da rota `/api/cron/outbox` (ver ./a11-reconciler-scheduler.ts). Sincronizada no Inngest em
+// 13/11/2026; o workflow do GitHub continua valendo até uma PR separada retirar o `schedule`.
 const a11ReconcilerScheduler = client.createFunction(A11_RECONCILER_SCHEDULER_FUNCTION_CONFIG, async ({ step }) =>
   handleA11ReconcilerScheduler({ step }),
 );
 
 // Agendador da manutenção de retenção da A11 (eventos travados, alerta de vencimento e vencimento dos 30 dias): função
-// própria, SEPARADA do reconciliador (uma falha não impede a outra), só por relógio (a cada 10 minutos), que roda a
-// MESMA operação da rota `/api/cron/retention` (ver ./a11-retention-scheduler.ts). Preparada, não ativada.
+// própria, SEPARADA do reconciliador (uma falha não impede a outra), só por relógio (uma vez por hora, minuto 23),
+// que roda a MESMA operação da rota `/api/cron/retention` (ver ./a11-retention-scheduler.ts). Sincronizada em 13/11/2026.
 const a11RetentionScheduler = client.createFunction(A11_RETENTION_SCHEDULER_FUNCTION_CONFIG, async ({ step }) =>
   handleA11RetentionScheduler({ step }),
 );

@@ -2,7 +2,7 @@
  * @vitest-environment node
  *
  * A11 — agendador periódico da MANUTENÇÃO DE RETENÇÃO no app geral do Inngest (`praxis-crm`, `/api/inngest`), em
- * função PRÓPRIA (`a11-retention-scheduler`), a cada 10 minutos, separada do reconciliador da outbox
+ * função PRÓPRIA (`a11-retention-scheduler`), de hora em hora (minuto 23), separada do reconciliador da outbox
  * (`a11-reconciler-scheduler`). Faz tudo o que hoje depende de `/api/cron/retention` e nada além disso: eventos
  * travados, alerta antecipado de vencimento e o vencimento dos 30 dias. Prepara a retirada do `schedule` instável do
  * GitHub Actions sem ativar nada: o workflow e a rota continuam como estão. Só as proteções essenciais:
@@ -10,7 +10,8 @@
  *  A. a rota `/api/cron/retention` (usada pelo workflow) se comporta como antes da extração da operação
  *     compartilhada: mesmos limites, mesma ordem, mesmas respostas, mesmos alertas e mesmos códigos;
  *  B. o payload real da sincronização (SDK real, sem rede) tem EXATAMENTE cinco funções; a nova leva só o cron de
- *     10 em 10 minutos, concorrência 1 e 0 retries; A11 (evento), C1, C3b e o reconciliador ficam iguais;
+ *     de hora em hora (minuto 23), concorrência 1 e 0 retries; A11 (evento), C3b e o reconciliador ficam iguais e a C1
+ *     só muda de 2 para 10 minutos (franquia do Inngest);
  *  C. a função chama a MESMA operação da rota, com os mesmos limites, e devolve só contagens;
  *  D. configuração ausente falha antes do banco; erro do banco ou resposta inválida falham com código fechado,
  *     sem mensagem original, payload, dado pessoal ou segredo; os alertas saem como sempre (só identificadores);
@@ -179,7 +180,7 @@ async function funcoesSincronizadas(): Promise<SyncedFunction[]> {
 /** Executa a função de retenção com o SDK real (assinatura válida, sem rede). */
 async function executarNoSdk(eventId: string, runId: string, fnId = FN_RETENCAO) {
   const route = await import("@/app/api/inngest/route");
-  const ev = { name: "inngest/scheduled.timer", data: { cron: "*/10 * * * *" }, id: eventId, ts: Date.now() };
+  const ev = { name: "inngest/scheduled.timer", data: { cron: "23 * * * *" }, id: eventId, ts: Date.now() };
   const body = JSON.stringify({
     event: ev,
     events: [ev],
@@ -303,9 +304,9 @@ describe("B. o payload real da sincronização", () => {
     expect(functions).toHaveLength(5);
   });
 
-  it("2–3. cron exatamente `*/10 * * * *` e nenhum outro gatilho (nenhum evento)", async () => {
+  it("2–3. cron exatamente `23 * * * *` (de hora em hora, no minuto 23) e nenhum outro gatilho (nenhum evento)", async () => {
     const fn = (await funcoesSincronizadas()).find((f) => f.id === FN_RETENCAO);
-    expect(fn?.triggers).toEqual([{ cron: "*/10 * * * *" }]);
+    expect(fn?.triggers).toEqual([{ cron: "23 * * * *" }]);
   });
 
   it("4. concorrência exatamente 1", async () => {
@@ -337,11 +338,11 @@ describe("B. o payload real da sincronização", () => {
     expect(Object.values(fn?.steps ?? {}).map((s) => s.retries)).toEqual([{ attempts: 9 }]);
   });
 
-  it("14. a C1 e a C3b permanecem iguais", async () => {
+  it("14. a C1 (agora a cada 10 minutos) e a C3b permanecem iguais nos demais campos", async () => {
     const functions = await funcoesSincronizadas();
     const c1 = functions.find((f) => f.id === FN_C1);
     const c3b = functions.find((f) => f.id === FN_C3B);
-    expect(c1?.triggers).toEqual([{ cron: "*/2 * * * *" }]);
+    expect(c1?.triggers).toEqual([{ cron: "*/10 * * * *" }]);
     expect(c1?.concurrency).toEqual({ limit: 1 });
     expect(Object.values(c1?.steps ?? {}).map((s) => s.retries)).toEqual([{ attempts: 0 }]);
     expect(c3b?.triggers).toEqual([{ cron: "17 6 * * *" }]);
@@ -352,7 +353,7 @@ describe("B. o payload real da sincronização", () => {
   it("a configuração do arquivo: id claro, gatilho só de relógio, sem evento", () => {
     const fonte = semComentarios(lerFonte("src/app/api/inngest/a11-retention-scheduler.ts"));
     expect(fonte).toContain('id: "a11-retention-scheduler" as const');
-    expect(fonte).toContain('triggers: [{ cron: "*/10 * * * *" }]');
+    expect(fonte).toContain('triggers: [{ cron: "23 * * * *" }]');
     expect(fonte).toContain("concurrency: { limit: 1 }");
     expect(fonte).toContain("retries: 0 as const");
     expect(fonte).not.toMatch(/event:\s*["'`A-Z]|\.send\(|inngestClient\(|inngestPublisher/);
@@ -743,7 +744,7 @@ describe("G. isolamento: nada da agenda, do WhatsApp ou da Vitória, e nenhuma c
     expect(rota).toContain("retries: A11_INGEST_MAX_RETRIES");
     expect(rota).toContain("triggers: [{ event: FORM_EVENT_NAME }]");
     expect(rota).toContain("export const A11_INGEST_MAX_RETRIES = 9;");
-    expect(lerFonte("src/app/api/inngest/automations-scheduler.ts")).toContain('triggers: [{ cron: "*/2 * * * *" }]');
+    expect(lerFonte("src/app/api/inngest/automations-scheduler.ts")).toContain('triggers: [{ cron: "*/10 * * * *" }]');
     expect(lerFonte("src/app/api/inngest/privacy-retention-scheduler.ts")).toContain('triggers: [{ cron: "17 6 * * *" }]');
   });
 

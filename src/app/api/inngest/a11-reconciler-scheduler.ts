@@ -15,12 +15,12 @@ import { inngestPublisher } from "@/server/ingest/publisher";
  * cada 10 minutos) é instável — intervalos observados de 3,4 a 10,6 horas (mediana 6,5 h), só 4 execuções em
  * 24 h contra 144 esperadas. O Inngest dispara por relógio próprio.
  *
- * ESTADO: preparada, NÃO ativada. Enquanto o app não for sincronizado no Inngest, esta função não roda; o
- * workflow antigo continua em funcionamento. Sequência futura: (1) merge e deploy; (2) sincronizar o app
- * `praxis-crm`; (3) observar pelo menos duas execuções naturais; (4) confirmar que o workflow antigo rodando ao
- * mesmo tempo não duplica efeito (o banco reserva cada linha uma única vez); (5) SÓ ENTÃO, em PR separada,
- * retirar o `schedule` do GitHub e manter o `workflow_dispatch` como contingência. ATENÇÃO ao passo 5: o mesmo
- * workflow também chama `/api/cron/retention` (retenção e alertas da A11), que NÃO é coberta por esta função.
+ * ESTADO: sincronizada no Inngest em 13/11/2026 (65 de 65 runs concluídos, sem retry nem duplicação, na observação
+ * natural); o workflow antigo continua em funcionamento. Sequência futura: (1) observar a coincidência com o
+ * workflow antigo e confirmar que não duplica efeito (o banco reserva cada linha uma única vez); (2) SÓ ENTÃO, em
+ * PR separada, retirar o `schedule` do GitHub e manter o `workflow_dispatch` como contingência. ATENÇÃO: o mesmo
+ * workflow também chama `/api/cron/retention` (retenção e alertas da A11), que é coberta pela função própria
+ * `a11-retention-scheduler` (uma vez por hora), não por esta.
  *
  * Sem acionamento por evento: o gatilho é exclusivamente o relógio. Um único passo. Sem chamada ao WhatsApp, à
  * agenda ou à Vitória: só as RPCs da operação compartilhada e a publicação do evento da A11 no Inngest.
@@ -30,10 +30,12 @@ import { inngestPublisher } from "@/server/ingest/publisher";
  * duas rodadas em paralelo daqui; contra o workflow antigo valem as travas do banco. A falha de publicação de
  * UM item não derruba a rodada: vira contagem (`failed`) e o banco reagenda o item em 60 s, como na rota.
  *
- * Capacidade (franquia conhecida do Inngest: 50.000 execuções por mês): a cada 10 minutos são 144 execuções por
- * dia, cerca de 4.320 por mês (30 dias). Somadas à C1 (a cada 2 min, ~21.600 por mês) e à C3b (diária, ~31 por
- * mês), o total periódico fica em ~25.951 por mês, MAIS as execuções por evento da A11, a agenda e o WhatsApp.
- * Continua abaixo da franquia, mas precisa de acompanhamento. NÃO reduzir o intervalo sem reavaliar o plano.
+ * Capacidade (franquia do plano Hobby: 50.000 EXECUÇÕES por mês): o Inngest cobra 3 execuções por run de um passo
+ * (o run, o passo e a finalização). A cada 10 minutos são 144 runs por dia, 4.320 por mês e 12.960 execuções por
+ * mês (30 dias). Total periódico do app: C1 a cada 10 min 12.960 + esta função 12.960 + retenção da A11 horária
+ * 2.160 + C3b diária 90 = 28.170 execuções por mês (9.390 runs), com margem de ~21.830 para os eventos. A
+ * estimativa anterior contava runs, não execuções faturáveis. NÃO encurtar o intervalo nem ativar a Agenda ou o
+ * WhatsApp sem novo cálculo; no Hobby, atingir o limite PAUSA as funções.
  *
  * Só o código fechado sai daqui: nunca a mensagem do banco, payload, dado pessoal, URL ou segredo. Sem log
  * próprio. O retorno de sucesso são só as quatro contagens.

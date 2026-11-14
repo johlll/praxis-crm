@@ -55,20 +55,30 @@ rota). Tela: `Automações` (`/automacoes`).
 
 - **O que existe.** Uma função própria do Inngest, `c1-automations-scheduler`, no
   app geral `praxis-crm` (`/api/inngest`), isolada do worker da A11. Cron
-  `*/2 * * * *` (a cada 2 minutos), concorrência 1 e `retries: 0`. Chama só
+  `*/10 * * * *` (a cada 10 minutos; era `*/2`, reduzido em 14/11/2026 por causa
+  da franquia do Inngest, veja "Custo"), concorrência 1 e `retries: 0`. Chama só
   `process_automation_events_system`, com lote máximo de 100 por rodada (a sobra
   fica para o ciclo seguinte), e devolve só `{ events, executions }`. Código em
   `src/app/api/inngest/automations-scheduler.ts`.
 - **Tentativas ficam no banco.** O banco controla as 4 tentativas e a espera
   (1, 5 e 30 minutos) e o dead-letter. Se uma execução da função falhar (a
-  falha sai só com código, sem mensagem do banco), **a próxima rodada de 2
-  minutos é a recuperação**: ela retoma tudo o que estiver vencido.
-- **Custo.** Cerca de 21.600 execuções por mês (30 por hora, 720 por dia), com
-  margem na franquia atual de 50.000 execuções do Inngest para A11, B2, B3 e as
-  execuções reais. Não passar para 1 minuto sem reavaliar o plano.
+  falha sai só com código, sem mensagem do banco), **a próxima rodada de 10
+  minutos é a recuperação**: ela retoma tudo o que estiver vencido. O
+  processamento continua sendo pedido **na hora** pelas operações de lead e de
+  mudança de etapa (`scheduleAutomationRun`), pelo botão "Processar agora" e
+  pela rota de contingência; o relógio só recupera e processa as novas
+  tentativas. Um atraso máximo de 10 minutos é suficiente para o MVP.
+- **Custo.** O Inngest cobra 3 execuções por run de um passo. A cada 10 minutos
+  são 144 runs por dia, 4.320 por mês e **12.960 execuções por mês**, dentro da
+  franquia do plano Hobby (50.000 execuções por mês) junto com a A11 (28.170 por
+  mês no total periódico do app; margem de cerca de 21.830 para os eventos). A
+  estimativa original desta seção (~21.600 por mês a cada 2 minutos) contava
+  runs, não execuções: o consumo real era de ~64.800 por mês. Não encurtar o
+  intervalo sem recalcular o consumo (veja o runbook, "Consumo do Inngest").
 - **Contingência.** `/api/cron/automations` continua como rodada manual
   (`CRON_SECRET`), com o mesmo contrato.
-- **Ainda não operacional.** A função só passa a rodar depois que o app
+- **Ainda não operacional.** (Superado: o app foi sincronizado em 9/11/2026 e a
+  C1 é operacional em Production.) A função só passa a rodar depois que o app
   `praxis-crm` for **sincronizado no Inngest** (etapa externa, não feita nesta
   PR). Enquanto isso, a C1 não é operacional em Production: a primeira tentativa
   segue em melhor esforço e os retries dependem de nova rodada manual ou
