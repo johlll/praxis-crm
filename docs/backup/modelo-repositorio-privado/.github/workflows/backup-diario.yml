@@ -18,17 +18,30 @@
 #        BACKUP_STORAGE_S3_ENDPOINT, BACKUP_STORAGE_S3_REGION,
 #        BACKUP_STORAGE_S3_ACCESS_KEY_ID, BACKUP_STORAGE_S3_SECRET_ACCESS_KEY;
 #   4. rodar uma vez por "Run workflow" (workflow_dispatch) e conferir o artefato;
-#   5. só depois deixar o agendamento diário valer.
+#   5. só depois deixar o agendamento valer.
 #
 # O workflow tem guardas: não roda no repositório público do Praxis, nem em qualquer repositório que
 # não seja privado, e não responde a pull_request.
+#
+# AGENDAMENTO RESISTENTE A ATRASO: o agendamento do GitHub é de melhor esforço (uma janela de 07:30 já rodou quase
+# sete horas depois, e o GitHub pode descartar uma execução sem avisar). Por isso há QUATRO oportunidades por
+# dia, mas no máximo UM backup completo a cada 20 horas: o job `janela` roda primeiro e consulta SÓ os metadados
+# dos artefatos deste próprio repositório (token efêmero, somente leitura). Se já existe um backup completo e
+# bem-sucedido com menos de 20 horas, ele encerra com sucesso e o job `backup` NÃO roda — sem instalar nada e sem
+# tocar em banco, Storage ou secrets. Sem backup recente, o backup roda normalmente. O disparo manual
+# (workflow_dispatch) ignora a trava e SEMPRE executa. Se a consulta ao GitHub falhar, a janela falha fechada
+# (nunca presume que há backup recente). O objetivo continua sendo um RPO de aproximadamente 24 horas.
 # =====================================================================================================
 name: Backup diário do Praxis (modelo)
 
 on:
   schedule:
-    # 07:30 UTC = 04:30 em Brasília, depois do lote diário de retenção da C3b (06:17 UTC).
+    # Quatro oportunidades diárias, todas depois do lote diário de retenção da C3b (06:17 UTC).
+    # 07:30 UTC = 04:30 em Brasília; 11:30, 15:30 e 19:30 UTC são as janelas de reserva.
     - cron: "30 7 * * *"
+    - cron: "30 11 * * *"
+    - cron: "30 15 * * *"
+    - cron: "30 19 * * *"
   workflow_dispatch:
 
 # Uma execução por vez; uma nova NÃO cancela a que está rodando.
@@ -41,9 +54,93 @@ permissions:
   contents: read
 
 jobs:
-  backup:
-    # Nunca no repositório público do Praxis (o segundo guarda, "privado", está no primeiro passo).
+  janela:
+    # Decide se já existe um backup completo recente. Nunca no repositório público do Praxis. Não tem secrets,
+    # não instala nada e só LÊ metadados dos artefatos deste repositório (a leitura de Actions é a única
+    # permissão a mais, e só neste job).
     if: ${{ github.repository != 'johlll/praxis-crm' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      executar: ${{ steps.decidir.outputs.executar }}
+    steps:
+      - name: Exigir repositório PRIVADO
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.private')" = "true"
+
+      - name: Decidir se já existe um backup completo recente (só metadados dos artefatos)
+        id: decidir
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIMITE_HORAS: "20"
+        run: |
+          set -euo pipefail
+
+          saida() { printf 'executar=%s\n' "$1" >>"$GITHUB_OUTPUT"; }
+          falhar() { printf 'ERRO: %s\n' "$1" >&2; exit 1; }
+
+          # Disparo manual: SEMPRE executa, sem a trava de 20 horas e sem consultar nada.
+          # Execução agendada: só executa se não houver backup completo recente. Qualquer outro evento é inesperado.
+          case "${GITHUB_EVENT_NAME}" in
+            workflow_dispatch)
+              echo "janela: disparo_manual -> executar"
+              saida true
+              exit 0
+              ;;
+            schedule) ;;
+            *) falhar evento_inesperado ;;
+          esac
+
+          limite=$((LIMITE_HORAS * 3600))
+          agora="$(date -u +%s)"
+          # Caminho DESTE workflow neste repositório: só contam execuções dele.
+          meu_caminho="${GITHUB_WORKFLOW_REF#"${GITHUB_REPOSITORY}/"}"
+          meu_caminho="${meu_caminho%%@*}"
+
+          # 1. Só METADADOS dos artefatos do próprio repositório (nunca o conteúdo): idade em segundos e a execução
+          #    que o gerou, do mais novo para o mais antigo. Conta só artefato não expirado, não vazio, com o nome
+          #    do backup e ligado à execução que o nome indica. Qualquer falha de consulta falha fechado.
+          candidatos="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" 2>/dev/null \
+            | jq -r --argjson agora "$agora" '
+                .artifacts[]
+                | select(.expired == false and .size_in_bytes > 0 and (.name | test("^praxis-backup-[0-9]+$")))
+                | select((.name | sub("^praxis-backup-"; "")) == (.workflow_run.id | tostring))
+                | [([($agora - (.created_at | fromdateiso8601)), 0] | max), (.workflow_run.id | tostring)]
+                | @tsv' 2>/dev/null \
+            | tr -d '\r' | sort -n)" || falhar estado_anterior_indisponivel
+
+          while IFS=$'\t' read -r idade execucao; do
+            [ -n "${execucao}" ] || continue
+            [[ "${idade}" =~ ^[0-9]+$ && "${execucao}" =~ ^[0-9]+$ ]] || falhar estado_anterior_indisponivel
+            [ "${idade}" -lt "${limite}" ] || continue
+            # 2. Só conta se a execução que gerou o artefato terminou com SUCESSO, neste mesmo workflow.
+            situacao="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${execucao}" 2>/dev/null \
+              | jq -r '[.status, .conclusion, ((.path // "") | sub("@.*$"; ""))] | @tsv' 2>/dev/null \
+              | tr -d '\r')" || falhar estado_anterior_indisponivel
+            if [ "${situacao}" = "$(printf 'completed\tsuccess\t%s' "${meu_caminho}")" ]; then
+              echo "janela: backup_recente idade_horas=$((idade / 3600)) limite_horas=${LIMITE_HORAS} -> nao_executar"
+              saida false
+              exit 0
+            fi
+          done <<<"${candidatos}"
+
+          echo "janela: sem_backup_recente limite_horas=${LIMITE_HORAS} -> executar"
+          saida true
+
+  backup:
+    needs: janela
+    # Só roda se a janela mandar executar (nenhum backup completo com menos de 20 horas) ou em disparo manual.
+    # Nunca no repositório público do Praxis (o segundo guarda, "privado", está no primeiro passo).
+    if: ${{ github.repository != 'johlll/praxis-crm' && needs.janela.outputs.executar == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:

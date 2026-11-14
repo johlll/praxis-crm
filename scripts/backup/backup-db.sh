@@ -13,14 +13,31 @@
 # (auth.users e auth.identities + schemas public, private e supabase_migrations; Storage NÃO entra).
 #
 # UM ÚNICO SNAPSHOT: tudo o que entra no pacote (os 4 dumps, as contagens de estrutura e a conferência de
-# linhas do manifesto) enxerga exatamente o mesmo instante do banco. Uma sessão auxiliar abre uma
-# transação REPEATABLE READ, READ ONLY, exporta o snapshot (pg_export_snapshot) e o MANTÉM ABERTO; cada
+# linhas do manifesto) enxerga exatamente o mesmo instante do banco. Uma sessão auxiliar (o "segurador") abre
+# uma transação REPEATABLE READ, READ ONLY, exporta o snapshot (pg_export_snapshot) e o MANTÉM ABERTO; cada
 # pg_dump usa esse snapshot (--snapshot) e as consultas de catálogo rodam dentro dessa mesma transação.
 # Nenhuma escrita é bloqueada (a transação é só de leitura e só ela segura o snapshot; o pg_dump pega apenas
 # ACCESS SHARE) e a produção não é pausada.
 #
+# CICLO DE VIDA DO SEGURADOR (explícito e determinístico):
+#   - a transação leva o application_name EXCLUSIVO "praxis-backup-snapshot" (só durante a transação), o que
+#     permite conferir de fora que ela acabou;
+#   - ela só vive enquanto os dumps rodam. A espera é do CLIENTE (um laço que manda um batimento a cada 10 s):
+#     no servidor a sessão fica OCIOSA, sem nenhuma consulta rodando — nada de pg_sleep, que o servidor não
+#     interrompe quando o cliente morre (foi assim que a versão anterior deixou sessões órfãs por até 4 horas,
+#     com a transação aberta e centenas de ACCESS SHARE LOCK);
+#   - no sucesso, ANTES de declarar o backup concluído: COMMIT e fim da sessão, conferidos por uma segunda
+#     conexão. Em falha ou sinal, a limpeza faz o mesmo. Só se a sessão não acabar sozinha entra o último
+#     recurso (pg_terminate_backend), preso à identidade EXATA da sessão (PID + rótulo + banco + usuário +
+#     início da transação) para jamais atingir outra;
+#   - tetos no servidor: idle_in_transaction_session_timeout (5 min), statement_timeout (10 min) e lock_timeout
+#     (1 min). Se o cliente sumir sem avisar (rede, runner morto), o próprio Postgres derruba a sessão em poucos
+#     minutos, sem depender deste script; e a sessão nunca fica presa esperando consulta ou trava;
+#   - se a sessão cair no meio, o backup falha fechado (snapshot_falhou).
+#
 # Nada de texto claro sobrevive: a pasta de trabalho é apagada ao terminar OU falhar, e uma falha
-# também remove qualquer saída parcial. Só imprime códigos fechados — nunca URL, senha, SQL ou dado.
+# também remove qualquer saída parcial. Só imprime códigos fechados — nunca URL, senha, PID, snapshot, SQL
+# ou dado.
 set -euo pipefail
 umask 077
 
@@ -29,20 +46,104 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/lib.sh"
 
 WORK=""
-HOLDER_PID=""
+ERR=""
+HOLDER_APP="praxis-backup-snapshot" # application_name exclusivo e fechado da sessão que segura o snapshot
+HOLDER_OUT=""
+HOLDER_ERR=""
+HOLDER_STOP=""
+HOLDER_PID=""        # processo do psql local que mantém a sessão (nunca impresso)
+HOLDER_BACKEND_PID="" # PID do backend no servidor, lido da própria sessão (nunca impresso)
+HOLDER_XACT_START=""  # início da transação do segurador, parte da identidade (nunca impresso)
+HOLDER_WHERE=""       # condição SQL que identifica INEQUIVOCAMENTE essa sessão
+HOLDER_CLOSED=0
+HOLD_MAX_TICKS=7500   # teto de vida da sessão: 7500 x 0,2 s = 25 min (o job inteiro tem 30)
+TS_FMT='YYYY-MM-DD"T"HH24:MI:SS.US'
 OUT_FILES=()
 OK=0
-stop_holder() { # encerra a sessão que segura o snapshot (a transação some junto)
-  if [ -n "$HOLDER_PID" ]; then
-    kill "$HOLDER_PID" 2>/dev/null || true
-    wait "$HOLDER_PID" 2>/dev/null || true
-    HOLDER_PID=""
-  fi
+
+read_holder_identity() { # lê (sem imprimir) o PID do backend e o início da transação que a sessão publicou
+  local linha resto pid ts
+  [ -r "$HOLDER_OUT" ] || return 1
+  while IFS= read -r linha; do
+    linha="${linha%$'\r'}"
+    case "$linha" in
+      HOLDER:*)
+        resto="${linha#HOLDER:}"
+        pid="${resto%%:*}"
+        ts="${resto#*:}"
+        [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+        [[ "$ts" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}$ ]] || return 1
+        HOLDER_BACKEND_PID="$pid"
+        HOLDER_XACT_START="$ts"
+        HOLDER_WHERE="pid = ${HOLDER_BACKEND_PID} and application_name = '${HOLDER_APP}' and datname = current_database() and usename = current_user and backend_type = 'client backend' and to_char(xact_start at time zone 'UTC', '${TS_FMT}') = '${HOLDER_XACT_START}'"
+        return 0
+        ;;
+    esac
+  done <"$HOLDER_OUT"
+  return 1
 }
+
+holder_present() { # 0 = a sessão do segurador ainda existe; 1 = não existe mais; 2 = não deu para saber
+  local n
+  [ -n "$HOLDER_WHERE" ] || return 2
+  n="$(psql -X -At -q -v ON_ERROR_STOP=1 -c "select count(*) from pg_stat_activity where $HOLDER_WHERE" 2>>"$ERR")" || return 2
+  n="${n%$'\r'}"
+  case "$n" in
+    0) return 1 ;;
+    1) return 0 ;;
+    *) return 2 ;;
+  esac
+}
+
+terminate_holder() { # ÚLTIMO RECURSO: derruba SÓ a sessão identificada por HOLDER_WHERE (e nenhuma outra)
+  [ -n "$HOLDER_WHERE" ] || return 1
+  psql -X -At -q -v ON_ERROR_STOP=1 -c "select pg_terminate_backend(pid) from pg_stat_activity where $HOLDER_WHERE" >/dev/null 2>>"$ERR" || return 1
+}
+
+# COMMIT e fim da sessão do segurador, conferidos por outra conexão. Idempotente.
+# 0 = encerrou limpo · 1 = encerrou, mas foi preciso o último recurso ou o COMMIT não se confirmou · 2 = ainda existe
+release_holder() {
+  local rc=0 i presente
+  [ "$HOLDER_CLOSED" -eq 1 ] && return 0
+  [ -n "$HOLDER_PID" ] || [ -n "$HOLDER_OUT" ] || return 0
+  [ -n "$HOLDER_WHERE" ] || read_holder_identity || true
+  if [ -n "$HOLDER_PID" ]; then
+    : >"$HOLDER_STOP"
+    for i in $(seq 1 75); do # até ~15 s para o psql dar o COMMIT e sair sozinho
+      kill -0 "$HOLDER_PID" 2>/dev/null || break
+      sleep 0.2
+    done
+    if kill -0 "$HOLDER_PID" 2>/dev/null; then
+      kill "$HOLDER_PID" 2>/dev/null || true
+      rc=1
+    fi
+    { wait "$HOLDER_PID"; } 2>/dev/null || rc=1
+    HOLDER_PID=""
+    grep -q '^ENCERRADO' "$HOLDER_OUT" 2>/dev/null || rc=1
+  fi
+  if [ -n "$HOLDER_WHERE" ]; then
+    presente=0
+    holder_present || presente=$?
+    if [ "$presente" -ne 1 ]; then
+      rc=1
+      terminate_holder || true
+      for i in $(seq 1 50); do
+        sleep 0.2
+        presente=0
+        holder_present || presente=$?
+        [ "$presente" -eq 1 ] && break
+      done
+      [ "$presente" -eq 1 ] || return 2
+    fi
+  fi
+  HOLDER_CLOSED=1
+  return "$rc"
+}
+
 cleanup() {
   local rc=$?
   trap - EXIT
-  stop_holder
+  release_holder >/dev/null 2>&1 || true # em QUALQUER saída (sucesso, falha ou sinal) o segurador é encerrado
   [ -n "$WORK" ] && rm -rf "$WORK"
   if [ "$OK" -ne 1 ]; then
     [ "${#OUT_FILES[@]}" -gt 0 ] && rm -f "${OUT_FILES[@]}"
@@ -84,17 +185,25 @@ SERVER_VERSION="$(psql -X -At -c 'show server_version' 2>"$ERR")" || die "conexa
 [[ "$SERVER_VERSION" =~ ^[0-9]+(\.[0-9]+)?([[:space:]].*)?$ ]] || die "conexao_falhou" 69
 PG_DUMP_VERSION="$(pg_dump --version | sed -e 's/^pg_dump (PostgreSQL) //')"
 
-# ---- 3. Snapshot único: a sessão auxiliar o exporta e o mantém aberto -------------------------
+# ---- 3. Snapshot único: a sessão auxiliar o exporta e o mantém aberto SÓ enquanto os dumps rodam ---
 # A mesma transação (REPEATABLE READ, READ ONLY) responde às consultas de catálogo e de contagem; os
 # dumps entram nela pelo snapshot exportado. Quem segura o snapshot não escreve nem trava ninguém.
+# O SQL entra por um canal (pipe) alimentado por um laço do CLIENTE: depois do READY o servidor não executa
+# nada (a sessão fica ociosa na transação) e só o COMMIT final, pedido por `release_holder`, a encerra.
 HOLDER_OUT="$WORK/.snapshot.out"
 HOLDER_ERR="$WORK/.snapshot.err" # nunca lido nem impresso
+HOLDER_STOP="$WORK/.liberar-snapshot"
 : >"$HOLDER_OUT"
-psql -X -At -q -v ON_ERROR_STOP=1 >"$HOLDER_OUT" 2>"$HOLDER_ERR" <<'SQL' &
+MAIN_PID=$$
+(
+  cat <<'SQL'
 begin isolation level repeatable read read only;
-set local statement_timeout = 0;
-set local idle_in_transaction_session_timeout = 0;
+set local application_name = 'praxis-backup-snapshot';
+set local statement_timeout = '10min';
+set local lock_timeout = '1min';
+set local idle_in_transaction_session_timeout = '5min';
 select 'SNAPSHOT:' || pg_export_snapshot();
+select 'HOLDER:' || pg_backend_pid() || ':' || to_char(transaction_timestamp() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US');
 with t as (
   select c.oid, c.relname, n.nspname
   from pg_class c join pg_namespace n on n.oid = c.relnamespace
@@ -117,8 +226,19 @@ union all select 'ROWS:' || t.nspname || '.' || t.relname || ':'
   || (xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I.%I', t.nspname, t.relname), false, true, '')))[1]::text
   from t;
 select 'READY';
-select pg_sleep(14400);
 SQL
+  # Espera de CLIENTE: até `release_holder` criar o arquivo de liberação, o script principal morrer ou o teto de
+  # vida acabar. A cada 10 s um batimento impede qualquer expiração por ociosidade (pooler, rede) e renova o
+  # teto de ociosidade do servidor — que, se o cliente sumir, derruba a sessão em minutos.
+  ticks=0
+  while [ ! -e "$HOLDER_STOP" ] && kill -0 "$MAIN_PID" 2>/dev/null && [ "$ticks" -lt "$HOLD_MAX_TICKS" ]; do
+    sleep 0.2
+    ticks=$((ticks + 1))
+    if [ $((ticks % 50)) -eq 0 ]; then echo "select 'PING';"; fi
+  done
+  echo "commit;"
+  echo "select 'ENCERRADO';"
+) | psql -X -At -q -v ON_ERROR_STOP=1 >"$HOLDER_OUT" 2>"$HOLDER_ERR" &
 HOLDER_PID=$!
 
 # Espera a sessão publicar o snapshot e as contagens (até ~2 min). Se ela morrer, o backup para.
@@ -136,12 +256,16 @@ while IFS= read -r linha; do
   case "$linha" in SNAPSHOT:*) SNAPSHOT_ID="${linha#SNAPSHOT:}" ;; esac
 done <"$HOLDER_OUT"
 [[ "$SNAPSHOT_ID" =~ ^[0-9A-Fa-f]+(-[0-9A-Fa-f]+)+$ ]] || die "snapshot_falhou" 70
+# Identidade da sessão (PID do backend + início da transação), lida de dentro dela e validada: é com ela que
+# o script confere, por outra conexão, que o segurador existe durante os dumps e que sumiu no fim.
+read_holder_identity || die "snapshot_falhou" 70
+holder_present || die "snapshot_falhou" 70
 
 # ---- 4. Dumps: todos no MESMO snapshot (qualquer falha para tudo) --------------------------------
 dump() { # $1 = etapa; $2 = arquivo; resto = argumentos do pg_dump (a conexão vem do ambiente)
   local etapa="$1" arquivo="$2"
   shift 2
-  kill -0 "$HOLDER_PID" 2>/dev/null || die "snapshot_falhou" 70
+  holder_present || die "snapshot_falhou" 70
   pg_dump --snapshot="$SNAPSHOT_ID" --no-owner --quote-all-identifiers --no-publications --no-subscriptions --file="$arquivo" "$@" 2>"$ERR" || die "dump_falhou:$etapa" 70
   [ -s "$arquivo" ] || die "dump_falhou:$etapa" 70
 }
@@ -170,9 +294,16 @@ awk -v main="$PKG/01-schema-auth.sql" -v trg="$PKG/03-schema-auth-triggers.sql" 
 [ -s "$PKG/01-schema-auth.sql" ] || die "dump_falhou:schema_auth" 70
 rm -f "$WORK/auth-schema.full.sql"
 
-# O snapshot já não é necessário: a sessão que o segurava termina aqui (e só se ainda estava viva).
-kill -0 "$HOLDER_PID" 2>/dev/null || die "snapshot_falhou" 70
-stop_holder
+# O snapshot já não é necessário: a sessão que o segurava termina AGORA (COMMIT e fim da sessão, conferidos por
+# outra conexão), antes de o backup seguir e de ser declarado concluído. Se ela já tinha caído, falha fechado.
+holder_present || die "snapshot_falhou" 70
+RELEASE_RC=0
+release_holder || RELEASE_RC=$?
+case "$RELEASE_RC" in
+  0) ;;
+  1) printf 'AVISO: segurador_encerrado_por_fallback\n' >&2 ;;
+  *) die "segurador_nao_encerrado" 70 ;;
+esac
 
 # ---- 4b. Contagens para a validação da restauração (só números) ----------------------------------
 # Linhas por tabela, tiradas do PRÓPRIO dump de dados (mesmo snapshot): cada bloco COPY.

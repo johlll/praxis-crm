@@ -74,10 +74,21 @@ Estas quatro coisas **não estão resolvidas**. Ficam registradas aqui para ning
   não deve ser tratada como comprovada. Quando a execução das 06:17 UTC aparecer verde no Inngest pela primeira
   vez, avise o João para registrar.
 
-### 4. Backup: primeira execução natural não comprovada
+### 4. Backup: agendamento atrasa e a sessão do snapshot ficava órfã — correção PREPARADA, não ativada
 
-A janela de 13/11 não gerou execução; a prova que falta é a de 14/11 às 07:30 UTC. Detalhes em
-`docs/decisoes/b6c-backup-restauracao.md`.
+- A janela de 13/11 às 07:30 UTC **não gerou execução**. A de 14/11 **rodou, mas às 14:22 UTC** (cerca de 6 h 52 min
+  de atraso), com sucesso (2 min 28 s). O agendamento do GitHub funciona, mas **atrasa e pode descartar**: o RPO de
+  ~24 h só vale enquanto houver um backup novo por dia.
+- Depois desse backup, a sessão que **segura o snapshot** ficou **órfã no banco**: a versão atual a mantém com
+  `pg_sleep(14400)` (4 horas) e, no fim, só encerra o cliente local. Ela mantém a transação aberta e centenas de
+  travas de leitura por até 4 horas, o que **pode atrasar uma migration**. Nenhum dado foi afetado.
+- **Correção preparada no código e no modelo; NÃO está ativada.** (1) O script passa a encerrar a sessão do snapshot
+  de forma explícita (`COMMIT` e fim da sessão, conferidos por outra conexão) antes de declarar o backup concluído e
+  em qualquer falha ou sinal. (2) O modelo do workflow passa a ter **quatro janelas por dia** (07:30, 11:30, 15:30 e
+  19:30 UTC) e uma **trava de 20 horas**: se já existe um backup completo e bem-sucedido com menos de 20 horas, a
+  execução termina sem tocar em banco, Storage ou secrets; o disparo manual sempre executa. O objetivo continua
+  sendo **RPO de aproximadamente 24 horas**. **Só passa a valer depois de copiada para o repositório privado e
+  confirmada por um backup NATURAL.** Detalhes em `docs/decisoes/b6c-backup-restauracao.md`.
 
 ## Onde consultar cada coisa
 
@@ -87,7 +98,7 @@ A janela de 13/11 não gerou execução; a prova que falta é a de 14/11 às 07:
 | Banco e login (Supabase) | Dados e autenticação (projeto `rgoeppjwnltcbeqipovh`) | [Painel do projeto](https://supabase.com/dashboard/project/rgoeppjwnltcbeqipovh) · [Logs](https://supabase.com/dashboard/project/rgoeppjwnltcbeqipovh/logs/explorer) · [Migrations](https://supabase.com/dashboard/project/rgoeppjwnltcbeqipovh/database/migrations) |
 | Rotinas (Inngest) | App `praxis-crm`, cinco funções sincronizadas: `c1-automations-scheduler` (a cada 10 min a partir desta mudança; era a cada 2 min), `a11-reconciler-scheduler` (a cada 10 min), `a11-retention-scheduler` (uma vez por hora, minuto 23; sincronizada a cada 10 min até o próximo Resync), `c3b-privacy-retention-scheduler` (06:17 UTC = 03:17 em Brasília) e `a11-process-form-submission` (só quando há envio de formulário) | [Painel do Inngest](https://app.inngest.com) → app `praxis-crm` → Runs |
 | CI e reconciliação (GitHub) | Testes de cada PR; reconciliação agendada da captação de formulários | [Actions do repositório](https://github.com/johlll/praxis-crm/actions) |
-| Backup (GitHub, repositório **privado**) | Backup diário às 07:30 UTC (04:30 em Brasília) | [Actions dos backups](https://github.com/johlll/praxis-crm-backups/actions) (só quem tem acesso ao repositório privado) |
+| Backup (GitHub, repositório **privado**) | Backup diário às 07:30 UTC (04:30 em Brasília); o modelo novo, com quatro janelas por dia e trava de 20 h, está preparado e **ainda não foi ativado** | [Actions dos backups](https://github.com/johlll/praxis-crm-backups/actions) (só quem tem acesso ao repositório privado) |
 
 Status dos serviços, para separar "é conosco" de "é do provedor":
 [Vercel](https://www.vercel-status.com) · [Supabase](https://status.supabase.com) ·
@@ -99,6 +110,9 @@ Faça depois das **04:45 de Brasília**, quando o backup do dia já deveria ter 
 
 1. **Backup.** Nas Actions do repositório privado, a execução mais recente é a de hoje, está **verde** e tem o
    **artefato** `praxis-backup-…` anexado. Execução ausente, vermelha ou sem artefato = alerta (seção abaixo).
+   O agendamento atual atrasa: se a execução de hoje ainda não apareceu, espere e confira de novo mais tarde.
+   *Quando o modelo novo for ativado* (quatro janelas), execuções verdes com o job `backup` **pulado** serão o
+   esperado sempre que já houver backup completo com menos de 20 horas; o que importa é existir um artefato recente.
 2. **Aplicação.** O último deployment de **Production** está **Ready** e o CRM abre e deixa entrar.
 3. **Rotinas.** No Inngest, `c1-automations-scheduler` tem execuções recentes e verdes (uma a cada 10 minutos) e a
    `c3b-privacy-retention-scheduler` do dia (06:17 UTC) aparece verde. Enquanto a primeira execução natural da rotina

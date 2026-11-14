@@ -97,8 +97,15 @@ cat >"$ROOT/shim/psql" <<SHIM
 if [ "\${1:-}" = "--version" ]; then exec "$(command -v psql)" --version; fi
 { printf 'PSQL_ARGV:'; printf ' [%s]' "\$@"; printf '\nPGHOST=%s PGUSER=%s PGDATABASE=%s\n' "\${PGHOST:-}" "\${PGUSER:-}" "\${PGDATABASE:-}"; } >> "$ROOT/argv-registro.txt"
 case " \$* " in
-  *" -c "*) printf '17.6\n' ;;                                  # consulta de versão
-  *) cat >/dev/null; printf 'SNAPSHOT:00000003-00000002-1\nREADY\n'; exec sleep 30 ;; # sessão do snapshot
+  *" -c "*)
+    case "\$*" in
+      *pg_stat_activity*) if [ -e "$ROOT/segurador-encerrado" ]; then printf '0\n'; else printf '1\n'; fi ;; # a sessão do snapshot existe até o COMMIT
+      *) printf '17.6\n' ;;                                       # consulta de versão
+    esac ;;
+  *) # sessão do snapshot: publica o necessário e fica "viva" até receber o COMMIT, como a de verdade
+    printf 'SNAPSHOT:00000003-00000002-1\nHOLDER:12345:2026-11-14T10:00:00.123456\nREADY\n'
+    while IFS= read -r l; do case "\$l" in "commit;") printf 'ENCERRADO\n'; break ;; esac; done
+    : >"$ROOT/segurador-encerrado" ;;
 esac
 SHIM
 chmod +x "$ROOT/shim/pg_dump" "$ROOT/shim/psql"
@@ -110,7 +117,8 @@ if grep -F -e "$SEGREDO_SENHA" -e "$SEGREDO_ENC" -e "host-que-nao-existe" -e "po
 grep -q "PGPASSWORD_DEFINIDA=sim" "$ROOT/argv-registro.txt" && grep -q "PGPASSWORD_VALOR=$SEGREDO_SENHA\$" "$ROOT/argv-registro.txt" && ok "a senha chega ao filho só pelo ambiente, já decodificada (%40 -> @)" || bad "a senha não chegou ao filho pelo ambiente"
 grep -q "PGHOST=host-que-nao-existe.invalid PGUSER=usuario_x PGDATABASE=banco_x" "$ROOT/argv-registro.txt" && ok "host, usuário e banco vão por variáveis PG* (URL desmontada)" || bad "variáveis PG* não conferem"
 tmp_empty && [ ! -e "$ROOT/out2" ] && ok "dump com falha: nenhum texto claro nem saída ficou" || bad "sobrou arquivo depois do dump com falha"
-rm -f "$ROOT/shim/pg_dump" "$ROOT/shim/psql" "$ROOT/argv-registro.txt"
+[ -e "$ROOT/segurador-encerrado" ] && ok "a sessão do snapshot recebeu o COMMIT e foi encerrada antes de o script sair (sessão simulada)" || bad "a sessão do snapshot não foi encerrada"
+rm -f "$ROOT/shim/pg_dump" "$ROOT/shim/psql" "$ROOT/argv-registro.txt" "$ROOT/segurador-encerrado"
 
 echo "== 3. falha do dump no meio deixa texto claro parcial? (não pode)"
 cat >"$ROOT/shim/pg_dump" <<SHIM
