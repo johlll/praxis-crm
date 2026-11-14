@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { createAdminSupabaseClient } from "@/server/supabase/admin";
 import { getIngestConfig, IngestConfigError } from "@/server/ingest/config";
+import { OutboxReconcileError, reconcileOutbox } from "@/server/ingest/outbox-reconciler";
 import { inngestPublisher } from "@/server/ingest/publisher";
 
 export const runtime = "nodejs";
@@ -24,6 +25,11 @@ export const dynamic = "force-dynamic";
  * Cobre o cenário "publiquei e a resposta se perdeu": republicar o mesmo
  * id é inofensivo (o Inngest deduplica por 24 h e, passado isso, o worker
  * encontra o evento já processado).
+ *
+ * A operação em si mora em `src/server/ingest/outbox-reconciler.ts` e é a
+ * MESMA que o agendador do Inngest (`a11-reconciler-scheduler`) executa a
+ * cada 10 minutos: esta rota só autentica e traduz a falha em HTTP. O
+ * workflow do GitHub Actions continua chamando esta rota.
  */
 
 function authorized(request: Request): boolean {
@@ -45,50 +51,14 @@ export async function POST(request: Request) {
 
   const supabase = createAdminSupabaseClient();
 
-  const resolution = await supabase.rpc("resolve_stale_outbox_batch", { p_limit: 200 });
-  if (resolution.error) {
-    return NextResponse.json({ error: "resolve_failed" }, { status: 503 });
-  }
-  const resolved = ((resolution.data ?? []) as unknown as { outbox_id: string }[]).length;
-
-  const { data, error } = await supabase.rpc("claim_outbox_batch", {
-    p_limit: 20,
-    p_lock_seconds: 120,
-  });
-  if (error) {
-    return NextResponse.json({ error: "claim_failed" }, { status: 503 });
-  }
-
-  const batch = (data ?? []) as unknown as {
-    outbox_id: string;
-    webhook_event_id: string;
-    workspace_id: string;
-  }[];
-
-  let published = 0;
-  let failed = 0;
-
-  for (const item of batch) {
-    try {
-      await inngestPublisher({
-        webhookEventId: item.webhook_event_id,
-        workspaceId: item.workspace_id,
-      });
-      await supabase.rpc("mark_outbox_published", { p_outbox_id: item.outbox_id });
-      published += 1;
-    } catch {
-      // Só o código sanitizado: a mensagem original poderia carregar
-      // detalhe de infraestrutura.
-      await supabase.rpc("mark_outbox_failed", {
-        p_outbox_id: item.outbox_id,
-        p_error_code: "publish_failed",
-        p_retry_in_seconds: 60,
-      });
-      failed += 1;
+  try {
+    return NextResponse.json(await reconcileOutbox(supabase, inngestPublisher));
+  } catch (error) {
+    if (error instanceof OutboxReconcileError) {
+      return NextResponse.json({ error: error.code }, { status: 503 });
     }
+    throw error;
   }
-
-  return NextResponse.json({ resolved, claimed: batch.length, published, failed });
 }
 
 // GET com o mesmo segredo, para o agendador da Vercel (que usa GET).

@@ -194,12 +194,12 @@ describe("/api/inngest — app da A11 preservado, sem a B2", () => {
     expect((await route.GET(new NextRequest(`${BASE}/api/inngest`), undefined)).status).toBe(503);
   });
 
-  it("com a configuração da A11: a função da A11 e os agendadores da C1 (B6a) e da C3b (B6b), mesmo app id, sem a B2", async () => {
+  it("com a configuração da A11: a função da A11 e os agendadores da C1 (B6a), da C3b (B6b) e das duas periódicas da A11 (reconciliador e retenção), mesmo app id, sem a B2", async () => {
     vi.resetModules();
     vi.doMock("@/server/ingest/config", () => ({ IngestConfigError: class extends Error {}, getIngestConfig: () => ({}) }));
     const route = await import("@/app/api/inngest/route");
     const { body } = await introspect(route, "/api/inngest");
-    expect(body).toMatchObject({ authentication_succeeded: true, app_id: "praxis-crm", function_count: 3 });
+    expect(body).toMatchObject({ authentication_succeeded: true, app_id: "praxis-crm", function_count: 5 });
     expect(route.A11_INGEST_MAX_RETRIES).toBe(9);
     vi.doUnmock("@/server/ingest/config");
   });

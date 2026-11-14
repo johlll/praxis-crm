@@ -5,6 +5,8 @@ import { getIngestConfig, IngestConfigError } from "@/server/ingest/config";
 import { FORM_EVENT_NAME, inngestClient } from "@/server/ingest/publisher";
 import { processWebhookEvent } from "@/server/ingest/worker";
 
+import { A11_RECONCILER_SCHEDULER_FUNCTION_CONFIG, handleA11ReconcilerScheduler } from "./a11-reconciler-scheduler";
+import { A11_RETENTION_SCHEDULER_FUNCTION_CONFIG, handleA11RetentionScheduler } from "./a11-retention-scheduler";
 import { AUTOMATIONS_SCHEDULER_FUNCTION_CONFIG, handleAutomationsScheduler } from "./automations-scheduler";
 import {
   handlePrivacyRetentionScheduler,
@@ -15,7 +17,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Worker da A11 (e, em função própria, os agendadores periódicos da C1 e da C3b).
+ * Worker da A11 (e, em função própria, os agendadores periódicos da C1, da C3b e os dois da A11: reconciliador da
+ * outbox e retenção dos eventos recebidos).
  *
  * API conferida na documentação oficial do Inngest e no `.d.ts` do pacote
  * instalado antes de escrever: `serve({ client, functions })` de
@@ -92,7 +95,24 @@ const privacyRetentionScheduler = client.createFunction(PRIVACY_RETENTION_SCHEDU
   handlePrivacyRetentionScheduler({ step }),
 );
 
-const handlers = serve({ client, functions: [processFormSubmission, automationsScheduler, privacyRetentionScheduler] });
+// Agendador do reconciliador da outbox da A11: função própria, só por relógio (a cada 10 minutos), que roda a
+// MESMA operação da rota `/api/cron/outbox` (ver ./a11-reconciler-scheduler.ts). Preparada, não ativada: só
+// passa a rodar quando o app for sincronizado no Inngest; o workflow do GitHub continua valendo até lá.
+const a11ReconcilerScheduler = client.createFunction(A11_RECONCILER_SCHEDULER_FUNCTION_CONFIG, async ({ step }) =>
+  handleA11ReconcilerScheduler({ step }),
+);
+
+// Agendador da manutenção de retenção da A11 (eventos travados, alerta de vencimento e vencimento dos 30 dias): função
+// própria, SEPARADA do reconciliador (uma falha não impede a outra), só por relógio (a cada 10 minutos), que roda a
+// MESMA operação da rota `/api/cron/retention` (ver ./a11-retention-scheduler.ts). Preparada, não ativada.
+const a11RetentionScheduler = client.createFunction(A11_RETENTION_SCHEDULER_FUNCTION_CONFIG, async ({ step }) =>
+  handleA11RetentionScheduler({ step }),
+);
+
+const handlers = serve({
+  client,
+  functions: [processFormSubmission, automationsScheduler, privacyRetentionScheduler, a11ReconcilerScheduler, a11RetentionScheduler],
+});
 
 /**
  * Falha FECHADA por requisição: sem configuração obrigatória, a rota
