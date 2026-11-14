@@ -295,9 +295,10 @@ else
 fi
 
 echo "== 8. sessão presa no servidor: o último recurso derruba SÓ o segurador e poupa as sessões-isca"
-# Duas iscas em transação aberta, do MESMO usuário: uma com o MESMO rótulo do segurador e outra com outro rótulo.
-( parse_database_url "$ADMIN_URL"; psql -X -q -At -c "begin; set local application_name = '$LABEL'; select pg_sleep(120);" >/dev/null 2>&1 ) &
-( parse_database_url "$ADMIN_URL"; psql -X -q -At -c "begin; set local application_name = 'outra-aplicacao'; select pg_sleep(120);" >/dev/null 2>&1 ) &
+# Duas iscas em transação aberta, do MESMO usuário do backup (não o administrador: no CI são usuários diferentes):
+# uma com o MESMO rótulo do segurador e outra com outro rótulo.
+( parse_database_url "$BACKUP_URL"; psql -X -q -At -c "begin; set local application_name = '$LABEL'; select pg_sleep(120);" >/dev/null 2>&1 ) &
+( parse_database_url "$BACKUP_URL"; psql -X -q -At -c "begin; set local application_name = 'outra-aplicacao'; select pg_sleep(120);" >/dev/null 2>&1 ) &
 ISCAS=""
 for _ in $(seq 1 50); do
   ISCAS="$(adm -c "select pid from pg_stat_activity where datname = '$DB' and usename = '$DBUSER' and wait_event = 'PgSleep' and application_name in ('$LABEL', 'outra-aplicacao') order by pid" | paste -sd, -)"
