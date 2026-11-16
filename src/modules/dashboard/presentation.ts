@@ -105,6 +105,16 @@ const ORIGIN_SLOTS = ["chart1", "chart2", "chart3", "chart4", "chart5", "chart6"
 export const NO_SOURCE_LABEL = "Não informada";
 export const OTHER_SOURCES_LABEL = "Outras origens";
 
+/**
+ * Identidade interna de cada fatia (seleção e destaque na rosca e na tabela).
+ * Origem real e categoria especial usam prefixos diferentes ("real:" e
+ * "especial:"), então nenhum texto digitado como origem colide com a
+ * categoria "Não informada" ou com o agrupamento "Outras origens".
+ */
+const segmentKeyOfSource = (source: string) => `real:${source}`;
+const SEGMENT_KEY_NO_SOURCE = "especial:nao-informada";
+const SEGMENT_KEY_OTHERS = "especial:outras";
+
 export type OriginRow = {
   source: string | null;
   label: string;
@@ -163,14 +173,14 @@ export function buildOriginBreakdown(sources: { source: string | null; created: 
 
   colored.forEach((row, index) => {
     const color = ORIGIN_SLOTS[index]!;
-    const key = `origem:${row.source}`;
+    const key = segmentKeyOfSource(row.source!);
     rows.push({ source: row.source, label: row.source!, created: row.created, won: row.won, share: share(row.created), segmentKey: key, color });
     segments.push({ key, label: row.source!, created: row.created, share: share(row.created)!, color });
   });
 
   if (folded.length > 0) {
     const color = ORIGIN_SLOTS[ORIGIN_SLOTS.length - 1]!;
-    const key = "origem:outras";
+    const key = SEGMENT_KEY_OTHERS;
     for (const row of folded) {
       rows.push({ source: row.source, label: row.source!, created: row.created, won: row.won, share: share(row.created), segmentKey: key, color });
     }
@@ -179,7 +189,7 @@ export function buildOriginBreakdown(sources: { source: string | null; created: 
   }
 
   if (unknown) {
-    const key = "origem:sem";
+    const key = SEGMENT_KEY_NO_SOURCE;
     rows.push({ source: null, label: NO_SOURCE_LABEL, created: unknown.created, won: unknown.won, share: share(unknown.created), segmentKey: key, color: "neutral" });
     segments.push({ key, label: NO_SOURCE_LABEL, created: unknown.created, share: share(unknown.created)!, color: "neutral" });
   }

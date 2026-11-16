@@ -176,7 +176,7 @@ describe("origem: denominador, ordem e cores", () => {
     expect(b.segments).toHaveLength(6);
     expect(b.segments.at(-1)).toMatchObject({ label: "Outras origens", color: "chart6", created: 15 + 14 + 13 });
     expect(b.rows).toHaveLength(8);
-    expect(b.rows.filter((r) => r.segmentKey === "origem:outras").map((r) => r.label)).toEqual(["origem 6", "origem 7", "origem 8"]);
+    expect(b.rows.filter((r) => r.segmentKey === "especial:outras").map((r) => r.label)).toEqual(["origem 6", "origem 7", "origem 8"]);
   });
 
   it("linha sem criadas no período fica só na tabela (sem fatia, sem cor)", () => {
@@ -192,6 +192,65 @@ describe("origem: denominador, ordem e cores", () => {
     expect(none.showDonut).toBe(false);
     expect(none.totalCreated).toBe(0);
     expect(none.rows[0]!.share).toBeNull();
+  });
+
+  // A identidade de cada fatia (usada em seleção e destaque) não pode colidir
+  // com nenhum nome de origem que o escritório tenha digitado.
+  it("origem real chamada 'sem' e origem nula têm fatias com identidades diferentes, cada linha na sua", () => {
+    const b = presentation.buildOriginBreakdown([
+      { source: "sem", created: 7, won: 2 },
+      { source: null, created: 3, won: 1 },
+      { source: "google", created: 10, won: 0 },
+    ]);
+    const real = b.rows.find((r) => r.source === "sem")!;
+    const none = b.rows.find((r) => r.source === null)!;
+    expect(real.segmentKey).not.toBe(none.segmentKey);
+    expect(new Set(b.segments.map((s) => s.key)).size).toBe(b.segments.length);
+    const segmentOf = (key: string | null) => b.segments.find((s) => s.key === key)!;
+    expect(segmentOf(real.segmentKey)).toMatchObject({ label: "sem", created: 7, color: "chart2" });
+    expect(segmentOf(none.segmentKey)).toMatchObject({ label: "Não informada", created: 3, color: "neutral" });
+    // Totais e percentuais seguem os mesmos.
+    expect(b.totalCreated).toBe(20);
+    expect(b.segments.reduce((s, x) => s + x.created, 0)).toBe(20);
+    expect([real.share, none.share]).toEqual([0.35, 0.15]);
+  });
+
+  it("mais de seis origens com 'outras' entre as cinco maiores: a origem real é distinta do agrupamento", () => {
+    const sources = [
+      { source: "outras", created: 19, won: 3 },
+      { source: "origem 2", created: 18, won: 0 },
+      { source: "origem 3", created: 17, won: 0 },
+      { source: "origem 4", created: 16, won: 0 },
+      { source: "origem 5", created: 15, won: 0 },
+      { source: "origem 6", created: 14, won: 0 },
+      { source: "origem 7", created: 13, won: 0 },
+      { source: null, created: 2, won: 0 },
+    ];
+    const b = presentation.buildOriginBreakdown(sources);
+    const real = b.rows.find((r) => r.source === "outras")!;
+    const grouped = b.rows.filter((r) => ["origem 6", "origem 7"].includes(r.label));
+    expect(real.color).toBe("chart1");
+    expect(new Set(b.segments.map((s) => s.key)).size).toBe(b.segments.length);
+    // As menores continuam compartilhando a identidade do agrupamento — e só elas.
+    expect(grouped.map((r) => r.segmentKey)).toEqual([grouped[0]!.segmentKey, grouped[0]!.segmentKey]);
+    expect(grouped[0]!.segmentKey).not.toBe(real.segmentKey);
+    expect(b.rows.filter((r) => r.segmentKey === real.segmentKey).map((r) => r.label)).toEqual(["outras"]);
+    expect(b.segments.find((s) => s.key === grouped[0]!.segmentKey)).toMatchObject({ label: "Outras origens", color: "chart6", created: 27 });
+    expect(b.segments.find((s) => s.key === real.segmentKey)).toMatchObject({ label: "outras", created: 19, color: "chart1" });
+    expect(b.totalCreated).toBe(114);
+    expect(b.segments.reduce((s, x) => s + x.created, 0)).toBe(114);
+    expect(b.segments.reduce((s, x) => s + x.share, 0)).toBeCloseTo(1, 10);
+  });
+
+  it("o prefixo das identidades separa origem real de categoria especial, qualquer que seja o texto digitado", () => {
+    const b = presentation.buildOriginBreakdown([
+      { source: "especial:nao-informada", created: 4, won: 0 },
+      { source: "especial:outras", created: 3, won: 0 },
+      { source: "real:google", created: 2, won: 0 },
+      { source: null, created: 1, won: 0 },
+    ]);
+    expect(new Set(b.segments.map((s) => s.key)).size).toBe(4);
+    expect(b.rows.map((r) => r.segmentKey)).toEqual(b.segments.map((s) => s.key));
   });
 });
 
