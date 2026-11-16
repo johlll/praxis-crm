@@ -1,9 +1,15 @@
 /**
  * Design tokens do Praxis CRM.
  *
- * Extraídos dos protótipos aprovados em
- * "Central de Atividades do CRM 3" (Central de Atividades, Pipeline,
- * Perfil 360 do Lead, Visão Geral).
+ * Tema escuro aprovado por João em 15/11/2026 (refinamento visual, 1º
+ * escopo): composição e densidade inspiradas nas referências enviadas,
+ * paleta conferida no CSS do blog da Vizentini — fundo principal #151A18,
+ * superfícies/cards #232B28 e hover de superfícies #29322F. Bronze só como
+ * acento discreto (marca, item ativo, destaques pequenos).
+ *
+ * Os NOMES dos tokens continuam os mesmos do tema claro anterior: as telas
+ * usam tokens semânticos (bg-surface, text-text, border-border…), então
+ * todas herdam o tema sem redesenho individual.
  *
  * Este arquivo é a fonte de verdade em TypeScript; `globals.css` declara os
  * mesmos valores como CSS variables para o Tailwind. Ao mudar um token,
@@ -11,71 +17,79 @@
  */
 
 export const color = {
-  // Fundos
-  canvas: "#EFEEE9",
-  app: "#F5F4EF",
-  surface: "#FFFFFF",
-  surfaceSubtle: "#FBFBF8",
-  surfaceMuted: "#FCFCFA",
-  surfaceSelected: "#F2F7F5",
+  // Fundos — canvas é o fundo principal; app é o preenchimento "rebaixado"
+  // (chips, campos, contadores) sobre uma superfície.
+  canvas: "#151A18",
+  app: "#1B211F",
+  surface: "#232B28",
+  surfaceHover: "#29322F",
+  surfaceSubtle: "#1C2321",
+  surfaceMuted: "#1F2624",
+  surfaceSelected: "#263330",
 
   // Barra lateral
-  sidebar: "#0C2E2C",
-  sidebarHover: "#133A37",
-  sidebarText: "#B7CCC7",
-  sidebarTextStrong: "#CFDEDA",
-  sidebarMuted: "#7FA39C",
-  sidebarActive: "#1E9E7F",
-  sidebarActiveText: "#04221D",
-  sidebarBadgeText: "#8FE3C9",
+  sidebar: "#191F1D",
+  sidebarHover: "#222A27",
+  sidebarText: "#B4BEB9",
+  sidebarTextStrong: "#E6EBE8",
+  sidebarMuted: "#8F9A95",
+  sidebarActive: "#29322F",
+  sidebarActiveText: "#F3F5F4",
+  sidebarBadgeText: "#DDBA92",
 
-  // Marca
-  primary: "#0E6C5C",
-  primaryHover: "#0A5447",
-  primaryAccent: "#1E9E7F",
-  primaryTint: "#EAF4F1",
-  primaryRing: "#E1EEE9",
-  primaryBorder: "#CFE6D8",
+  // Marca — verde Praxis clareado para o fundo escuro; texto escuro por
+  // cima quando ele é fundo de botão (onSolid).
+  primary: "#3DB591",
+  primaryHover: "#52C4A1",
+  primaryAccent: "#2E9C7B",
+  primaryTint: "#1D3530",
+  primaryRing: "#2C5148",
+  primaryBorder: "#2F5A4E",
 
-  // Texto
-  // textTertiary/textSoft/textMuted foram escurecidos em relação ao
-  // protótipo (6E7671/7C8480/8A918D) para atingir 4.5:1 (WCAG 2.1 AA)
-  // contra os três fundos claros do produto — ver tests/unit/contrast.test.ts.
-  // A ordem de ênfase é preservada: text > textSecondary > textTertiary >
-  // textSoft > textMuted.
-  text: "#17201E",
-  textSecondary: "#4C5551",
-  textTertiary: "#5C635F",
-  textMuted: "#676C69",
-  textSoft: "#626865",
+  // Acento bronze (detalhes, nunca grandes áreas)
+  accent: "#C9A27A",
+  accentTint: "#30291F",
+  accentBorder: "#5B4935",
+
+  // Texto sobre fundo sólido claro (bg-primary, bg-danger, bg-warning…)
+  onSolid: "#0E1412",
+
+  // Texto — todos com 4.5:1 (WCAG 2.1 AA) contra canvas, app, surface e
+  // surfaceHover; ver tests/unit/contrast.test.ts. Ordem de ênfase:
+  // text > textSecondary > textTertiary > textSoft > textMuted.
+  text: "#EEF1EF",
+  textSecondary: "#C7CECA",
+  textTertiary: "#ABB4AF",
+  textMuted: "#9AA49F",
+  textSoft: "#A2ABA6",
   // Único tom abaixo de AA: reservado a elementos decorativos
   // (aria-hidden) ou dica secundária desabilitada (ex.: atalho ⌘K),
   // nunca a texto que carregue informação essencial.
-  textDisabled: "#A5AAA6",
+  textDisabled: "#66706B",
 
   // Bordas
-  border: "#E4E2DA",
-  borderSubtle: "#EDECE5",
-  borderInput: "#C9C6BB",
-  borderStrong: "#D7D5CE",
+  border: "#2F3935",
+  borderSubtle: "#29322F",
+  borderInput: "#3B4743",
+  borderStrong: "#44504B",
   borderUnassigned: "#C9A55C",
 
-  // Semânticos
-  danger: "#B3402E",
-  dangerBg: "#FBECE9",
-  warning: "#8A5A00",
-  warningBg: "#FBF2E3",
-  info: "#1F5C99",
-  infoBg: "#EAF1FA",
-  infoBgAlt: "#E9F0F7",
-  success: "#18794E",
-  successBg: "#E8F6EC",
-  successBgAlt: "#E7F3EC",
-  purple: "#5A45A8",
-  purpleBg: "#EEEAF9",
-  purpleBgAlt: "#F0EDFB",
-  neutral: "#4C5551",
-  neutralBg: "#F0EFE9",
+  // Semânticos — texto claro sobre fundo tingido escuro
+  danger: "#F28B79",
+  dangerBg: "#3A2421",
+  warning: "#E7B866",
+  warningBg: "#362D1D",
+  info: "#88B9EE",
+  infoBg: "#1E2C3A",
+  infoBgAlt: "#1F2B36",
+  success: "#6ECF99",
+  successBg: "#1C3328",
+  successBgAlt: "#1F3129",
+  purple: "#B8A7F2",
+  purpleBg: "#2C2740",
+  purpleBgAlt: "#29253A",
+  neutral: "#BFC7C3",
+  neutralBg: "#2A322F",
 } as const;
 
 export const font = {
@@ -104,18 +118,18 @@ export const radius = {
 } as const;
 
 export const shadow = {
-  card: "0 1px 1px rgba(23,32,30,0.03)",
-  raised: "0 1px 2px rgba(23,32,30,0.12)",
-  ring: "0 0 0 2px #E1EEE9",
+  card: "0 1px 2px rgba(0,0,0,0.22)",
+  raised: "0 10px 28px rgba(0,0,0,0.38)",
+  ring: "0 0 0 2px #2C5148",
 } as const;
 
-/** Larguras estruturais medidas nos protótipos (1440×900). */
+/** Larguras estruturais (sidebar próxima dos ~230–245 px das referências). */
 export const layout = {
-  sidebarWidth: 228,
+  sidebarWidth: 236,
   detailPanelWidth: 372,
   profilePanelWidth: 320,
-  kanbanColumnWidth: 272,
-  kanbanColumnStep: 282,
+  kanbanColumnWidth: 256,
+  kanbanColumnStep: 266,
   contentMaxWidth: 1440,
 } as const;
 
@@ -135,9 +149,10 @@ export const breakpoint = {
 export type ColorToken = keyof typeof color;
 
 /**
- * Tokens de cor usados como cor de TEXTO sobre um fundo claro (surface, app
- * ou canvas). Todos devem atingir contraste mínimo 4.5:1 (WCAG 2.1 AA)
- * contra os três — verificado em tests/unit/contrast.test.ts.
+ * Tokens de cor usados como cor de TEXTO sobre os fundos do produto
+ * (canvas, app, surface e surfaceHover). Todos devem atingir contraste
+ * mínimo 4.5:1 (WCAG 2.1 AA) contra os quatro — verificado em
+ * tests/unit/contrast.test.ts.
  */
 export const textColorTokens = [
   "text",
@@ -146,7 +161,23 @@ export const textColorTokens = [
   "textMuted",
   "textSoft",
   "primary",
+  "accent",
   "danger",
+  "warning",
+  "success",
+  "info",
+] as const satisfies readonly ColorToken[];
+
+/**
+ * Pares "texto escuro sobre cor sólida" (botão primário, badge de
+ * atrasadas, chamada de atenção): onSolid precisa de 4.5:1 sobre cada um.
+ */
+export const solidBackgroundTokens = [
+  "primary",
+  "primaryHover",
+  "danger",
+  "warning",
+  "accent",
 ] as const satisfies readonly ColorToken[];
 
 /**

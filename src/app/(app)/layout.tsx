@@ -18,7 +18,7 @@ import { CalendarCapabilitiesProvider } from "@/components/calendar/calendar-cap
  * uma troca de rota.
  */
 export default async function AppLayout({ children }: { children: ReactNode }) {
-  const { activeWorkspace, workspaces } = await getShellContext();
+  const { activeWorkspace, workspaces, user } = await getShellContext();
   const [activityCounts, calendarCapabilities] = await Promise.all([
     getActivityCounts(activeWorkspace.id),
     // Com a integração desligada devolve tudo falso sem tocar no banco.
@@ -26,7 +26,12 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   ]);
 
   return (
-    <AppShell activeWorkspace={activeWorkspace} workspaces={workspaces} overdueActivitiesCount={activityCounts.overdue}>
+    <AppShell
+      activeWorkspace={activeWorkspace}
+      workspaces={workspaces}
+      overdueActivitiesCount={activityCounts.overdue}
+      user={{ fullName: user.fullName, initials: user.initials, role: user.role }}
+    >
       <CalendarCapabilitiesProvider value={calendarCapabilities}>{children}</CalendarCapabilitiesProvider>
     </AppShell>
   );

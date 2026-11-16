@@ -21,7 +21,7 @@ export function ErrorState({
       className="flex flex-col items-center justify-center gap-3 rounded-card border border-danger/25 bg-danger-bg px-6 py-10 text-center"
     >
       <div
-        className="flex size-10 items-center justify-center rounded-card bg-white text-danger"
+        className="flex size-10 items-center justify-center rounded-card bg-surface text-danger"
         aria-hidden
       >
         <AlertTriangle size={18} />
@@ -36,7 +36,7 @@ export function ErrorState({
         <button
           type="button"
           onClick={onRetry}
-          className="h-8 rounded-md border border-danger/30 bg-white px-3 text-body font-semibold text-danger transition-colors hover:bg-danger-bg"
+          className="h-8 rounded-md border border-danger/30 bg-surface px-3 text-body font-semibold text-danger transition-colors hover:bg-danger-bg"
         >
           Tentar novamente
         </button>

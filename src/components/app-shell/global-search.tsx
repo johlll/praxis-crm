@@ -33,7 +33,7 @@ export function GlobalSearch() {
   }, []);
 
   return (
-    <div className="relative h-[34px] w-[420px]">
+    <div className="relative h-[34px] w-[280px] xl:w-[340px]">
       <Search
         size={14}
         strokeWidth={1.5}
@@ -48,10 +48,10 @@ export function GlobalSearch() {
         placeholder="Buscar clientes, processos, oportunidades…"
         aria-label="Busca global"
         aria-keyshortcuts="Meta+K Control+K"
-        className="h-full w-full rounded-[9px] border border-border bg-app pr-14 pl-[33px] text-[12.5px] text-text transition-colors placeholder:text-text-muted hover:border-border-input focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+        className="h-full w-full rounded-[9px] border border-border bg-surface pr-14 pl-[33px] text-[12.5px] text-text transition-colors placeholder:text-text-muted hover:border-border-input focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
       />
       <kbd
-        className="pointer-events-none absolute top-1/2 right-[11px] -translate-y-1/2 rounded-sm border border-border bg-surface px-[5px] py-px font-mono text-[10px] text-text-disabled"
+        className="pointer-events-none absolute top-1/2 right-[11px] -translate-y-1/2 rounded-sm border border-border bg-app px-[5px] py-px font-mono text-[10px] text-text-disabled"
         aria-hidden
       >
         {isMac ? "⌘K" : "Ctrl K"}
