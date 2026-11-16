@@ -44,7 +44,9 @@ export function MobileNav(props: MobileNavProps) {
           >
             P
           </span>
-          <span className="truncate text-small font-semibold text-sidebar-text-strong">{props.activeWorkspace.name}</span>
+          {/* Só a marca: o nome do workspace fica no seletor da gaveta (repetir
+              o texto aqui duplicaria o nome no DOM também no desktop). */}
+          <span className="font-serif text-[19px] leading-none text-sidebar-text-strong">Praxis</span>
         </div>
       </div>
 
