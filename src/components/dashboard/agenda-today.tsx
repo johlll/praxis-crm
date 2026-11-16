@@ -3,8 +3,10 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { CalendarClock } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { PanelIcon } from "./panel-icon";
 import { formatTime } from "@/lib/timezone";
 import { ACTIVITY_TYPE_LABEL } from "@/components/activities/labels";
 import { completeActivityAction } from "@/modules/activities/actions";
@@ -83,12 +85,15 @@ export function AgendaToday({
   canEdit: boolean;
 }) {
   return (
-    <section aria-labelledby="agenda-titulo" className="flex flex-col gap-1 rounded-lg border border-border bg-surface p-4">
-      <div className="flex items-baseline justify-between gap-2">
-        <h2 id="agenda-titulo" className="m-0 text-body font-bold text-text">
-          Agenda de hoje
-        </h2>
-        <span className="text-meta text-text-muted">
+    <section aria-labelledby="agenda-titulo" className="flex min-w-0 flex-col gap-1 rounded-lg border border-border bg-surface p-4">
+      <div className="flex items-start justify-between gap-2 pb-1">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <PanelIcon icon={CalendarClock} />
+          <h2 id="agenda-titulo" className="m-0 text-lead font-bold text-text">
+            Agenda de hoje
+          </h2>
+        </div>
+        <span className="shrink-0 pt-1 text-meta text-text-muted">
           {pending} pendente{pending === 1 ? "" : "s"} de {total}
         </span>
       </div>

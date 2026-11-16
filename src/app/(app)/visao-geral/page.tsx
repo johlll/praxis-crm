@@ -103,7 +103,11 @@ export default async function VisaoGeralPage({
 
   return (
     <>
-      <Topbar title="Visão geral" subtitle={greeting(new Date(dashboard.generatedAt), firstName)} user={user} />
+      <Topbar
+        title={greeting(new Date(dashboard.generatedAt), firstName)}
+        subtitle="Visão geral · acompanhe o desempenho comercial do escritório"
+        user={user}
+      />
       <main className="flex-1 overflow-y-auto p-5">
         <div className="mx-auto flex max-w-[1400px] flex-col gap-4">
           {dashboard.isDemo ? (
@@ -141,18 +145,19 @@ export default async function VisaoGeralPage({
             <AttentionBanner dashboard={dashboard} />
           </div>
 
-          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
-            <div className="flex min-w-0 flex-col gap-4">
-              <FunnelCard dashboard={dashboard} pipelineHrefs={pipelineHrefs} />
-              <AttributionCard
-                attribution={attribution}
-                modelHrefs={modelHrefs}
-                sourceHrefs={sourceHrefs}
-                clearSourceHref={clearSourceHref}
-              />
-              <SeriesCard dashboard={dashboard} />
-            </div>
-            <div className="flex min-w-0 flex-col gap-4">
+          {/* Funil em painel largo: as etapas reais do pipeline, com os nomes inteiros. */}
+          <FunnelCard dashboard={dashboard} pipelineHrefs={pipelineHrefs} />
+
+          {/* Gráficos e painel operacional lado a lado (três colunas a partir de 1280 px). */}
+          <div className="grid items-stretch gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <SeriesCard dashboard={dashboard} />
+            <AttributionCard
+              attribution={attribution}
+              modelHrefs={modelHrefs}
+              sourceHrefs={sourceHrefs}
+              clearSourceHref={clearSourceHref}
+            />
+            <div className="flex min-w-0 flex-col gap-4 md:col-span-2 lg:col-span-1">
               {selected ? (
                 <OpportunityPanel
                   opportunity={selected}
@@ -162,16 +167,18 @@ export default async function VisaoGeralPage({
                 />
               ) : null}
               <AttentionList dashboard={dashboard} hrefFor={attentionHrefs} selectedId={selected?.id ?? null} />
-              <AgendaToday
-                items={dashboard.agendaToday.items}
-                total={dashboard.agendaToday.total}
-                pending={dashboard.positions.todayActivitiesPending}
-                canEdit={roleHasPermission(user.role, "activity.edit")}
-              />
             </div>
           </div>
 
-          <TeamTable rows={dashboard.team} days={dashboard.period.days} />
+          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+            <AgendaToday
+              items={dashboard.agendaToday.items}
+              total={dashboard.agendaToday.total}
+              pending={dashboard.positions.todayActivitiesPending}
+              canEdit={roleHasPermission(user.role, "activity.edit")}
+            />
+            <TeamTable rows={dashboard.team} days={dashboard.period.days} />
+          </div>
           <InsightsSection insights={buildInsights(dashboard)} />
         </div>
       </main>

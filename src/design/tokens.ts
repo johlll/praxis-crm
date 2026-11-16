@@ -90,6 +90,21 @@ export const color = {
   purpleBgAlt: "#29253A",
   neutral: "#BFC7C3",
   neutralBg: "#2A322F",
+
+  // Gráficos — paleta categórica (identidade de série, ex.: origens na
+  // rosca da Visão geral). Ordem FIXA, nunca reciclada: é ela que garante
+  // a separação entre vizinhos para daltonismo (protan/deutan) e para a
+  // visão normal. Validada por script contra `surface` em 16/11/2026:
+  // faixa de luminosidade, croma mínimo, contraste >= 3:1 e separação entre
+  // fatias vizinhas, inclusive no fechamento da rosca (pior par 8,4 com
+  // daltonismo; 19,3 sem). Ver docs/decisoes/refino-visual-2-visao-geral.md.
+  // "Sem origem" usa `neutral`, que também passa contra as seis.
+  chart1: "#3987E5",
+  chart2: "#D95926",
+  chart3: "#199E70",
+  chart4: "#C98500",
+  chart5: "#D55181",
+  chart6: "#0CA30C",
 } as const;
 
 export const font = {

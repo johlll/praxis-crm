@@ -165,3 +165,14 @@ Critérios conferidos: é `latest` (não canary/RC); `engines` declara
 ativamente pela Mozilla; `npm view deprecated` vazio. Usado via
 `pdfjs-dist/legacy/build/pdf.mjs`, o build pensado para rodar fora do
 navegador.
+
+## Dependência nova do refinamento visual 2 — verificação de 16/11/2026
+
+| Pacote | Escolhido | Última estável | Motivo |
+|---|---|---|---|
+| recharts | 3.10.1 | 3.10.1 | `latest` (publicada em 25/07/2026), não canary/beta; aprovada por João para os gráficos da Visão geral. Peer `react ^16.8 \|\| … \|\| ^19` aceita o React 19.2.8. A linha 3 não usa `defaultProps` (sem aviso no React 19). |
+| react-is | 19.2.8 | 19.3.1 | Peer obrigatório do Recharts. Fixado na MESMA versão de `react`/`react-dom` do projeto, não no `latest`, para não misturar duas linhas do React. |
+
+O `npm install` também alinhou no lockfile a linha de `pdfjs-dist`, que
+estava `^6.3.289` no lock e já era `6.3.289` no `package.json` (nenhuma
+versão instalada mudou).
