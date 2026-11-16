@@ -1,19 +1,25 @@
+import { Lightbulb, Users } from "lucide-react";
+
 import { initialsOf } from "@/lib/initials";
 import type { TeamRow } from "@/modules/dashboard/queries";
 import type { Insight } from "@/modules/dashboard/presentation";
+import { PanelIcon } from "./panel-icon";
 
 export function TeamTable({ rows, days }: { rows: TeamRow[]; days: number }) {
   return (
-    <section aria-labelledby="equipe-titulo" className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
-      <div className="flex flex-col">
-        <h2 id="equipe-titulo" className="m-0 text-body font-bold text-text">
-          Desempenho da equipe
-        </h2>
-        <p className="m-0 text-meta text-text-muted">
-          Leads recebidos e oportunidades ganhas: responsável atual do lead. Consultas e atrasadas: responsável atual da
-          atividade. Atribuir um lead não significa que ele foi atendido. Quem saiu do escritório continua na tabela, marcado
-          como fora da equipe, porque os registros seguem atribuídos a essa pessoa.
-        </p>
+    <section aria-labelledby="equipe-titulo" className="flex min-w-0 flex-col gap-3 rounded-lg border border-border bg-surface p-4">
+      <div className="flex min-w-0 items-start gap-2.5">
+        <PanelIcon icon={Users} />
+        <div className="flex min-w-0 flex-col">
+          <h2 id="equipe-titulo" className="m-0 text-lead font-bold text-text">
+            Desempenho da equipe
+          </h2>
+          <p className="m-0 text-meta text-text-muted">
+            Leads recebidos e oportunidades ganhas: responsável atual do lead. Consultas e atrasadas: responsável atual da
+            atividade. Atribuir um lead não significa que ele foi atendido. Quem saiu do escritório continua na tabela, marcado
+            como fora da equipe, porque os registros seguem atribuídos a essa pessoa.
+          </p>
+        </div>
       </div>
       {rows.length === 0 ? (
         <p className="m-0 text-body text-text-secondary">Nenhum membro com dados no período.</p>
@@ -81,9 +87,12 @@ export function InsightsSection({ insights }: { insights: Insight[] }) {
   if (insights.length === 0) return null;
   return (
     <section aria-labelledby="insights-titulo" className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
-      <h2 id="insights-titulo" className="m-0 text-label font-semibold tracking-[1.3px] text-text-tertiary uppercase">
-        Destaques calculados
-      </h2>
+      <div className="flex items-center gap-2.5">
+        <PanelIcon icon={Lightbulb} />
+        <h2 id="insights-titulo" className="m-0 text-label font-semibold tracking-[1.3px] text-text-tertiary uppercase">
+          Destaques calculados
+        </h2>
+      </div>
       <ul className="m-0 grid list-none gap-3 p-0 md:grid-cols-3">
         {insights.map((insight) => (
           <li key={insight.id} className="flex flex-col gap-1 rounded-card border border-border bg-surface-subtle px-3.5 py-3">

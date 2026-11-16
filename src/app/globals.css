@@ -75,6 +75,14 @@
   --color-neutral: #bfc7c3;
   --color-neutral-bg: #2a322f;
 
+  /* Gráficos — paleta categórica validada (ordem fixa; ver tokens.ts) */
+  --color-chart1: #3987e5;
+  --color-chart2: #d95926;
+  --color-chart3: #199e70;
+  --color-chart4: #c98500;
+  --color-chart5: #d55181;
+  --color-chart6: #0ca30c;
+
   /* Tipografia */
   --font-sans: var(--font-public-sans), "Helvetica Neue", Helvetica, Arial, sans-serif;
   --font-serif: var(--font-instrument-serif), Georgia, serif;

@@ -135,7 +135,10 @@ sem fase atribuída).
 ## 8. Decisões de implementação
 
 - Sem biblioteca de gráficos: o protótipo usa barras simples, feitas em CSS
-  com os tokens (nenhuma dependência nova — política §2.1).
+  com os tokens (nenhuma dependência nova — política §2.1). Revisto no
+  refinamento visual 2 (16/11/2026): série, previsão e origem passaram a
+  usar Recharts, aprovado por João; o funil continua em barras CSS. As
+  definições acima não mudaram — ver `refino-visual-2-visao-geral.md`.
 - `workspaces.is_demo` marca escritórios só com dados fictícios; só SQL
   direto altera (authenticated tem apenas SELECT em `workspaces`).
 - Dados: seed local/CI com os escritórios "Painel" e "Painel B" e usuários
