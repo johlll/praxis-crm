@@ -358,8 +358,17 @@ test.describe.serial("pipeline — arrastar e soltar", () => {
   const column = (page: Page, name: string) => page.locator(`section[aria-label="Etapa ${name}"]`);
 
   async function dragTo(page: Page, from: ReturnType<Page["locator"]>, to: ReturnType<Page["locator"]>) {
-    const a = (await from.boundingBox())!;
-    const b = (await to.boundingBox())!;
+    // O quadro chega por streaming: os cartões já existem no DOM, mas ficam
+    // escondidos atrás do esqueleto (pipeline/loading.tsx) até a troca.
+    // boundingBox() não espera e devolve null para elemento invisível
+    // (falha real do CI da main, run 43784749785) — por isso as esperas.
+    await expect(from).toBeVisible();
+    await expect(to).toBeVisible();
+    const a = await from.boundingBox();
+    const b = await to.boundingBox();
+    if (a === null || b === null) {
+      throw new Error(`posição nula depois de visível: origem=${JSON.stringify(a)} destino=${JSON.stringify(b)}`);
+    }
     await page.mouse.move(a.x + a.width / 2, a.y + 30);
     await page.mouse.down();
     // Passa da distância mínima (6 px) antes de ir ao destino: abaixo dela é clique.
