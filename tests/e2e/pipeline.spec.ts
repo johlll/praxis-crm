@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { SEED_CONTACTS, SEED_USERS } from "./fixtures";
+import { SEED_CONTACTS, SEED_PAINEL, SEED_USERS } from "./fixtures";
 import { callRpcDirect, getSupabaseAccessToken, login, readSupabaseEnv, switchWorkspace } from "./helpers";
 
 /**
@@ -339,5 +339,123 @@ test.describe.serial("pipeline — A5", () => {
 
     await page.goto(opportunityUrl);
     await expect(page.getByRole("heading", { name: "404" })).toBeVisible();
+  });
+});
+
+/**
+ * Refinamento do pipeline — arrastar e soltar de verdade, com mouse, no
+ * navegador. Usa o Escritório Painel B (seed da A10, dados demonstrativos):
+ * tem cartões abertos e colunas vazias, e este arquivo é o último a rodar
+ * no CI, então mexer nele não afeta os testes do painel (dashboard.spec.ts).
+ * O arraste usa o MESMO fluxo de negócio do seletor "Mover" (requisitos →
+ * move_opportunity_stage com lock_version) — o que se prova aqui é o gesto
+ * e o resultado gravado, não regra nova.
+ */
+test.describe.serial("pipeline — arrastar e soltar", () => {
+  // 8 colunas de 256 px + barra lateral cabem inteiras, sem rolagem.
+  test.use({ viewport: { width: 2440, height: 1000 } });
+
+  const column = (page: Page, name: string) => page.locator(`section[aria-label="Etapa ${name}"]`);
+
+  async function dragTo(page: Page, from: ReturnType<Page["locator"]>, to: ReturnType<Page["locator"]>) {
+    const a = (await from.boundingBox())!;
+    const b = (await to.boundingBox())!;
+    await page.mouse.move(a.x + a.width / 2, a.y + 30);
+    await page.mouse.down();
+    // Passa da distância mínima (6 px) antes de ir ao destino: abaixo dela é clique.
+    await page.mouse.move(a.x + a.width / 2 + 14, a.y + 36, { steps: 4 });
+    await page.mouse.move(b.x + b.width / 2, b.y + Math.min(b.height / 2, 220), { steps: 18 });
+    await page.mouse.up();
+  }
+
+  async function waitIdle(page: Page) {
+    await expect(page.getByText(/Conferindo requisitos…|Movendo…|Atualizando…/)).toHaveCount(0, { timeout: 15000 });
+  }
+
+  test("1. soltar numa coluna vazia grava, atualiza os contadores e persiste", async ({ page }) => {
+    await login(page, SEED_PAINEL.ownerB.email);
+    await page.goto("/pipeline");
+
+    const source = column(page, "Agendar consulta");
+    const target = column(page, "Enviar proposta");
+    await expect(target.getByText("Nenhuma oportunidade nesta etapa")).toBeVisible();
+    const card = source.getByTestId("pipeline-card").first();
+    const id = (await card.getAttribute("data-opportunity-id"))!;
+    const sourceBefore = await source.getByTestId("pipeline-card").count();
+
+    await dragTo(page, card, target);
+    await waitIdle(page);
+
+    await expect(target.locator(`[data-opportunity-id="${id}"]`)).toBeVisible();
+    await expect(target.getByLabel("1 oportunidade")).toBeVisible();
+    await expect(source.getByTestId("pipeline-card")).toHaveCount(sourceBefore - 1);
+
+    await page.reload();
+    await expect(column(page, "Enviar proposta").locator(`[data-opportunity-id="${id}"]`)).toBeVisible();
+  });
+
+  test("2. etapa com requisito usa o fluxo existente: cancelar não muda, confirmar move", async ({ page, request }) => {
+    const accessToken = await getSupabaseAccessToken(request, SEED_PAINEL.ownerB.email);
+    const { url, anonKey } = readSupabaseEnv();
+    const pipelines = await request.get(`${url}/rest/v1/pipelines?is_default=eq.true&select=id`, {
+      headers: { apikey: anonKey, Authorization: `Bearer ${accessToken}` },
+    });
+    const pipelineId = ((await pipelines.json()) as Array<{ id: string }>)[0]!.id;
+    const stages = await request.get(
+      `${url}/rest/v1/pipeline_stages?pipeline_id=eq.${pipelineId}&select=id,name`,
+      { headers: { apikey: anonKey, Authorization: `Bearer ${accessToken}` } },
+    );
+    const assinatura = ((await stages.json()) as Array<{ id: string; name: string }>).find(
+      (s) => s.name === "Aguardar assinatura",
+    )!;
+    const created = await callRpcDirect(request, accessToken, "create_stage_requirement", {
+      p_stage_id: assinatura.id,
+      p_label: "Contrato revisado (teste e2e)",
+      p_field_type: "checkbox",
+    });
+    expect(created.status, JSON.stringify(created)).toBeLessThan(300);
+
+    await login(page, SEED_PAINEL.ownerB.email);
+    await page.goto("/pipeline");
+    const source = column(page, "Negociar honorários");
+    const target = column(page, "Aguardar assinatura");
+    const card = source.getByTestId("pipeline-card").first();
+    const id = (await card.getAttribute("data-opportunity-id"))!;
+
+    await dragTo(page, card, target);
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText("Complete os dados necessários para avançar esta oportunidade")).toBeVisible();
+    await dialog.getByRole("button", { name: "Cancelar" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(source.locator(`[data-opportunity-id="${id}"]`)).toBeVisible();
+    await page.reload();
+    await expect(column(page, "Negociar honorários").locator(`[data-opportunity-id="${id}"]`)).toBeVisible();
+
+    await dragTo(page, column(page, "Negociar honorários").locator(`[data-opportunity-id="${id}"]`), column(page, "Aguardar assinatura"));
+    await dialog.getByRole("checkbox").check();
+    await dialog.getByRole("button", { name: "Salvar e avançar" }).click();
+    await waitIdle(page);
+    await expect(column(page, "Aguardar assinatura").locator(`[data-opportunity-id="${id}"]`)).toBeVisible();
+    await page.reload();
+    await expect(column(page, "Aguardar assinatura").locator(`[data-opportunity-id="${id}"]`)).toBeVisible();
+  });
+
+  test("3. papel sem edição não arrasta; o clique no cartão continua abrindo o detalhe", async ({ page }) => {
+    await login(page, SEED_PAINEL.viewer.email);
+    await page.goto("/pipeline");
+
+    await expect(page.getByText("Somente visualização")).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Arrastar / })).toHaveCount(0);
+    await expect(page.getByLabel(/^Mover .* para etapa$/)).toHaveCount(0);
+
+    const source = column(page, "Fazer primeiro contato");
+    const card = source.getByTestId("pipeline-card").first();
+    const id = (await card.getAttribute("data-opportunity-id"))!;
+    await dragTo(page, card, column(page, "Agendar consulta"));
+    await expect(source.locator(`[data-opportunity-id="${id}"]`)).toBeVisible();
+
+    const box = (await source.locator(`[data-opportunity-id="${id}"]`).boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(page).toHaveURL(new RegExp(`/oportunidades/${id}$`));
   });
 });

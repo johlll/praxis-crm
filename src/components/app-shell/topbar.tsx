@@ -1,20 +1,20 @@
+import type { ReactNode } from "react";
 import { Bell, Plus } from "lucide-react";
 
-import { ROLE_LABEL, type Role } from "@/lib/roles";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import type { Role } from "@/lib/roles";
 import { GlobalSearch } from "./global-search";
-import { SignOutItem } from "./sign-out-item";
 
 type TopbarProps = {
   title: string;
   subtitle?: string;
-  user: {
+  /** Ações próprias da tela, alinhadas à direita antes das ações globais. */
+  actions?: ReactNode;
+  /**
+   * Mantido por compatibilidade com as telas existentes: desde o
+   * refinamento visual (15/11/2026) a conta e o papel aparecem no rodapé da
+   * barra lateral, como nas referências aprovadas.
+   */
+  user?: {
     fullName: string;
     initials: string;
     role: Role;
@@ -22,76 +22,41 @@ type TopbarProps = {
 };
 
 /**
- * Cabeçalho das telas internas — medidas conferidas nos protótipos
- * (header 60px, título 16.5px/700, busca central de 420×34). O usuário à
- * direita vem da sessão real (ver `(app)/layout.tsx`), não mais fixo.
+ * Cabeçalho das telas internas, no mesmo fundo da página (sem faixa
+ * branca): título forte sem exagero, subtítulo discreto e ações à direita.
  */
-export function Topbar({ title, subtitle, user }: TopbarProps) {
+export function Topbar({ title, subtitle, actions }: TopbarProps) {
   return (
-    <header className="flex h-[60px] shrink-0 items-center gap-[18px] border-b border-border bg-surface px-5">
-      <div className="flex min-w-0 flex-col">
-        <h1 className="m-0 truncate text-[16.5px] leading-tight font-bold tracking-[-0.2px] text-text">
+    // px-5 alinha com o p-5 do <main> das telas existentes.
+    <header className="flex shrink-0 items-center gap-3 px-5 pt-4 pb-2 md:min-h-[68px] md:gap-4 md:pt-5">
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <h1 className="m-0 truncate text-[19px] leading-tight font-bold tracking-[-0.3px] text-text md:text-[22px]">
           {title}
         </h1>
-        {subtitle ? (
-          <p className="m-0 truncate text-meta text-text-soft">{subtitle}</p>
-        ) : null}
-      </div>
-
-      <div className="flex flex-1 justify-center">
-        <GlobalSearch />
+        {subtitle ? <p className="m-0 truncate text-small text-text-muted">{subtitle}</p> : null}
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
+        {actions}
+        <div className="hidden lg:block">
+          <GlobalSearch />
+        </div>
+
         <button
           type="button"
-          className="flex h-[34px] items-center gap-1.5 rounded-[9px] bg-primary px-3.5 text-[12.5px] font-bold text-white shadow-[0_1px_2px_rgba(12,46,44,0.22)] transition-colors hover:bg-primary-hover"
+          className="flex h-[34px] items-center gap-1.5 rounded-[9px] bg-primary px-2.5 text-[12.5px] font-bold text-on-solid shadow-card transition-colors hover:bg-primary-hover md:px-3.5"
         >
-          <Plus size={14} strokeWidth={2} aria-hidden />
-          Criar
+          <Plus size={15} strokeWidth={2} aria-hidden />
+          <span className="max-md:sr-only">Criar</span>
         </button>
 
         <button
           type="button"
           aria-label="Notificações"
-          className="flex size-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-app"
+          className="flex size-[34px] items-center justify-center rounded-[9px] border border-border text-text-secondary transition-colors hover:bg-surface-hover hover:text-text"
         >
-          <Bell size={17} strokeWidth={1.3} aria-hidden />
+          <Bell size={16} strokeWidth={1.5} aria-hidden />
         </button>
-
-        <div className="mx-[3px] h-[22px] w-px bg-border" aria-hidden />
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              aria-label="Menu do usuário"
-              className="flex items-center gap-2 rounded-md px-1.5 py-1 transition-colors hover:bg-app"
-            >
-              <div
-                className="flex size-8 items-center justify-center rounded-md bg-primary-tint text-[11px] font-bold text-primary"
-                aria-hidden
-              >
-                {user.initials}
-              </div>
-              <div className="flex flex-col text-left leading-[1.2]">
-                <span className="text-[11.5px] font-semibold text-text">
-                  {user.fullName}
-                </span>
-                <span className="text-[10px] text-text-muted">
-                  {ROLE_LABEL[user.role]}
-                </span>
-              </div>
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-[200px]">
-            <DropdownMenuItem asChild>
-              <a href="/configuracoes/equipe">Equipe</a>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <SignOutItem />
-          </DropdownMenuContent>
-        </DropdownMenu>
       </div>
     </header>
   );

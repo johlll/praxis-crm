@@ -14,10 +14,10 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        primary: "bg-primary text-white hover:bg-primary-hover",
-        secondary: "border border-border bg-surface text-text hover:bg-app",
-        ghost: "text-text-secondary hover:bg-app",
-        danger: "bg-danger text-white hover:bg-danger/90",
+        primary: "bg-primary text-on-solid hover:bg-primary-hover",
+        secondary: "border border-border bg-surface text-text hover:border-border-strong hover:bg-surface-hover",
+        ghost: "text-text-secondary hover:bg-surface-hover hover:text-text",
+        danger: "bg-danger text-on-solid hover:bg-danger/90",
       },
       size: {
         sm: "h-8 px-3 text-small",

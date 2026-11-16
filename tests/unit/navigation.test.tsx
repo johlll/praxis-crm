@@ -1,8 +1,12 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { Sidebar, type SidebarWorkspace } from "@/components/app-shell/sidebar";
-import { primaryNav, secondaryNav } from "@/components/app-shell/navigation";
+import { primaryNav, secondaryNav, sidebarLayout } from "@/components/app-shell/navigation";
+
+vi.mock("@/modules/auth/actions", () => ({
+  signOutAction: vi.fn(),
+}));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/pipeline",
@@ -43,7 +47,45 @@ describe("Sidebar", () => {
     );
   });
 
-  it("mostra o workspace ativo no rodapé", () => {
+  it("o agrupamento visual contém cada item de navegação exatamente uma vez (nada escondido)", () => {
+    const agrupados = sidebarLayout.flatMap((entry) =>
+      entry.kind === "item" ? [entry.item.href] : entry.group.items.map((i) => i.href),
+    );
+    const todos = [...primaryNav, ...secondaryNav].map((i) => i.href);
+
+    expect([...agrupados].sort()).toEqual([...todos].sort());
+    expect(new Set(agrupados).size).toBe(agrupados.length);
+  });
+
+  it("grupos começam abertos e podem ser recolhidos e reabertos", () => {
+    render(<Sidebar activeWorkspace={activeWorkspace} workspaces={[activeWorkspace]} overdueActivitiesCount={3} />);
+
+    const operacao = screen.getByRole("button", { name: /Operação/ });
+    expect(operacao).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(operacao);
+    expect(operacao).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("link", { name: /Atividades/ })).not.toBeInTheDocument();
+    // Recolhido, o grupo continua mostrando as atrasadas.
+    expect(screen.getByLabelText("3 atrasadas")).toBeInTheDocument();
+
+    fireEvent.click(operacao);
+    expect(screen.getByRole("link", { name: /Atividades/ })).toBeInTheDocument();
+  });
+
+  it("mostra a conta e as ações de conta no rodapé quando há usuário", () => {
+    render(
+      <Sidebar
+        activeWorkspace={activeWorkspace}
+        workspaces={[activeWorkspace]}
+        user={{ fullName: "Ana Owner (seed)", initials: "AO", role: "owner" }}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Menu do usuário" })).toHaveTextContent("Ana Owner (seed)");
+  });
+
+  it("mostra o workspace ativo no seletor", () => {
     render(<Sidebar activeWorkspace={activeWorkspace} workspaces={[activeWorkspace]} />);
 
     expect(screen.getByText("Escritório Um (seed)")).toBeInTheDocument();

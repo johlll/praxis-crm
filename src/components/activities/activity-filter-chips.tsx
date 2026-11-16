@@ -50,7 +50,7 @@ export function ActivityFilterChips({
               <span
                 className={cn(
                   "rounded-full px-1.5 text-label font-bold leading-[16px]",
-                  active ? "bg-primary text-white" : "bg-app text-text-tertiary",
+                  active ? "bg-primary text-on-solid" : "bg-app text-text-tertiary",
                 )}
               >
                 {count}

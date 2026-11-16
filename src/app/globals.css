@@ -3,67 +3,77 @@
 /**
  * Tokens do design system — espelham src/design/tokens.ts.
  * O teste tokens.test.ts falha se os dois divergirem.
+ * Tema escuro aprovado em 15/11/2026 (ver comentário em tokens.ts).
  */
 @theme {
   /* Fundos */
-  --color-canvas: #efeee9;
-  --color-app: #f5f4ef;
-  --color-surface: #ffffff;
-  --color-surface-subtle: #fbfbf8;
-  --color-surface-muted: #fcfcfa;
-  --color-surface-selected: #f2f7f5;
+  --color-canvas: #151a18;
+  --color-app: #1b211f;
+  --color-surface: #232b28;
+  --color-surface-hover: #29322f;
+  --color-surface-subtle: #1c2321;
+  --color-surface-muted: #1f2624;
+  --color-surface-selected: #263330;
 
   /* Barra lateral */
-  --color-sidebar: #0c2e2c;
-  --color-sidebar-hover: #133a37;
-  --color-sidebar-text: #b7ccc7;
-  --color-sidebar-text-strong: #cfdeda;
-  --color-sidebar-muted: #7fa39c;
-  --color-sidebar-active: #1e9e7f;
-  --color-sidebar-active-text: #04221d;
-  --color-sidebar-badge-text: #8fe3c9;
+  --color-sidebar: #191f1d;
+  --color-sidebar-hover: #222a27;
+  --color-sidebar-text: #b4beb9;
+  --color-sidebar-text-strong: #e6ebe8;
+  --color-sidebar-muted: #8f9a95;
+  --color-sidebar-active: #29322f;
+  --color-sidebar-active-text: #f3f5f4;
+  --color-sidebar-badge-text: #ddba92;
 
   /* Marca */
-  --color-primary: #0e6c5c;
-  --color-primary-hover: #0a5447;
-  --color-primary-accent: #1e9e7f;
-  --color-primary-tint: #eaf4f1;
-  --color-primary-ring: #e1eee9;
-  --color-primary-border: #cfe6d8;
+  --color-primary: #3db591;
+  --color-primary-hover: #52c4a1;
+  --color-primary-accent: #2e9c7b;
+  --color-primary-tint: #1d3530;
+  --color-primary-ring: #2c5148;
+  --color-primary-border: #2f5a4e;
 
-  /* Texto — tertiary/soft/muted escurecidos para 4.5:1 (WCAG AA) contra
-     surface/app/canvas; ver src/design/tokens.ts e tests/unit/contrast.test.ts */
-  --color-text: #17201e;
-  --color-text-secondary: #4c5551;
-  --color-text-tertiary: #5c635f;
-  --color-text-muted: #676c69;
-  --color-text-soft: #626865;
+  /* Acento bronze — só detalhes */
+  --color-accent: #c9a27a;
+  --color-accent-tint: #30291f;
+  --color-accent-border: #5b4935;
+
+  /* Texto sobre fundo sólido claro */
+  --color-on-solid: #0e1412;
+
+  /* Texto — 4.5:1 (WCAG AA) contra canvas, app, surface e surface-hover;
+     ver src/design/tokens.ts e tests/unit/contrast.test.ts */
+  --color-text: #eef1ef;
+  --color-text-secondary: #c7ceca;
+  --color-text-tertiary: #abb4af;
+  --color-text-muted: #9aa49f;
+  --color-text-soft: #a2aba6;
   /* Abaixo de AA por design: só para elementos decorativos/desabilitados */
-  --color-text-disabled: #a5aaa6;
+  --color-text-disabled: #66706b;
 
   /* Bordas */
-  --color-border: #e4e2da;
-  --color-border-subtle: #edece5;
-  --color-border-input: #c9c6bb;
-  --color-border-strong: #d7d5ce;
+  --color-border: #2f3935;
+  --color-border-subtle: #29322f;
+  --color-border-input: #3b4743;
+  --color-border-strong: #44504b;
   --color-border-unassigned: #c9a55c;
 
   /* Semânticos */
-  --color-danger: #b3402e;
-  --color-danger-bg: #fbece9;
-  --color-warning: #8a5a00;
-  --color-warning-bg: #fbf2e3;
-  --color-info: #1f5c99;
-  --color-info-bg: #eaf1fa;
-  --color-info-bg-alt: #e9f0f7;
-  --color-success: #18794e;
-  --color-success-bg: #e8f6ec;
-  --color-success-bg-alt: #e7f3ec;
-  --color-purple: #5a45a8;
-  --color-purple-bg: #eeeaf9;
-  --color-purple-bg-alt: #f0edfb;
-  --color-neutral: #4c5551;
-  --color-neutral-bg: #f0efe9;
+  --color-danger: #f28b79;
+  --color-danger-bg: #3a2421;
+  --color-warning: #e7b866;
+  --color-warning-bg: #362d1d;
+  --color-info: #88b9ee;
+  --color-info-bg: #1e2c3a;
+  --color-info-bg-alt: #1f2b36;
+  --color-success: #6ecf99;
+  --color-success-bg: #1c3328;
+  --color-success-bg-alt: #1f3129;
+  --color-purple: #b8a7f2;
+  --color-purple-bg: #2c2740;
+  --color-purple-bg-alt: #29253a;
+  --color-neutral: #bfc7c3;
+  --color-neutral-bg: #2a322f;
 
   /* Tipografia */
   --font-sans: var(--font-public-sans), "Helvetica Neue", Helvetica, Arial, sans-serif;
@@ -86,19 +96,19 @@
   --radius-pill: 20px;
 
   /* Sombras */
-  --shadow-card: 0 1px 1px rgba(23, 32, 30, 0.03);
-  --shadow-raised: 0 1px 2px rgba(23, 32, 30, 0.12);
-  --shadow-ring: 0 0 0 2px #e1eee9;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.22);
+  --shadow-raised: 0 10px 28px rgba(0, 0, 0, 0.38);
+  --shadow-ring: 0 0 0 2px #2c5148;
 
   /* Densidade da tabela (padding vertical da célula) */
   --density-comfortable: 11px;
   --density-compact: 7px;
 
   /* Larguras estruturais */
-  --spacing-sidebar: 228px;
+  --spacing-sidebar: 236px;
   --spacing-detail-panel: 372px;
   --spacing-profile-panel: 320px;
-  --spacing-kanban-column: 272px;
+  --spacing-kanban-column: 256px;
 
   /* Breakpoints (desktop-first, conforme §11 do plano) */
   --breakpoint-md: 1024px;
@@ -106,6 +116,11 @@
 }
 
 @layer base {
+  /* Controles nativos (select, data, barras de rolagem) no esquema escuro */
+  html {
+    color-scheme: dark;
+  }
+
   html,
   body {
     margin: 0;
@@ -141,6 +156,11 @@
     font-variant-numeric: tabular-nums;
   }
 
+  ::selection {
+    background: var(--color-primary-ring);
+    color: var(--color-text);
+  }
+
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
@@ -150,6 +170,11 @@
     background: var(--color-border-strong);
     border-radius: 8px;
     border: 3px solid transparent;
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-text-disabled);
     background-clip: content-box;
   }
 

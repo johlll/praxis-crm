@@ -50,7 +50,7 @@ function DropdownMenuItem({
       data-variant={variant}
       className={cn(
         "relative flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-small outline-none select-none",
-        "focus:bg-app data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+        "focus:bg-surface-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         "data-[inset]:pl-8",
         "data-[variant=danger]:text-danger data-[variant=danger]:focus:bg-danger-bg",
         className,
@@ -70,7 +70,7 @@ function DropdownMenuCheckboxItem({
       data-slot="dropdown-menu-checkbox-item"
       className={cn(
         "relative flex cursor-pointer items-center gap-2 rounded-sm py-1.5 pr-2 pl-8 text-small outline-none select-none",
-        "focus:bg-app data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+        "focus:bg-surface-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         className,
       )}
       {...props}
@@ -95,7 +95,7 @@ function DropdownMenuRadioItem({
       data-slot="dropdown-menu-radio-item"
       className={cn(
         "relative flex cursor-pointer items-center gap-2 rounded-sm py-1.5 pr-2 pl-8 text-small outline-none select-none",
-        "focus:bg-app data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+        "focus:bg-surface-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         className,
       )}
       {...props}
@@ -163,7 +163,7 @@ function DropdownMenuSubTrigger({
       data-inset={inset}
       className={cn(
         "flex cursor-pointer items-center rounded-sm px-2 py-1.5 text-small outline-none select-none",
-        "focus:bg-app data-[state=open]:bg-app data-[inset]:pl-8",
+        "focus:bg-surface-hover data-[state=open]:bg-surface-hover data-[inset]:pl-8",
         className,
       )}
       {...props}

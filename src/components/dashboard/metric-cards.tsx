@@ -184,7 +184,7 @@ export function AttentionBanner({ dashboard }: { dashboard: Dashboard }) {
       </div>
       <Link
         href="#atencao"
-        className="shrink-0 rounded-md bg-warning px-3 py-1.5 text-small font-bold text-white hover:text-white hover:no-underline"
+        className="shrink-0 rounded-md bg-warning px-3 py-1.5 text-small font-bold text-on-solid hover:text-on-solid hover:no-underline"
       >
         Revisar
       </Link>

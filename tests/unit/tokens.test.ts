@@ -171,13 +171,15 @@ describe("tokens de design — larguras estruturais", () => {
     expect(todasAsChaves).toEqual(classificadas);
   });
 
-  it("mantém as larguras medidas na conferência visual contra o protótipo", () => {
-    // Pin explícito dos valores em si (não só da consistência com o CSS) —
-    // conferidos no DOM do Pipeline.dc.html a 1440×900 na fase A1.
-    expect(layout.sidebarWidth).toBe(228);
+  it("mantém as larguras aprovadas no refinamento visual", () => {
+    // Pin explícito dos valores em si (não só da consistência com o CSS).
+    // Refinamento de 15/11/2026: sidebar compacta próxima dos ~230–245 px
+    // das referências aprovadas e colunas do kanban mais densas; o passo
+    // continua sendo largura + 10 px de espaçamento.
+    expect(layout.sidebarWidth).toBe(236);
     expect(layout.detailPanelWidth).toBe(372);
-    expect(layout.kanbanColumnWidth).toBe(272);
-    expect(layout.kanbanColumnStep).toBe(282);
+    expect(layout.kanbanColumnWidth).toBe(256);
+    expect(layout.kanbanColumnStep).toBe(layout.kanbanColumnWidth + 10);
   });
 });
 
