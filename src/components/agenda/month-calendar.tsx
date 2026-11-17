@@ -103,7 +103,7 @@ export function MonthCalendar({
       </div>
 
       <table
-        className={cn("w-full table-fixed border-separate border-spacing-1 transition-opacity", busy && "opacity-60")}
+        className={cn("w-full table-fixed border-separate border-spacing-0.5 transition-opacity sm:border-spacing-1", busy && "opacity-60")}
         onKeyDown={handleKeyDown}
       >
         <caption className="sr-only">
