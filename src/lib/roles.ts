@@ -93,6 +93,18 @@ export type Permission =
   | "conversation.send"
   | "conversation.link"
   | "conversation.simulate"
+  // Conversas + IA (PR 1, docs/decisoes/conversas-ia-fundacao.md). Corrigir a
+  // situação do atendimento da conversa e pausar/retomar as alterações
+  // automáticas dela: quem atende (owner/admin/manager/lawyer/sales), com o
+  // alcance da conversa. É uma permissão PRÓPRIA, não conversation.send:
+  // responder não autoriza nada além do atendimento. Corrigir o andamento
+  // do caso/serviço (oportunidade ganha) e pausar/retomar a automação dele:
+  // case.progress_edit, só owner/admin/manager/lawyer — atendimento e
+  // visualizador não alteram andamento jurídico. A pausa da etapa comercial
+  // segue opportunity.edit (quem já move a oportunidade no Kanban). O banco
+  // repete as três faixas.
+  | "conversation.attendance_edit"
+  | "case.progress_edit"
   | "contact.consent_manage"
   // A8 — clientes e handoff. "Ver" segue a matriz do plano: todos os
   // papéis veem (owner/admin/manager sem restrição de linha; lawyer só
@@ -196,6 +208,8 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "conversation.send": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
   "conversation.link": new Set<Role>(["owner", "admin", "manager"]),
   "conversation.simulate": new Set<Role>(["owner", "admin"]),
+  "conversation.attendance_edit": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
+  "case.progress_edit": new Set<Role>(["owner", "admin", "manager", "lawyer"]),
   "contact.consent_manage": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
   "client.view": new Set(ROLES),
   "client.manage": new Set<Role>(["owner", "admin", "manager"]),

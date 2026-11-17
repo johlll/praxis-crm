@@ -118,6 +118,10 @@ export const AUDIT_ACTION_GROUPS: readonly AuditActionGroup[] = [
   ]),
   group("Conversas e mensagens", [
     ["conversation.link_resolved", "Vínculo da conversa resolvido"],
+    ["conversation.attendance_changed", "Situação do atendimento alterada"],
+    ["opportunity.case_progress_changed", "Andamento do caso alterado"],
+    ["status_track.automation_paused", "Alterações automáticas pausadas"],
+    ["status_track.automation_resumed", "Alterações automáticas retomadas"],
     ["message.received", "Mensagem recebida"],
     ["message.sent", "Mensagem enviada"],
     ["message.observed", "Mensagem observada no WhatsApp"],

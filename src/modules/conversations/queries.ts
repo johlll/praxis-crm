@@ -4,6 +4,8 @@ import type { Database } from "@/server/types/database";
 
 export type MessageDirection = Database["public"]["Enums"]["message_direction"];
 export type MessageStatus = Database["public"]["Enums"]["message_status"];
+export type MessageOrigin = Database["public"]["Enums"]["whatsapp_message_origin"];
+export type MessageSenderClassification = Database["public"]["Enums"]["whatsapp_sender_classification"];
 
 export type ConversationListItem = {
   id: string;
@@ -142,6 +144,16 @@ export type MessageListItem = {
   sentBy: string | null;
   createdAt: string;
   waMessageId: string;
+  /**
+   * Conversas + IA (PR 1): por onde a mensagem passou e quem a enviou, como o
+   * banco gravou. Ausentes (null) nas respostas que não os devolvem (envio).
+   * `origin = "chatbot"` exige correlação positiva na gravação e mesmo assim
+   * NÃO identifica uma pessoa nem a Vitória; sem correlação a classificação
+   * continua "unresolved" — nunca promovida aqui.
+   */
+  origin?: MessageOrigin | null;
+  senderClassification?: MessageSenderClassification | null;
+  contentKind?: string | null;
 };
 
 function mapMessageRow(row: Record<string, unknown>): MessageListItem {
@@ -155,7 +167,28 @@ function mapMessageRow(row: Record<string, unknown>): MessageListItem {
     sentBy: (row.sent_by as string | null) ?? null,
     createdAt: row.created_at as string,
     waMessageId: row.wa_message_id as string,
+    origin: (row.origin as MessageOrigin | null | undefined) ?? null,
+    senderClassification: (row.sender_classification as MessageSenderClassification | null | undefined) ?? null,
+    contentKind: (row.content_kind as string | null | undefined) ?? null,
   };
+}
+
+/**
+ * Autoria exibível de uma mensagem, sem promover nada além do que o banco
+ * comprovou. "automation" só com classificação automation (que o banco só
+ * aceita com correlação positiva); nunca vira nome de pessoa nem "Vitória".
+ */
+export type MessageAuthorKind = "client" | "office_crm" | "office_phone" | "internal" | "automation" | "unidentified";
+
+export function messageAuthorKind(
+  m: Pick<MessageListItem, "direction" | "origin" | "senderClassification">,
+): MessageAuthorKind {
+  const cls = m.senderClassification ?? null;
+  if (cls === "automation") return "automation";
+  if (m.origin === "inbound") return cls === "external" ? "client" : cls === "internal" ? "internal" : "unidentified";
+  if (m.origin === "crm" && cls === "internal") return "office_crm";
+  if (m.origin === "business_app" && cls === "internal") return "office_phone";
+  return "unidentified";
 }
 
 /**
