@@ -15,7 +15,7 @@ export default function AgendaError({ error, retry }: { error: Error & { digest?
       <div className="mx-auto max-w-[1200px]">
         <ErrorState
           title="Não foi possível carregar a agenda"
-          description="Não deu para buscar todas as atividades da semana. Tente novamente em instantes; se continuar, avise o responsável pelo sistema."
+          description="Não deu para buscar todas as atividades do mês. Tente novamente em instantes; se continuar, avise o responsável pelo sistema."
           onRetry={retry}
         />
       </div>

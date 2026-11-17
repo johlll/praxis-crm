@@ -34,6 +34,7 @@ export function CreateActivityDialog({
   members,
   leadId,
   opportunityId,
+  defaultDueDate,
 }: {
   /** Só é necessário quando leadId não é passado (Central de Atividades, sem lead fixo). */
   leadOptions?: LeadListItem[];
@@ -41,6 +42,8 @@ export function CreateActivityDialog({
   /** Quando a origem já sabe o lead (painel da oportunidade ou do lead), o campo some do formulário. */
   leadId?: string;
   opportunityId?: string;
+  /** "YYYY-MM-DD" já preenchido no campo Data (Agenda: o dia selecionado); continua editável. */
+  defaultDueDate?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [instanceKey, setInstanceKey] = useState(0);
@@ -65,6 +68,7 @@ export function CreateActivityDialog({
         members={members}
         {...(leadId ? { leadId } : {})}
         {...(opportunityId ? { opportunityId } : {})}
+        {...(defaultDueDate ? { defaultDueDate } : {})}
         onDone={() => setOpen(false)}
       />
     </Dialog>
@@ -76,12 +80,14 @@ function CreateActivityDialogBody({
   members,
   leadId,
   opportunityId,
+  defaultDueDate,
   onDone,
 }: {
   leadOptions: LeadListItem[];
   members: TeamMember[];
   leadId?: string;
   opportunityId?: string;
+  defaultDueDate?: string;
   onDone: () => void;
 }) {
   const [state, formAction, pending] = useActionState(createActivityAction, INITIAL_STATE);
@@ -171,7 +177,7 @@ function CreateActivityDialogBody({
         <div className="grid grid-cols-2 gap-3">
           <FormField>
             <FormLabel htmlFor="activity-due-date">Data</FormLabel>
-            <Input id="activity-due-date" name="dueDate" type="date" required />
+            <Input id="activity-due-date" name="dueDate" type="date" required defaultValue={defaultDueDate} />
           </FormField>
           <FormField>
             <FormLabel htmlFor="activity-due-time">Horário (opcional)</FormLabel>
