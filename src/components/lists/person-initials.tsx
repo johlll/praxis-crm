@@ -38,11 +38,14 @@ export function PersonInitials({
 }
 
 /** Marcador de "sem responsável": tracejado, como na tabela de equipe. */
-export function NoOwnerMark() {
+export function NoOwnerMark({ className }: { className?: string }) {
   return (
     <span
       aria-hidden
-      className="flex size-6 shrink-0 items-center justify-center rounded-full border border-dashed border-border-unassigned text-[10px] text-text-tertiary"
+      className={cn(
+        "flex size-6 shrink-0 items-center justify-center rounded-full border border-dashed border-border-unassigned text-[10px] text-text-tertiary",
+        className,
+      )}
     >
       —
     </span>

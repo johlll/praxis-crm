@@ -27,9 +27,15 @@ const STATUS_TONE: Record<LeadListItem["status"], ListTagTone> = {
   arquivado: "neutral",
 };
 
-const th = "px-4 py-2.5 text-label font-semibold tracking-[1px] text-text-tertiary uppercase";
+/**
+ * Entre md (1024) e lg (1280) a sidebar fixa deixa ~750-950 px para a tabela:
+ * colunas secundárias mais estreitas, recuo menor, resumo em até 2 linhas e
+ * responsável sem as iniciais devolvem o espaço ao nome do contato. A partir
+ * de lg valem as larguras da composição aprovada.
+ */
+const th = "px-3 py-2.5 lg:px-4 text-label font-semibold tracking-[1px] text-text-tertiary uppercase";
 const meta =
-  "px-4 py-2.5 align-middle text-text-secondary max-md:inline-flex max-md:items-center max-md:gap-1.5 max-md:p-0 max-md:text-small";
+  "px-3 py-2.5 lg:px-4 align-middle text-text-secondary max-md:inline-flex max-md:items-center max-md:gap-1.5 max-md:p-0 max-md:text-small";
 
 /**
  * Componente de servidor: o navegador recebe só o HTML da linha. Status é
@@ -43,10 +49,10 @@ export function LeadListTable({ items }: { items: LeadListItem[] }) {
         <thead className="max-md:hidden">
           <tr className="border-b border-border bg-surface-subtle">
             <th scope="col" className={th}>Contato</th>
-            <th scope="col" className={`${th} w-[180px] lg:w-[220px]`}>Área jurídica</th>
-            <th scope="col" className={`${th} w-[116px]`}>Prioridade</th>
-            <th scope="col" className={`${th} w-[120px]`}>Status</th>
-            <th scope="col" className={`${th} w-[200px] lg:w-[230px]`}>Responsável</th>
+            <th scope="col" className={`${th} md:w-[132px] lg:w-[220px]`}>Área jurídica</th>
+            <th scope="col" className={`${th} md:w-[92px] lg:w-[116px]`}>Prioridade</th>
+            <th scope="col" className={`${th} md:w-[108px] lg:w-[120px]`}>Status</th>
+            <th scope="col" className={`${th} md:w-[144px] lg:w-[230px]`}>Responsável</th>
           </tr>
         </thead>
         <tbody className="max-md:block">
@@ -55,7 +61,7 @@ export function LeadListTable({ items }: { items: LeadListItem[] }) {
               key={item.id}
               className="border-b border-border-subtle transition-colors last:border-0 focus-within:bg-surface-hover hover:bg-surface-hover max-md:relative max-md:flex max-md:flex-wrap max-md:items-center max-md:gap-x-3 max-md:gap-y-2 max-md:py-3 max-md:pr-4 max-md:pl-[60px]"
             >
-              <td className="px-4 py-2.5 align-middle max-md:block max-md:basis-full max-md:p-0">
+              <td className="px-3 py-2.5 align-middle lg:px-4 max-md:block max-md:basis-full max-md:p-0">
                 <div className="flex min-w-0 items-center gap-3">
                   <PersonInitials name={item.contactName} className="max-md:absolute max-md:top-3 max-md:left-4" />
                   <div className="flex min-w-0 flex-col">
@@ -68,7 +74,7 @@ export function LeadListTable({ items }: { items: LeadListItem[] }) {
                     {item.summary ? (
                       <span
                         title={item.summary}
-                        className="truncate text-small text-text-muted max-md:line-clamp-2 max-md:whitespace-normal"
+                        className="text-small text-text-muted max-lg:line-clamp-2 lg:truncate"
                       >
                         {item.summary}
                       </span>
@@ -94,14 +100,14 @@ export function LeadListTable({ items }: { items: LeadListItem[] }) {
               <td className={meta}>
                 {item.assignedToName ? (
                   <span className="flex min-w-0 items-center gap-2">
-                    <PersonInitials name={item.assignedToName} tone="member" size="sm" />
-                    <span className="truncate" title={item.assignedToName}>
+                    <PersonInitials name={item.assignedToName} tone="member" size="sm" className="md:max-lg:hidden" />
+                    <span className="max-md:truncate md:max-lg:line-clamp-2 lg:truncate" title={item.assignedToName}>
                       {item.assignedToName}
                     </span>
                   </span>
                 ) : (
                   <span className="flex items-center gap-2 text-text-muted">
-                    <NoOwnerMark />
+                    <NoOwnerMark className="md:max-lg:hidden" />
                     Sem responsável
                   </span>
                 )}

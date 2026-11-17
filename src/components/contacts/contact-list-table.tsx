@@ -9,9 +9,14 @@ import type { ContactListItem } from "@/modules/contacts/queries";
 const TYPE_LABEL: Record<ContactListItem["type"], string> = { pf: "PF", pj: "PJ" };
 const TYPE_NAME: Record<ContactListItem["type"], string> = { pf: "Pessoa física", pj: "Pessoa jurídica" };
 
-const th = "px-4 py-2.5 text-label font-semibold tracking-[1px] text-text-tertiary uppercase";
+/**
+ * Entre md (1024) e lg (1280) a sidebar fixa deixa ~750-950 px para a tabela:
+ * colunas secundárias mais estreitas e recuo menor devolvem o espaço ao nome
+ * e ao e-mail. A partir de lg valem as larguras da composição aprovada.
+ */
+const th = "px-3 py-2.5 lg:px-4 text-label font-semibold tracking-[1px] text-text-tertiary uppercase";
 /** Célula secundária: coluna da tabela no computador; item da linha de detalhes no celular. */
-const metaBase = "px-4 py-2.5 align-middle text-text-secondary";
+const metaBase = "px-3 py-2.5 lg:px-4 align-middle text-text-secondary";
 const meta = `${metaBase} max-md:inline-flex max-md:items-center max-md:gap-1.5 max-md:p-0 max-md:text-small`;
 /** Sem valor: "—" na coluna do computador; no cartão do celular o item simplesmente não aparece. */
 const metaMissing = `${metaBase} max-md:hidden`;
@@ -39,9 +44,9 @@ export function ContactListTable({ items }: { items: ContactListItem[] }) {
         <thead className="max-md:hidden">
           <tr className="border-b border-border bg-surface-subtle">
             <th scope="col" className={th}>Contato</th>
-            <th scope="col" className={`${th} w-[92px]`}>Tipo</th>
-            <th scope="col" className={`${th} w-[180px]`}>Telefone</th>
-            <th scope="col" className={`${th} w-[220px] lg:w-[260px]`}>Cidade/UF</th>
+            <th scope="col" className={`${th} md:w-[76px] lg:w-[92px]`}>Tipo</th>
+            <th scope="col" className={`${th} md:w-[140px] lg:w-[180px]`}>Telefone</th>
+            <th scope="col" className={`${th} md:w-[150px] lg:w-[260px]`}>Cidade/UF</th>
           </tr>
         </thead>
         <tbody className="max-md:block">
@@ -54,7 +59,7 @@ export function ContactListTable({ items }: { items: ContactListItem[] }) {
                 key={item.id}
                 className="border-b border-border-subtle transition-colors last:border-0 focus-within:bg-surface-hover hover:bg-surface-hover max-md:relative max-md:flex max-md:flex-wrap max-md:items-center max-md:gap-x-4 max-md:gap-y-1.5 max-md:py-3 max-md:pr-4 max-md:pl-[60px]"
               >
-                <td className="px-4 py-2.5 align-middle max-md:block max-md:basis-full max-md:p-0">
+                <td className="px-3 py-2.5 align-middle lg:px-4 max-md:block max-md:basis-full max-md:p-0">
                   <div className="flex min-w-0 items-center gap-3">
                     <PersonInitials name={item.name} className="max-md:absolute max-md:top-3 max-md:left-4" />
                     <div className="flex min-w-0 flex-col">
@@ -67,7 +72,7 @@ export function ContactListTable({ items }: { items: ContactListItem[] }) {
                       {email ? (
                         <span
                           title={email}
-                          className="truncate text-small text-text-muted max-md:overflow-visible max-md:whitespace-normal max-md:[overflow-wrap:anywhere]"
+                          className="text-small text-text-muted max-lg:[overflow-wrap:anywhere] lg:truncate"
                         >
                           {email}
                         </span>
