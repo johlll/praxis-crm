@@ -3695,11 +3695,15 @@ export type Database = {
       }
       status_tracks: {
         Row: {
-          attendance_status: Database["public"]["Enums"]["conversation_attendance_status"] | null
+          attendance_status:
+            | Database["public"]["Enums"]["conversation_attendance_status"]
+            | null
           automation_paused: boolean
           automation_paused_at: string | null
           automation_paused_by: string | null
-          case_progress_status: Database["public"]["Enums"]["case_progress_status"] | null
+          case_progress_status:
+            | Database["public"]["Enums"]["case_progress_status"]
+            | null
           conversation_id: string | null
           created_at: string
           id: string
@@ -3711,11 +3715,15 @@ export type Database = {
           workspace_id: string
         }
         Insert: {
-          attendance_status?: Database["public"]["Enums"]["conversation_attendance_status"] | null
+          attendance_status?:
+            | Database["public"]["Enums"]["conversation_attendance_status"]
+            | null
           automation_paused?: boolean
           automation_paused_at?: string | null
           automation_paused_by?: string | null
-          case_progress_status?: Database["public"]["Enums"]["case_progress_status"] | null
+          case_progress_status?:
+            | Database["public"]["Enums"]["case_progress_status"]
+            | null
           conversation_id?: string | null
           created_at?: string
           id?: string
@@ -3727,11 +3735,15 @@ export type Database = {
           workspace_id: string
         }
         Update: {
-          attendance_status?: Database["public"]["Enums"]["conversation_attendance_status"] | null
+          attendance_status?:
+            | Database["public"]["Enums"]["conversation_attendance_status"]
+            | null
           automation_paused?: boolean
           automation_paused_at?: string | null
           automation_paused_by?: string | null
-          case_progress_status?: Database["public"]["Enums"]["case_progress_status"] | null
+          case_progress_status?:
+            | Database["public"]["Enums"]["case_progress_status"]
+            | null
           conversation_id?: string | null
           created_at?: string
           id?: string
