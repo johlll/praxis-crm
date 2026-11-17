@@ -5642,6 +5642,20 @@ export type Database = {
           total_count: number
         }[]
       }
+      list_activities_in_range: {
+        Args: {
+          p_from: string
+          p_page?: number
+          p_page_size?: number
+          p_to: string
+          p_workspace_id: string
+        }
+        Returns: {
+          day_counts: Json
+          items: Json
+          total_count: number
+        }[]
+      }
       list_activity_calendar_links: {
         Args: { p_activity_ids: string[] }
         Returns: Json

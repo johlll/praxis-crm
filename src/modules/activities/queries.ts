@@ -3,6 +3,7 @@ import { DataLoadError, isExpectedAbsence } from "@/server/data/load-error";
 import type { Database } from "@/server/types/database";
 import type { ACTIVITY_FILTERS } from "./schema";
 import { attachCalendarInfo } from "@/modules/calendar/activity-links";
+import { dayKeyOf } from "@/lib/calendar-month";
 import type { ActivityCalendarInfo } from "@/modules/calendar/types";
 
 export type ActivityFilter = (typeof ACTIVITY_FILTERS)[number];
@@ -230,6 +231,84 @@ export async function listAllActivities(
   throw new ActivitiesLoadError(
     `a lista completa de atividades do workspace ${workspaceId} (${items.length}/${total} após ${LIST_ALL_MAX_PAGES} páginas)`,
   );
+}
+
+export type ActivitiesInRange = {
+  items: ActivityListItem[];
+  total: number;
+  /** {"YYYY-MM-DD": n} do intervalo inteiro, calculado no banco. */
+  dayCounts: Record<string, number>;
+};
+
+function mapDayCounts(raw: unknown): Record<string, number> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, number> = {};
+  for (const [day, n] of Object.entries(raw as Record<string, unknown>)) out[day] = Number(n);
+  return out;
+}
+
+/**
+ * TODAS as atividades (pendentes e concluídas) com prazo entre `from` e `to`
+ * ("YYYY-MM-DD", inclusivos, no fuso do escritório), no alcance do usuário —
+ * usada pela Agenda mensal. O banco recusa intervalos de mais de 42 dias.
+ *
+ * Pagina até esgotar o total (o RPC devolve no máximo 100 por página) e
+ * nunca devolve sucesso parcial: falha de página, página vazia antes do fim,
+ * teto de páginas atingido ou itens que não batem com a contagem por dia do
+ * banco viram ActivitiesLoadError — a tela mostra erro, nunca "nenhuma
+ * atividade" nem um mês pela metade.
+ */
+export async function listActivitiesInRange(
+  workspaceId: string,
+  range: { from: string; to: string },
+): Promise<ActivitiesInRange> {
+  const supabase = await createServerSupabaseClient();
+  const resource = `as atividades de ${range.from} a ${range.to} do workspace ${workspaceId}`;
+  let items: ActivityListItem[] = [];
+  let total = 0;
+  let dayCounts: Record<string, number> = {};
+
+  for (let page = 1; page <= LIST_ALL_MAX_PAGES; page++) {
+    const { data, error } = await supabase.rpc("list_activities_in_range", {
+      p_workspace_id: workspaceId,
+      p_from: range.from,
+      p_to: range.to,
+      p_page: page,
+      p_page_size: LIST_ALL_PAGE_SIZE,
+    });
+    if (error) throw new ActivitiesLoadError(`${resource} (página ${page})`, error);
+    const row = data?.[0];
+    if (!row) throw new ActivitiesLoadError(`${resource} (página ${page} sem resposta)`);
+
+    const pageItems = (row.items as unknown as Array<Record<string, unknown>> | null) ?? [];
+    if (page === 1) {
+      total = row.total_count;
+      dayCounts = mapDayCounts(row.day_counts);
+    }
+    items = items.concat(await attachCalendarInfo(pageItems.map(mapActivityRow)));
+
+    if (items.length >= total) break;
+    if (pageItems.length === 0) throw new ActivitiesLoadError(`${resource} (página ${page} vazia com ${items.length}/${total})`);
+    if (page === LIST_ALL_MAX_PAGES) throw new ActivitiesLoadError(`${resource} (${items.length}/${total} após ${page} páginas)`);
+  }
+
+  // Coerência entre as páginas e a contagem do banco (uma escrita entre uma
+  // página e outra pode desalinhar): na dúvida, erro — nunca números que não batem.
+  const seen: Record<string, number> = {};
+  for (const item of items) {
+    const day = dayKeyOf(item.dueAt);
+    seen[day] = (seen[day] ?? 0) + 1;
+  }
+  const countedTotal = Object.values(dayCounts).reduce((sum, n) => sum + n, 0);
+  const consistent =
+    items.length === total &&
+    countedTotal === total &&
+    new Set(items.map((item) => item.id)).size === items.length &&
+    Object.keys(seen).length === Object.keys(dayCounts).length &&
+    Object.entries(seen).every(([day, n]) => dayCounts[day] === n);
+  if (!consistent) throw new ActivitiesLoadError(`${resource} (itens e contagem por dia não conferem)`);
+
+  return { items, total, dayCounts };
 }
 
 export class ConsultationLoadError extends DataLoadError {

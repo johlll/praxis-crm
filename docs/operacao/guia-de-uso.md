@@ -86,8 +86,11 @@ no lugar de um erro.
   tem acesso àquele lead.
 - Em Configurações → **Pipelines** dá para definir **uma atividade criada automaticamente** quando uma
   oportunidade chega a certa etapa.
-- **Agenda** mostra, em visão semanal, as atividades com data. A ligação com o Google Agenda ainda não está ligada
-  (última seção).
+- **Agenda** é um calendário do mês (segunda a domingo) com a quantidade de atividades de cada dia. Clicar num dia
+  mostra, ao lado (no celular, embaixo), as atividades dele separadas em **Com horário** e **Sem horário**, com as
+  mesmas ações da lista e o botão **Nova atividade** já com a data do dia. **Hoje**, **Mês anterior** e **Próximo
+  mês** navegam; o endereço guarda o mês e o dia (dá para recarregar ou voltar). A ligação com o Google Agenda ainda
+  não está ligada (última seção).
 
 ## 7. Clientes
 
