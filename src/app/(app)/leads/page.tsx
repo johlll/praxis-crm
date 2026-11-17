@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Plus, Users as UsersIcon } from "lucide-react";
+import { Plus, SearchX, Users as UsersIcon } from "lucide-react";
 
 import { Topbar } from "@/components/app-shell/topbar";
 import { Button } from "@/components/ui/button";
@@ -61,13 +61,18 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   ]);
 
   const hasActiveFilters = Boolean(filters.search || filters.status || filters.priority || filters.assignedTo);
+  const count = total.toLocaleString("pt-BR");
+  const subtitle = hasActiveFilters
+    ? `${count} ${total === 1 ? "lead encontrado" : "leads encontrados"} com os filtros aplicados`
+    : `${count} ${total === 1 ? "lead cadastrado" : "leads cadastrados"}`;
 
   return (
     <>
-      <Topbar title="Leads" subtitle={`${total} ${total === 1 ? "lead" : "leads"}`} user={user} />
+      <Topbar title="Leads" subtitle={subtitle} user={user} />
       <main className="flex-1 overflow-y-auto p-5">
-        <div className="mx-auto flex max-w-[1100px] flex-col gap-4">
-          <div className="flex items-start justify-between gap-3">
+        <div className="mx-auto flex max-w-[1400px] flex-col gap-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div className="min-w-0 flex-1">
             <LeadFilterBar
               defaultValues={{
                 search: filters.search ?? "",
@@ -78,24 +83,37 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
               members={members}
               hasActiveFilters={hasActiveFilters}
             />
-            <Button asChild size="sm" className="shrink-0">
+            </div>
+            <Button asChild className="shrink-0 max-md:order-first">
               <Link href="/leads/novo">
-                <Plus size={14} aria-hidden />
+                <Plus size={15} aria-hidden />
                 Novo lead
               </Link>
             </Button>
           </div>
 
           {items.length === 0 ? (
-            <EmptyState
-              icon={UsersIcon}
-              title={hasActiveFilters ? "Nenhum lead encontrado" : "Nenhum lead ainda"}
-              description={
-                hasActiveFilters
-                  ? "Tente outro filtro ou limpe a busca."
-                  : "Cadastre o primeiro lead vinculado a um contato."
-              }
-            />
+            hasActiveFilters ? (
+              <EmptyState
+                icon={SearchX}
+                title="Nenhum lead encontrado"
+                description="Tente outro filtro ou limpe a busca."
+              />
+            ) : (
+              <EmptyState
+                icon={UsersIcon}
+                title="Nenhum lead ainda"
+                description="Cadastre o primeiro lead vinculado a um contato."
+                action={
+                  <Button asChild size="sm">
+                    <Link href="/leads/novo">
+                      <Plus size={14} aria-hidden />
+                      Novo lead
+                    </Link>
+                  </Button>
+                }
+              />
+            )
           ) : (
             <>
               <LeadListTable items={items} />
@@ -103,6 +121,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
                 page={page}
                 total={total}
                 pageSize={pageSize}
+                itemCount={items.length}
                 currentParams={{
                   q: filters.search,
                   status: filters.status,
