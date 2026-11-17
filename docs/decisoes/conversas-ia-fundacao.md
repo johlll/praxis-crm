@@ -144,6 +144,10 @@ continua `unresolved`. `messageAuthorKind` (servidor) nunca promove isso a um no
   estáticas da migration.
 - Concorrência real (local, duas conexões): primeira escrita simultânea, mesma chave ao mesmo tempo e
   pausa × correção.
+- Conferências de atualização da B3 (`scripts/check-upgrade-b3-*.sh`): elas aplicam todas as
+  migrations até a atual e comparam a leitura da A7 antes/depois. A foto "depois" de
+  `list_conversation_messages` passa a ignorar **só** as três chaves novas (`origin`,
+  `sender_classification`, `content_kind`); todo campo que já existia continua comparado byte a byte.
 
 ## Limites desta PR
 
