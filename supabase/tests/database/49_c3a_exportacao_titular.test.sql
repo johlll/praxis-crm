@@ -192,6 +192,13 @@ insert into public.custom_field_values (workspace_id, definition_id, entity_type
   (:'ws_um'::uuid, (:'d_cliente')::uuid, 'client', 'boolean', (:'client_alfa')::uuid, true);
 update public.custom_field_definitions set archived_at = now() where id = (:'d_arq')::uuid;
 
+-- Conversas + IA (PR 1): uma mudança de situação do atendimento na conversa do titular,
+-- com a mensagem dele como evidência — popula `status_tracks` e `status_track_history`.
+set local role authenticated;
+select pg_temp.login(:'ana'::uuid);
+select set_conversation_attendance_status((:'conv_alfa')::uuid, 'aguardando_escritorio', 0, array[(:'msg_alfa')::uuid]);
+reset role;
+
 -- =====================================================================
 -- 1) Superfície fechada
 -- =====================================================================

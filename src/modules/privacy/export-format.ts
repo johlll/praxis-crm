@@ -43,6 +43,8 @@ export const PRIVACY_EXPORT_LIST_CATEGORIES = [
   "attribution_links",
   "continuity_references",
   "custom_fields",
+  "status_tracks",
+  "status_track_history",
 ] as const;
 
 export type PrivacyExportSection = { has_data: boolean; items: unknown[] };

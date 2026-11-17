@@ -111,13 +111,30 @@ select 'conversation', get_conversation(:'conv_a7'::uuid);
 reset role;
 commit;
 
+-- Conversas + IA (PR 1, migration 20261117130000): list_conversation_messages ganhou três
+-- chaves NOVAS por mensagem (origin, sender_classification, content_kind). A foto "depois"
+-- ignora só essas três; todo campo que já existia continua comparado byte a byte.
+create function pg_temp.sem_chaves_conversas_ia(p jsonb) returns jsonb language plpgsql immutable as \$f\$
+begin
+  if jsonb_typeof(p) = 'array' then
+    return (select coalesce(jsonb_agg(pg_temp.sem_chaves_conversas_ia(e) order by o), '[]'::jsonb)
+            from jsonb_array_elements(p) with ordinality x(e, o));
+  elsif jsonb_typeof(p) = 'object' and jsonb_typeof(p -> 'items') = 'array' then
+    return jsonb_set(p, '{items}', (
+      select coalesce(jsonb_agg((e - 'origin' - 'sender_classification' - 'content_kind') order by o), '[]'::jsonb)
+      from jsonb_array_elements(p -> 'items') with ordinality x(e, o)));
+  end if;
+  return p;
+end;
+\$f\$;
+
 do \$check\$
 declare
   v_bad integer;
 begin
   select count(*) into v_bad
   from public.upgrade_b3d2b2a_leituras a join leituras_depois d using (chave)
-  where a.valor is distinct from d.valor;
+  where a.valor is distinct from pg_temp.sem_chaves_conversas_ia(d.valor);
   if v_bad <> 0 or (select count(*) from leituras_depois) <> 3 then
     raise exception 'leituras da A7 mudaram na atualização (% diferentes)', v_bad;
   end if;

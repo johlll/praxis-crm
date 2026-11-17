@@ -3590,6 +3590,194 @@ export type Database = {
           },
         ]
       }
+      status_track_event_evidence: {
+        Row: {
+          event_id: string
+          message_id: string
+          workspace_id: string
+        }
+        Insert: {
+          event_id: string
+          message_id: string
+          workspace_id: string
+        }
+        Update: {
+          event_id?: string
+          message_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "status_track_event_evidence_event_fkey"
+            columns: ["workspace_id", "event_id"]
+            isOneToOne: false
+            referencedRelation: "status_track_events"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "status_track_event_evidence_message_fkey"
+            columns: ["workspace_id", "message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "status_track_event_evidence_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      status_track_events: {
+        Row: {
+          actor_kind: string
+          actor_user_id: string
+          event: string
+          evidence_count: number
+          from_status: string | null
+          from_version: number
+          id: string
+          idempotency_key: string | null
+          occurred_at: string
+          to_status: string | null
+          to_version: number
+          track_id: string
+          workspace_id: string
+        }
+        Insert: {
+          actor_kind?: string
+          actor_user_id: string
+          event: string
+          evidence_count?: number
+          from_status?: string | null
+          from_version: number
+          id?: string
+          idempotency_key?: string | null
+          occurred_at?: string
+          to_status?: string | null
+          to_version: number
+          track_id: string
+          workspace_id: string
+        }
+        Update: {
+          actor_kind?: string
+          actor_user_id?: string
+          event?: string
+          evidence_count?: number
+          from_status?: string | null
+          from_version?: number
+          id?: string
+          idempotency_key?: string | null
+          occurred_at?: string
+          to_status?: string | null
+          to_version?: number
+          track_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "status_track_events_track_same_workspace_fkey"
+            columns: ["workspace_id", "track_id"]
+            isOneToOne: false
+            referencedRelation: "status_tracks"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "status_track_events_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      status_tracks: {
+        Row: {
+          attendance_status:
+            | Database["public"]["Enums"]["conversation_attendance_status"]
+            | null
+          automation_paused: boolean
+          automation_paused_at: string | null
+          automation_paused_by: string | null
+          case_progress_status:
+            | Database["public"]["Enums"]["case_progress_status"]
+            | null
+          conversation_id: string | null
+          created_at: string
+          id: string
+          manual_decided_at: string | null
+          opportunity_id: string | null
+          track: Database["public"]["Enums"]["status_track_kind"]
+          updated_at: string
+          version: number
+          workspace_id: string
+        }
+        Insert: {
+          attendance_status?:
+            | Database["public"]["Enums"]["conversation_attendance_status"]
+            | null
+          automation_paused?: boolean
+          automation_paused_at?: string | null
+          automation_paused_by?: string | null
+          case_progress_status?:
+            | Database["public"]["Enums"]["case_progress_status"]
+            | null
+          conversation_id?: string | null
+          created_at?: string
+          id?: string
+          manual_decided_at?: string | null
+          opportunity_id?: string | null
+          track: Database["public"]["Enums"]["status_track_kind"]
+          updated_at?: string
+          version?: number
+          workspace_id: string
+        }
+        Update: {
+          attendance_status?:
+            | Database["public"]["Enums"]["conversation_attendance_status"]
+            | null
+          automation_paused?: boolean
+          automation_paused_at?: string | null
+          automation_paused_by?: string | null
+          case_progress_status?:
+            | Database["public"]["Enums"]["case_progress_status"]
+            | null
+          conversation_id?: string | null
+          created_at?: string
+          id?: string
+          manual_decided_at?: string | null
+          opportunity_id?: string | null
+          track?: Database["public"]["Enums"]["status_track_kind"]
+          updated_at?: string
+          version?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "status_tracks_conversation_same_workspace_fkey"
+            columns: ["workspace_id", "conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "status_tracks_opportunity_same_workspace_fkey"
+            columns: ["workspace_id", "opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "status_tracks_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       touchpoint_demand_links: {
         Row: {
           action: Database["public"]["Enums"]["touchpoint_link_action"]
@@ -5516,6 +5704,10 @@ export type Database = {
         }[]
       }
       get_conversation: { Args: { p_conversation_id: string }; Returns: Json }
+      get_conversation_case: {
+        Args: { p_conversation_id: string; p_opportunity_id: string }
+        Returns: Json
+      }
       get_custom_field_values: {
         Args: { p_entity_type: string; p_record_id: string }
         Returns: Json
@@ -5588,6 +5780,13 @@ export type Database = {
       }
       get_stage_requirements_status: {
         Args: { p_opportunity_id: string; p_to_stage_id: string }
+        Returns: Json
+      }
+      get_status_track: {
+        Args: {
+          p_target_id: string
+          p_track: Database["public"]["Enums"]["status_track_kind"]
+        }
         Returns: Json
       }
       get_webhook_event_payload: {
@@ -5708,6 +5907,10 @@ export type Database = {
           total_count: number
         }[]
       }
+      list_conversation_case_options: {
+        Args: { p_conversation_id: string }
+        Returns: Json
+      }
       list_conversation_messages: {
         Args: {
           p_before?: string
@@ -5795,6 +5998,19 @@ export type Database = {
       list_recoverable_calendar_links: {
         Args: { p_actor_user_id: string; p_connection_id: string }
         Returns: Json
+      }
+      list_status_track_history: {
+        Args: {
+          p_before?: string
+          p_before_id?: string
+          p_limit?: number
+          p_target_id: string
+          p_track: Database["public"]["Enums"]["status_track_kind"]
+        }
+        Returns: {
+          has_more: boolean
+          items: Json
+        }[]
       }
       lose_opportunity: {
         Args: {
@@ -6138,6 +6354,16 @@ export type Database = {
         }
         Returns: undefined
       }
+      set_conversation_attendance_status: {
+        Args: {
+          p_conversation_id: string
+          p_evidence_message_ids?: string[]
+          p_expected_version: number
+          p_idempotency_key?: string
+          p_status: Database["public"]["Enums"]["conversation_attendance_status"]
+        }
+        Returns: Json
+      }
       set_custom_field_archived: {
         Args: { p_archived: boolean; p_definition_id: string }
         Returns: undefined
@@ -6189,6 +6415,16 @@ export type Database = {
         }
         Returns: undefined
       }
+      set_opportunity_case_progress: {
+        Args: {
+          p_evidence_message_ids?: string[]
+          p_expected_version: number
+          p_idempotency_key?: string
+          p_opportunity_id: string
+          p_status: Database["public"]["Enums"]["case_progress_status"]
+        }
+        Returns: Json
+      }
       set_stage_auto_activity_rule: {
         Args: {
           p_activity_type: Database["public"]["Enums"]["activity_type"]
@@ -6198,6 +6434,15 @@ export type Database = {
           p_title: string
         }
         Returns: string
+      }
+      set_status_track_automation: {
+        Args: {
+          p_expected_version: number
+          p_paused: boolean
+          p_target_id: string
+          p_track: Database["public"]["Enums"]["status_track_kind"]
+        }
+        Returns: Json
       }
       simulate_automation_rule: { Args: { p_rule_id: string }; Returns: Json }
       simulate_inbound_whatsapp_message: {
@@ -6905,6 +7150,16 @@ export type Database = {
         | "cancelled_in_google"
         | "unlinked"
         | "needs_attention"
+      case_progress_status:
+        | "nao_informado"
+        | "aguardando_documentos"
+        | "documentos_recebidos"
+        | "em_analise"
+        | "aguardando_cliente"
+        | "aguardando_terceiros"
+        | "em_execucao"
+        | "concluido"
+        | "suspenso"
       client_status: "ativo" | "encerrado" | "suspenso"
       conflict_check_status:
         | "nao_verificado"
@@ -6924,6 +7179,12 @@ export type Database = {
         | "formulario_contato"
       contact_channel: "whatsapp" | "email" | "telefone" | "presencial"
       contact_type: "pf" | "pj"
+      conversation_attendance_status:
+        | "nao_informado"
+        | "novo"
+        | "aguardando_escritorio"
+        | "aguardando_cliente"
+        | "encerrado"
       duplicate_status: "pending" | "merged" | "dismissed"
       duplicate_tier: "strong" | "review" | "low"
       fee_model: "fixed" | "contingency" | "fixed_contingency"
@@ -6962,6 +7223,7 @@ export type Database = {
       proposal_email_send_status: "queued" | "accepted" | "failed"
       proposal_status: "rascunho" | "enviada" | "aceita" | "recusada"
       stage_requirement_type: "text" | "textarea" | "date" | "checkbox"
+      status_track_kind: "attendance" | "case_progress" | "commercial_stage"
       touchpoint_link_action: "assign" | "unassign"
       webhook_event_status:
         | "received"
@@ -7132,6 +7394,17 @@ export const Constants = {
         "unlinked",
         "needs_attention",
       ],
+      case_progress_status: [
+        "nao_informado",
+        "aguardando_documentos",
+        "documentos_recebidos",
+        "em_analise",
+        "aguardando_cliente",
+        "aguardando_terceiros",
+        "em_execucao",
+        "concluido",
+        "suspenso",
+      ],
       client_status: ["ativo", "encerrado", "suspenso"],
       conflict_check_status: [
         "nao_verificado",
@@ -7154,6 +7427,13 @@ export const Constants = {
       ],
       contact_channel: ["whatsapp", "email", "telefone", "presencial"],
       contact_type: ["pf", "pj"],
+      conversation_attendance_status: [
+        "nao_informado",
+        "novo",
+        "aguardando_escritorio",
+        "aguardando_cliente",
+        "encerrado",
+      ],
       duplicate_status: ["pending", "merged", "dismissed"],
       duplicate_tier: ["strong", "review", "low"],
       fee_model: ["fixed", "contingency", "fixed_contingency"],
@@ -7195,6 +7475,7 @@ export const Constants = {
       proposal_email_send_status: ["queued", "accepted", "failed"],
       proposal_status: ["rascunho", "enviada", "aceita", "recusada"],
       stage_requirement_type: ["text", "textarea", "date", "checkbox"],
+      status_track_kind: ["attendance", "case_progress", "commercial_stage"],
       touchpoint_link_action: ["assign", "unassign"],
       webhook_event_status: [
         "received",

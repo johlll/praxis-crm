@@ -223,6 +223,20 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   custom_field_option_in_use: "Há registros usando uma das opções que você tirou da lista. Mantenha essas opções.",
   custom_field_invalid_value: "Algum valor não é válido para o tipo do campo. Confira os campos.",
   custom_field_invalid_option: "Escolha uma das opções disponíveis para o campo.",
+  // Conversas + IA (PR 1) — trilhas de status. conversation_not_found, opportunity_not_found,
+  // opportunity_closed, insufficient_permission e contact_anonymized já existem.
+  track_conflict: "Esta informação foi alterada por outra pessoa enquanto você editava. Recarregue e tente de novo.",
+  status_unchanged: "Esse já é o valor atual.",
+  invalid_status: "Escolha um dos valores disponíveis.",
+  invalid_version: "Recarregue a página e tente de novo.",
+  invalid_evidence: "Alguma mensagem escolhida como evidência não pode ser usada aqui.",
+  idempotency_conflict: "Este pedido já foi registrado com outro conteúdo. Recarregue e tente de novo.",
+  opportunity_not_won: "O andamento só existe para oportunidades ganhas.",
+  automation_already_paused: "As alterações automáticas já estão pausadas aqui.",
+  automation_not_paused: "As alterações automáticas não estão pausadas aqui.",
+  case_not_selectable: "Este caso não pode ser selecionado nesta conversa.",
+  status_track_unavailable: "Não foi possível carregar esta informação agora. Tente novamente.",
+  invalid_request: "Pedido inválido. Recarregue a página e tente de novo.",
 };
 
 /** update_lead_basic_fields()/assign_lead()/set_lead_status()/set_lead_value()
