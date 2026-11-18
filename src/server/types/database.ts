@@ -5911,6 +5911,20 @@ export type Database = {
         Args: { p_conversation_id: string }
         Returns: Json
       }
+      list_conversation_inbox: {
+        Args: {
+          p_page?: number
+          p_page_size?: number
+          p_search?: string
+          p_status?: string
+          p_workspace_id: string
+        }
+        Returns: {
+          items: Json
+          status_counts: Json
+          total_count: number
+        }[]
+      }
       list_conversation_messages: {
         Args: {
           p_before?: string

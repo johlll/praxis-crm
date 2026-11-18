@@ -1,4 +1,5 @@
 import { createServerSupabaseClient } from "@/server/supabase/server";
+import { toUserMessage } from "@/lib/errors";
 import { DataLoadError, isExpectedAbsence } from "@/server/data/load-error";
 import type { MessageOrigin, MessageSenderClassification } from "@/modules/conversations/queries";
 
@@ -263,7 +264,23 @@ export type TrackMutationResult = {
   replayed: boolean;
 };
 
-export type TrackActionState = { ok: true; result: TrackMutationResult } | { ok: false; error: string };
+/**
+ * `conflict`: a versão lida já não é a atual (alguém corrigiu, pausou ou retomou
+ * no meio). A tela mostra "o registro mudou" e oferece atualizar; nunca repete a
+ * alteração à força.
+ */
+export type TrackActionState =
+  | { ok: true; result: TrackMutationResult }
+  | { ok: false; error: string; conflict?: true };
+
+export function trackFailure(error: { message?: string } | null | undefined): TrackActionState & { ok: false } {
+  const message = (error as { message?: string } | null | undefined)?.message;
+  return {
+    ok: false,
+    error: toUserMessage(error),
+    ...(message === "track_conflict" ? { conflict: true as const } : {}),
+  };
+}
 
 export function mapTrackMutation(row: Record<string, unknown>): TrackMutationResult {
   return {

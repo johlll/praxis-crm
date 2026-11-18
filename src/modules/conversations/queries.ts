@@ -1,6 +1,8 @@
 import { createServerSupabaseClient } from "@/server/supabase/server";
 import { DataLoadError, isExpectedAbsence } from "@/server/data/load-error";
 import type { Database } from "@/server/types/database";
+import type { AttendanceStatus } from "@/modules/status-tracks/schema";
+import { isAttendanceStatus, mapInboxCounts, type InboxCounts, type InboxFilter } from "./inbox";
 
 export type MessageDirection = Database["public"]["Enums"]["message_direction"];
 export type MessageStatus = Database["public"]["Enums"]["message_status"];
@@ -20,12 +22,17 @@ export type ConversationListItem = {
   lastMessageText: string | null;
   lastMessageDirection: MessageDirection | null;
   lastMessageStatus: MessageStatus | null;
+  /** Tipo da última mensagem (uma mídia não tem texto); só a caixa de entrada devolve. */
+  lastMessageContentKind: string | null;
+  /** Situação do atendimento ("nao_informado" = dado legado); só a caixa de entrada devolve. */
+  attendanceStatus: AttendanceStatus;
 };
 
 function mapConversationRow(row: Record<string, unknown>): ConversationListItem {
   return {
     id: row.id as string,
-    waId: row.wa_id as string,
+    // wa_id aceita nulo desde a B3 (o telefone fica na identidade); nunca assumir texto.
+    waId: (row.wa_id as string | null) ?? "",
     contactId: (row.contact_id as string | null) ?? null,
     contactName: (row.contact_name as string | null) ?? null,
     leadId: (row.lead_id as string | null) ?? null,
@@ -36,6 +43,8 @@ function mapConversationRow(row: Record<string, unknown>): ConversationListItem 
     lastMessageText: (row.last_message_text as string | null) ?? null,
     lastMessageDirection: (row.last_message_direction as MessageDirection | null) ?? null,
     lastMessageStatus: (row.last_message_status as MessageStatus | null) ?? null,
+    lastMessageContentKind: (row.last_message_content_kind as string | null | undefined) ?? null,
+    attendanceStatus: isAttendanceStatus(row.attendance_status) ? row.attendance_status : "nao_informado",
   };
 }
 
@@ -82,6 +91,54 @@ export async function listConversations(
   return { items: items.map(mapConversationRow), total: row.total_count, page, pageSize: PAGE_SIZE };
 }
 
+export type ConversationInboxPage = {
+  items: ConversationListItem[];
+  /** Total do filtro e da busca atuais (não só da página). */
+  total: number;
+  page: number;
+  pageSize: number;
+  /** Contagem por situação sobre TODO o conjunto que o papel alcança, respeitando a busca. */
+  counts: InboxCounts;
+};
+
+/**
+ * Lista da caixa de entrada (Conversas + IA, PR 2). Busca, filtro e contagens
+ * são feitos no servidor, sobre o conjunto inteiro — nunca só sobre a página
+ * carregada. Mesmo contrato de erro de sempre: falha de consulta sobe como
+ * ConversationsLoadError; "zero conversas" é só o resultado vazio de verdade.
+ */
+export async function listConversationInbox(
+  workspaceId: string,
+  opts: { page?: number | undefined; status?: InboxFilter | undefined; search?: string | undefined } = {},
+): Promise<ConversationInboxPage> {
+  const page = Math.max(1, opts.page ?? 1);
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase.rpc("list_conversation_inbox", {
+    p_workspace_id: workspaceId,
+    p_page: page,
+    p_page_size: PAGE_SIZE,
+    ...(opts.status && opts.status !== "all" ? { p_status: opts.status } : {}),
+    ...(opts.search ? { p_search: opts.search } : {}),
+  });
+
+  if (error) {
+    throw new ConversationsLoadError(`a caixa de entrada do workspace ${workspaceId}`, error);
+  }
+  const row = data?.[0];
+  if (!row) {
+    // A função sempre devolve uma linha; sem ela algo falhou de verdade.
+    throw new ConversationsLoadError(`a caixa de entrada do workspace ${workspaceId}`);
+  }
+  const items = (row.items as unknown as Array<Record<string, unknown>> | null) ?? [];
+  return {
+    items: items.map(mapConversationRow),
+    total: Number(row.total_count),
+    page,
+    pageSize: PAGE_SIZE,
+    counts: mapInboxCounts(row.status_counts),
+  };
+}
+
 export type ConversationDetail = {
   id: string;
   workspaceId: string;
@@ -116,7 +173,8 @@ export async function getConversation(conversationId: string): Promise<Conversat
     id: row.id as string,
     workspaceId: row.workspace_id as string,
     channelId: row.channel_id as string,
-    waId: row.wa_id as string,
+    // wa_id aceita nulo desde a B3 (o telefone fica na identidade); nunca assumir texto.
+    waId: (row.wa_id as string | null) ?? "",
     contactId: (row.contact_id as string | null) ?? null,
     contactName: (row.contact_name as string | null) ?? null,
     leadId: (row.lead_id as string | null) ?? null,
@@ -160,7 +218,8 @@ function mapMessageRow(row: Record<string, unknown>): MessageListItem {
   return {
     id: row.id as string,
     direction: row.direction as MessageDirection,
-    bodyText: row.body_text as string,
+    // Mídia sem legenda não tem texto (body_text aceita nulo para tipos que não são texto).
+    bodyText: (row.body_text as string | null) ?? "",
     status: row.status as MessageStatus,
     statusUpdatedAt: row.status_updated_at as string,
     errorReason: (row.error_reason as string | null) ?? null,
@@ -173,23 +232,9 @@ function mapMessageRow(row: Record<string, unknown>): MessageListItem {
   };
 }
 
-/**
- * Autoria exibível de uma mensagem, sem promover nada além do que o banco
- * comprovou. "automation" só com classificação automation (que o banco só
- * aceita com correlação positiva); nunca vira nome de pessoa nem "Vitória".
- */
-export type MessageAuthorKind = "client" | "office_crm" | "office_phone" | "internal" | "automation" | "unidentified";
-
-export function messageAuthorKind(
-  m: Pick<MessageListItem, "direction" | "origin" | "senderClassification">,
-): MessageAuthorKind {
-  const cls = m.senderClassification ?? null;
-  if (cls === "automation") return "automation";
-  if (m.origin === "inbound") return cls === "external" ? "client" : cls === "internal" ? "internal" : "unidentified";
-  if (m.origin === "crm" && cls === "internal") return "office_crm";
-  if (m.origin === "business_app" && cls === "internal") return "office_phone";
-  return "unidentified";
-}
+// Regra de autoria vive num módulo puro (sem dependências de servidor) para os componentes de cliente
+// poderem usá-la; reexportada aqui para quem já importava daqui.
+export { messageAuthorKind, type MessageAuthorKind } from "./message-author";
 
 /**
  * Erro deliberado (nunca uma página parcial disfarçada de "conversa
@@ -345,13 +390,19 @@ export function mapSendMessageResult(row: Record<string, unknown>): SendMessageR
     message: {
       id: row.message_id as string,
       direction: row.direction as MessageDirection,
-      bodyText: row.body_text as string,
+      // Mídia sem legenda não tem texto (body_text aceita nulo para tipos que não são texto).
+    bodyText: (row.body_text as string | null) ?? "",
       status: row.status as MessageStatus,
       statusUpdatedAt: row.status_updated_at as string,
       errorReason: (row.error_reason as string | null) ?? null,
       sentBy: (row.sent_by as string | null) ?? null,
       createdAt: row.created_at as string,
       waMessageId: row.wa_message_id as string,
+      // `sent_by` preenchido só existe em saída do CRM (restrição
+      // messages_sent_by_only_crm), então a origem é comprovada; sem ele, nada é suposto.
+      ...(row.sent_by
+        ? { origin: "crm" as const, senderClassification: "internal" as const, contentKind: (row.content_kind as string | null) ?? "text" }
+        : {}),
     },
   };
 }

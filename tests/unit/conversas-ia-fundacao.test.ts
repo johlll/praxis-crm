@@ -258,7 +258,8 @@ describe("ações (correções humanas e pausa)", () => {
   it("erros do banco viram mensagem em português, sem detalhe técnico", async () => {
     rpcMock.mockResolvedValue({ data: null, error: { message: "track_conflict" } });
     const r = await setConversationAttendanceAction({ conversationId: CONV, status: "encerrado", expectedVersion: 0 });
-    expect(r).toEqual({ ok: false, error: toUserMessage({ message: "track_conflict" }) });
+    // A PR 2 passou a sinalizar o conflito de versão (a tela oferece "Atualizar"); a mensagem segue em português.
+    expect(r).toEqual({ ok: false, error: toUserMessage({ message: "track_conflict" }), conflict: true });
     for (const code of ["invalid_evidence", "idempotency_conflict", "opportunity_not_won", "automation_already_paused", "case_not_selectable"]) {
       expect(toUserMessage({ message: code })).not.toBe(toUserMessage({ message: "algo_desconhecido" }));
     }
