@@ -99,6 +99,14 @@ export const setTrackAutomationSchema = z.object({
   expectedVersion: version,
 });
 
+/** Cursor do histórico (o evento mais antigo já exibido); o servidor só devolve o que vem antes. */
+export const historyPageSchema = z.object({
+  track: z.enum(STATUS_TRACKS),
+  targetId: id("Alvo inválido."),
+  before: z.string().refine((v) => !Number.isNaN(Date.parse(v)), { message: "Posição do histórico inválida." }),
+  beforeId: id("Posição do histórico inválida."),
+});
+
 export const caseSelectionSchema = z.object({
   conversationId: id("Conversa inválida."),
   opportunityId: id("Caso inválido."),

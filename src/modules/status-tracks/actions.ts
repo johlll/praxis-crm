@@ -4,11 +4,18 @@ import { revalidatePath } from "next/cache";
 
 import { createServerSupabaseClient } from "@/server/supabase/server";
 import { requirePermissionSafe } from "@/server/authz/safe";
-import { toUserMessage } from "@/lib/errors";
 
-import { mapTrackMutation, type TrackActionState, type TrackMutationResult } from "./queries";
+import {
+  listStatusTrackHistory,
+  mapTrackMutation,
+  trackFailure,
+  type StatusTrackHistoryPage,
+  type TrackActionState,
+  type TrackMutationResult,
+} from "./queries";
 import {
   TRACK_EDIT_PERMISSION,
+  historyPageSchema,
   setAttendanceSchema,
   setCaseProgressSchema,
   setTrackAutomationSchema,
@@ -54,7 +61,7 @@ export async function setConversationAttendanceAction(input: {
     p_evidence_message_ids: parsed.data.evidenceMessageIds,
     ...(parsed.data.idempotencyKey ? { p_idempotency_key: parsed.data.idempotencyKey } : {}),
   });
-  if (error || !data) return { ok: false, error: toUserMessage(error) };
+  if (error || !data) return trackFailure(error);
 
   const result = mapTrackMutation(data as Record<string, unknown>);
   revalidateTrack(result);
@@ -82,7 +89,7 @@ export async function setOpportunityCaseProgressAction(input: {
     p_evidence_message_ids: parsed.data.evidenceMessageIds,
     ...(parsed.data.idempotencyKey ? { p_idempotency_key: parsed.data.idempotencyKey } : {}),
   });
-  if (error || !data) return { ok: false, error: toUserMessage(error) };
+  if (error || !data) return trackFailure(error);
 
   const result = mapTrackMutation(data as Record<string, unknown>);
   revalidateTrack(result);
@@ -109,9 +116,34 @@ export async function setStatusTrackAutomationAction(input: {
     p_paused: parsed.data.paused,
     p_expected_version: parsed.data.expectedVersion,
   });
-  if (error || !data) return { ok: false, error: toUserMessage(error) };
+  if (error || !data) return trackFailure(error);
 
   const result = mapTrackMutation(data as Record<string, unknown>);
   revalidateTrack(result);
   return { ok: true, result };
+}
+
+/**
+ * Leitura (nada é gravado): a página anterior do histórico de uma trilha, a
+ * partir do evento mais antigo já exibido. O banco confere o alcance de quem lê;
+ * alvo inexistente ou fora do alcance volta como "não encontrado".
+ */
+export async function loadStatusTrackHistoryAction(input: {
+  track: string;
+  targetId: string;
+  before: string;
+  beforeId: string;
+}): Promise<{ ok: true; page: StatusTrackHistoryPage } | { ok: false; error: string }> {
+  const parsed = historyPageSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: firstIssue(parsed.error.issues) };
+
+  try {
+    const page = await listStatusTrackHistory(parsed.data.track, parsed.data.targetId, {
+      cursor: { before: parsed.data.before, beforeId: parsed.data.beforeId },
+    });
+    if (!page) return { ok: false, error: "Não foi possível carregar o histórico." };
+    return { ok: true, page };
+  } catch {
+    return { ok: false, error: "Não foi possível carregar o histórico. Tente de novo." };
+  }
 }

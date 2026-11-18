@@ -1,11 +1,20 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { CheckCheck, Check, Clock, TriangleAlert } from "lucide-react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, useTransition } from "react";
+import { CheckCheck, Check, Clock, EyeOff, MessageSquare, TriangleAlert } from "lucide-react";
 
+import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { MessageListItem } from "@/modules/conversations/queries";
+import { messageAuthorKind, type MessageAuthorKind } from "@/modules/conversations/message-author";
+import {
+  MESSAGE_AUTHOR_HINT,
+  MESSAGE_AUTHOR_LABEL,
+  dayKey,
+  formatDaySeparator,
+  unsupportedContentNotice,
+} from "@/modules/conversations/inbox";
 import {
   loadOlderMessagesAction,
   sendMessageAction,
@@ -15,6 +24,7 @@ import type { WhatsAppSendUi } from "@/modules/conversations/whatsapp-send";
 import { toUserMessage } from "@/lib/errors";
 import { MESSAGE_STATUS_LABEL } from "./labels";
 import { WhatsAppComposer } from "./whatsapp-composer";
+import { OpenContextButton } from "./context-panel-shell";
 
 function formatTime(iso: string): string {
   return new Intl.DateTimeFormat("pt-BR", {
@@ -37,6 +47,16 @@ function StatusIcon({ status }: { status: MessageListItem["status"] }) {
   if (status === "sent") return <Check size={13} className="text-text-tertiary" aria-hidden />;
   return <Clock size={13} className="text-text-tertiary" aria-hidden />;
 }
+
+/** Aparência do balão por autoria comprovada (nunca por suposição). */
+const BUBBLE_CLASS: Record<MessageAuthorKind, string> = {
+  client: "border border-border bg-surface-subtle",
+  office_crm: "bg-primary-tint",
+  office_phone: "bg-primary-tint",
+  internal: "bg-primary-tint",
+  automation: "border border-purple/30 bg-purple-bg",
+  unidentified: "border border-dashed border-border-strong bg-surface-subtle",
+};
 
 export function ConversationThread({
   conversationId,
@@ -65,6 +85,35 @@ export function ConversationThread({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadingOlder, startLoadOlder] = useTransition();
 
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  // Distância do fundo antes de acrescentar mensagens antigas no topo (não pular a leitura).
+  const anchorRef = useRef<number | null>(null);
+  const stickToBottomRef = useRef(true);
+
+  // Ao abrir, leva ao fim (a mensagem mais recente). Repete no quadro seguinte e quando as fontes
+  // terminam de carregar, porque a altura do histórico ainda pode mudar até lá.
+  useEffect(() => {
+    const toEnd = () => {
+      const el = scrollRef.current;
+      if (el && stickToBottomRef.current) el.scrollTop = el.scrollHeight;
+    };
+    toEnd();
+    const frame = requestAnimationFrame(toEnd);
+    void document.fonts?.ready.then(toEnd);
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (anchorRef.current !== null) {
+      el.scrollTop = el.scrollHeight - anchorRef.current;
+      anchorRef.current = null;
+    } else if (stickToBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [items]);
+
   function handleLoadOlder() {
     const oldest = items[0];
     if (!oldest) return;
@@ -75,6 +124,9 @@ export function ConversationThread({
         setLoadError(result.error);
         return;
       }
+      const el = scrollRef.current;
+      if (el) anchorRef.current = el.scrollHeight - el.scrollTop;
+      stickToBottomRef.current = false;
       setItems((prev) => [...result.items, ...prev]);
       setHasMore(result.hasMore);
     });
@@ -88,18 +140,27 @@ export function ConversationThread({
    * atualiza a bolha existente em vez de duplicar.
    */
   function handleSent(message: MessageListItem) {
+    stickToBottomRef.current = true;
     setItems((prev) =>
       prev.some((m) => m.id === message.id) ? prev.map((m) => (m.id === message.id ? message : m)) : [...prev, message],
     );
   }
 
   function handleStatusSimulated(messageId: string, status: MessageListItem["status"]) {
+    stickToBottomRef.current = false;
     setItems((prev) => prev.map((m) => (m.id === messageId ? { ...m, status } : m)));
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-3">
-      <div className="flex flex-col gap-2">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div
+        ref={scrollRef}
+        role="log"
+        aria-label="Mensagens da conversa"
+        aria-live="polite"
+        tabIndex={0}
+        className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-ring md:px-4"
+      >
         {hasMore ? (
           <div className="flex justify-center">
             <Button variant="secondary" size="sm" onClick={handleLoadOlder} disabled={loadingOlder}>
@@ -118,48 +179,98 @@ export function ConversationThread({
           </Alert>
         ) : null}
 
-        <ul className="flex flex-col gap-2">
-          {items.map((m) => (
-            <li key={m.id} className={m.direction === "outbound" ? "flex justify-end" : "flex justify-start"}>
-              <div
-                className={
-                  m.direction === "outbound"
-                    ? "max-w-[75%] rounded-card rounded-tr-sm bg-primary-tint px-3 py-2"
-                    : "max-w-[75%] rounded-card rounded-tl-sm border border-border bg-surface px-3 py-2"
-                }
-              >
-                <p className="whitespace-pre-wrap text-body text-text">{m.bodyText}</p>
-                <div className="mt-1 flex items-center justify-end gap-1.5">
-                  {m.direction === "outbound" && canSimulateStatus ? (
-                    <StatusSimulateMenu
-                      phoneNumberId={phoneNumberId}
-                      waMessageId={m.waMessageId}
-                      recipientWaId={recipientWaId}
-                      currentStatus={m.status}
-                      onSimulated={(status) => handleStatusSimulated(m.id, status)}
-                    />
-                  ) : null}
-                  {m.errorReason ? (
-                    <span className="text-label text-danger" title={errorReasonTitle(m.errorReason)}>
-                      {m.errorReason === "send_uncertain" ? "Envio incerto" : MESSAGE_STATUS_LABEL.failed}
+        {items.length === 0 ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 py-10 text-center">
+            <div className="flex size-10 items-center justify-center rounded-card bg-primary-tint text-primary" aria-hidden>
+              <MessageSquare size={18} />
+            </div>
+            <p className="m-0 text-body font-semibold text-text">Nenhuma mensagem nesta conversa ainda</p>
+            <p className="m-0 max-w-[300px] text-meta text-text-tertiary">
+              As mensagens aparecem aqui assim que chegarem ou forem enviadas.
+            </p>
+          </div>
+        ) : null}
+
+        <ul className="m-0 flex list-none flex-col gap-2 p-0">
+          {items.map((m, i) => {
+            const prev = items[i - 1];
+            const newDay = !prev || dayKey(prev.createdAt) !== dayKey(m.createdAt);
+            const author = messageAuthorKind(m);
+            const outbound = m.direction === "outbound";
+            const nonText = m.contentKind && m.contentKind !== "text";
+            return (
+              <Fragment key={m.id}>
+                {newDay ? (
+                  <li className="flex justify-center py-1" aria-hidden={false}>
+                    <span className="rounded-full bg-surface-muted px-3 py-0.5 text-meta font-semibold text-text-muted">
+                      {formatDaySeparator(m.createdAt)}
                     </span>
-                  ) : null}
-                  <span className="text-label text-text-tertiary">{formatTime(m.createdAt)}</span>
-                  {m.direction === "outbound" ? <StatusIcon status={m.status} /> : null}
-                </div>
-              </div>
-            </li>
-          ))}
+                  </li>
+                ) : null}
+                <li className={outbound ? "flex justify-end" : "flex justify-start"}>
+                  <div
+                    className={cn(
+                      "max-w-[88%] rounded-card px-3 py-2 md:max-w-[78%]",
+                      outbound ? "rounded-tr-sm" : "rounded-tl-sm",
+                      BUBBLE_CLASS[author],
+                    )}
+                  >
+                    <p
+                      className="m-0 mb-1 text-label font-bold text-text-muted"
+                      title={MESSAGE_AUTHOR_HINT[author]}
+                    >
+                      {MESSAGE_AUTHOR_LABEL[author]}
+                    </p>
+                    {nonText ? (
+                      <p className="m-0 mb-1 flex items-center gap-1.5 text-meta italic text-text-tertiary">
+                        <EyeOff size={13} aria-hidden className="shrink-0" />
+                        {unsupportedContentNotice(m.contentKind)}
+                      </p>
+                    ) : null}
+                    {m.bodyText ? (
+                      <p className="m-0 whitespace-pre-wrap text-body text-text [overflow-wrap:anywhere]">{m.bodyText}</p>
+                    ) : null}
+                    <div className="mt-1 flex flex-wrap items-center justify-end gap-1.5">
+                      {outbound && canSimulateStatus ? (
+                        <StatusSimulateMenu
+                          phoneNumberId={phoneNumberId}
+                          waMessageId={m.waMessageId}
+                          recipientWaId={recipientWaId}
+                          currentStatus={m.status}
+                          onSimulated={(status) => handleStatusSimulated(m.id, status)}
+                        />
+                      ) : null}
+                      {m.errorReason ? (
+                        <span className="text-label text-danger" title={errorReasonTitle(m.errorReason)}>
+                          {m.errorReason === "send_uncertain" ? "Envio incerto" : MESSAGE_STATUS_LABEL.failed}
+                        </span>
+                      ) : null}
+                      <time dateTime={m.createdAt} className="text-label text-text-tertiary">
+                        {formatTime(m.createdAt)}
+                      </time>
+                      {outbound ? <StatusIcon status={m.status} /> : null}
+                    </div>
+                  </div>
+                </li>
+              </Fragment>
+            );
+          })}
         </ul>
       </div>
 
       {canSend ? (
-        sendContext ? (
-          <WhatsAppComposer conversationId={conversationId} context={sendContext} onSent={handleSent} />
-        ) : (
-          <Composer conversationId={conversationId} disabled={consentBlocked} onSent={handleSent} />
-        )
-      ) : null}
+        <div className="shrink-0 border-t border-border bg-surface px-3 py-3 md:px-4">
+          {sendContext ? (
+            <WhatsAppComposer conversationId={conversationId} context={sendContext} onSent={handleSent} />
+          ) : (
+            <Composer conversationId={conversationId} disabled={consentBlocked} onSent={handleSent} />
+          )}
+        </div>
+      ) : (
+        <p className="m-0 shrink-0 border-t border-border px-4 py-3 text-meta text-text-tertiary">
+          Seu perfil só visualiza as conversas; o envio de mensagens não está disponível.
+        </p>
+      )}
     </div>
   );
 }
@@ -213,23 +324,25 @@ function Composer({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-2 border-t border-border pt-3">
+    <form onSubmit={handleSubmit} className="flex flex-col gap-2">
       {disabled ? (
         <Alert variant="warning">
           <AlertDescription>
-            Sem consentimento vigente para WhatsApp — registre o consentimento do contato abaixo antes de enviar.
+            Sem consentimento vigente para WhatsApp — registre o consentimento do contato no painel de contexto antes de
+            enviar. <OpenContextButton>Abrir contexto</OpenContextButton>
           </AlertDescription>
         </Alert>
       ) : null}
-      <div className="flex gap-2">
+      <div className="flex items-end gap-2">
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           disabled={isPending}
           rows={2}
           maxLength={4096}
+          aria-label="Mensagem"
           placeholder="Escreva uma mensagem (simulada)…"
-          className="flex-1 resize-none rounded-input border border-border-input bg-surface px-3 py-2 text-body text-text disabled:opacity-60"
+          className="min-w-0 flex-1 resize-none rounded-input border border-border-input bg-surface-subtle px-3 py-2 text-body text-text placeholder:text-text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring disabled:opacity-60"
         />
         {/* Não desabilita pelo "disabled" (falta de consentimento): o
             servidor já recusa com "consent_required" — deixar tentar e
@@ -285,7 +398,8 @@ function StatusSimulateMenu({
         type="button"
         onClick={() => setOpen((v) => !v)}
         disabled={isPending}
-        className="rounded-full bg-purple-bg px-1.5 py-0.5 text-label font-bold text-purple"
+        aria-expanded={open}
+        className="rounded-full bg-purple-bg px-1.5 py-0.5 text-label font-bold text-purple focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
         title="Simular evento de status (visível só para administração)"
       >
         SIMULAR

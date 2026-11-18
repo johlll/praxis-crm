@@ -3,6 +3,7 @@
 Migration: `20261117130000_conversas_ia_fundacao.sql` (aditiva; **só vale depois de aplicada no
 hospedado**, com autorização). Esta PR entrega **só a fundação de banco e servidor**: não há tela
 nova, extrator de IA nem aplicador automático. Nenhuma alteração automática acontece ainda.
+A interface construída sobre esta fundação (PR 2) está em [conversas-interface.md](conversas-interface.md).
 
 ## Decisões aprovadas
 

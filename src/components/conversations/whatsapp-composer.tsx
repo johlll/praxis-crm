@@ -105,7 +105,7 @@ export function WhatsAppComposer({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-2 border-t border-border pt-3">
+    <form onSubmit={handleSubmit} className="flex flex-col gap-2">
       {blocked ? (
         <Alert variant="warning">
           <AlertDescription>{toUserMessage({ message: blocked })}</AlertDescription>
