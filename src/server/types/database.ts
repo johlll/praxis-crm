@@ -7049,7 +7049,11 @@ export type Database = {
         Returns: Json
       }
       whatsapp_record_message_origin_time: {
-        Args: { p_inbox_id: string; p_origin_at: string; p_origin_issue?: string }
+        Args: {
+          p_inbox_id: string
+          p_origin_at: string
+          p_origin_issue?: string
+        }
         Returns: Json
       }
       whatsapp_reserve_send: {

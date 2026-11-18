@@ -409,7 +409,7 @@ describe("7. tipos do banco e documentação", () => {
     for (const column of ["origin_time_at", "origin_time_issue", "origin_time_source"]) {
       expect((types.match(new RegExp(`\\b${column}\\??: string \\| null`, "g")) ?? []).length, column).toBe(3);
     }
-    expect(types).toMatch(/whatsapp_record_message_origin_time: \{\s+Args: \{ p_inbox_id: string; p_origin_at: string; p_origin_issue\?: string \}\s+Returns: Json/);
+    expect(types).toMatch(/whatsapp_record_message_origin_time: \{\s+Args: \{\s+p_inbox_id: string\s+p_origin_at: string\s+p_origin_issue\?: string\s+\}\s+Returns: Json/);
   });
 
   it("a decisão documenta fontes, motivos de inelegibilidade, a regra de comparação e os limites", () => {
