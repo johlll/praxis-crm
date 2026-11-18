@@ -22,6 +22,7 @@ import type * as OutboundModule from "@/server/whatsapp/effects/outbound-observe
 import type * as StatusModule from "@/server/whatsapp/effects/message-status";
 import type * as IdentityModule from "@/server/whatsapp/effects/identity-change";
 import type * as AccountModule from "@/server/whatsapp/effects/account-event";
+import type * as OriginTimeModule from "@/server/whatsapp/effects/message-origin-time";
 import type * as InboxModule from "@/server/whatsapp/inbox";
 import type * as ProviderModule from "@/server/whatsapp/provider";
 import type { WhatsAppProvider } from "@/server/whatsapp/provider/contract";
@@ -38,6 +39,7 @@ import {
   INBOX_KEY,
   MESSAGE_ID,
   OCCURRED,
+  ORIGIN,
   PHONE,
   PHONE_2,
   rawTypeOf,
@@ -57,6 +59,7 @@ const h = vi.hoisted(() => ({
   status: vi.fn(),
   identity: vi.fn(),
   account: vi.fn(),
+  origin: vi.fn(),
   claimed: [] as unknown[],
 }));
 
@@ -103,6 +106,11 @@ vi.mock("@/server/whatsapp/effects/identity-change", async (importOriginal) => (
 vi.mock("@/server/whatsapp/effects/account-event", async (importOriginal) => ({
   ...(await importOriginal<typeof AccountModule>()),
   applyWhatsAppAccountEvent: h.account,
+}));
+// Horário de ORIGEM da mensagem (conversas-horario-origem): espião, como os efeitos.
+vi.mock("@/server/whatsapp/effects/message-origin-time", async (importOriginal) => ({
+  ...(await importOriginal<typeof OriginTimeModule>()),
+  recordWhatsAppMessageOriginTime: h.origin,
 }));
 
 const loadConsumer = () => import("@/server/whatsapp/consumer");
@@ -171,6 +179,11 @@ beforeEach(async () => {
       return { outcome: "duplicate" };
     });
   }
+  h.origin.mockReset();
+  h.origin.mockImplementation(async () => {
+    order.push("origin_time");
+    return { outcome: "recorded" };
+  });
 });
 
 afterEach(() => {
@@ -231,7 +244,8 @@ describe("1. cada tipo normalizado chama exatamente o seu efeito", () => {
     arrange(event);
     await expect(run()).resolves.toEqual({ outcome: "processed", code: "duplicate" });
     expect(effectCalls()).toEqual(only(kind));
-    expect(order).toEqual(["claim", "normalize", "effect"]);
+    // Só mensagem (recebida ou observada) ganha o passo do horário de origem, depois do efeito.
+    expect(order).toEqual(["claim", "normalize", "effect", ...(kind === "inbound" || kind === "outbound" ? ["origin_time"] : [])]);
     expect(finalizations()).toEqual([]);
   });
 
@@ -495,7 +509,7 @@ describe("4. resultado do efeito → finalização", () => {
     });
     await expect(run()).resolves.toEqual({ outcome: "processed", code: outcome });
     expect(finalizations()).toEqual([]);
-    expect(order).toEqual(["claim", "normalize", "effect"]);
+    expect(order).toEqual(["claim", "normalize", "effect", ...(kind === "inbound" || kind === "outbound" ? ["origin_time"] : [])]);
   });
 
   it.each(KINDS.flatMap((kind) => NO_OWNERSHIP.map((outcome) => [kind, outcome] as const)))(
@@ -1021,3 +1035,77 @@ describe("10. códigos do consumidor", () => {
   });
 });
 
+// ---------------------------------------------------------------------
+// 11. Horário de ORIGEM da mensagem (conversas-horario-origem.md)
+// ---------------------------------------------------------------------
+
+describe("11. horário de origem da mensagem", () => {
+  const MESSAGE_KINDS = ["inbound", "outbound"] as const;
+  const OTHER_KINDS = ["status", "identity", "account"] as const;
+
+  it.each(MESSAGE_KINDS)("%s: depois do efeito aplicado, grava o horário QUE O EVENTO TROUXE, com o mesmo claim", async (kind) => {
+    arrange(CASE_OF[kind]);
+    EFFECT[kind].mockImplementation(async () => {
+      order.push("effect");
+      return effectResultFor(kind, "applied");
+    });
+    await expect(run()).resolves.toEqual({ outcome: "processed", code: "applied" });
+    expect(h.origin).toHaveBeenCalledTimes(1);
+    const [claim, originTime] = h.origin.mock.calls[0]!;
+    expect(claim).toBe(EFFECT[kind].mock.calls[0]![0]);
+    expect(originTime).toEqual({ kind: "provider_send_time", at: new Date(ORIGIN) });
+    // O horário de origem não é o horário do evento (occurredAt) nem o da chegada.
+    expect(originTime.at.toISOString()).not.toBe(OCCURRED);
+    expect(finalizations()).toEqual([]);
+  });
+
+  it.each(MESSAGE_KINDS)("%s: horário ausente no evento é repassado como `missing` (nunca vira occurredAt)", async (kind) => {
+    arrange({ ...CASE_OF[kind], originTime: { kind: "missing" } });
+    EFFECT[kind].mockImplementation(async () => effectResultFor(kind, "applied"));
+    await run();
+    expect(h.origin.mock.calls[0]![1]).toEqual({ kind: "missing" });
+  });
+
+  it.each(MESSAGE_KINDS)("%s: mensagem duplicada ou já processada também passa pela gravação (o banco decide se confirma ou contradiz)", async (kind) => {
+    for (const outcome of ["duplicate", "already_processed"]) {
+      h.origin.mockClear();
+      arrange(CASE_OF[kind]);
+      EFFECT[kind].mockResolvedValue({ outcome });
+      await run();
+      expect(h.origin, outcome).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it.each(MESSAGE_KINDS.flatMap((kind) => ["identity_conflict", "effect_conflict", "channel_paused", "channel_disconnected", "channel_disabled", "terminal_failed", "claim_lost", "not_found"].map((o) => [kind, o] as const)))(
+    "%s / %s: sem mensagem aplicada, nada é gravado",
+    async (kind, outcome) => {
+      arrange(CASE_OF[kind]);
+      EFFECT[kind].mockResolvedValue({ outcome });
+      await run().catch(() => undefined);
+      expect(h.origin).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(MESSAGE_KINDS)("%s: efeito que lança erro não grava horário", async (kind) => {
+    arrange(CASE_OF[kind]);
+    EFFECT[kind].mockRejectedValue(new Error("falha qualquer"));
+    await run().catch(() => undefined);
+    expect(h.origin).not.toHaveBeenCalled();
+  });
+
+  it.each(OTHER_KINDS)("%s: status, identidade e conta NUNCA gravam horário de origem (horário de status não é horário de mensagem)", async (kind) => {
+    arrange(CASE_OF[kind]);
+    EFFECT[kind].mockImplementation(async () => effectResultFor(kind, "applied"));
+    await run();
+    expect(h.origin).not.toHaveBeenCalled();
+  });
+
+  it.each(MESSAGE_KINDS)("%s: falha da gravação vira nova tentativa — a entrada NÃO é finalizada de novo", async (kind) => {
+    arrange(CASE_OF[kind]);
+    EFFECT[kind].mockImplementation(async () => effectResultFor(kind, "applied"));
+    h.origin.mockRejectedValue(new Error("rede fora"));
+    await expect(run()).rejects.toMatchObject({ name: "WhatsAppConsumerRetryableError" });
+    expect(finalizations()).toEqual([]);
+    expect(effectCalls()).toEqual(only(kind));
+  });
+});

@@ -94,7 +94,7 @@ create table public.upgrade_b3d2b2b3a_leituras as select * from leituras;
 create table public.upgrade_b3d2b2b3a_linhas as
 select 'i:' || x.id as chave, md5(x::text) as linha from public.whatsapp_identities x
 union all select 'c:' || x.id, md5(x::text) from public.conversations x
-union all select 'm:' || x.id, md5(x::text) from public.messages x;
+union all select 'm:' || x.id, md5((to_jsonb(x) - array['origin_time_at', 'origin_time_source', 'origin_time_issue'])::text) from public.messages x;
 create table public.upgrade_b3d2b2b3a_estado as
 select (:'r1'::jsonb ->> 'conversation_id') as conv_a7, :'entrada'::text as entrada, :'eco_outcome' || '/' || :'st_outcome' as antes;
 create table public.upgrade_b3d2b2b3a_contagens as
@@ -161,7 +161,7 @@ begin
   where l.linha is distinct from case split_part(l.chave, ':', 1)
     when 'i' then (select md5(x::text) from public.whatsapp_identities x where x.id = split_part(l.chave, ':', 2)::uuid)
     when 'c' then (select md5(x::text) from public.conversations x where x.id = split_part(l.chave, ':', 2)::uuid)
-    when 'm' then (select md5(x::text) from public.messages x where x.id = split_part(l.chave, ':', 2)::uuid)
+    when 'm' then (select md5((to_jsonb(x) - array['origin_time_at', 'origin_time_source', 'origin_time_issue'])::text) from public.messages x where x.id = split_part(l.chave, ':', 2)::uuid)
   end;
   if v_bad <> 0 then
     raise exception '% linha(s) de identidade, conversa ou mensagem mudaram na migration', v_bad;

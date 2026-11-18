@@ -218,6 +218,24 @@ export type WhatsAppContentKind =
   | "unsupported"
   | "other";
 
+/**
+ * Horário em que a mensagem OCORREU na origem, como o PROVEDOR o informou no campo próprio da
+ * mensagem (YCloud `sendTime`, RFC 3339 com fuso, conferido). É outra coisa que `occurredAt`, que
+ * continua sendo o horário do evento para ordenação e `last_message_at` (com o `createTime` do
+ * envelope como reserva quando falta o da mensagem), e que a chegada ao CRM (`created_at`).
+ *
+ *  - `provider_send_time`: o provedor informou o horário da mensagem. O banco ainda julga limites
+ *    (futuro, antigo demais) e contradição entre eventos antes de aceitá-lo como evidência;
+ *  - `missing`: o provedor não informou. NUNCA vira o `createTime` do envelope, o horário de
+ *    entrega/leitura ou "agora": o horário de origem fica desconhecido e a mensagem inelegível.
+ *
+ * Um horário presente e malformado (texto fora de RFC 3339, número em segundos ou milissegundos)
+ * continua invalidando o evento inteiro, como antes: este tipo não o repara nem o adivinha.
+ */
+export type WhatsAppMessageOriginTime =
+  | { readonly kind: "provider_send_time"; readonly at: Date }
+  | { readonly kind: "missing" };
+
 export type NormalizedInboundMessage = {
   kind: "message.inbound";
   originCandidate: "inbound";
@@ -227,6 +245,8 @@ export type NormalizedInboundMessage = {
   /** Id da mensagem na Meta (`wamid`), quando o provedor manda. */
   waMessageId: string | null;
   occurredAt: Date;
+  /** Horário da mensagem na origem (ver o tipo). Não substitui `occurredAt`. */
+  originTime: WhatsAppMessageOriginTime;
   sender: WhatsAppContactIdentity;
   senderProfileName: string | null;
   contentKind: WhatsAppContentKind;
@@ -247,6 +267,8 @@ export type NormalizedOutboundObserved = {
   providerMessageId: string;
   waMessageId: string | null;
   occurredAt: Date;
+  /** Horário da mensagem na origem (ver o tipo). Não substitui `occurredAt`. */
+  originTime: WhatsAppMessageOriginTime;
   recipient: WhatsAppContactIdentity;
   contentKind: WhatsAppContentKind;
   text: string | null;

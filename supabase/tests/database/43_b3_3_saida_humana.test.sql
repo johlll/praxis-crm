@@ -12,7 +12,7 @@
 -- da B3. Nenhuma chave real e nenhuma rede: valores de teste, só desta transação.
 
 begin;
-select plan(100);
+select plan(102);
 
 \set ana     '20000000-0000-0000-0000-000000000001'
 \set bruno   '20000000-0000-0000-0000-000000000002'
@@ -302,6 +302,17 @@ select ok(
           and m.origin_correlation_ref = (:'r1'::jsonb) ->> 'outbox_id'
    from public.messages m where m.id = ((:'r1'::jsonb) ->> 'message_id')::uuid),
   'a mensagem do CRM tem origin=crm, sender_classification=internal, autor e correlação com a outbox'
+);
+-- Horário de origem (conversas-horario-origem): o envio humano nasce com a origem do próprio CRM.
+select ok(
+  (select m.origin_time_source = 'crm_accepted' and m.origin_time_at = m.created_at and m.origin_time_issue is null
+   from public.messages m where m.id = ((:'r1'::jsonb) ->> 'message_id')::uuid),
+  'a mensagem do CRM nasce com origem crm_accepted (o instante em que o CRM aceitou o envio)'
+);
+select is(
+  (select count(*)::int from public.messages m where m.origin_time_source = 'crm_accepted'
+     and not (m.origin = 'crm' and m.direction = 'outbound' and m.sender_classification = 'internal')),
+  0, 'nenhuma mensagem fora do envio humano ganha a origem crm_accepted'
 );
 select ok(
   (select o.attempts = 0 and o.state = 'reserved' and o.kind = 'text' and o.created_by = :'ana'::uuid

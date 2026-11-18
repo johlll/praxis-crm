@@ -150,6 +150,8 @@ describe("normalização de eventos simulados para tipos próprios do CRM", () =
         providerMessageId: "m1",
         waMessageId: null,
         occurredAt: new Date("2026-10-19T12:00:00Z"),
+        // Provedor simulado: o horário é escolhido por quem monta o evento, então não prova a origem.
+        originTime: { kind: "missing" },
         sender: { kind: "phone", phoneE164: "+5511999990000", bsuid: null },
         senderProfileName: null,
         contentKind: "text",

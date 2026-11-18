@@ -98,7 +98,7 @@ create table public.upgrade_b3d2b2b3b_leituras as select * from leituras;
 create table public.upgrade_b3d2b2b3b_linhas as
 select 'i:' || x.id as chave, md5(x::text) as linha from public.whatsapp_identities x
 union all select 'c:' || x.id, md5(x::text) from public.conversations x
-union all select 'm:' || x.id, md5(x::text) from public.messages x
+union all select 'm:' || x.id, md5((to_jsonb(x) - array['origin_time_at', 'origin_time_source', 'origin_time_issue'])::text) from public.messages x
 union all select 'h:' || x.id, md5(to_jsonb(x)::text) from public.whatsapp_channels x
 union all select 'l:' || x.id, md5(x::text) from public.whatsapp_effect_ledger x
 union all select 'b:' || x.id, md5((to_jsonb(x) - array['reconcile_token', 'reconcile_reserved_at', 'reconcile_reserved_until', 'reconcile_attempts', 'last_republished_at', 'last_republish_error_code', 'reconcile_next_at'])::text) from public.whatsapp_webhook_inbox x where x.id <> :'entrada'::uuid;
@@ -169,7 +169,7 @@ begin
   where l.linha is distinct from case split_part(l.chave, ':', 1)
     when 'i' then (select md5(x::text) from public.whatsapp_identities x where x.id = split_part(l.chave, ':', 2)::uuid)
     when 'c' then (select md5(x::text) from public.conversations x where x.id = split_part(l.chave, ':', 2)::uuid)
-    when 'm' then (select md5(x::text) from public.messages x where x.id = split_part(l.chave, ':', 2)::uuid)
+    when 'm' then (select md5((to_jsonb(x) - array['origin_time_at', 'origin_time_source', 'origin_time_issue'])::text) from public.messages x where x.id = split_part(l.chave, ':', 2)::uuid)
     when 'h' then (select md5((to_jsonb(x) - 'provider_account_ref' - 'last_event_at' - 'provider_status_event_at')::text) from public.whatsapp_channels x where x.id = split_part(l.chave, ':', 2)::uuid)
     when 'l' then (select md5(x::text) from public.whatsapp_effect_ledger x where x.id = split_part(l.chave, ':', 2)::uuid)
     -- Sem as colunas técnicas da reconciliação (B3.2e), que uma migration posterior acrescenta.

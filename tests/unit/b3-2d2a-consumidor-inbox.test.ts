@@ -82,6 +82,8 @@ beforeEach(async () => {
     // B3.2d-2b3: os efeitos do domínio (o banco já finaliza a entrada neles).
     whatsapp_effect_inbound_message: () => ({ data: { outcome: "duplicate" }, error: null }),
     whatsapp_effect_message_status: () => ({ data: { outcome: "duplicate" }, error: null }),
+    // Horário de origem da mensagem: gravado depois do efeito (conversas-horario-origem).
+    whatsapp_record_message_origin_time: () => ({ data: { outcome: "unchanged" }, error: null }),
   };
   rpcLog = [];
   insideStep = false;
@@ -349,13 +351,14 @@ describe("3. resultados do claim", () => {
 
 describe("4. decisão com o adaptador do provedor gravado no canal", () => {
   it.each([
-    ["message.inbound", INBOUND, "whatsapp_effect_inbound_message"],
-    ["message.status", STATUS, "whatsapp_effect_message_status"],
-  ])("%s com canal ativo: vai ao efeito do domínio (B3.2d-2b3), que já finaliza a entrada — nenhuma finalização do consumidor", async (_name, event, effectRpc) => {
+    // A mensagem ainda grava o horário de origem depois do efeito; o status nunca.
+    ["message.inbound", INBOUND, ["whatsapp_effect_inbound_message", "whatsapp_record_message_origin_time"]],
+    ["message.status", STATUS, ["whatsapp_effect_message_status"]],
+  ])("%s com canal ativo: vai ao efeito do domínio (B3.2d-2b3), que já finaliza a entrada — nenhuma finalização do consumidor", async (_name, event, effectRpcs) => {
     claimReturns(claimRow(event));
     await expect(run()).resolves.toEqual({ outcome: "processed", code: "duplicate" });
     expect(finalizations()).toEqual([]);
-    expect(names()).toEqual(["whatsapp_inbox_claim", effectRpc]);
+    expect(names()).toEqual(["whatsapp_inbox_claim", ...effectRpcs]);
   });
 
   it("evento não suportado: dispose unsupported_event com id, token e disposição", async () => {
@@ -724,7 +727,7 @@ describe("11. sem domínio, sem log, sem conteúdo", () => {
     const result = await run();
     // O consumidor chama as RPCs da inbox; as dos efeitos, só através dos módulos dos efeitos.
     for (const name of names()) {
-      expect(["whatsapp_inbox_claim", "whatsapp_inbox_fail", "whatsapp_inbox_release", "whatsapp_inbox_dispose", "whatsapp_effect_inbound_message", "whatsapp_effect_message_status"]).toContain(name);
+      expect(["whatsapp_inbox_claim", "whatsapp_inbox_fail", "whatsapp_inbox_release", "whatsapp_inbox_dispose", "whatsapp_effect_inbound_message", "whatsapp_effect_message_status", "whatsapp_record_message_origin_time"]).toContain(name);
     }
     expect(fromMock).not.toHaveBeenCalled();
     for (const spy of spies) expect(spy).not.toHaveBeenCalled();

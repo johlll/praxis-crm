@@ -22,6 +22,8 @@ export const BSUID = "BR.1234567890";
 export const TEXT = "Olá, quero falar sobre a ação — mensagem fictícia";
 export const EVENT_ID = "evt-2b3-1";
 export const OCCURRED = "2026-11-02T12:00:00.000Z";
+/** Horário de ORIGEM da mensagem nos eventos do harness: diferente de OCCURRED de propósito. */
+export const ORIGIN = "2026-11-02T11:58:30.000Z";
 export const WABA_REF = "waba-ref-2b3";
 export const MESSAGE_ID = "5c000000-0000-4000-8000-000000000001";
 export const CONVERSATION_ID = "5d000000-0000-4000-8000-000000000001";
@@ -84,6 +86,7 @@ export const EVENTS = {
     routingKey: ROUTING,
     providerMessageId: "m-in-1",
     waMessageId: "wamid.IN1",
+    originTime: { kind: "provider_send_time", at: new Date(ORIGIN) },
     sender: PHONE_ID,
     senderProfileName: "Cliente Fictício",
     contentKind: "text",
@@ -97,6 +100,7 @@ export const EVENTS = {
     routingKey: ROUTING,
     providerMessageId: "m-out-1",
     waMessageId: "wamid.OUT1",
+    originTime: { kind: "provider_send_time", at: new Date(ORIGIN) },
     recipient: PHONE_ID,
     contentKind: "text",
     text: TEXT,
