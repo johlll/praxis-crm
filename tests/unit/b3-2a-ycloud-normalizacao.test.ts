@@ -123,6 +123,7 @@ describe("2. mensagem recebida: candidata a `inbound`", () => {
       providerMessageId: inboundText.whatsappInboundMessage.id,
       waMessageId: inboundText.whatsappInboundMessage.wamid,
       occurredAt: new Date(inboundText.whatsappInboundMessage.sendTime),
+      originTime: { kind: "provider_send_time", at: new Date(inboundText.whatsappInboundMessage.sendTime) },
       sender: { kind: "phone_and_bsuid", phoneE164: FICT.customerPhone, bsuid: FICT.bsuid },
       senderProfileName: FICT.profileName,
       contentKind: "text",

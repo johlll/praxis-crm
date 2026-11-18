@@ -136,6 +136,8 @@ select is(
      -- A saída humana (B3.3, §28.18) tem teste próprio (43).
      and p.proname not in ('whatsapp_enable_channel_send', 'whatsapp_upsert_template', 'whatsapp_send_context',
                            'whatsapp_reserve_send', 'whatsapp_outbox_begin', 'whatsapp_outbox_finish')
+     -- A gravação do horário de origem da mensagem (conversas-horario-origem) tem teste próprio (57).
+     and p.proname <> 'whatsapp_record_message_origin_time'
      and has_function_privilege('service_role', p.oid, 'execute')),
   10,
   'as 10 funções public.whatsapp_* da B3.1 são executáveis por service_role'

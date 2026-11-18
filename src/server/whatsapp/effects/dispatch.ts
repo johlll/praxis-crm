@@ -1,10 +1,12 @@
 import { applyWhatsAppAccountEvent, WhatsAppAccountEventError } from "@/server/whatsapp/effects/account-event";
 import { applyWhatsAppIdentityChange, WhatsAppIdentityChangeError } from "@/server/whatsapp/effects/identity-change";
 import { applyWhatsAppInboundMessage, WhatsAppInboundEffectError } from "@/server/whatsapp/effects/inbound-message";
+import { recordWhatsAppMessageOriginTime } from "@/server/whatsapp/effects/message-origin-time";
 import { applyWhatsAppMessageStatus, WhatsAppMessageStatusError } from "@/server/whatsapp/effects/message-status";
 import { applyWhatsAppOutboundObserved, WhatsAppOutboundObservedError } from "@/server/whatsapp/effects/outbound-observed";
 import type { WhatsAppInboxClaim } from "@/server/whatsapp/inbox";
 import type {
+  WhatsAppMessageOriginTime,
   NormalizedAccountEvent,
   NormalizedIdentityChange,
   NormalizedInboundMessage,
@@ -28,7 +30,7 @@ import type {
  *
  * Este módulo NÃO finaliza a entrada, não copia nem serializa o claim, não
  * consulta o relógio, não lê variável de ambiente, não fala com o banco (só
- * os efeitos falam) e não registra log. O horário do provedor vai ao efeito
+ * os efeitos falam e a gravação do horário de origem, abaixo) e não registra log. O horário do provedor vai ao efeito
  * como veio: quem julga o horário é o banco. A disposição só carrega códigos
  * fixos — nunca ids, telefone, BSUID, conta, routing key, token ou conteúdo.
  */
@@ -167,6 +169,31 @@ async function settle(call: () => Promise<unknown>, table: ReadonlyMap<string, W
   }
 }
 
+/**
+ * Horário de ORIGEM da mensagem (conversas-horario-origem.md). Depois do efeito de mensagem recebida ou
+ * de saída observada, e SÓ quando a mensagem existe (aplicada, duplicada ou já processada por outro
+ * worker), grava o que o EVENTO trouxe — nunca `occurredAt` nem o horário de um status. O banco julga
+ * limites, contradição e quem pode preencher. É a segunda chamada de uma mensagem já concluída: se
+ * falhar, a mensagem segue recebida com origem DESCONHECIDA (inelegível como evidência temporal) e
+ * o resultado é uma nova tentativa, que termina em `already_processed` sem refazer o efeito.
+ */
+async function withOriginTime(
+  claim: WhatsAppInboxClaim,
+  disposition: WhatsAppEffectDisposition,
+  originTime: WhatsAppMessageOriginTime,
+): Promise<WhatsAppEffectDisposition> {
+  const messageExists =
+    disposition.action === "done" &&
+    (disposition.outcome === "already_processed" || (disposition.outcome === "processed" && (disposition.code === "applied" || disposition.code === "duplicate")));
+  if (!messageExists) return disposition;
+  try {
+    await recordWhatsAppMessageOriginTime(claim, originTime);
+  } catch {
+    return RETRY;
+  }
+  return disposition;
+}
+
 async function dispatch(claim: WhatsAppInboxClaim, event: WhatsAppDomainEvent): Promise<WhatsAppEffectDisposition> {
   switch (event.kind) {
     case "message.inbound": {
@@ -180,7 +207,8 @@ async function dispatch(claim: WhatsAppInboxClaim, event: WhatsAppDomainEvent): 
         sender: contact(event.sender),
         profileName: event.senderProfileName,
       };
-      return settle(() => applyWhatsAppInboundMessage(claim, input), INBOUND_OUTCOMES, (e) => fromError(e, WhatsAppInboundEffectError, "invalid_inbound_message", true));
+      const disposition = await settle(() => applyWhatsAppInboundMessage(claim, input), INBOUND_OUTCOMES, (e) => fromError(e, WhatsAppInboundEffectError, "invalid_inbound_message", true));
+      return withOriginTime(claim, disposition, event.originTime);
     }
     case "message.outbound_observed": {
       const occurredAt = iso(event.occurredAt);
@@ -193,7 +221,8 @@ async function dispatch(claim: WhatsAppInboxClaim, event: WhatsAppDomainEvent): 
         occurredAt,
         recipient: contact(event.recipient),
       };
-      return settle(() => applyWhatsAppOutboundObserved(claim, input), OUTBOUND_OUTCOMES, (e) => fromError(e, WhatsAppOutboundObservedError, "invalid_outbound_message", true));
+      const disposition = await settle(() => applyWhatsAppOutboundObserved(claim, input), OUTBOUND_OUTCOMES, (e) => fromError(e, WhatsAppOutboundObservedError, "invalid_outbound_message", true));
+      return withOriginTime(claim, disposition, event.originTime);
     }
     case "message.status": {
       const occurredAt = iso(event.occurredAt);

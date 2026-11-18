@@ -521,6 +521,24 @@ export async function runWhatsAppInboxClaimEffect(
   return { data, error };
 }
 
+/** Grava o horário de ORIGEM da mensagem que o efeito deste claim acabou de aplicar (ou de reconhecer
+ * como duplicada). Só a entrada do claim vai ao banco: a mensagem vem do ledger do evento, a fonte
+ * é fixa e o veredito é do banco. O token não é enviado — a entrada já foi concluída pelo efeito — mas
+ * só quem tem um claim emitido aqui chega a esta chamada. */
+export async function runWhatsAppInboxOriginTimeRecord(
+  claim: WhatsAppInboxClaim,
+  args: Readonly<{ p_origin_at: string | null; p_origin_issue: "missing" | null }>,
+): Promise<{ data: unknown; error: { message?: string } | null }> {
+  const entry = requireClaim(claim);
+  const admin = createWhatsAppAdminSupabaseClient();
+  const { data, error } = await admin.rpc("whatsapp_record_message_origin_time", {
+    p_inbox_id: entry.inboxId,
+    p_origin_at: args.p_origin_at as never,
+    ...(args.p_origin_issue === null ? {} : { p_origin_issue: args.p_origin_issue }),
+  });
+  return { data, error };
+}
+
 // ---------------------------------------------------------------------
 // Listagem e expurgo — só metadado
 // ---------------------------------------------------------------------
