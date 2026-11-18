@@ -4,7 +4,7 @@
  * Conversas + IA, PR 2 — interface de Conversas sobre a fundação da #356.
  * docs/decisoes/conversas-interface.md
  */
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -574,6 +574,22 @@ describe("tela de Conversas — promessas que ela não faz", () => {
         expect(clause, `${file} importa valor de ${from}`).toMatch(/^type\s/);
       }
     }
+  });
+
+  it("trocar de conversa não troca a lista por esqueleto: sem loading.tsx no segmento, com um Suspense por conversa", () => {
+    // loading.tsx envolveria a página inteira (lista incluída) e zeraria a rolagem dela a cada clique.
+    expect(existsSync(join(ROOT, "src/app/(app)/conversas/loading.tsx"))).toBe(false);
+    expect(existsSync(join(ROOT, "src/app/(app)/conversas/[id]/loading.tsx"))).toBe(false);
+    const workspace = read("src/components/conversations/conversations-workspace.tsx");
+    expect(workspace.match(/<Suspense key=\{conversationId\}/g)).toHaveLength(2); // mensagens e contexto
+    // a existência da conversa é conferida ANTES da transmissão (404 de verdade para inexistente/fora do alcance)
+    expect(workspace.indexOf("getConversation(conversationId)")).toBeLessThan(workspace.indexOf("<Suspense"));
+    expect(workspace.indexOf("notFound()")).toBeGreaterThan(-1);
+  });
+
+  it("os links da lista dão retorno imediato ao clique (useLinkStatus)", () => {
+    expect(read("src/components/conversations/link-pending.tsx")).toContain("useLinkStatus");
+    expect(read("src/components/conversations/inbox-list.tsx").match(/<LinkPending \/>/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
   it("o texto de mensagem nunca é gravado como evidência: só ids são enviados", () => {

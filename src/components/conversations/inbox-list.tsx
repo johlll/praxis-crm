@@ -16,6 +16,7 @@ import {
   type InboxParams,
 } from "@/modules/conversations/inbox";
 import { ConversationsPagination } from "./conversations-pagination";
+import { LinkPending } from "./link-pending";
 import { ATTENDANCE_STATUS_CLASS } from "./labels";
 
 /**
@@ -93,6 +94,7 @@ export function InboxList({
                     {INBOX_FILTER_LABEL[f]}
                     <span className="sr-only">: </span>
                     <span className={cn("tabular-nums", active ? "text-primary" : "text-text-muted")}>{counts[f]}</span>
+                    <LinkPending />
                   </Link>
                 </li>
               );
@@ -154,11 +156,14 @@ export function InboxList({
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <span className="flex items-baseline justify-between gap-2">
                       <span className="truncate text-body font-semibold text-text">{name}</span>
-                      {c.lastMessageAt ? (
-                        <time dateTime={c.lastMessageAt} className="shrink-0 text-meta text-text-muted">
-                          {formatListTime(c.lastMessageAt)}
-                        </time>
-                      ) : null}
+                      <span className="flex shrink-0 items-center gap-1.5">
+                        <LinkPending />
+                        {c.lastMessageAt ? (
+                          <time dateTime={c.lastMessageAt} className="text-meta text-text-muted">
+                            {formatListTime(c.lastMessageAt)}
+                          </time>
+                        ) : null}
+                      </span>
                     </span>
                     <span className={cn("truncate text-meta text-text-tertiary", preview.isKind && "italic")}>
                       {preview.text}

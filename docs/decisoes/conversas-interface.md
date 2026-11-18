@@ -132,7 +132,14 @@ digitada não se perde**. A gaveta leva o foco para dentro, prende o Tab, fecha 
 O aviso de "sem consentimento" ganhou o botão "Abrir contexto". Sem rolagem horizontal da página, texto longo
 quebra, e a lista e o histórico rolam sozinhos com o compositor fixo embaixo.
 
-Estados: lista vazia, sem resultado (com "Limpar busca e filtro"), carregando (esqueleto), erro da lista (erro
+Carregamento: a lista e o cabeçalho da conversa aparecem primeiro; as **mensagens** e o **contexto** carregam
+depois, cada um com o seu esqueleto (um `Suspense` por conversa). Não existe `loading.tsx` no segmento de
+propósito: ele envolve a página inteira, então cada clique trocaria a lista por um esqueleto e zeraria a rolagem
+dela. O clique mostra um indicador discreto no próprio item ("Abrindo…" para leitor de tela). A existência da
+conversa é conferida antes da transmissão, então conversa inexistente ou fora do alcance continua sendo um 404 de
+verdade. Mudar só a lista (filtro, busca, página) ou o caso em foco não troca a conversa aberta: o rascunho fica.
+
+Estados: lista vazia, sem resultado (com "Limpar busca e filtro"), erro da lista (erro
 tratado, nunca "sem conversas"), erro das mensagens (erro tratado da rota), conversa sem mensagens, sem contato
 resolvido (aponta para a revisão de vínculo), falha **só do contexto** (a conversa e o envio continuam; o painel mostra
 "Tentar novamente") e sem permissão (ausência de controles, com a explicação).

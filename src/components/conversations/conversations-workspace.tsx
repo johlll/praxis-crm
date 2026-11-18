@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, MessageCircle } from "lucide-react";
@@ -6,51 +7,17 @@ import { Topbar } from "@/components/app-shell/topbar";
 import { cn } from "@/lib/cn";
 import { initialsOf } from "@/lib/initials";
 import { formatPhoneForDisplay } from "@/lib/format-phone";
-import { roleHasPermission } from "@/lib/roles";
 import { getShellContext } from "@/modules/shell/queries";
 import { requireWorkspace } from "@/server/authz/permissions";
-import {
-  getConversation,
-  hasActiveWhatsAppConsent,
-  listContactConsents,
-  listConversationInbox,
-  listConversationMessages,
-  messageAuthorKind,
-  type MessageListItem,
-} from "@/modules/conversations/queries";
-import { loadWhatsAppSendUi } from "@/modules/conversations/whatsapp-send";
-import { loadConversationContext, type ConversationContext } from "@/modules/conversations/context";
-import {
-  MESSAGE_AUTHOR_LABEL,
-  contentKindLabel,
-  inboxHref,
-  isUuid,
-  parseInboxParams,
-} from "@/modules/conversations/inbox";
-import type { EvidenceCandidate } from "@/modules/conversations/context-format";
-import { listAllOpportunities, type OpportunityListItem } from "@/modules/opportunities/queries";
-import { ConversationThread } from "./conversation-thread";
-import { LinkReviewBanner } from "./link-review-banner";
-import { ConsentPanel } from "./consent-panel";
+import { getConversation, listConversationInbox } from "@/modules/conversations/queries";
+import { inboxHref, isUuid, parseInboxParams } from "@/modules/conversations/inbox";
 import { InboxList } from "./inbox-list";
-import { ConversationContextPanel } from "./conversation-context-panel";
+import { ContextSection, PanelSkeleton, ThreadSection, ThreadSkeleton } from "./conversation-pane";
 import { ContextPanelPane, ContextPanelProvider, ContextPanelToggle } from "./context-panel-shell";
 
 type RawParams = Record<string, string | string[] | undefined>;
 
-/** Mensagens recentes oferecidas como evidência opcional (referência; o texto não é gravado em lugar nenhum). */
-function evidenceCandidates(items: MessageListItem[]): EvidenceCandidate[] {
-  return items
-    .slice(-12)
-    .reverse()
-    .map((m) => ({
-      id: m.id,
-      createdAt: m.createdAt,
-      authorLabel: MESSAGE_AUTHOR_LABEL[messageAuthorKind(m)],
-      excerpt:
-        m.bodyText.trim().slice(0, 80) || (m.contentKind ? contentKindLabel(m.contentKind) : "Mensagem sem texto"),
-    }));
-}
+const SUBTITLE = "Mensagens de WhatsApp — simulador interno (sem conexão real nesta fase)";
 
 /**
  * Tela de Conversas em três partes (Conversas + IA, PR 2): lista à esquerda,
@@ -58,6 +25,10 @@ function evidenceCandidates(items: MessageListItem[]): EvidenceCandidate[] {
  * duas rotas (`/conversas` e `/conversas/[id]`), então os links existentes, a
  * abertura direta da conversa, o recarregar e o Voltar/Avançar continuam
  * valendo — o estado da tela (busca, situação, página, caso em foco) está na URL.
+ *
+ * Ordem de carregamento: a lista e o cabeçalho da conversa aparecem primeiro; as mensagens e o contexto
+ * chegam depois, cada um com o seu esqueleto. A existência da conversa é conferida antes de qualquer
+ * transmissão, para uma conversa inexistente ou fora do alcance continuar sendo um 404 de verdade.
  */
 export async function ConversationsWorkspace({
   conversationId,
@@ -92,12 +63,10 @@ export async function ConversationsWorkspace({
     </section>
   );
 
-  const subtitle = "Mensagens de WhatsApp — simulador interno (sem conexão real nesta fase)";
-
   if (!conversationId) {
     return (
       <>
-        <Topbar title="Conversas" subtitle={subtitle} user={user} />
+        <Topbar title="Conversas" subtitle={SUBTITLE} user={user} />
         <main className="flex min-h-0 flex-1 gap-3 px-3 pb-3 md:px-5 md:pb-5">
           {listPane}
           <section
@@ -120,39 +89,12 @@ export async function ConversationsWorkspace({
   const conversation = await getConversation(conversationId);
   if (!conversation) notFound();
 
-  // Erro real de carregamento propaga daqui até error.tsx — nunca vira
-  // "conversa vazia" (ver docs/decisoes/a7-conversas.md §11).
-  const { items, hasMore } = await listConversationMessages(conversationId);
-
-  const [consents, openOpportunityItems] = await Promise.all([
-    conversation.contactId ? listContactConsents(conversation.contactId) : Promise.resolve([]),
-    conversation.leadId && !conversation.opportunityId
-      ? listAllOpportunities(workspaceId, { leadId: conversation.leadId, status: "open" })
-      : Promise.resolve<OpportunityListItem[]>([]),
-  ]);
-
-  // O contexto (situação, caso, histórico) pode falhar sem derrubar a conversa:
-  // as mensagens e o envio continuam, e o painel mostra o erro com "tentar de novo".
-  let context: ConversationContext | null = null;
-  let contextFailed = false;
-  try {
-    context = await loadConversationContext(conversationId, params.caso, conversation.leadId);
-  } catch (error) {
-    contextFailed = true;
-    console.error("Falha ao carregar o contexto da conversa", error);
-  }
-
-  const canSend = roleHasPermission(user.role, "conversation.send");
-  // Canal real da B3: janela, motivo de bloqueio e templates. Canal legado da A7: `null`.
-  const sendContext = canSend ? await loadWhatsAppSendUi({ workspaceId, actorUserId: user.id }, conversationId) : null;
-  const canSimulate = roleHasPermission(user.role, "conversation.simulate");
-  const consentBlocked = !hasActiveWhatsAppConsent(consents);
-  const recipientWaId = conversation.waId.replace(/^\+/, "");
+  const session = { userId: user.id, role: user.role, workspaceId };
   const name = conversation.contactName ?? (conversation.waId ? formatPhoneForDisplay(conversation.waId) : "Contato a definir");
 
   return (
     <>
-      <Topbar title="Conversas" subtitle={subtitle} user={user} />
+      <Topbar title="Conversas" subtitle={SUBTITLE} user={user} />
       <ContextPanelProvider>
         <main className="flex min-h-0 flex-1 gap-3 px-3 pb-3 md:px-5 md:pb-5">
           {listPane}
@@ -190,67 +132,17 @@ export async function ConversationsWorkspace({
               SIMULAÇÃO — sem conexão real com o WhatsApp
             </p>
 
-            {conversation.needsLinkReview ? (
-              <div id="revisao-vinculo" className="shrink-0 border-b border-border p-3">
-                <LinkReviewBanner
-                  conversationId={conversation.id}
-                  contactId={conversation.contactId}
-                  leadId={conversation.leadId}
-                  contactCandidates={conversation.linkCandidateContacts.map((c) => ({ id: c.id, label: c.name }))}
-                  leadCandidates={conversation.linkCandidateLeads.map((l) => ({ id: l.id, label: l.legalArea }))}
-                  openOpportunities={openOpportunityItems.map((o) => ({ id: o.id, label: o.stageName }))}
-                />
-              </div>
-            ) : null}
-
-            <ConversationThread
-              key={conversation.id}
-              conversationId={conversation.id}
-              initialItems={items}
-              initialHasMore={hasMore}
-              canSend={canSend}
-              canSimulateStatus={canSimulate}
-              phoneNumberId={conversation.phoneNumberId}
-              recipientWaId={recipientWaId}
-              consentBlocked={consentBlocked}
-              sendContext={sendContext}
-            />
+            {/* A chave é a conversa: ao trocar de conversa o esqueleto aparece aqui; ao mudar só a lista
+                (filtro, busca, página) ou o caso em foco, a conversa aberta e o rascunho continuam. */}
+            <Suspense key={conversationId} fallback={<ThreadSkeleton />}>
+              <ThreadSection conversation={conversation} session={session} />
+            </Suspense>
           </section>
 
           <ContextPanelPane title="Contexto do atendimento">
-            <ConversationContextPanel
-              conversation={{
-                id: conversation.id,
-                contactId: conversation.contactId,
-                contactName: conversation.contactName,
-                waId: conversation.waId,
-                leadId: conversation.leadId,
-                legalArea: conversation.legalArea,
-                needsLinkReview: conversation.needsLinkReview,
-              }}
-              context={context}
-              contextFailed={contextFailed}
-              params={params}
-              permissions={{
-                editAttendance: roleHasPermission(user.role, "conversation.attendance_edit"),
-                editProgress: roleHasPermission(user.role, "case.progress_edit"),
-                pauseCommercial: roleHasPermission(user.role, "opportunity.edit"),
-              }}
-              evidence={evidenceCandidates(items)}
-              consentSlot={
-                conversation.contactId ? (
-                  <ConsentPanel
-                    contactId={conversation.contactId}
-                    consents={consents}
-                    canManage={roleHasPermission(user.role, "contact.consent_manage")}
-                  />
-                ) : (
-                  <p className="m-0 text-meta text-text-tertiary">
-                    Sem contato vinculado: o consentimento aparece depois que o vínculo for resolvido.
-                  </p>
-                )
-              }
-            />
+            <Suspense key={conversationId} fallback={<PanelSkeleton />}>
+              <ContextSection conversation={conversation} params={params} session={session} />
+            </Suspense>
           </ContextPanelPane>
         </main>
       </ContextPanelProvider>

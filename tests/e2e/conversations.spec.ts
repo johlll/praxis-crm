@@ -141,6 +141,10 @@ test.describe.serial("conversas + simulador de WhatsApp — A7", () => {
     await filters.getByRole("link", { name: /^Novo/ }).click();
     await expect(list.getByText("Nenhuma conversa encontrada")).toBeVisible();
     await list.getByRole("link", { name: "Limpar busca e filtro" }).click();
+    // Espera a navegação terminar: o formulário de busca carrega o filtro atual em campo oculto e
+    // buscar antes disso reaproveitaria o filtro "Novo".
+    await expect(page).toHaveURL(/\/conversas$/);
+    await expect(list.getByRole("link", { name: /Contato E2E A7/ })).toBeVisible();
 
     await list.getByLabel("Buscar conversa por contato, telefone ou caso").fill("E2E A7");
     await list.getByRole("button", { name: "Buscar" }).click();
