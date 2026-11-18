@@ -17,6 +17,7 @@ import {
 } from "@/modules/conversations/inbox";
 import { ConversationsPagination } from "./conversations-pagination";
 import { LinkPending } from "./link-pending";
+import { ScrollMemoryList } from "./scroll-memory-list";
 import { ATTENDANCE_STATUS_CLASS } from "./labels";
 
 /**
@@ -132,7 +133,10 @@ export function InboxList({
           )}
         </div>
       ) : (
-        <ul className="m-0 min-h-0 flex-1 list-none divide-y divide-border overflow-y-auto p-0">
+        <ScrollMemoryList
+          storageKey={`conversas:rolagem:${params.q}|${params.status}|${params.page}`}
+          className="m-0 min-h-0 flex-1 list-none divide-y divide-border overflow-y-auto p-0"
+        >
           {items.map((c) => {
             const selected = c.id === highlightId;
             const name = c.contactName ?? (c.waId ? formatPhoneForDisplay(c.waId) : "Contato a definir");
@@ -193,7 +197,7 @@ export function InboxList({
               </li>
             );
           })}
-        </ul>
+        </ScrollMemoryList>
       )}
 
       <ConversationsPagination page={page} total={total} pageSize={pageSize} hrefFor={hrefFor} />

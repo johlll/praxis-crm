@@ -587,6 +587,13 @@ describe("tela de Conversas — promessas que ela não faz", () => {
     expect(workspace.indexOf("notFound()")).toBeGreaterThan(-1);
   });
 
+  it("a lista lembra a rolagem (a página remonta ao trocar de conversa)", () => {
+    expect(read("src/components/conversations/inbox-list.tsx")).toContain("<ScrollMemoryList");
+    const memory = read("src/components/conversations/scroll-memory-list.tsx");
+    expect(memory).toContain("sessionStorage");
+    expect(memory).toContain('[aria-current="page"]'); // traz a conversa aberta para a área visível
+  });
+
   it("os links da lista dão retorno imediato ao clique (useLinkStatus)", () => {
     expect(read("src/components/conversations/link-pending.tsx")).toContain("useLinkStatus");
     expect(read("src/components/conversations/inbox-list.tsx").match(/<LinkPending \/>/g)?.length).toBeGreaterThanOrEqual(2);
