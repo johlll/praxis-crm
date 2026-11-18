@@ -330,7 +330,15 @@ export async function getWinRequirementsStatus(opportunityId: string): Promise<S
 }
 
 export type PipelineOption = { id: string; name: string; isDefault: boolean };
-export type PipelineStageOption = { id: string; pipelineId: string; name: string; position: number };
+export type PipelineStageOption = {
+  id: string;
+  pipelineId: string;
+  name: string;
+  position: number;
+  /** Etapas terminais (ganho/perda): ficam fora do andamento comercial do painel de Conversas. */
+  isWon: boolean;
+  isLost: boolean;
+};
 export type LostReasonOption = { id: string; label: string };
 
 export async function listPipelines(workspaceId: string): Promise<PipelineOption[]> {
@@ -363,12 +371,19 @@ export async function listPipelineStages(pipelineId: string): Promise<PipelineSt
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase
     .from("pipeline_stages")
-    .select("id, pipeline_id, name, position")
+    .select("id, pipeline_id, name, position, is_won, is_lost")
     .eq("pipeline_id", pipelineId)
     .order("position", { ascending: true });
   if (error) throw new DataLoadError(`as etapas do pipeline ${pipelineId}`, error);
 
-  return (data ?? []).map((s) => ({ id: s.id, pipelineId: s.pipeline_id, name: s.name, position: s.position }));
+  return (data ?? []).map((s) => ({
+    id: s.id,
+    pipelineId: s.pipeline_id,
+    name: s.name,
+    position: s.position,
+    isWon: s.is_won === true,
+    isLost: s.is_lost === true,
+  }));
 }
 
 export type StageRequirementDetail = {

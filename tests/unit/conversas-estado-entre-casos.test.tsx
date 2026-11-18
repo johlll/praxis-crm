@@ -84,7 +84,15 @@ function context(focusId: string, opts: { version?: number } = {}) {
       state: state({ track: "attendance", conversationId: CONV, version: 0, status: "nao_informado" }),
       history: emptyHistory,
     },
-    cases: { conversationId: CONV, contactResolved: true, linkedOpportunityId: null, items: [optA, optB] },
+    cases: {
+      conversationId: CONV,
+      contactResolved: true,
+      linkedOpportunityId: null,
+      items: [optA, optB],
+      defaultOpportunityId: null,
+      defaultSource: null,
+    },
+    members: [],
     focusId,
     focusSource: "url" as const,
     invalidCaseRequested: false,
@@ -95,6 +103,14 @@ function context(focusId: string, opts: { version?: number } = {}) {
       valueLabel: null,
       commercial: { state: state({ track: "commercial_stage", opportunityId: focusId, status: null }), history: emptyHistory },
       progress: { state: state({ track: "case_progress", opportunityId: focusId, version }), history: emptyHistory },
+      pipelineName: "Comercial",
+      wonAt: "2026-11-02T12:00:00+00:00",
+      signedAt: null,
+      lostReasonLabel: null,
+      steps: null,
+      stageMoves: [],
+      pendingActivities: [],
+      doneActivities: null,
     },
   };
 }
@@ -105,7 +121,8 @@ function panel(focusId: string, opts: { version?: number } = {}): ReactElement {
       conversation={{ id: CONV, contactId: "c1000000-0000-4000-8000-000000000001", contactName: "Rita", waId: "+5541999990111", leadId: null, legalArea: null, needsLinkReview: false }}
       context={context(focusId, opts) as never}
       contextFailed={false}
-      params={{ q: "", status: "all", page: 1, caso: focusId, sel: null }}
+      // Os editores ficam na edição aberta pelo lápis (editar=1), não na consulta.
+      params={{ q: "", status: "all", page: 1, caso: focusId, sel: null, aba: "resumo", editar: true }}
       permissions={{ editAttendance: true, editProgress: true, pauseCommercial: true }}
       evidence={MSGS.map((id, i) => ({ id, createdAt: `2026-11-17T1${i}:00:00+00:00`, authorLabel: "Cliente", excerpt: `Mensagem ${i + 1}` }))}
       consentSlot={null}

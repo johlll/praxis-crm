@@ -4,7 +4,7 @@ import { SEED_USERS } from "./fixtures";
 import { login } from "./helpers";
 
 /**
- * Conversas + IA (PR 2): a tela tem lista, mensagens e um painel de contexto. O painel é a terceira
+ * Conversas + IA: a tela tem lista, mensagens e o painel do caso (cabeçalho, abas e edição pelo lápis). O painel é a terceira
  * coluna a partir de 1400 px e uma gaveta abaixo disso (o e2e roda em 1280 px). Estes ajudantes
  * abrem e fecham a gaveta só quando ela existe, para o mesmo teste valer nas duas larguras.
  */
@@ -156,11 +156,17 @@ test.describe.serial("conversas + simulador de WhatsApp — A7", () => {
     await expect(list.getByText("Nenhuma conversa encontrada")).toBeVisible();
   });
 
-  test("5. dono corrige a situação, pausa e retoma as alterações automáticas (sem mexer no bot)", async ({ page }) => {
+  test("5. dono corrige a situação pelo lápis, pausa e retoma as alterações automáticas (sem mexer no bot)", async ({ page }) => {
     await login(page, SEED_USERS.ana.email);
     await page.goto(conversationUrl);
     await openContext(page);
     const panel = page.locator("#painel-contexto");
+
+    // Painel do caso: a consulta não expõe formulários; a edição abre pelo lápis, dentro do painel.
+    await expect(panel.getByRole("navigation", { name: "Seções do caso" })).toBeVisible();
+    await expect(panel.getByLabel("Corrigir situação")).toHaveCount(0);
+    await panel.getByRole("link", { name: "Editar situação e andamento" }).click();
+    await expect(page).toHaveURL(/editar=1/);
 
     await expect(panel.getByText("Ainda sem registro de situação")).toBeVisible();
     await expect(panel.getByText("A automação de status ainda não foi ativada", { exact: false })).toBeVisible();
@@ -170,32 +176,48 @@ test.describe.serial("conversas + simulador de WhatsApp — A7", () => {
     await panel.getByLabel("Corrigir situação").selectOption("aguardando_cliente");
     await panel.getByRole("button", { name: "Salvar" }).first().click();
     await expect(panel.getByText("Registrado.", { exact: true }).first()).toBeVisible();
-    await expect(panel.getByText("De “Não informado” para “Aguardando o cliente”")).toBeVisible();
 
-    // A lista (servidor) mostra a nova situação.
-    await closeContext(page);
-    const list = page.getByRole("region", { name: "Lista de conversas" });
-    await expect(list.getByRole("link", { name: /Contato E2E A7/ }).getByText("Aguardando o cliente")).toBeVisible();
-
-    await openContext(page);
     await panel.getByRole("button", { name: "Pausar" }).first().click();
     await expect(panel.getByText("Pausadas por", { exact: false }).first()).toBeVisible();
-    await expect(panel.getByText("Alterações automáticas de status pausadas")).toBeVisible();
     await panel.getByRole("button", { name: "Retomar" }).first().click();
     await expect(panel.getByText("Liberadas (ainda não ativadas)").first()).toBeVisible();
+
+    // O Histórico (aba) mostra de → para e a pausa, com a origem de cada evento.
+    await panel.getByRole("link", { name: "Voltar ao caso" }).click();
+    await expect(page).not.toHaveURL(/editar=1/);
+    await panel.getByRole("link", { name: /^Histórico/ }).click();
+    await expect(page).toHaveURL(/aba=historico/);
+    await expect(panel.getByText("De “Não informado” para “Aguardando o cliente”")).toBeVisible();
+    await expect(panel.getByText("Alterações automáticas de status pausadas")).toBeVisible();
+
+    // A lista (servidor) mostra a nova situação, identificada como situação do atendimento.
+    await closeContext(page);
+    const list = page.getByRole("region", { name: "Lista de conversas" });
+    await expect(list.getByRole("link", { name: /Contato E2E A7/ }).getByTitle("Situação do atendimento: Aguardando o cliente")).toBeVisible();
   });
 
-  test("6. visualizador lê a situação e o histórico, sem nenhum controle de escrita", async ({ page }) => {
+  test("6. visualizador lê situação, caso e histórico, sem lápis nem controle de escrita", async ({ page }) => {
     await login(page, SEED_USERS.elisa.email);
     await page.goto(conversationUrl);
+    // A situação do atendimento aparece no cabeçalho da conversa, identificada.
+    await expect(page.getByTitle("Situação do atendimento: Aguardando o cliente").first()).toBeVisible();
     await openContext(page);
     const panel = page.locator("#painel-contexto");
 
-    await expect(panel.getByText("Aguardando o cliente").first()).toBeVisible();
-    await expect(panel.getByText("Seu perfil só visualiza a situação do atendimento.")).toBeVisible();
+    await expect(panel.getByRole("link", { name: "Editar situação e andamento" })).toHaveCount(0);
+    await panel.getByRole("link", { name: /^Histórico/ }).click();
+    await expect(panel.getByText("De “Não informado” para “Aguardando o cliente”")).toBeVisible();
     await expect(panel.getByLabel("Corrigir situação")).toHaveCount(0);
     await expect(panel.getByRole("button", { name: "Salvar" })).toHaveCount(0);
     await expect(panel.getByRole("button", { name: "Pausar" })).toHaveCount(0);
+
+    // Mesmo com editar=1 no endereço, nada de escrita.
+    const editUrl = new URL(conversationUrl);
+    editUrl.searchParams.set("editar", "1");
+    await page.goto(editUrl.toString());
+    await openContext(page);
+    await expect(panel.getByLabel("Corrigir situação")).toHaveCount(0);
+    await expect(panel.getByRole("button", { name: /Salvar|Pausar|Retomar/ })).toHaveCount(0);
     await closeContext(page);
     await expect(page.getByPlaceholder("Escreva uma mensagem (simulada)…")).toHaveCount(0);
     await expect(page.getByText("Seu perfil só visualiza as conversas", { exact: false })).toBeVisible();

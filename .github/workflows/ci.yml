@@ -425,6 +425,13 @@ jobs:
         # roda por último.
         run: bash scripts/check-upgrade-c3b-retencao.sh
 
+      - name: Atualização a partir da versão anterior (painel do caso em Conversas)
+        # A lista de conversas e as opções de caso devolvem o mesmo de antes nas chaves antigas
+        # (ordem, total, contagens e valores), as chaves novas seguem a regra única do caso e nada é
+        # escrito — ver scripts/check-upgrade-conversas-painel-caso.sh. Recria o banco local, por isso
+        # roda no fim.
+        run: bash scripts/check-upgrade-conversas-painel-caso.sh
+
       - name: Publicar relatório do Playwright (só se algo falhar)
         if: failure()
         uses: actions/upload-artifact@v4

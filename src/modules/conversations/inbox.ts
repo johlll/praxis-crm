@@ -4,6 +4,7 @@ import {
   type AttendanceStatus,
 } from "@/modules/status-tracks/schema";
 import type { MessageAuthorKind } from "./message-author";
+import { isCaseTab, type CaseTab } from "./case-display";
 
 /**
  * Conversas + IA (PR 2) — regras puras da caixa de entrada: estado da URL
@@ -41,6 +42,10 @@ export type InboxParams = {
    * leva de volta para a lista, para a seleção não se perder.
    */
   sel: string | null;
+  /** Aba do painel do caso (`resumo` é o padrão e não vai na URL). */
+  aba: CaseTab;
+  /** Edição aberta pelo lápis (`editar=1`). Fica na URL para o Voltar do navegador fechar a edição. */
+  editar: boolean;
 };
 
 type RawParams = Record<string, string | string[] | undefined>;
@@ -56,18 +61,22 @@ export function parseInboxParams(raw: RawParams): InboxParams {
   const page = Number.isFinite(pageNum) ? Math.min(MAX_PAGE, Math.max(1, pageNum)) : 1;
   const casoRaw = first(raw.caso) ?? "";
   const selRaw = first(raw.sel) ?? "";
+  const abaRaw = first(raw.aba);
   return {
     q,
     status,
     page,
     caso: UUID_RE.test(casoRaw) ? casoRaw.toLowerCase() : null,
     sel: UUID_RE.test(selRaw) ? selRaw.toLowerCase() : null,
+    aba: isCaseTab(abaRaw) ? abaRaw : "resumo",
+    editar: first(raw.editar) === "1",
   };
 }
 
 /**
  * Monta o endereço preservando o estado da lista (busca, filtro, página) e,
- * se pedido, o caso em foco. Só entram os valores diferentes do padrão, para
+ * se pedido, o estado do painel da conversa aberta (caso em foco, aba e edição).
+ * Abrir OUTRA conversa não leva esse estado: ele é da conversa que estava aberta. Só entram os valores diferentes do padrão, para
  * que os links existentes (`/conversas`, `/conversas/<id>`) continuem sendo
  * os mesmos quando não há estado.
  */
@@ -81,6 +90,8 @@ export function inboxHref(
   if (params.status && params.status !== "all") query.set("situacao", params.status);
   if (params.page && params.page > 1) query.set("page", String(params.page));
   if (opts.keepCase && params.caso) query.set("caso", params.caso);
+  if (opts.keepCase && params.aba && params.aba !== "resumo") query.set("aba", params.aba);
+  if (opts.keepCase && params.editar) query.set("editar", "1");
   // Sem conversa aberta (lista), o destaque vai em `sel`; com conversa aberta, ela já é a seleção.
   if (!conversationId && params.sel) query.set("sel", params.sel);
   const qs = query.toString();

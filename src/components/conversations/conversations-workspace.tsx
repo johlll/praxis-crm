@@ -12,7 +12,7 @@ import { requireWorkspace } from "@/server/authz/permissions";
 import { getConversation, listConversationInbox } from "@/modules/conversations/queries";
 import { inboxHref, isUuid, parseInboxParams } from "@/modules/conversations/inbox";
 import { InboxList } from "./inbox-list";
-import { ContextSection, PanelSkeleton, ThreadSection, ThreadSkeleton } from "./conversation-pane";
+import { ContextSection, ConversationCaseLine, PanelSkeleton, ThreadSection, ThreadSkeleton } from "./conversation-pane";
 import { ContextPanelPane, ContextPanelProvider, ContextPanelToggle } from "./context-panel-shell";
 
 type RawParams = Record<string, string | string[] | undefined>;
@@ -121,9 +121,15 @@ export async function ConversationsWorkspace({
                 <h2 className="m-0 truncate text-lead font-bold text-text">{name}</h2>
                 <p className="m-0 truncate text-meta text-text-tertiary">
                   {conversation.contactName
-                    ? `${conversation.waId ? formatPhoneForDisplay(conversation.waId) : "Telefone não informado"}${conversation.legalArea ? ` · ${conversation.legalArea}` : ""}`
+                    ? conversation.waId
+                      ? formatPhoneForDisplay(conversation.waId)
+                      : "Telefone não informado"
                     : "Contato ainda não vinculado"}
                 </p>
+                {/* Caso mostrado no painel + situação do atendimento (separada). Carrega com o painel, sem segurar a conversa. */}
+                <Suspense key={conversationId} fallback={null}>
+                  <ConversationCaseLine conversation={conversation} params={params} session={session} />
+                </Suspense>
               </div>
               <ContextPanelToggle label="Contexto" />
             </header>
@@ -139,7 +145,7 @@ export async function ConversationsWorkspace({
             </Suspense>
           </section>
 
-          <ContextPanelPane title="Contexto do atendimento">
+          <ContextPanelPane title="Caso e atendimento">
             <Suspense key={conversationId} fallback={<PanelSkeleton />}>
               <ContextSection conversation={conversation} params={params} session={session} />
             </Suspense>

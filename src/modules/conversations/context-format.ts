@@ -21,6 +21,67 @@ export const TRACK_LABEL: Record<StatusTrack, string> = {
   commercial_stage: "Etapa comercial",
 };
 
+/** Etiqueta de ORIGEM de cada evento no histórico do caso (a situação do atendimento é da conversa). */
+export const TRACK_TAG: Record<StatusTrack, string> = {
+  attendance: "Atendimento desta conversa",
+  case_progress: "Andamento do serviço",
+  commercial_stage: "Etapa comercial",
+};
+
+/**
+ * Evento do histórico do caso que não é de trilha de status: movimentação da etapa comercial
+ * (`stage_transitions`, a fonte canônica) ou marco gravado na própria oportunidade (abertura, ganho).
+ */
+export type CaseHistoryExtra = {
+  id: string;
+  occurredAt: string;
+  tag: string;
+  title: string;
+  detail: string | null;
+  /** Autor quando a fonte registra; `null` quando a fonte não guarda quem fez. */
+  actorLabel: string | null;
+};
+
+/**
+ * Monta os eventos de fonte canônica fora das trilhas: cada movimentação comercial uma vez, a abertura
+ * (`opportunities.created_at`) e o ganho (`won_at`). A perda não entra: a oportunidade não grava quando
+ * foi perdida (o motivo aparece no Resumo).
+ */
+export function caseHistoryExtras(input: {
+  opportunityId: string;
+  createdAt: string;
+  wonAt: string | null;
+  stageMoves: readonly { id: string; occurredAt: string; fromStageName: string | null; toStageName: string; actorName: string | null }[];
+}): CaseHistoryExtra[] {
+  const out: CaseHistoryExtra[] = input.stageMoves.map((m) => ({
+    id: `move:${m.id}`,
+    occurredAt: m.occurredAt,
+    tag: "Etapa comercial",
+    title: "Etapa comercial alterada",
+    detail: m.fromStageName ? `De “${m.fromStageName}” para “${m.toStageName}”` : `Para “${m.toStageName}”`,
+    actorLabel: m.actorName ?? "Alguém da equipe",
+  }));
+  out.push({
+    id: `opened:${input.opportunityId}`,
+    occurredAt: input.createdAt,
+    tag: "Oportunidade",
+    title: "Oportunidade aberta",
+    detail: null,
+    actorLabel: null,
+  });
+  if (input.wonAt) {
+    out.push({
+      id: `won:${input.opportunityId}`,
+      occurredAt: input.wonAt,
+      tag: "Oportunidade",
+      title: "Oportunidade ganha",
+      detail: "A partir daqui o caso tem andamento do serviço.",
+      actorLabel: null,
+    });
+  }
+  return out;
+}
+
 /** Rótulo de um código de status de uma trilha; código fora do vocabulário é mostrado como veio. */
 export function statusLabel(track: StatusTrack, code: string | null): string {
   if (code === null) return "Não informado";
