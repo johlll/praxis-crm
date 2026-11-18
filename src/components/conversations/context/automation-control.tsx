@@ -17,16 +17,13 @@ import { useTrackAction } from "./use-track-action";
  * nunca bloqueiam a correção manual autorizada. Como a automação de status
  * ainda não foi ativada, a pausa hoje só protege decisões futuras.
  */
-export function AutomationControl({
-  track,
-  targetId,
-  paused,
-  pausedAt,
-  pausedByName,
-  version,
-  canEdit,
-  deniedReason,
-}: {
+export function AutomationControl(props: AutomationControlProps) {
+  // Identidade = trilha + alvo (a versão fica de fora): outro caso é outro controle, sem erro, conflito nem
+  // confirmação herdados do anterior; salvar o MESMO alvo (versão nova) não reinicia nada.
+  return <AutomationControlBody key={`${props.track}:${props.targetId}`} {...props} />;
+}
+
+type AutomationControlProps = {
   track: StatusTrack;
   targetId: string;
   paused: boolean;
@@ -35,7 +32,9 @@ export function AutomationControl({
   version: number;
   canEdit: boolean;
   deniedReason: string;
-}) {
+};
+
+function AutomationControlBody({ track, targetId, paused, pausedAt, pausedByName, version, canEdit, deniedReason }: AutomationControlProps) {
   const { pending, blocked, error, conflict, done, run, refresh } = useTrackAction();
 
   function toggle() {

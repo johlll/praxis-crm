@@ -26,15 +26,15 @@ const MAX_EVIDENCE = 20;
  *   não leva evidência de um caso para o outro.
  * - Não envia mensagem nem faz nenhuma ação externa.
  */
-export function TrackStatusEditor({
-  kind,
-  targetId,
-  current,
-  version,
-  options,
-  evidence,
-  fieldLabel,
-}: {
+export function TrackStatusEditor(props: TrackStatusEditorProps) {
+  // Identidade = trilha + alvo. O painel mostra um caso por vez e a troca do caso é uma navegação de cliente:
+  // o React atualiza a árvore no mesmo lugar e, sem chave, manteria a escolha, as evidências marcadas, a chave de
+  // idempotência e os avisos do caso anterior. Com a chave, outro alvo é outro editor, do zero. A VERSÃO fica de
+  // fora de propósito: salvar ou atualizar o MESMO alvo muda a versão e não pode apagar a confirmação nem o aviso.
+  return <TrackStatusEditorBody key={`${props.kind}:${props.targetId}`} {...props} />;
+}
+
+type TrackStatusEditorProps = {
   kind: "attendance" | "case_progress";
   targetId: string;
   current: string | null;
@@ -42,7 +42,9 @@ export function TrackStatusEditor({
   options: StatusOption[];
   evidence: EvidenceCandidate[];
   fieldLabel: string;
-}) {
+};
+
+function TrackStatusEditorBody({ kind, targetId, current, version, options, evidence, fieldLabel }: TrackStatusEditorProps) {
   const selectId = useId();
   const [choice, setChoice] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
