@@ -107,6 +107,16 @@ oportunidade foi ganha**); **histórico** das alterações com as referências d
   e a tela diz que **o registro mudou** e oferece **Atualizar**; nunca sobrescreve em silêncio nem repete a
   alteração. Depois de salvar, o controle fica desabilitado até a tela atualizar (a versão antiga já não vale).
   Cada tentativa leva uma chave de idempotência.
+- **Identidade do controle = trilha + alvo.** Trocar o caso em foco é uma navegação de cliente: o React atualiza a
+  árvore no mesmo lugar e, sem chave, manteria o estado local do caso anterior (reproduzido: a escolha e as
+  evidências de A apareciam em B e eram gravadas no evento de B; a confirmação da pausa de A aparecia sob B; e,
+  com a resposta perdida em A, B reaproveitava a chave de idempotência de A e o servidor recusava a correção de B).
+  `TrackStatusEditor` e `AutomationControl` aplicam a chave `trilha:alvo` por dentro, então nenhum chamador a
+  esquece: outro alvo é outro controle, do zero (escolha, evidências marcadas, chave, erro, conflito e confirmação).
+  A **versão fica de fora da chave** de propósito: salvar ou atualizar o MESMO alvo muda a versão e não pode apagar a
+  confirmação nem o bloqueio compartilhado. A situação do atendimento (da conversa) não é reiniciada ao trocar o caso.
+  Limite conhecido: se a pessoa troca de caso com um salvamento em andamento, o resultado dele não é mostrado no novo
+  caso (o histórico do caso original o registra).
 - **"Não informado"** é estado de leitura: não é opção de correção.
 - **Evidência é opcional** e pertence só à correção em que foi escolhida; vão só os ids (nunca o texto), com o
   limite e as regras da fundação (validadas no servidor). O histórico mostra a referência (autoria comprovada, data,
@@ -153,6 +163,11 @@ resolvido (aponta para a revisão de vínculo), falha **só do contexto** (a con
   autoria e tipos, regra do foco, texto do histórico, ações (conflito sinalizado, histórico paginado), permissões,
   a migration (aditiva, estável, sem curinga) e "promessas que a tela não faz" (nada de IA ativa, Vitória, botões
   fictícios; componente de cliente nunca importa valor de módulo de servidor).
+- Unitários `conversas-estado-entre-casos.test.tsx` (comportamental): renderiza o painel real, troca o caso e confere o
+  que a pessoa vê e o que é enviado ao servidor (escolha, evidências, chave de idempotência, erro, conflito e
+  confirmação não atravessam casos; salvar o mesmo caso não apaga a confirmação; o bloqueio compartilhado e a situação
+  do atendimento permanecem). Falhava em 4 testes antes da correção; um teste de mutação (versão na chave) derruba a
+  guarda do mesmo alvo.
 - e2e `conversations.spec.ts`: a jornada da A7 foi adaptada à tela nova e ganhou três jornadas (lista com filtro e
   busca; correção, pausa e retomada; visualizador sem controles).
 - Validação visual e funcional local com dados sintéticos (ambiente descartável): ver a descrição da PR.
