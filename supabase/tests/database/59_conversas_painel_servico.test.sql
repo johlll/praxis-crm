@@ -8,13 +8,15 @@
 -- serviço seguem as regras I1/I2; uma única versão para estado e roteiro (conflito e repetição pela chave);
 -- trocar/remover com registros exige confirmação e preserva as conclusões; dois casos do mesmo contato não
 -- se misturam; nada muda na situação do atendimento nem na etapa comercial; permissões, alcance e
--- isolamento; esqueleto anonimizado imutável; exclusão em cascata.
+-- isolamento; uma chave de idempotência por escritório entre todos os históricos da trilha (registro
+-- compartilhado); histórico do roteiro paginado pelo cursor (mais de 100 eventos, horários repetidos);
+-- esqueleto anonimizado imutável; exclusão em cascata.
 --
 -- Fixtures do seed: ana=owner, carla=lawyer, elisa=viewer no Escritório Um; bruno=owner no Escritório Dois.
 -- Aqui: bruno=sales e daniel=manager no Escritório Um. Dados sintéticos.
 
 begin;
-select plan(128);
+select plan(155);
 
 \set ana    '20000000-0000-0000-0000-000000000001'
 \set bruno  '20000000-0000-0000-0000-000000000002'
@@ -55,6 +57,34 @@ create function pg_temp.etapa(p_opp uuid, p_pos int) returns uuid language sql s
 $f$;
 create function pg_temp.versao(p_opp uuid) returns bigint language sql security definer as $f$
   select coalesce((select version from public.status_tracks where opportunity_id = p_opp and track = 'case_progress'), 0)
+$f$;
+-- Percorre o histórico do roteiro pela RPC, página a página pelo cursor do último evento, até acabar.
+-- Devolve "páginas:id1,id2,...".
+create function pg_temp.walk(p_opp uuid, p_limit int) returns text language plpgsql as $f$
+declare
+  v_before timestamptz;
+  v_before_id uuid;
+  v_items jsonb;
+  v_more boolean := true;
+  v_ids text[] := '{}';
+  v_pages int := 0;
+begin
+  while v_more loop
+    select r.items, r.has_more into v_items, v_more from public.list_case_service_history(p_opp, v_before, v_before_id, p_limit) r;
+    v_pages := v_pages + 1;
+    exit when jsonb_array_length(v_items) = 0;
+    v_ids := v_ids || array(select e ->> 'id' from jsonb_array_elements(v_items) with ordinality x(e, o) order by o);
+    v_before := (v_items -> -1 ->> 'occurred_at')::timestamptz;
+    v_before_id := (v_items -> -1 ->> 'id')::uuid;
+    if v_pages > 200 then
+      raise exception 'paginação sem fim';
+    end if;
+  end loop;
+  return v_pages || ':' || array_to_string(v_ids, ',');
+end;
+$f$;
+create function pg_temp.vat(p_conv uuid) returns bigint language sql security definer as $f$
+  select coalesce((select version from public.status_tracks where conversation_id = p_conv and track = 'attendance'), 0)
 $f$;
 
 -- ---------------------------------------------------------------------
@@ -397,6 +427,114 @@ select throws_ok(format('select set_case_service_current_step(%L, %L, 6, %L)', :
 select throws_ok(format('select set_opportunity_case_progress(%L, %L, 6, %L, %L)', :'opa', 'em_analise', '{}', 'a0000000-0000-0000-0000-000000000001'), 'P0001', 'idempotency_conflict', 'chave do roteiro não vale para a correção');
 
 -- =====================================================================
+-- 9b) Uma chave por escritório entre TODOS os históricos que a aceitam (situação do atendimento,
+--     andamento e roteiro), nas duas ordens; repetição exata; outro escritório; escritor direto.
+--     A concorrência real (duas sessões) está em scripts/painel-servico-concurrency-check.sh.
+-- =====================================================================
+
+select get_case_service((:'opv')::uuid) ->> 'version' as vopv0 \gset
+select pg_temp.vat((:'conv')::uuid) as vat0 \gset
+select is(apply_case_service_plan((:'opv')::uuid, (:'tipo2')::uuid, (:'vopv0')::bigint, 1, 'd0000000-0000-0000-0000-000000000001'::uuid) ->> 'replayed', 'false',
+  'roteiro grava com a chave D1');
+select throws_ok(format('select set_conversation_attendance_status(%L, %L, %s, %L, %L)', :'conv', 'aguardando_cliente', :'vat0', '{}', 'd0000000-0000-0000-0000-000000000001'),
+  'P0001', 'idempotency_conflict', 'a situação do atendimento não aceita a chave já usada no roteiro');
+select throws_ok(format('select set_conversation_attendance_status(%L, %L, %s, %L, %L)', :'conv', 'aguardando_cliente', (:'vat0')::bigint + 5, '{}', 'd0000000-0000-0000-0000-000000000001'),
+  'P0001', 'idempotency_conflict', 'a chave é conferida antes da versão (sem track_conflict enganoso)');
+select is(pg_temp.vat((:'conv')::uuid), (:'vat0')::bigint, 'nada mudou na situação do atendimento');
+
+select is(set_conversation_attendance_status((:'conv')::uuid, 'aguardando_escritorio', (:'vat0')::bigint, '{}'::uuid[], 'd0000000-0000-0000-0000-000000000002'::uuid) ->> 'replayed', 'false',
+  'situação do atendimento grava com a chave D2');
+select throws_ok(format('select set_case_service_current_step(%L, %L, %s, %L)', :'opv', pg_temp.etapa((:'opv')::uuid, 2), pg_temp.versao((:'opv')::uuid), 'd0000000-0000-0000-0000-000000000002'),
+  'P0001', 'idempotency_conflict', 'o roteiro não aceita a chave da situação do atendimento');
+select throws_ok(format('select set_case_service_current_step(%L, %L, %s, %L)', :'opv', pg_temp.etapa((:'opv')::uuid, 2), pg_temp.versao((:'opv')::uuid) + 9, 'd0000000-0000-0000-0000-000000000002'),
+  'P0001', 'idempotency_conflict', 'no roteiro a chave também é conferida antes da versão');
+select throws_ok(format('select set_opportunity_case_progress(%L, %L, %s, %L, %L)', :'opv', 'em_analise', pg_temp.versao((:'opv')::uuid), '{}', 'd0000000-0000-0000-0000-000000000002'),
+  'P0001', 'idempotency_conflict', 'nem a correção do andamento');
+select is(pg_temp.versao((:'opv')::uuid), (:'vopv0')::bigint + 1, 'as recusas não sobem a versão do caso');
+
+-- Resposta perdida: o cliente repete o MESMO pedido mais tarde.
+select is(set_conversation_attendance_status((:'conv')::uuid, 'aguardando_escritorio', (:'vat0')::bigint, '{}'::uuid[], 'd0000000-0000-0000-0000-000000000002'::uuid) ->> 'replayed', 'true',
+  'repetição exata da situação: devolve o gravado');
+select is(apply_case_service_plan((:'opv')::uuid, (:'tipo2')::uuid, (:'vopv0')::bigint, 1, 'd0000000-0000-0000-0000-000000000001'::uuid) ->> 'replayed', 'true',
+  'repetição exata do roteiro: devolve o gravado');
+select is(pg_temp.vat((:'conv')::uuid), (:'vat0')::bigint + 1, 'a repetição não sobe a versão da situação');
+select is(pg_temp.versao((:'opv')::uuid), (:'vopv0')::bigint + 1, 'nem a do caso');
+select is(
+  pg_temp.n(format($q$select (select count(*) from public.status_track_events where workspace_id = %1$L and idempotency_key in (%2$L, %3$L))
+                       + (select count(*) from public.case_service_events where workspace_id = %1$L and idempotency_key in (%2$L, %3$L))$q$,
+    :'ws_um', 'd0000000-0000-0000-0000-000000000001', 'd0000000-0000-0000-0000-000000000002')),
+  2::bigint, 'um evento por chave, somando os dois históricos');
+
+-- A mesma chave em outro escritório é independente.
+select pg_temp.login(:'bruno'::uuid);
+select win_opportunity((:'oz')::uuid, 0, 100000, 'fixed');
+select is(set_opportunity_case_progress((:'oz')::uuid, 'em_analise', pg_temp.versao((:'oz')::uuid), '{}'::uuid[], 'd0000000-0000-0000-0000-000000000001'::uuid) ->> 'replayed', 'false',
+  'a mesma chave em outro escritório grava normalmente');
+select pg_temp.login(:'ana'::uuid);
+reset role;
+
+-- O registro compartilhado: uma linha por chave e escritório, com a origem; fechado aos papéis de API.
+select is(
+  pg_temp.t(format($q$select string_agg(left(idempotency_key::text, 8) || ':' || source, ',' order by idempotency_key)
+    from public.status_track_idempotency_keys where workspace_id = %L
+      and idempotency_key in ('a0000000-0000-0000-0000-000000000001', 'b0000000-0000-0000-0000-000000000001',
+                              'd0000000-0000-0000-0000-000000000001', 'd0000000-0000-0000-0000-000000000002')$q$, :'ws_um')),
+  'a0000000:case_service_events,b0000000:status_track_events,d0000000:case_service_events,d0000000:status_track_events',
+  'cada chave usada está uma vez no registro compartilhado, com o histórico de origem');
+select is(pg_temp.n(format('select count(*) from public.status_track_idempotency_keys where idempotency_key = %L', 'd0000000-0000-0000-0000-000000000001')),
+  2::bigint, 'a mesma chave em dois escritórios: duas linhas independentes');
+select throws_ok(
+  format($q$insert into public.status_track_events (workspace_id, track_id, event, from_version, to_version, actor_user_id, idempotency_key)
+    values (%L, (select id from public.status_tracks where conversation_id = %L), 'automation_paused', 90, 91, %L, %L)$q$,
+    :'ws_um', :'conv', :'ana', 'd0000000-0000-0000-0000-000000000001'),
+  '23505', null, 'nem um escritor direto na tabela reaproveita a chave do outro histórico');
+select ok(
+  pg_temp.n($q$select count(*) from pg_class c join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public' and c.relname = 'status_track_idempotency_keys' and c.relrowsecurity and c.relforcerowsecurity$q$) = 1
+  and pg_temp.n($q$select count(*) from information_schema.role_table_grants
+    where table_schema = 'public' and table_name = 'status_track_idempotency_keys' and grantee in ('anon', 'authenticated', 'service_role')$q$) = 0,
+  'registro compartilhado: RLS forçada e nenhum privilégio para os papéis de API');
+select is(
+  pg_temp.n($q$select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'private' and p.proname like 'status_track_key%'
+      and (has_function_privilege('authenticated', p.oid, 'execute') or has_function_privilege('anon', p.oid, 'execute')
+        or has_function_privilege('service_role', p.oid, 'execute'))$q$),
+  0::bigint, 'as funções privadas do registro não são chamáveis por papel de API');
+set local role authenticated;
+select pg_temp.login(:'ana'::uuid);
+
+-- =====================================================================
+-- 9c) Histórico do roteiro paginado no servidor: mais de 100 eventos, horários repetidos (empate só
+--     pelo id), percorridos página a página pelo cursor — sem repetir, sem pular, por caso, no alcance.
+-- =====================================================================
+
+reset role;
+insert into public.case_service_events (workspace_id, opportunity_id, plan_id, op, from_version, to_version, actor_user_id, request_fingerprint, occurred_at)
+select (:'ws_um')::uuid, (:'opv')::uuid, p.id, 'current_step_set', 100 + i, 101 + i, (:'ana')::uuid, 'paginacao',
+       timestamptz '2026-11-10 10:00:00.123456+00' + (i / 12) * interval '1 second' + (case when i % 12 = 11 then interval '1 microsecond' else interval '0' end)
+from generate_series(0, 119) i
+cross join (select id from public.case_service_plans where opportunity_id = (:'opv')::uuid and status = 'active') p;
+select pg_temp.t(format($q$select string_agg(id::text, ',' order by occurred_at desc, id desc) from public.case_service_events where opportunity_id = %L$q$, :'opv')) as esperado_opv \gset
+select pg_temp.n(format('select count(*) from public.case_service_events where opportunity_id = %L', :'opv')) as total_opv \gset
+set local role authenticated;
+select pg_temp.login(:'ana'::uuid);
+
+select is(pg_temp.walk((:'opv')::uuid, 50), ceil((:'total_opv')::numeric / 50)::int || ':' || :'esperado_opv',
+  'mais de 100 eventos em páginas de 50: todas as páginas, na ordem do banco, sem repetir nem pular');
+select is(pg_temp.walk((:'opv')::uuid, 7), ceil((:'total_opv')::numeric / 7)::int || ':' || :'esperado_opv',
+  'páginas de 7 cortando grupos de horário igual: o mesmo resultado');
+select ok((:'total_opv')::int > 100, 'o caso tem mais de 100 eventos no roteiro');
+select is(
+  (select count(*) from unnest(string_to_array(split_part(pg_temp.walk((:'opb')::uuid, 50), ':', 2), ',')) x where x = any(string_to_array(:'esperado_opv', ','))),
+  0::bigint, 'o histórico de outro caso do mesmo contato não traz nenhum evento deste');
+select throws_ok(format('select * from list_case_service_history(%L, %L, null, 50)', :'opv', '2026-11-10 10:00:00+00'), 'P0001', 'invalid_cursor',
+  'cursor pela metade é recusado');
+select pg_temp.login(:'carla'::uuid);
+select throws_ok(format('select * from list_case_service_history(%L, %L, %L, 50)', :'opv', '2026-11-10 10:00:05.123456+00', split_part(:'esperado_opv', ',', 3)),
+  'P0001', 'opportunity_not_found', 'fora do alcance, a página seguinte também não aparece');
+select pg_temp.login(:'ana'::uuid);
+
+-- =====================================================================
 -- 10) Alcance e permissões nas escritas e leituras
 -- =====================================================================
 
@@ -444,6 +582,8 @@ select lives_ok(format('delete from public.opportunities where id = %L', :'opa')
 select is(
   pg_temp.n(format('select (select count(*) from public.case_service_plans where opportunity_id = %1$L) + (select count(*) from public.case_service_events where opportunity_id = %1$L) + (select count(*) from public.opportunity_case_numbers where opportunity_id = %1$L)', :'opa')),
   0::bigint, 'nada do caso excluído sobra');
+select is(pg_temp.n(format('select count(*) from public.status_track_idempotency_keys where idempotency_key = %L', 'a0000000-0000-0000-0000-000000000001')),
+  0::bigint, 'a chave do caso excluído sai do registro compartilhado junto com o evento');
 
 select * from finish();
 rollback;

@@ -125,10 +125,41 @@ atualização). Sem roteiro, o andamento não ganha restrição nova.
 - `case_service_events`: uma linha imutável por operação (aplicar, trocar, remover, concluir, reabrir, definir/limpar a
   etapa atual), com o alvo (roteiro, etapa, etapa atual antes/depois), a mudança de andamento quando houve, a versão,
   o autor e a **chave de idempotência**. Repetir o mesmo pedido com a mesma chave devolve o resultado como repetição
-  (nada gravado de novo); a mesma chave com outro pedido é `idempotency_conflict`, inclusive entre o histórico do roteiro
-  e o do andamento. Três repetições simultâneas gravam um evento só (concorrência real).
+  (nada gravado de novo, versão igual); a mesma chave com outro pedido ou outro alvo é `idempotency_conflict`. Três
+  repetições simultâneas gravam um evento só (concorrência real).
+- **Uma chave por escritório entre todos os históricos da trilha.** A situação do atendimento e o andamento gravam em
+  `status_track_events`; o roteiro, em `case_service_events`. Cada tabela tem o próprio índice único e casos diferentes
+  usam travas diferentes, então conferir uma tabela a partir da outra (como a primeira versão desta PR fazia) não
+  impedia duas sessões de gravarem a **mesma chave ao mesmo tempo**, uma em cada histórico (reproduzido com duas
+  sessões reais: dois eventos com a mesma chave). A situação do atendimento nem conferia o histórico do roteiro.
+  A garantia agora é estrutural: **`status_track_idempotency_keys`**, um registro único `(escritório, chave)`
+  preenchido por **gatilho** nas duas tabelas — qualquer escritor, atual ou futuro (o aplicador automático incluído),
+  passa por ele, sem depender de cada função lembrar de conferir.
+  - **Concorrência:** a segunda gravação da mesma chave espera a transação da primeira; se ela confirmar, recebe
+    `idempotency_conflict`; se desfizer, a chave fica livre e a segunda grava. Mesma chave em escritórios diferentes
+    não espera nem conflita.
+  - **Sem deadlock:** cada operação grava uma única chave, sempre depois da trava da própria trilha, e nada espera trava
+    de trilha depois de gravar a chave — não há ciclo de espera.
+  - **Resposta antecipada:** `private.status_track_key_assert_free` adianta o `idempotency_conflict` quando a chave já
+    foi confirmada no outro histórico, **antes** da conferência de versão (sem `track_conflict` enganoso). Está em
+    `private.status_track_replay` (recriada com a mesma assinatura; vale para a situação do atendimento e o andamento,
+    sem recriar `set_conversation_attendance_status`) e no começo comum do roteiro. Quem decide, sob concorrência, é o
+    índice único.
+  - **Registros antigos:** a migration copia para o registro as chaves já gravadas em `status_track_events` (com a
+    tabela travada entre a cópia e o gatilho), sem alterar linha antiga — conferido no script de atualização, que
+    também prova que a repetição de um pedido antigo devolve o gravado e que o roteiro recusa a chave antiga.
+  - Nada da proteção de versão, permissões, evidências ou decisão humana mudou.
 - O painel mostra os eventos na aba **Histórico** (origem "Roteiro do serviço") junto com o número interno
-  (origem "Identificação"), o andamento, a etapa comercial e os marcos da oportunidade.
+  (origem "Identificação"), o andamento, a etapa comercial e os marcos da oportunidade. O roteiro é **paginado no
+  servidor** como as trilhas: a primeira página (50) vem com a tela e "Mais antigos — roteiro do serviço" busca a
+  seguinte pela RPC `list_case_service_history` com o cursor do último evento mostrado (horário exato, com
+  microssegundos, + id) até acabar. A ordem é a do banco, `(occurred_at desc, id desc)`, inclusive para horários
+  iguais; a tela ordena com microssegundos (`stampMicros`/`compareStampDesc`), não com `Date.parse` (que corta em
+  milissegundos). O cursor nunca passa por `Date`. Falha ao buscar os antigos mostra o aviso, mantém o que já apareceu e
+  deixa tentar de novo; trocar de caso no meio da busca descarta a resposta do caso anterior (a linha do tempo tem
+  identidade por caso e a resposta só entra se for do mesmo caso e do mesmo ponto); depois de uma atualização, a lista
+  recomeça da primeira página nova. A leitura segue as permissões e o alcance do banco (fora do alcance é erro, nunca
+  lista vazia que esconderia o botão).
 - Auditoria (`audit_logs`): `opportunity.case_number_assigned` (atribuição manual), `opportunity.case_service_changed`
   (operação e versão), `service_type.created|updated|archived|restored` — só códigos, números e contagens.
 
@@ -146,6 +177,9 @@ atualização). Sem roteiro, o andamento não ganha restrição nova.
 - **Retenção:** sem mudança. Oportunidade ganha já bloqueia a anonimização (`open_or_won_opportunity`); um caso perdido
   com número segue o fluxo normal.
 - **Exclusão administrativa:** excluir a oportunidade leva número, roteiros, etapas e eventos em cascata.
+- **Registro de chaves (`status_track_idempotency_keys`):** só códigos (escritório, chave, origem, id do evento), nenhum
+  dado pessoal; fora da exportação, como as chaves no restante da C3a. A linha sai junto com o evento (gatilho na
+  exclusão — cascata da conversa apagada pela anonimização ou da oportunidade excluída) e com o escritório.
 
 ## 7. Interface
 
@@ -171,22 +205,36 @@ atualização). Sem roteiro, o andamento não ganha restrição nova.
 
 ## 8. Testes
 
-- pgTAP `59_conversas_painel_servico` (128): superfície fechada; caso antigo sem número nem roteiro; numeração no ganho,
+- pgTAP `59_conversas_painel_servico` (155): superfície fechada; caso antigo sem número nem roteiro; numeração no ganho,
   explícita, repetível e por escritório; imutabilidade; catálogo (permissões, validação, versão, arquivamento); cópia
   sem efeito retroativo; concluir/avançar/escolher/voltar sem inferência; I1 e a reabertura atômica; idempotência e
-  conflito entre os dois históricos; troca e remoção com registros; dois casos do mesmo contato; permissões, alcance e
-  isolamento; nada na situação do atendimento nem na etapa comercial; esqueleto anonimizado; cascata.
+  conflito entre os dois históricos; **uma chave por escritório em todos os caminhos** (situação do atendimento,
+  andamento e roteiro, nas duas ordens; conflito antes da versão; repetição exata depois de resposta perdida; outro
+  escritório; escritor direto na tabela; registro fechado e limpo na cascata); **histórico paginado** (mais de 100
+  eventos com horários repetidos percorridos pela RPC em páginas de 50 e de 7, por caso, no alcance); troca e remoção
+  com registros; dois casos do mesmo contato; permissões, alcance e isolamento; nada na situação do atendimento nem na
+  etapa comercial; esqueleto anonimizado; cascata.
 - pgTAP `49_c3a_exportacao_titular`: o titular de teste ganha um caso numerado com roteiro e conclusão.
 - Concorrência real `scripts/painel-servico-concurrency-check.sh` (no CI): números simultâneos, mesma conclusão por três
-  sessões, mesma chave ao mesmo tempo, modelo editado durante a aplicação.
+  sessões, mesma chave ao mesmo tempo, modelo editado durante a aplicação e, entre os históricos, a mesma chave segurada
+  por uma sessão e tentada por outra em outro caso (roteiro × andamento e roteiro × situação do atendimento, nas duas
+  ordens: a segunda espera e recebe `idempotency_conflict`, sem subir versão), desistência com `rollback` (a chave fica
+  livre), escritórios diferentes (sem espera) e repetição exata simultânea a um pedido diferente com a mesma chave.
 - Atualização `scripts/check-upgrade-conversas-painel-servico.sh` (no CI): lista, opções, trilha, histórico e exportação
-  iguais nas chaves/seções antigas; nada numerado nem aplicado; nenhuma linha antiga alterada.
+  iguais nas chaves/seções antigas; nada numerado nem aplicado; nenhuma linha antiga alterada; chaves antigas copiadas
+  para o registro único e valendo entre os históricos.
   `check-upgrade-conversas-painel-caso.sh` passou a ignorar só as chaves novas do item de caso.
 - Unitários `conversas-painel-servico.test.ts` (regras, modelos, leitura, ações, permissões no código e no banco,
-  contrato da migration) e `conversas-painel-servico-render.test.tsx` (painel e editor renderizados, troca de caso).
+  contrato da migration, cursor do histórico e ação de carregar mais, ordem com microssegundos),
+  `conversas-painel-servico-render.test.tsx` (painel e editor renderizados, troca de caso) e
+  `conversas-historico-roteiro-paginacao.test.tsx` (130 eventos em 3 páginas, falha e nova tentativa, troca de caso
+  durante a busca, atualização).
 - e2e `conversations.spec.ts`: atribuição do número no caso aberto (cabeçalho e lista coerentes), cópia de modelo no
   catálogo e visualizador sem acesso ao catálogo.
-- Mutações: 9 no SQL e 6 na interface, todas detectadas.
+- Mutações: 9 no SQL e 6 na interface, todas detectadas; na correção, mais 5 no SQL (roteiro fora do registro,
+  repetição sem consultar o registro, roteiro sem resposta antecipada, cursor sem desempate pelo id, registro que não
+  libera na exclusão) e 5 na interface/leitura (cursor passando por `Date`, página que substitui em vez de somar, sem
+  botão, ordem em milissegundos, próxima página sem cursor), todas detectadas.
 
 ## 9. Pendências (registradas, não implementadas)
 

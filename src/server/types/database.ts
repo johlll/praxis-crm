@@ -4028,6 +4028,38 @@ export type Database = {
           },
         ]
       }
+      status_track_idempotency_keys: {
+        Row: {
+          created_at: string
+          event_id: string
+          idempotency_key: string
+          source: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          event_id: string
+          idempotency_key: string
+          source: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          event_id?: string
+          idempotency_key?: string
+          source?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "status_track_idempotency_keys_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       status_tracks: {
         Row: {
           attendance_status:

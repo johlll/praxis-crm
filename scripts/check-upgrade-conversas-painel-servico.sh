@@ -13,7 +13,10 @@
 #      - nenhum caso ganhou número nem roteiro (a migration não numera nada); o caso ganho antigo continua
 #        sem número, sem roteiro e com o mesmo andamento e a mesma versão;
 #      - as seções novas da exportação existem e estão vazias para o titular antigo;
-#      - nenhuma linha de conversas, oportunidades, trilhas ou histórico foi alterada.
+#      - nenhuma linha de conversas, oportunidades, trilhas ou histórico foi alterada;
+#      - as chaves de idempotência gravadas antes entram no registro único compartilhado (uma linha por
+#        chave, com o evento de origem) e, depois disso, a repetição exata de um pedido antigo devolve o
+#        gravado e o roteiro recusa a chave de um pedido antigo (idempotency_conflict).
 #
 # Recria o banco local, por isso roda no fim do CI e termina na versão atual. Tudo fictício.
 set -euo pipefail
@@ -28,6 +31,8 @@ LEAD_A="79000000-0000-0000-0000-0000000000a1"
 OPP_GANHA="79000000-0000-0000-0000-0000000000b1"
 OPP_ABERTA="79000000-0000-0000-0000-0000000000b2"
 CANAL="79000000-0000-0000-0000-0000000000c1"
+K_SITUACAO="79000000-0000-4000-8000-0000000000d1"
+K_ANDAMENTO="79000000-0000-4000-8000-0000000000d2"
 
 psql_db() {
   docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q "$@"
@@ -96,8 +101,8 @@ begin
   -- Ganho, situação e andamento pela versão anterior, como a tela faria.
   perform set_config('request.jwt.claims', json_build_object('sub', '$ANA', 'role', 'authenticated')::text, true);
   perform public.win_opportunity('$OPP_GANHA', 0, 150000, 'fixed');
-  perform public.set_conversation_attendance_status(v_conv, 'aguardando_cliente', 0);
-  perform public.set_opportunity_case_progress('$OPP_GANHA', 'em_analise', 0);
+  perform public.set_conversation_attendance_status(v_conv, 'aguardando_cliente', 0, '{}'::uuid[], '$K_SITUACAO');
+  perform public.set_opportunity_case_progress('$OPP_GANHA', 'em_analise', 0, '{}'::uuid[], '$K_ANDAMENTO');
   perform public.set_opportunity_case_progress('$OPP_GANHA', 'aguardando_documentos', 1);
 end
 \$seed\$;
@@ -207,9 +212,40 @@ begin
 end
 \$check\$;
 
+-- Chaves gravadas antes: copiadas para o registro único, e valendo entre os históricos daqui em diante.
+do \$chave\$
+declare
+  v_tipo uuid;
+  v_conv uuid := (select id from public.conversations where opportunity_id = '$OPP_GANHA');
+  v_ok boolean := false;
+begin
+  if (select string_agg(k.idempotency_key::text || '=' || k.source, ',' order by k.idempotency_key)
+      from public.status_track_idempotency_keys k
+      join public.status_track_events e on e.id = k.event_id and e.idempotency_key = k.idempotency_key and e.workspace_id = k.workspace_id
+      where k.workspace_id = '$WS_UM') is distinct from '$K_SITUACAO=status_track_events,$K_ANDAMENTO=status_track_events'
+     or (select count(*) from public.status_track_idempotency_keys) <> (select count(*) from public.status_track_events where idempotency_key is not null) then
+    raise exception 'as chaves gravadas antes deveriam estar no registro único, uma linha por chave, com o evento de origem';
+  end if;
+
+  perform set_config('request.jwt.claims', json_build_object('sub', '$ANA', 'role', 'authenticated')::text, true);
+  if public.set_conversation_attendance_status(v_conv, 'aguardando_cliente', 0, '{}'::uuid[], '$K_SITUACAO') ->> 'replayed' <> 'true' then
+    raise exception 'a repetição exata de um pedido antigo deveria devolver o gravado';
+  end if;
+  v_tipo := (public.create_service_type('$WS_UM', 'Tipo (upgrade etapa B)', array['Um', 'Dois']) ->> 'id')::uuid;
+  begin
+    perform public.apply_case_service_plan('$OPP_GANHA', v_tipo, 2, 1, '$K_ANDAMENTO');
+  exception when others then
+    v_ok := sqlerrm = 'idempotency_conflict';
+  end;
+  if not v_ok then
+    raise exception 'o roteiro deveria recusar a chave de um pedido antigo do andamento';
+  end if;
+end
+\$chave\$;
+
 drop table public.upgrade_check_before;
 drop table public.upgrade_check_after;
 drop table public.upgrade_check_rows;
 SQL
 
-echo "OK: lista, painel, andamento, histórico e exportação iguais aos de antes; nada numerado nem aplicado; nada alterado"
+echo "OK: lista, painel, andamento, histórico e exportação iguais aos de antes; nada numerado nem aplicado; nada alterado; chaves antigas no registro único"

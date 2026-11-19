@@ -763,9 +763,10 @@ function CaseHistory({ conversation, context }: { conversation: PanelConversatio
         wonAt: focus.wonAt,
         stageMoves: focus.stageMoves,
         caseNumber: focus.service.caseNumber,
-        serviceEvents: focus.serviceHistory?.items ?? [],
       })
     : [];
+  // O roteiro tem paginação própria no servidor (o botão "Mais antigos — roteiro do serviço").
+  const service = focus?.serviceHistory ? { opportunityId: focus.option.opportunityId, page: focus.serviceHistory } : null;
   return (
     <>
       <Muted>
@@ -774,10 +775,15 @@ function CaseHistory({ conversation, context }: { conversation: PanelConversatio
           : "Sem caso em foco, aparece só a situação do atendimento desta conversa."}
       </Muted>
       <HistoryTimeline
-        key={[...sources.map((s) => `${s.track}:${s.targetId}:${s.page.items[0]?.id ?? "-"}`), extra.length].join("|")}
+        key={[
+          ...sources.map((s) => `${s.track}:${s.targetId}:${s.page.items[0]?.id ?? "-"}`),
+          `service:${service?.opportunityId ?? "-"}:${service?.page.items[0]?.id ?? "-"}`,
+          extra.length,
+        ].join("|")}
         sources={sources}
         currentConversationId={conversation.id}
         extra={extra}
+        service={service}
       />
       {conversation.leadId ? (
         <Muted>

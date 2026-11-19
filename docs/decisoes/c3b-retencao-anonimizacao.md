@@ -155,3 +155,5 @@ e contato inexistente desfazem a chamada sem rastro. O texto de erro do banco nu
   etapas copiadas e histórico do roteiro são **esqueleto** (códigos, datas e nomes de etapa do catálogo; sem texto livre
   por caso). A anonimização não precisa apagá-los e não mudou; depois de `contacts.anonymized_at`, um gatilho próprio
   recusa `INSERT`/`UPDATE` neles com `contact_anonymized`. Exclusão administrativa da oportunidade leva tudo em cascata.
+  O registro de chaves de idempotência (`status_track_idempotency_keys`) só tem códigos; a linha sai junto com o evento
+  (gatilho na exclusão, inclusive na cascata da conversa apagada pela anonimização).

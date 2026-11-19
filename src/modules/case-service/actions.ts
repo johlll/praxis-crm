@@ -6,6 +6,8 @@ import { createServerSupabaseClient } from "@/server/supabase/server";
 import { requirePermissionSafe } from "@/server/authz/safe";
 import { toUserMessage } from "@/lib/errors";
 
+import { listCaseServiceHistory, type CaseServiceHistoryPage } from "./queries";
+
 import {
   applyPlanSchema,
   archiveServiceTypeSchema,
@@ -13,6 +15,7 @@ import {
   completeStepSchema,
   removePlanSchema,
   reopenStepSchema,
+  serviceHistoryPageSchema,
   serviceTypeFormSchema,
   setCurrentStepSchema,
 } from "./schema";
@@ -51,6 +54,29 @@ function done(opportunityId: string, data: unknown): CaseServiceActionState {
   const row = (data ?? {}) as Record<string, unknown>;
   revalidateCase(opportunityId);
   return { ok: true, result: { replayed: row.replayed === true, version: Number(row.version ?? 0) } };
+}
+
+/**
+ * Próxima página do histórico do roteiro (aba Histórico), pelo cursor do último evento mostrado. Leitura: a
+ * permissão e o alcance são os do banco (quem lê o caso lê o histórico dele; fora do alcance ou de outro
+ * escritório volta como erro, nunca como lista vazia que esconderia o botão). Não grava nem revalida nada.
+ */
+export async function loadCaseServiceHistoryAction(input: {
+  opportunityId: string;
+  before: string;
+  beforeId: string;
+}): Promise<{ ok: true; page: CaseServiceHistoryPage } | { ok: false; error: string }> {
+  const parsed = serviceHistoryPageSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: firstIssue(parsed.error.issues) };
+  try {
+    const page = await listCaseServiceHistory(parsed.data.opportunityId, {
+      cursor: { before: parsed.data.before, beforeId: parsed.data.beforeId },
+    });
+    if (!page) return { ok: false, error: "Não foi possível carregar o histórico." };
+    return { ok: true, page };
+  } catch {
+    return { ok: false, error: "Não foi possível carregar o histórico. Tente de novo." };
+  }
 }
 
 /** Atribui o próximo número interno a um caso sem número (aberto ou ganho). Repetir não gasta outro número. */

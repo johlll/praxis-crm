@@ -27,14 +27,19 @@
 --     (manual_decided_at), registra um evento imutável (quem, quando, alvo) e aceita chave de
 --     idempotência. Quando uma operação muda também o andamento (reabrir uma etapa de um caso
 --     concluído), as duas mudanças acontecem na mesma transação e entram nos dois históricos.
+--   - Uma chave de idempotência por escritório vale para um único pedido em TODOS os históricos da
+--     trilha (situação do atendimento, andamento e roteiro): registro único compartilhado,
+--     preenchido por gatilho nas duas tabelas de histórico, sem depender de leitura cruzada.
 --   - Exportação do titular (C3a): três seções novas. Anonimização (C3b): os registros novos são
 --     esqueleto (códigos, datas, nomes de etapa do catálogo, nada de texto livre do caso) e ficam
 --     imutáveis depois da anonimização, como o restante do esqueleto.
 --
 -- Migration ADITIVA: tabelas novas deny-all, funções novas, um gatilho novo em `opportunities`
--- (só atribui o número no ganho) e `create or replace`, com a MESMA assinatura, de
--- set_opportunity_case_progress (regra I1), private.conversation_case_item (chaves novas) e
--- private.privacy_export_payload (seções novas; as anteriores ficam iguais).
+-- (só atribui o número no ganho), gatilhos de registro da chave em `status_track_events` (com a
+-- cópia das chaves já gravadas, sem alterar linha antiga) e `create or replace`, com a MESMA
+-- assinatura, de private.status_track_replay (consulta o registro), set_opportunity_case_progress
+-- (regra I1), private.conversation_case_item (chaves novas) e private.privacy_export_payload
+-- (seções novas; as anteriores ficam iguais).
 
 -- =====================================================================
 -- 1) Número interno do caso
@@ -311,6 +316,151 @@ create trigger case_service_plan_steps_integrity_guard before insert or update o
   for each row execute function private.case_service_integrity_guard();
 create trigger case_service_events_integrity_guard before insert or update on public.case_service_events
   for each row execute function private.case_service_integrity_guard();
+
+-- =====================================================================
+-- 4b) Uma chave de idempotência por escritório entre os históricos da trilha
+--
+-- A situação do atendimento e o andamento gravam em status_track_events; o roteiro grava em
+-- case_service_events. Cada tabela tem o próprio índice único, e dois casos diferentes usam travas
+-- diferentes, então conferir uma tabela a partir da outra (leitura) não impede que duas sessões
+-- gravem a MESMA chave ao mesmo tempo, uma em cada histórico. O contrato é o de sempre: uma chave,
+-- dentro do escritório, representa um único pedido.
+--
+-- Garantia estrutural: um registro único (escritório, chave), preenchido por GATILHO em cada uma
+-- das duas tabelas — qualquer escritor, atual ou futuro (o aplicador automático incluído), passa
+-- por ele. A segunda gravação da mesma chave espera a primeira transação terminar: se ela
+-- confirmar, recebe unique_violation (as funções devolvem idempotency_conflict); se desfizer, a
+-- chave fica livre e a segunda grava. Cada operação grava UMA chave, sempre depois da trava da
+-- própria trilha, e nada espera trava de trilha depois de gravar a chave: sem ciclo de espera.
+--
+-- A leitura antecipada (status_track_key_assert_free) só adianta a resposta quando a chave já foi
+-- confirmada no outro histórico, antes da conferência de versão; quem decide é o índice único.
+-- O registro só tem códigos (escritório, chave, origem, id do evento), nenhum dado pessoal; some
+-- junto com o evento (exclusão em cascata da conversa ou da oportunidade) e com o escritório.
+-- =====================================================================
+
+create table public.status_track_idempotency_keys (
+  workspace_id uuid not null references public.workspaces (id) on delete cascade,
+  idempotency_key uuid not null,
+  source text not null check (source in ('status_track_events', 'case_service_events')),
+  event_id uuid not null,
+  created_at timestamptz not null default clock_timestamp(),
+  constraint status_track_idempotency_keys_pkey primary key (workspace_id, idempotency_key)
+);
+
+create index status_track_idempotency_keys_event_idx on public.status_track_idempotency_keys (event_id);
+
+comment on table public.status_track_idempotency_keys is
+  'Painel do caso (etapa B): registro único das chaves de idempotência por escritório, comum a status_track_events (situação do atendimento e andamento) e case_service_events (roteiro). Preenchido e limpo por gatilho; a chave nunca representa dois pedidos.';
+
+alter table public.status_track_idempotency_keys enable row level security;
+alter table public.status_track_idempotency_keys force row level security;
+revoke all on table public.status_track_idempotency_keys from public, anon, authenticated, service_role;
+
+create function private.status_track_key_register()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $body$
+begin
+  if tg_op = 'INSERT' then
+    insert into public.status_track_idempotency_keys (workspace_id, idempotency_key, source, event_id)
+    values (new.workspace_id, new.idempotency_key, tg_table_name, new.id);
+    return new;
+  end if;
+  delete from public.status_track_idempotency_keys
+  where workspace_id = old.workspace_id and idempotency_key = old.idempotency_key and event_id = old.id;
+  return old;
+end;
+$body$;
+
+revoke all on function private.status_track_key_register() from public, anon, authenticated, service_role;
+
+-- As chaves já gravadas entram no registro (a trava impede gravação nova entre a cópia e o gatilho).
+-- case_service_events nasce nesta migration, vazia.
+lock table public.status_track_events in share row exclusive mode;
+
+insert into public.status_track_idempotency_keys (workspace_id, idempotency_key, source, event_id, created_at)
+select e.workspace_id, e.idempotency_key, 'status_track_events', e.id, e.occurred_at
+from public.status_track_events e
+where e.idempotency_key is not null;
+
+create trigger status_track_events_key_register after insert on public.status_track_events
+  for each row when (new.idempotency_key is not null) execute function private.status_track_key_register();
+create trigger status_track_events_key_release after delete on public.status_track_events
+  for each row when (old.idempotency_key is not null) execute function private.status_track_key_register();
+create trigger case_service_events_key_register after insert on public.case_service_events
+  for each row when (new.idempotency_key is not null) execute function private.status_track_key_register();
+create trigger case_service_events_key_release after delete on public.case_service_events
+  for each row when (old.idempotency_key is not null) execute function private.status_track_key_register();
+
+-- Resposta antecipada: a chave já foi confirmada no OUTRO histórico → idempotency_conflict.
+create function private.status_track_key_assert_free(p_workspace_id uuid, p_key uuid, p_source text)
+returns void
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $body$
+begin
+  if p_key is not null and exists (
+    select 1 from public.status_track_idempotency_keys k
+    where k.workspace_id = p_workspace_id and k.idempotency_key = p_key and k.source <> p_source) then
+    raise exception 'idempotency_conflict';
+  end if;
+end;
+$body$;
+
+revoke all on function private.status_track_key_assert_free(uuid, uuid, text) from public, anon, authenticated, service_role;
+
+-- Repetição nas trilhas (situação do atendimento e andamento): igual à da fundação, mais a consulta
+-- ao registro compartilhado quando a chave não está em status_track_events. Com isso a situação do
+-- atendimento, que não foi recriada aqui, também recusa a chave do roteiro, antes da versão.
+-- `create or replace` com a mesma assinatura preserva a ACL (fechada).
+create or replace function private.status_track_replay(
+  p_workspace_id uuid,
+  p_key uuid,
+  p_track_id uuid,
+  p_to_status text,
+  p_evidence uuid[]
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $body$
+declare
+  v_event public.status_track_events;
+  v_row public.status_tracks;
+  v_saved uuid[];
+begin
+  if p_key is null then
+    return null;
+  end if;
+  select * into v_event from public.status_track_events
+  where workspace_id = p_workspace_id and idempotency_key = p_key;
+  if v_event.id is null then
+    perform private.status_track_key_assert_free(p_workspace_id, p_key, 'status_track_events');
+    return null;
+  end if;
+
+  select coalesce(array_agg(message_id order by message_id), '{}'::uuid[]) into v_saved
+  from public.status_track_event_evidence where event_id = v_event.id;
+
+  if v_event.track_id <> p_track_id
+     or v_event.event <> 'status_changed'
+     or v_event.to_status <> p_to_status
+     or v_saved <> coalesce((select array_agg(x order by x) from unnest(p_evidence) x), '{}'::uuid[]) then
+    raise exception 'idempotency_conflict';
+  end if;
+
+  select * into v_row from public.status_tracks where id = v_event.track_id;
+  return private.status_track_state_json(v_row)
+    || jsonb_build_object('event_id', v_event.id, 'event_version', v_event.to_version, 'replayed', true);
+end;
+$body$;
 
 -- =====================================================================
 -- 5) Número interno: atribuição (explícita ou no ganho)
@@ -998,12 +1148,6 @@ begin
   if p_expected_version is null or p_expected_version < 0 then
     raise exception 'invalid_version';
   end if;
-  -- A chave nunca muda de significado entre as duas tabelas de histórico da trilha.
-  if p_key is not null and exists (
-    select 1 from public.status_track_events e where e.workspace_id = v_target.workspace_id and e.idempotency_key = p_key) then
-    raise exception 'idempotency_conflict';
-  end if;
-
   o_track := private.status_track_lock(v_target.workspace_id, 'case_progress', null, p_opportunity_id);
 
   -- Depois da trava: duas repetições simultâneas da mesma chave se enfileiram aqui.
@@ -1018,6 +1162,9 @@ begin
         || jsonb_build_object('event_id', v_event.id, 'event_version', v_event.to_version, 'replayed', true);
       return;
     end if;
+    -- A chave já confirmada no outro histórico (situação do atendimento ou andamento): conflito, antes
+    -- da versão. A gravação simultânea é decidida pelo registro único (seção 4b).
+    perform private.status_track_key_assert_free(v_target.workspace_id, p_key, 'case_service_events');
   end if;
 
   if o_track.version <> p_expected_version then
@@ -1084,7 +1231,7 @@ begin
     )
     returning id into v_event_id;
   exception when unique_violation then
-    -- Mesma chave usada (ao mesmo tempo) em outro caso.
+    -- Mesma chave usada (ao mesmo tempo) em outro caso ou no outro histórico (registro único, seção 4b).
     raise exception 'idempotency_conflict';
   end;
 
@@ -1535,8 +1682,8 @@ grant execute on function public.set_case_service_current_step(uuid, uuid, bigin
 --
 -- Igual à da fundação, com duas diferenças: (a) `concluido` é recusado enquanto o roteiro ativo
 -- tiver etapa pendente (service_steps_pending) — concluir o serviço exige as etapas concluídas;
--- (b) a chave de idempotência não pode ter sido usada no histórico do roteiro (a chave nunca muda
--- de significado dentro da trilha). Sair de `concluido` (reabrir o serviço) segue permitido e não
+-- (b) a chave de idempotência não pode ter sido usada no histórico do roteiro — garantido pelo
+-- registro único da seção 4b (status_track_replay o consulta; a gravação simultânea esbarra no índice). Sair de `concluido` (reabrir o serviço) segue permitido e não
 -- reabre etapa nenhuma. `create or replace` preserva a ACL.
 -- =====================================================================
 
@@ -1593,12 +1740,6 @@ begin
   if p_expected_version is null or p_expected_version < 0 then
     raise exception 'invalid_version';
   end if;
-  if p_idempotency_key is not null and exists (
-    select 1 from public.case_service_events e
-    where e.workspace_id = v_opp.workspace_id and e.idempotency_key = p_idempotency_key) then
-    raise exception 'idempotency_conflict';
-  end if;
-
   v_evidence := private.status_track_validate_evidence(
     v_opp.workspace_id, v_role, v_actor, 'case_progress', null, v_lead.contact_id, p_evidence_message_ids);
 

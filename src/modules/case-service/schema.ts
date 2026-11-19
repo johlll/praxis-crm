@@ -353,6 +353,13 @@ export const reopenStepSchema = z.object({
   idempotencyKey,
 });
 
+/** Próxima página do histórico do roteiro: o cursor é o último evento já mostrado (horário exato + id). */
+export const serviceHistoryPageSchema = z.object({
+  opportunityId: id("Caso inválido."),
+  before: z.string().refine((v) => !Number.isNaN(Date.parse(v)), { message: "Posição do histórico inválida." }),
+  beforeId: id("Posição do histórico inválida."),
+});
+
 export const setCurrentStepSchema = z.object({
   opportunityId: id("Caso inválido."),
   stepId: id("Etapa inválida.").nullable(),

@@ -112,6 +112,10 @@ continua `unresolved`. `messageAuthorKind` (servidor) nunca promove isso a um no
 > **Roteiro do serviço (etapa B do painel):** as etapas do serviço e os marcos concluídos fazem parte da trilha
 > `case_progress` — mesma versão, mesma trava e mesma pausa. Regras e consequências para o aplicador em
 > [conversas-painel-servico.md](conversas-painel-servico.md#4-convivência-com-case_progress-decidida-antes-das-gravações).
+> A **chave de idempotência** vale para um único pedido por escritório em `status_track_events` e
+> `case_service_events` juntos: registro único `status_track_idempotency_keys`, preenchido por gatilho nas duas
+> tabelas (qualquer escritor novo, inclusive o aplicador, passa por ele); `private.status_track_replay` o consulta.
+> Detalhes em [conversas-painel-servico.md](conversas-painel-servico.md#5-histórico-idempotência-e-auditoria).
 
 - Cliente relatando "enviei" **não** comprova recebimento.
 - Arquivo efetivamente recebido **não** significa documento aprovado (`documentos_recebidos` é "ainda

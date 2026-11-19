@@ -36,18 +36,19 @@ import {
   type CaseServiceEvent,
 } from "@/modules/case-service/schema";
 import { caseBadge, caseChipLabel, caseIdentity } from "@/modules/conversations/case-display";
-import { caseHistoryExtras } from "@/modules/conversations/context-format";
+import { caseHistoryExtras, compareStampDesc, stampMicros } from "@/modules/conversations/context-format";
 import { roleHasPermission, ROLES, type Role } from "@/lib/roles";
 import { toUserMessage } from "@/lib/errors";
 import {
   applyCaseServicePlanAction,
   assignCaseNumberAction,
   completeCaseServiceStepAction,
+  loadCaseServiceHistoryAction,
   reopenCaseServiceStepAction,
   saveServiceTypeAction,
   setCaseServiceCurrentStepAction,
 } from "@/modules/case-service/actions";
-import { getCaseService } from "@/modules/case-service/queries";
+import { getCaseService, listCaseServiceHistory } from "@/modules/case-service/queries";
 import type { ConversationCaseOption } from "@/modules/status-tracks/queries";
 
 const ROOT = join(import.meta.dirname, "..", "..");
@@ -205,6 +206,55 @@ describe("histórico", () => {
     });
     expect(extras.find((e) => e.tag === "Identificação")).toMatchObject({ title: "Número interno #0003 atribuído", detail: "Por atribuição manual." });
     expect(extras.find((e) => e.tag === "Roteiro do serviço")).toMatchObject({ detail: "Andamento: Concluído → Em execução", actorLabel: "Ana" });
+  });
+});
+
+describe("histórico do roteiro paginado no servidor", () => {
+  it("a tela ordena como o banco: microssegundos contam, empate exato pelo id decrescente", () => {
+    expect(stampMicros("2026-11-18T12:00:00.123457+00:00") - stampMicros("2026-11-18T12:00:00.123456+00:00")).toBe(1);
+    expect(stampMicros("2026-11-18T12:00:00.123Z")).toBe(stampMicros("2026-11-18T12:00:00.123000+00:00"));
+    expect(stampMicros("2026-11-18T12:00:00Z")).toBe(Date.parse("2026-11-18T12:00:00Z") * 1000);
+    const rows = [
+      { id: "a", occurredAt: "2026-11-18T12:00:00.123456+00:00" },
+      { id: "c", occurredAt: "2026-11-18T12:00:00.123456+00:00" },
+      { id: "b", occurredAt: "2026-11-18T12:00:00.123457+00:00" },
+      { id: "d", occurredAt: "2026-11-18T11:59:59.999999+00:00" },
+    ];
+    expect([...rows].sort(compareStampDesc).map((r) => r.id)).toEqual(["b", "c", "a", "d"]);
+  });
+  // Horário com microssegundos, como o Postgres devolve: o cursor volta ao banco exatamente como veio
+  // (passar por Date cortaria para milissegundos e pularia ou repetiria eventos de horário igual).
+  const AT = "2026-11-18T12:00:00.123456+00:00";
+  const ev = (id: string, at = AT) => ({ id, op: "current_step_set", to_version: 2, occurred_at: at });
+  it("primeira página: sem cursor; o cursor da próxima é o último evento, sem conversão", async () => {
+    rpcMock.mockResolvedValueOnce({ data: [{ items: [ev("e3"), ev("e2")], has_more: true }], error: null });
+    const page = await listCaseServiceHistory(OPP);
+    expect(rpcMock).toHaveBeenCalledWith("list_case_service_history", { p_opportunity_id: OPP, p_limit: 50 });
+    expect(page).toMatchObject({ hasMore: true, next: { before: AT, beforeId: "e2" } });
+    expect(page!.items.map((e) => e.id)).toEqual(["e3", "e2"]);
+  });
+  it("página seguinte: leva o cursor (horário e id) ao banco; última página não tem cursor", async () => {
+    rpcMock.mockResolvedValueOnce({ data: [{ items: [ev("e1")], has_more: false }], error: null });
+    const page = await listCaseServiceHistory(OPP, { cursor: { before: AT, beforeId: "e2" } });
+    expect(rpcMock).toHaveBeenCalledWith("list_case_service_history", { p_opportunity_id: OPP, p_before: AT, p_before_id: "e2", p_limit: 50 });
+    expect(page).toMatchObject({ hasMore: false, next: null });
+  });
+  it("carregar mais: valida o pedido, devolve a página ou um erro legível; fora do alcance não vira lista vazia", async () => {
+    expect(await loadCaseServiceHistoryAction({ opportunityId: "x", before: AT, beforeId: S1 })).toMatchObject({ ok: false });
+    expect(await loadCaseServiceHistoryAction({ opportunityId: OPP, before: "ontem", beforeId: S1 })).toMatchObject({ ok: false });
+    expect(rpcMock).not.toHaveBeenCalled();
+
+    rpcMock.mockResolvedValueOnce({ data: [{ items: [ev(S2)], has_more: false }], error: null });
+    const ok = await loadCaseServiceHistoryAction({ opportunityId: OPP, before: AT, beforeId: S1 });
+    expect(rpcMock).toHaveBeenLastCalledWith("list_case_service_history", { p_opportunity_id: OPP, p_before: AT, p_before_id: S1, p_limit: 50 });
+    expect(ok).toMatchObject({ ok: true, page: { hasMore: false, next: null, items: [{ id: S2 }] } });
+
+    rpcMock.mockResolvedValueOnce({ data: null, error: { message: "opportunity_not_found" } });
+    expect(await loadCaseServiceHistoryAction({ opportunityId: OPP, before: AT, beforeId: S1 })).toEqual({ ok: false, error: "Não foi possível carregar o histórico." });
+    rpcMock.mockResolvedValueOnce({ data: null, error: { message: "boom" } });
+    expect(await loadCaseServiceHistoryAction({ opportunityId: OPP, before: AT, beforeId: S1 })).toEqual({
+      ok: false, error: "Não foi possível carregar o histórico. Tente de novo.",
+    });
   });
 });
 
