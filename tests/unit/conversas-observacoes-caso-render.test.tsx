@@ -203,6 +203,17 @@ describe("Resumo: cartão Observações (consulta)", () => {
     expect(noteActions.loadCaseNotesAction.mock.calls[1]![0]).toEqual(noteActions.loadCaseNotesAction.mock.calls[0]![0]);
   });
 
+  it("depois de registrar (nova primeira página do servidor), a observação nova aparece no topo, sem repetir", () => {
+    const all = notes(OPP_A, "a", 5);
+    const view = render(panel(ctx(OPP_A, "Imobiliário", 42, { status: "ok", page: page(all, null, 3) }), { editar: true }));
+    const section = screen.getByRole("region", { name: "Observações do caso" });
+    expect(shown(section)).toEqual(["Observação a5", "Observação a4", "Observação a3"]);
+    const nova = { ...notes(OPP_A, "n", 1)[0]!, body: "Observação recém-registrada", createdAt: "2026-11-19T09:00:00.000001+00:00" };
+    view.rerender(panel(ctx(OPP_A, "Imobiliário", 42, { status: "ok", page: page([nova, ...all], null, 3) }), { editar: true }));
+    const after = shown(screen.getByRole("region", { name: "Observações do caso" }));
+    expect(after).toEqual(["Observação recém-registrada", "Observação a5", "Observação a4"]);
+  });
+
   it("troca de caso durante a busca: a resposta do caso anterior nunca entra no caso novo", async () => {
     const fromA = notes(OPP_A, "a", 9);
     const fromB = notes(OPP_B, "b", 2);

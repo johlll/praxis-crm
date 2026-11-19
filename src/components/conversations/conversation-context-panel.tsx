@@ -653,7 +653,13 @@ function CaseNotesBlock({ focus }: { focus: FocusCase }) {
   if (notes.status === "error") return <CaseNotesUnavailable />;
   if (notes.status === "unavailable") return <Muted>As observações deste caso não estão disponíveis para o seu perfil.</Muted>;
   return (
-    <CaseNotesList key={`case_note:${focus.option.opportunityId}`} opportunityId={focus.option.opportunityId} initial={notes.page} />
+    // A identidade inclui a observação mais recente: depois de registrar (ou de outra pessoa registrar), a nova
+    // primeira página do servidor recomeça a lista — sem misturar com páginas antigas nem com outro caso.
+    <CaseNotesList
+      key={`case_note:${focus.option.opportunityId}:${notes.page.items[0]?.id ?? "-"}`}
+      opportunityId={focus.option.opportunityId}
+      initial={notes.page}
+    />
   );
 }
 
