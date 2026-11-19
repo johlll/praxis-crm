@@ -145,8 +145,9 @@ atualização). Sem roteiro, o andamento não ganha restrição nova.
     `private.status_track_replay` (recriada com a mesma assinatura; vale para a situação do atendimento e o andamento,
     sem recriar `set_conversation_attendance_status`) e no começo comum do roteiro. Quem decide, sob concorrência, é o
     índice único.
-  - **Registros antigos:** a migration copia para o registro as chaves já gravadas em `status_track_events` (com a
-    tabela travada entre a cópia e o gatilho), sem alterar linha antiga — conferido no script de atualização, que
+  - **Registros antigos:** a migration copia para o registro as chaves já gravadas em `status_track_events` — depois
+    de criar os gatilhos, ignorando chave já registrada, para não depender de a migration rodar numa transação só (o
+    CLI aplica comando a comando) —, sem alterar linha antiga — conferido no script de atualização, que
     também prova que a repetição de um pedido antigo devolve o gravado e que o roteiro recusa a chave antiga.
   - Nada da proteção de versão, permissões, evidências ou decisão humana mudou.
 - O painel mostra os eventos na aba **Histórico** (origem "Roteiro do serviço") junto com o número interno

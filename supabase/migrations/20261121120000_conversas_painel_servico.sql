@@ -377,15 +377,6 @@ $body$;
 
 revoke all on function private.status_track_key_register() from public, anon, authenticated, service_role;
 
--- As chaves já gravadas entram no registro (a trava impede gravação nova entre a cópia e o gatilho).
--- case_service_events nasce nesta migration, vazia.
-lock table public.status_track_events in share row exclusive mode;
-
-insert into public.status_track_idempotency_keys (workspace_id, idempotency_key, source, event_id, created_at)
-select e.workspace_id, e.idempotency_key, 'status_track_events', e.id, e.occurred_at
-from public.status_track_events e
-where e.idempotency_key is not null;
-
 create trigger status_track_events_key_register after insert on public.status_track_events
   for each row when (new.idempotency_key is not null) execute function private.status_track_key_register();
 create trigger status_track_events_key_release after delete on public.status_track_events
@@ -394,6 +385,16 @@ create trigger case_service_events_key_register after insert on public.case_serv
   for each row when (new.idempotency_key is not null) execute function private.status_track_key_register();
 create trigger case_service_events_key_release after delete on public.case_service_events
   for each row when (old.idempotency_key is not null) execute function private.status_track_key_register();
+
+-- As chaves já gravadas entram no registro DEPOIS dos gatilhos, sem depender de a migration rodar numa
+-- transação só (o CLI aplica comando a comando): criar o gatilho espera quem já estava gravando; quem grava
+-- depois dele já se registra sozinho, e a cópia ignora a chave já registrada. case_service_events nasce
+-- nesta migration, vazia.
+insert into public.status_track_idempotency_keys (workspace_id, idempotency_key, source, event_id, created_at)
+select e.workspace_id, e.idempotency_key, 'status_track_events', e.id, e.occurred_at
+from public.status_track_events e
+where e.idempotency_key is not null
+on conflict (workspace_id, idempotency_key) do nothing;
 
 -- Resposta antecipada: a chave já foi confirmada no OUTRO histórico → idempotency_conflict.
 create function private.status_track_key_assert_free(p_workspace_id uuid, p_key uuid, p_source text)
