@@ -6,6 +6,7 @@ import {
   CalendarClock,
   CalendarDays,
   FileSignature,
+  FileText,
   Hash,
   Info,
   ListChecks,
@@ -66,6 +67,7 @@ import { CaseSwitcher } from "./context/case-switcher";
 import { ConsentDisclosure } from "./context/consent-disclosure";
 import { ServiceStepper } from "./context/service-stepper";
 import { CaseNumberControl, ServicePlanEditor } from "./context/service-plan-editor";
+import { CaseNoteComposer, CaseNotesList, CaseNotesUnavailable } from "./context/case-notes";
 
 const ATTENDANCE_OPTIONS = ATTENDANCE_STATUSES.filter((s) => s !== "nao_informado").map((s) => ({
   value: s,
@@ -92,6 +94,8 @@ export type ContextPermissions = {
   assignCaseNumber?: boolean;
   /** service_catalog.manage — atalho para o catálogo quando ele está vazio. */
   manageServiceCatalog?: boolean;
+  /** case_note.add (e contato não anonimizado) — acrescenta observações ao caso, pela edição (lápis). */
+  addCaseNote?: boolean;
 };
 
 type PanelConversation = {
@@ -110,11 +114,26 @@ function formatDateOnly(d: string): string {
   return y && m && day ? `${day}/${m}/${y}` : d;
 }
 
-function Card({ title, action, children, className }: { title: string; action?: ReactNode; children: ReactNode; className?: string }) {
+function Card({
+  title,
+  icon: Icon,
+  action,
+  children,
+  className,
+}: {
+  title: string;
+  icon?: typeof User;
+  action?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
   return (
     <section aria-label={title} className={cn("flex flex-col gap-3 rounded-card border border-border bg-surface p-3.5", className)}>
       <div className="flex items-center justify-between gap-2">
-        <h3 className="m-0 text-body font-bold text-text">{title}</h3>
+        <h3 className="m-0 flex items-center gap-2 text-body font-bold text-text">
+          {Icon ? <Icon size={16} className="shrink-0 text-text-muted" aria-hidden /> : null}
+          {title}
+        </h3>
         {action}
       </div>
       {children}
@@ -191,7 +210,8 @@ export function ConversationContextPanel({
     permissions.editAttendance ||
     (status === "won" && permissions.editProgress) ||
     (status === "open" && permissions.pauseCommercial) ||
-    canAssignNumber;
+    canAssignNumber ||
+    Boolean(focus && permissions.addCaseNote);
   const editing = params.editar && canEditAny;
   const hrefWith = (over: Partial<InboxParams>) => inboxHref(conversation.id, { ...params, ...over }, { keepCase: true });
 
@@ -257,6 +277,7 @@ export function ConversationContextPanel({
                 params={params}
                 consentSlot={consentSlot}
                 consentNeedsAttention={consentNeedsAttention}
+                writeNoteHref={permissions.addCaseNote ? `${hrefWith({ editar: true })}#observacoes` : null}
               />
             )}
           </div>
@@ -483,12 +504,15 @@ function CaseSummary({
   params,
   consentSlot,
   consentNeedsAttention,
+  writeNoteHref,
 }: {
   conversation: PanelConversation;
   context: ConversationContext;
   params: InboxParams;
   consentSlot: ReactNode;
   consentNeedsAttention: boolean;
+  /** Edição com a seção de observações (só para quem acrescenta). O Resumo continua sendo consulta. */
+  writeNoteHref: string | null;
 }) {
   const { focus, cases } = context;
   if (!focus) {
@@ -603,8 +627,33 @@ function CaseSummary({
         )}
       </Card>
 
+      <Card
+        title="Observações"
+        icon={FileText}
+        action={
+          writeNoteHref ? (
+            <Link href={writeNoteHref as never} className="text-meta font-semibold text-primary hover:underline">
+              Escrever
+            </Link>
+          ) : null
+        }
+      >
+        <CaseNotesBlock focus={focus} />
+      </Card>
+
       <ConsentDisclosure defaultOpen={consentNeedsAttention}>{consentSlot}</ConsentDisclosure>
     </>
+  );
+}
+
+/** Observações do caso em foco: lista (com as anteriores por página), falha com nova tentativa ou vazio. */
+function CaseNotesBlock({ focus }: { focus: FocusCase }) {
+  const notes = focus.notes;
+  if (!notes) return <Muted>As observações aparecem no Resumo do caso.</Muted>;
+  if (notes.status === "error") return <CaseNotesUnavailable />;
+  if (notes.status === "unavailable") return <Muted>As observações deste caso não estão disponíveis para o seu perfil.</Muted>;
+  return (
+    <CaseNotesList key={`case_note:${focus.option.opportunityId}`} opportunityId={focus.option.opportunityId} initial={notes.page} />
   );
 }
 
@@ -802,9 +851,9 @@ function CaseHistory({ conversation, context }: { conversation: PanelConversatio
 // Edição (lápis)
 // ---------------------------------------------------------------------
 
-function EditSection({ title, hint, children }: { title: string; hint?: string | undefined; children: ReactNode }) {
+function EditSection({ title, hint, id, children }: { title: string; hint?: string | undefined; id?: string; children: ReactNode }) {
   return (
-    <section aria-label={title} className="flex flex-col gap-3 rounded-card border border-border bg-surface p-3.5">
+    <section id={id} aria-label={title} className="flex scroll-mt-4 flex-col gap-3 rounded-card border border-border bg-surface p-3.5">
       <div className="flex flex-col gap-0.5">
         <h3 className="m-0 text-body font-bold text-text">{title}</h3>
         {hint ? <Muted>{hint}</Muted> : null}
@@ -858,6 +907,25 @@ function CaseEdit({
                 closed={o.status === "lost"}
               />
             )}
+          </EditSection>
+        ) : null}
+
+        {focus && o ? (
+          <EditSection
+            title="Observações do caso"
+            hint="Pertencem a este caso, não ao contato: outro caso do mesmo cliente tem as suas. As notas gerais do lead continuam no perfil do lead."
+            id="observacoes"
+          >
+            {permissions.addCaseNote ? (
+              <CaseNoteComposer
+                key={`case_note:${o.opportunityId}`}
+                opportunityId={o.opportunityId}
+                caseLabel={caseChipLabel(o)}
+              />
+            ) : (
+              <Muted>Seu perfil só lê as observações deste caso.</Muted>
+            )}
+            <CaseNotesBlock focus={focus} />
           </EditSection>
         ) : null}
 

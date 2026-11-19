@@ -261,6 +261,10 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   service_reopen_status_required: "O serviço está concluído: escolha o novo andamento para reabrir a etapa.",
   case_concluded: "O serviço está concluído. Reabra o andamento antes de aplicar ou trocar o roteiro.",
   service_state_invalid: "Não foi possível registrar: a etapa e o andamento ficariam contraditórios.",
+  // Observações por caso.
+  case_note_body_required: "Escreva a observação antes de registrar.",
+  case_note_too_long: "A observação tem até 4.000 caracteres.",
+  case_note_immutable: "Observações registradas não mudam. Para corrigir, registre uma nova observação.",
 };
 
 /** update_lead_basic_fields()/assign_lead()/set_lead_status()/set_lead_value()

@@ -157,3 +157,8 @@ e contato inexistente desfazem a chamada sem rastro. O texto de erro do banco nu
   recusa `INSERT`/`UPDATE` neles com `contact_anonymized`. Exclusão administrativa da oportunidade leva tudo em cascata.
   O registro de chaves de idempotência (`status_track_idempotency_keys`) só tem códigos; a linha sai junto com o evento
   (gatilho na exclusão, inclusive na cascata da conversa apagada pela anonimização).
+- **Observações por caso** ([conversas-observacoes-caso.md](conversas-observacoes-caso.md)): texto livre, NÃO é
+  esqueleto. A anonimização as **apaga**, como as notas do lead (`privacy_anonymize_contact` recriada com a mesma
+  assinatura: só o `delete` e a conferência final a mais); um gatilho próprio recusa observação nova depois
+  (`contact_anonymized`). Retenção sem mudança (a observação não reinicia a contagem). Exclusão da oportunidade leva
+  as observações em cascata.

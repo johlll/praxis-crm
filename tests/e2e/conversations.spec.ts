@@ -275,4 +275,35 @@ test.describe.serial("conversas + simulador de WhatsApp — A7", () => {
     await page.goto("/configuracoes/tipos-de-servico");
     await expect(page.getByRole("heading", { name: "404" })).toBeVisible();
   });
+
+  test("10. observação do caso: escrita pelo lápis, lida no Resumo como texto; visualizador só lê", async ({ page }) => {
+    await login(page, SEED_USERS.ana.email);
+    await page.goto(conversationUrl);
+    await openContext(page);
+    const panel = page.locator("#painel-contexto");
+    const card = panel.getByRole("region", { name: "Observações" });
+    await expect(card.getByText("Nenhuma observação registrada neste caso.")).toBeVisible();
+    await expect(card.getByRole("textbox")).toHaveCount(0);
+
+    await card.getByRole("link", { name: "Escrever" }).click();
+    await expect(page).toHaveURL(/editar=1/);
+    const section = panel.getByRole("region", { name: "Observações do caso" });
+    await expect(section.getByText(/Nova observação para/)).toBeVisible();
+    await section.getByRole("textbox").fill("Cliente acompanha pelo WhatsApp.\n<b>sem negrito</b>");
+    await section.getByRole("button", { name: "Registrar observação" }).click();
+    await expect(section.getByText(/Observação registrada em/)).toBeVisible();
+    await expect(section.getByRole("textbox")).toHaveValue("");
+
+    await panel.getByRole("link", { name: "Voltar ao caso" }).click();
+    await expect(card.getByText("<b>sem negrito</b>", { exact: false })).toBeVisible();
+    await expect(card.locator("b")).toHaveCount(0);
+    await expect(card.getByText(/Cliente acompanha pelo WhatsApp\./)).toBeVisible();
+
+    await page.context().clearCookies();
+    await login(page, SEED_USERS.elisa.email);
+    await page.goto(conversationUrl);
+    await openContext(page);
+    await expect(card.getByText(/Cliente acompanha pelo WhatsApp\./)).toBeVisible();
+    await expect(card.getByRole("link", { name: "Escrever" })).toHaveCount(0);
+  });
 });

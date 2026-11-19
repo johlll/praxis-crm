@@ -210,6 +210,8 @@ select (select s.id from public.case_service_plan_steps s join public.case_servi
 set local role authenticated;
 select pg_temp.login(:'ana'::uuid);
 select complete_case_service_step((:'opp_alfa2')::uuid, (:'etapa_alfa')::uuid, 1);
+-- Observações por caso: uma observação (texto livre INTERNO, que não pode sair) popula `case_notes`.
+select add_case_note((:'opp_alfa2')::uuid, 'INTERNO-observacao-caso-ALFA', gen_random_uuid());
 reset role;
 
 -- =====================================================================
@@ -406,6 +408,7 @@ select ok(
   and not (:'pacote'::jsonb #> '{data,activities,0}' ?| array['title', 'notes'])
   and not (:'pacote'::jsonb #> '{data,proposals,0}' ? 'decision_note')
   and not (:'pacote'::jsonb #> '{data,lead_notes,0}' ? 'body')
+  and not (:'pacote'::jsonb #> '{data,case_notes,0}' ?| array['body', 'author_name', 'created_by'])
   and not (:'pacote'::jsonb #> '{data,conflict_checks,0}' ? 'note')
   and not (:'pacote'::jsonb #> '{data,proposal_email_sends,0}' ? 'to_email'),
   'as chaves dos dez campos retirados nem existem mais no conteúdo'

@@ -128,6 +128,8 @@ declare
   v_item_new text[] := array['case_number', 'service_type_name', 'service_step_name', 'service_step_position',
                              'service_steps_total', 'service_steps_completed'];
   v_export_new text[] := array['case_numbers', 'case_service_plans', 'case_service_history'];
+  -- Seções acrescentadas por migrations POSTERIORES (aplicadas junto no migration up): fora da comparação.
+  v_export_later text[] := array['case_notes'];
   v_diff integer;
   v_after jsonb;
   v_service jsonb;
@@ -173,7 +175,7 @@ begin
 
   -- Exportação: seções antigas byte a byte; as novas existem e estão vazias para o titular antigo.
   select a.body into v_after from public.upgrade_check_after a where a.kind = 'export';
-  if (v_after - v_export_new) is distinct from (select b.body from public.upgrade_check_before b where b.kind = 'export') then
+  if (v_after - v_export_new - v_export_later) is distinct from (select b.body from public.upgrade_check_before b where b.kind = 'export') then
     raise exception 'a exportação mudou nas seções antigas';
   end if;
   if (select count(*) from unnest(v_export_new) k where v_after -> k = '[]'::jsonb) <> 3 then

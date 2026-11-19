@@ -23,6 +23,8 @@ import {
   type CaseServiceHistoryPage,
 } from "@/modules/case-service/queries";
 import type { CaseService, ServiceTypeItem } from "@/modules/case-service/schema";
+import { listCaseNotes } from "@/modules/case-notes/queries";
+import { CASE_NOTES_SUMMARY, type CaseNotesPage } from "@/modules/case-notes/schema";
 import { commercialSteps, type CaseTab, type FocusSource, type Step } from "./case-display";
 
 /**
@@ -54,6 +56,12 @@ export type StageMove = {
   actorName: string | null;
 };
 
+/**
+ * Observações do caso: as mais recentes (Resumo e edição). Falha de leitura é um estado PRÓPRIO — o painel
+ * mostra o aviso com nova tentativa no cartão, sem derrubar o caso e sem fingir "nenhuma observação".
+ */
+export type CaseNotesView = { status: "ok"; page: CaseNotesPage } | { status: "error" } | { status: "unavailable" };
+
 export type FocusCase = {
   option: ConversationCaseOption;
   responsible: string | null;
@@ -84,7 +92,19 @@ export type FocusCase = {
   serviceHistory: CaseServiceHistoryPage | null;
   /** Catálogo ativo do escritório — só carregado na edição (aplicar ou trocar o roteiro). */
   serviceTypes: ServiceTypeItem[] | null;
+  /** Observações do caso — carregadas no Resumo e na edição. `null` nas outras abas. */
+  notes: CaseNotesView | null;
 };
+
+/** Primeira página de observações, sem derrubar o painel: falha → `error`; sem alcance → `unavailable`. */
+export async function loadCaseNotesView(opportunityId: string): Promise<CaseNotesView> {
+  try {
+    const page = await listCaseNotes(opportunityId, { limit: CASE_NOTES_SUMMARY });
+    return page ? { status: "ok", page } : { status: "unavailable" };
+  } catch {
+    return { status: "error" };
+  }
+}
 
 export type ConversationContext = {
   attendance: TrackView;
@@ -189,7 +209,7 @@ export const loadConversationContext = cache(async function loadConversationCont
   }
 
   const option = cases.items.find((o) => o.opportunityId === resolved.id)!;
-  const [opportunity, commercial, progress, pending, done, service, serviceHistory, serviceTypes] = await Promise.all([
+  const [opportunity, commercial, progress, pending, done, service, serviceHistory, serviceTypes, notes] = await Promise.all([
     getOpportunity(option.opportunityId),
     loadTrack("commercial_stage", option.opportunityId),
     option.status === "won" ? loadTrack("case_progress", option.opportunityId) : Promise.resolve(null),
@@ -205,6 +225,7 @@ export const loadConversationContext = cache(async function loadConversationCont
     getCaseService(option.opportunityId),
     opts.tab === "historico" ? listCaseServiceHistory(option.opportunityId) : Promise.resolve(null),
     editing && option.status === "won" ? listServiceTypes(opts.workspaceId) : Promise.resolve(null),
+    editing || opts.tab === "resumo" ? loadCaseNotesView(option.opportunityId) : Promise.resolve(null),
   ]);
   if (!service) throw new CaseServiceLoadError(`o serviço do caso ${option.opportunityId}`);
 
@@ -249,6 +270,7 @@ export const loadConversationContext = cache(async function loadConversationCont
       service,
       serviceHistory,
       serviceTypes: serviceTypes ? serviceTypes.filter((t) => !t.archived) : null,
+      notes,
     },
   };
 });

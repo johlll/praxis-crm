@@ -192,6 +192,7 @@ export async function ContextSection({
         editActivities: !anonymized && roleHasPermission(session.role, "activity.edit"),
         assignCaseNumber: !anonymized && roleHasPermission(session.role, "case.number_assign"),
         manageServiceCatalog: roleHasPermission(session.role, "service_catalog.manage"),
+        addCaseNote: !anonymized && roleHasPermission(session.role, "case_note.add"),
       }}
       evidence={evidenceCandidates(items)}
       consentNeedsAttention={Boolean(conversation.contactId) && !hasActiveWhatsAppConsent(consents)}

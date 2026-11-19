@@ -1042,6 +1042,54 @@ export type Database = {
           },
         ]
       }
+      case_notes: {
+        Row: {
+          body: string
+          created_at: string
+          created_by: string
+          id: string
+          idempotency_key: string
+          opportunity_id: string
+          request_fingerprint: string
+          workspace_id: string
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          created_by: string
+          id?: string
+          idempotency_key: string
+          opportunity_id: string
+          request_fingerprint: string
+          workspace_id: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          created_by?: string
+          id?: string
+          idempotency_key?: string
+          opportunity_id?: string
+          request_fingerprint?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_notes_opportunity_fkey"
+            columns: ["workspace_id", "opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "case_notes_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       case_number_counters: {
         Row: {
           last_value: number
@@ -5437,6 +5485,14 @@ export type Database = {
         }
         Returns: undefined
       }
+      add_case_note: {
+        Args: {
+          p_body: string
+          p_idempotency_key: string
+          p_opportunity_id: string
+        }
+        Returns: Json
+      }
       add_contact_email: {
         Args: {
           p_contact_id: string
@@ -6294,6 +6350,18 @@ export type Database = {
         Returns: Json
       }
       list_calendar_scheduler_heartbeats: { Args: never; Returns: Json }
+      list_case_notes: {
+        Args: {
+          p_before?: string
+          p_before_id?: string
+          p_limit?: number
+          p_opportunity_id: string
+        }
+        Returns: {
+          has_more: boolean
+          items: Json
+        }[]
+      }
       list_case_service_history: {
         Args: {
           p_before?: string
