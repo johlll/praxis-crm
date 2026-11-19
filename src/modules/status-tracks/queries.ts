@@ -192,12 +192,25 @@ export function mapCaseOption(row: Record<string, unknown>): ConversationCaseOpt
   };
 }
 
+/** De onde veio o caso padrão (regra do banco, compartilhada com a lista): vínculo, único do lead, único do contato. */
+export type CaseDefaultSource = "linked" | "lead" | "only";
+
+export function isCaseDefaultSource(v: unknown): v is CaseDefaultSource {
+  return v === "linked" || v === "lead" || v === "only";
+}
+
 export type ConversationCaseOptions = {
   conversationId: string;
   /** Sem contato resolvido não há caso a escolher (resolver o vínculo primeiro). */
   contactResolved: boolean;
   linkedOpportunityId: string | null;
   items: ConversationCaseOption[];
+  /**
+   * Caso padrão pela regra única do banco (`private.conversation_case_resolution`), a mesma da lista de
+   * conversas. Nulo com vários casos e nenhuma ligação inequívoca: nada é escolhido por palpite.
+   */
+  defaultOpportunityId: string | null;
+  defaultSource: CaseDefaultSource | null;
 };
 
 export async function listConversationCaseOptions(conversationId: string): Promise<ConversationCaseOptions | null> {
@@ -211,11 +224,17 @@ export async function listConversationCaseOptions(conversationId: string): Promi
   if (!row || !Array.isArray(row.items)) {
     throw new StatusTrackLoadError(`os casos da conversa ${conversationId}`);
   }
+  const items = (row.items as Record<string, unknown>[]).map(mapCaseOption);
+  const defaultId = typeof row.default_opportunity_id === "string" ? row.default_opportunity_id : null;
+  // O padrão só vale se for uma das opções devolvidas na MESMA leitura (nunca um id solto).
+  const defaultValid = defaultId !== null && items.some((o) => o.opportunityId === defaultId);
   return {
     conversationId: row.conversation_id as string,
     contactResolved: row.contact_resolved === true,
     linkedOpportunityId: (row.linked_opportunity_id as string | null) ?? null,
-    items: (row.items as Record<string, unknown>[]).map(mapCaseOption),
+    items,
+    defaultOpportunityId: defaultValid ? defaultId : null,
+    defaultSource: defaultValid && isCaseDefaultSource(row.default_source) ? row.default_source : null,
   };
 }
 

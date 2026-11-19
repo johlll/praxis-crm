@@ -15,10 +15,14 @@ import { loadConversationContext, type ConversationContext } from "@/modules/con
 import { MESSAGE_AUTHOR_LABEL, contentKindLabel, type InboxParams } from "@/modules/conversations/inbox";
 import type { EvidenceCandidate } from "@/modules/conversations/context-format";
 import { listAllOpportunities, type OpportunityListItem } from "@/modules/opportunities/queries";
+import { isContactAnonymized } from "@/modules/contacts/queries";
+import { caseBadge, caseCountLabel, caseIdentity } from "@/modules/conversations/case-display";
+import type { AttendanceStatus } from "@/modules/status-tracks/schema";
 import { ConversationThread } from "./conversation-thread";
 import { LinkReviewBanner } from "./link-review-banner";
 import { ConsentPanel } from "./consent-panel";
 import { ConversationContextPanel } from "./conversation-context-panel";
+import { AttendanceChip, CaseSubjectChips } from "./context/case-badge";
 
 /**
  * Partes da conversa que carregam depois da lista e do cabeçalho (Conversas + IA, PR 2): as mensagens e o
@@ -96,7 +100,51 @@ export async function ThreadSection({ conversation, session }: { conversation: C
   );
 }
 
-/** Conteúdo do painel de contexto: situação, caso em foco, histórico e consentimento. */
+/**
+ * Caso e situação do atendimento no cabeçalho da conversa. Lê o MESMO contexto do painel (cache da
+ * requisição): o caso mostrado aqui é sempre o do painel, inclusive quando foi escolhido na URL. Com vários
+ * casos e nenhum vínculo inequívoco mostra "N casos" — nunca um andamento atribuído ao cliente inteiro.
+ * Falha ou ausência de acesso: não mostra nada (o painel explica).
+ */
+export async function ConversationCaseLine({
+  conversation,
+  params,
+  session,
+}: {
+  conversation: ConversationDetail;
+  params: InboxParams;
+  session: Session;
+}) {
+  let context: ConversationContext | null = null;
+  try {
+    context = await loadConversationContext(conversation.id, params.caso, session.workspaceId, session.userId, params.aba);
+  } catch {
+    return null;
+  }
+  if (!context) return null;
+  const att = (context.attendance.state.status ?? "nao_informado") as AttendanceStatus;
+  const focus = context.focus;
+  const n = context.cases.items.length;
+  return (
+    <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
+      {focus ? (
+        <CaseSubjectChips subject={caseIdentity(focus.option, context.cases.items).title} badge={caseBadge(focus.option)} />
+      ) : n > 1 ? (
+        <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-label font-bold text-text-secondary">
+          {caseCountLabel(n)}
+          <span className="sr-only"> — nenhum vinculado a esta conversa</span>
+        </span>
+      ) : conversation.legalArea ? (
+        <span className="inline-flex min-w-0 max-w-full items-center rounded-full bg-neutral-bg px-2 py-0.5 text-label font-bold text-neutral">
+          <span className="truncate">{conversation.legalArea}</span>
+        </span>
+      ) : null}
+      <AttendanceChip status={att} showPrefix />
+    </div>
+  );
+}
+
+/** Conteúdo do painel de contexto: caso em foco (cabeçalho, abas, edição) e consentimento. */
 export async function ContextSection({
   conversation,
   params,
@@ -110,12 +158,14 @@ export async function ContextSection({
   // as mensagens e o envio continuam, e o painel mostra o erro com "tentar de novo".
   let context: ConversationContext | null = null;
   let contextFailed = false;
-  const [{ items }, consents] = await Promise.all([
+  const [{ items }, consents, anonymized] = await Promise.all([
     messagesFor(conversation.id),
     conversation.contactId ? consentsFor(conversation.contactId) : Promise.resolve([]),
+    // C3b: contato anonimizado é só consulta (o banco recusa as escritas); as tarefas também ficam só leitura.
+    conversation.contactId ? isContactAnonymized(conversation.contactId).catch(() => true) : Promise.resolve(false),
   ]);
   try {
-    context = await loadConversationContext(conversation.id, params.caso, conversation.leadId);
+    context = await loadConversationContext(conversation.id, params.caso, session.workspaceId, session.userId, params.aba);
   } catch (error) {
     contextFailed = true;
     console.error("Falha ao carregar o contexto da conversa", error);
@@ -139,8 +189,10 @@ export async function ContextSection({
         editAttendance: roleHasPermission(session.role, "conversation.attendance_edit"),
         editProgress: roleHasPermission(session.role, "case.progress_edit"),
         pauseCommercial: roleHasPermission(session.role, "opportunity.edit"),
+        editActivities: !anonymized && roleHasPermission(session.role, "activity.edit"),
       }}
       evidence={evidenceCandidates(items)}
+      consentNeedsAttention={Boolean(conversation.contactId) && !hasActiveWhatsAppConsent(consents)}
       consentSlot={
         conversation.contactId ? (
           <ConsentPanel

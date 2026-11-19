@@ -32,9 +32,21 @@ type AutomationControlProps = {
   version: number;
   canEdit: boolean;
   deniedReason: string;
+  /** Linha de título (padrão: "Alterações automáticas de status"); o painel de edição usa o nome da trilha. */
+  heading?: string;
 };
 
-function AutomationControlBody({ track, targetId, paused, pausedAt, pausedByName, version, canEdit, deniedReason }: AutomationControlProps) {
+function AutomationControlBody({
+  track,
+  targetId,
+  paused,
+  pausedAt,
+  pausedByName,
+  version,
+  canEdit,
+  deniedReason,
+  heading = "Alterações automáticas de status",
+}: AutomationControlProps) {
   const { pending, blocked, error, conflict, done, run, refresh } = useTrackAction();
 
   function toggle() {
@@ -45,7 +57,7 @@ function AutomationControlBody({ track, targetId, paused, pausedAt, pausedByName
     <div className="flex flex-col gap-2 rounded-input border border-border bg-surface-subtle px-3 py-2.5" aria-busy={pending}>
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 flex-col">
-          <span className="text-meta font-semibold text-text-secondary">Alterações automáticas de status</span>
+          <span className="text-meta font-semibold text-text-secondary">{heading}</span>
           <span className={cn("text-meta font-bold", paused ? "text-warning" : "text-text-tertiary")}>
             {paused
               ? `Pausadas${pausedByName ? ` por ${pausedByName}` : ""}${pausedAt ? ` em ${formatStamp(pausedAt)}` : ""}`

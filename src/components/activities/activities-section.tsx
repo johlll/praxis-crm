@@ -17,20 +17,28 @@ export function ActivitiesSection({
   activities,
   members,
   canEdit,
+  title = "Atividades",
+  allowCreate = canEdit,
+  emptyText = "Nenhuma atividade ainda.",
 }: {
   leadId: string;
   opportunityId?: string;
   activities: ActivityListItem[];
   members: TeamMember[];
   canEdit: boolean;
+  /** Título da seção (padrão "Atividades"). */
+  title?: string;
+  /** Mostra "Nova atividade" (padrão: quem edita). Desligado numa segunda lista da mesma tela. */
+  allowCreate?: boolean;
+  emptyText?: string;
 }) {
   return (
     <section className="rounded-lg border border-border bg-surface p-4">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-body font-semibold text-text">
-          Atividades {activities.length > 0 ? `(${activities.length})` : ""}
+          {title} {activities.length > 0 ? `(${activities.length})` : ""}
         </h2>
-        {canEdit ? (
+        {canEdit && allowCreate ? (
           <CreateActivityDialog
             leadId={leadId}
             members={members}
@@ -40,7 +48,7 @@ export function ActivitiesSection({
       </div>
 
       {activities.length === 0 ? (
-        <p className="text-body text-text-tertiary">Nenhuma atividade ainda.</p>
+        <p className="text-body text-text-tertiary">{emptyText}</p>
       ) : (
         <ul className="flex flex-col gap-2">
           {activities.map((activity) => {
