@@ -70,6 +70,12 @@ function option(id: string, area: string) {
     isLinked: false,
     caseProgressStatus: "nao_informado" as const,
     createdAt: "2026-11-01T12:00:00+00:00",
+    caseNumber: null,
+    serviceTypeName: null,
+    serviceStepName: null,
+    serviceStepPosition: null,
+    serviceStepsTotal: null,
+    serviceStepsCompleted: null,
   };
 }
 
@@ -111,6 +117,20 @@ function context(focusId: string, opts: { version?: number } = {}) {
       stageMoves: [],
       pendingActivities: [],
       doneActivities: null,
+      service: {
+        opportunityId: focusId,
+        opportunityStatus: "won",
+        applicable: true,
+        caseNumber: null,
+        version,
+        status: "nao_informado",
+        automationPaused: false,
+        manualDecidedAt: null,
+        plan: null,
+        previousPlans: 0,
+      },
+      serviceHistory: null,
+      serviceTypes: null,
     },
   };
 }

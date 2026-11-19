@@ -1042,6 +1042,220 @@ export type Database = {
           },
         ]
       }
+      case_number_counters: {
+        Row: {
+          last_value: number
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          last_value?: number
+          updated_at?: string
+          workspace_id: string
+        }
+        Update: {
+          last_value?: number
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_number_counters_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: true
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      case_service_events: {
+        Row: {
+          actor_kind: string
+          actor_user_id: string
+          current_step_after: string | null
+          current_step_before: string | null
+          from_version: number
+          id: string
+          idempotency_key: string | null
+          occurred_at: string
+          op: string
+          opportunity_id: string
+          plan_id: string
+          previous_plan_id: string | null
+          progress_from:
+            | Database["public"]["Enums"]["case_progress_status"]
+            | null
+          progress_to:
+            | Database["public"]["Enums"]["case_progress_status"]
+            | null
+          request_fingerprint: string
+          step_id: string | null
+          to_version: number
+          workspace_id: string
+        }
+        Insert: {
+          actor_kind?: string
+          actor_user_id: string
+          current_step_after?: string | null
+          current_step_before?: string | null
+          from_version: number
+          id?: string
+          idempotency_key?: string | null
+          occurred_at?: string
+          op: string
+          opportunity_id: string
+          plan_id: string
+          previous_plan_id?: string | null
+          progress_from?:
+            | Database["public"]["Enums"]["case_progress_status"]
+            | null
+          progress_to?:
+            | Database["public"]["Enums"]["case_progress_status"]
+            | null
+          request_fingerprint: string
+          step_id?: string | null
+          to_version: number
+          workspace_id: string
+        }
+        Update: {
+          actor_kind?: string
+          actor_user_id?: string
+          current_step_after?: string | null
+          current_step_before?: string | null
+          from_version?: number
+          id?: string
+          idempotency_key?: string | null
+          occurred_at?: string
+          op?: string
+          opportunity_id?: string
+          plan_id?: string
+          previous_plan_id?: string | null
+          progress_from?:
+            | Database["public"]["Enums"]["case_progress_status"]
+            | null
+          progress_to?:
+            | Database["public"]["Enums"]["case_progress_status"]
+            | null
+          request_fingerprint?: string
+          step_id?: string | null
+          to_version?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_service_events_opportunity_fkey"
+            columns: ["workspace_id", "opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "case_service_events_plan_fkey"
+            columns: ["workspace_id", "plan_id"]
+            isOneToOne: false
+            referencedRelation: "case_service_plans"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
+      case_service_plan_steps: {
+        Row: {
+          completed_at: string | null
+          completed_by: string | null
+          id: string
+          name: string
+          plan_id: string
+          position: number
+          workspace_id: string
+        }
+        Insert: {
+          completed_at?: string | null
+          completed_by?: string | null
+          id?: string
+          name: string
+          plan_id: string
+          position: number
+          workspace_id: string
+        }
+        Update: {
+          completed_at?: string | null
+          completed_by?: string | null
+          id?: string
+          name?: string
+          plan_id?: string
+          position?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_service_plan_steps_plan_fkey"
+            columns: ["workspace_id", "plan_id"]
+            isOneToOne: false
+            referencedRelation: "case_service_plans"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
+      case_service_plans: {
+        Row: {
+          applied_at: string
+          applied_by: string
+          current_step_id: string | null
+          ended_at: string | null
+          ended_by: string | null
+          id: string
+          opportunity_id: string
+          service_type_id: string | null
+          service_type_name: string
+          service_type_version: number
+          status: string
+          workspace_id: string
+        }
+        Insert: {
+          applied_at?: string
+          applied_by: string
+          current_step_id?: string | null
+          ended_at?: string | null
+          ended_by?: string | null
+          id?: string
+          opportunity_id: string
+          service_type_id?: string | null
+          service_type_name: string
+          service_type_version: number
+          status?: string
+          workspace_id: string
+        }
+        Update: {
+          applied_at?: string
+          applied_by?: string
+          current_step_id?: string | null
+          ended_at?: string | null
+          ended_by?: string | null
+          id?: string
+          opportunity_id?: string
+          service_type_id?: string | null
+          service_type_name?: string
+          service_type_version?: number
+          status?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_service_plans_opportunity_fkey"
+            columns: ["workspace_id", "opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "case_service_plans_type_fkey"
+            columns: ["workspace_id", "service_type_id"]
+            isOneToOne: false
+            referencedRelation: "service_types"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
       client_handoffs: {
         Row: {
           attempts: number
@@ -2789,6 +3003,48 @@ export type Database = {
           },
         ]
       }
+      opportunity_case_numbers: {
+        Row: {
+          assigned_at: string
+          assigned_by: string | null
+          assigned_via: string
+          number: number
+          opportunity_id: string
+          workspace_id: string
+        }
+        Insert: {
+          assigned_at?: string
+          assigned_by?: string | null
+          assigned_via: string
+          number: number
+          opportunity_id: string
+          workspace_id: string
+        }
+        Update: {
+          assigned_at?: string
+          assigned_by?: string | null
+          assigned_via?: string
+          number?: number
+          opportunity_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "opportunity_case_numbers_opportunity_fkey"
+            columns: ["workspace_id", "opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "opportunity_case_numbers_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       opportunity_requirement_values: {
         Row: {
           filled_at: string
@@ -3434,6 +3690,85 @@ export type Database = {
           },
         ]
       }
+      service_type_steps: {
+        Row: {
+          id: string
+          name: string
+          position: number
+          service_type_id: string
+          workspace_id: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          position: number
+          service_type_id: string
+          workspace_id: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          position?: number
+          service_type_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "service_type_steps_type_fkey"
+            columns: ["workspace_id", "service_type_id"]
+            isOneToOne: false
+            referencedRelation: "service_types"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
+      service_types: {
+        Row: {
+          archived_at: string | null
+          archived_by: string | null
+          created_at: string
+          created_by: string
+          id: string
+          name: string
+          suggestion_code: string | null
+          updated_at: string
+          version: number
+          workspace_id: string
+        }
+        Insert: {
+          archived_at?: string | null
+          archived_by?: string | null
+          created_at?: string
+          created_by: string
+          id?: string
+          name: string
+          suggestion_code?: string | null
+          updated_at?: string
+          version?: number
+          workspace_id: string
+        }
+        Update: {
+          archived_at?: string | null
+          archived_by?: string | null
+          created_at?: string
+          created_by?: string
+          id?: string
+          name?: string
+          suggestion_code?: string | null
+          updated_at?: string
+          version?: number
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "service_types_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       stage_auto_activity_rules: {
         Row: {
           activity_type: Database["public"]["Enums"]["activity_type"]
@@ -3686,6 +4021,38 @@ export type Database = {
           },
           {
             foreignKeyName: "status_track_events_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      status_track_idempotency_keys: {
+        Row: {
+          created_at: string
+          event_id: string
+          idempotency_key: string
+          source: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          event_id: string
+          idempotency_key: string
+          source: string
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          event_id?: string
+          idempotency_key?: string
+          source?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "status_track_idempotency_keys_workspace_id_fkey"
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
@@ -5126,6 +5493,16 @@ export type Database = {
         }
         Returns: Json
       }
+      apply_case_service_plan: {
+        Args: {
+          p_current_step_position?: number
+          p_expected_version: number
+          p_idempotency_key?: string
+          p_opportunity_id: string
+          p_service_type_id: string
+        }
+        Returns: Json
+      }
       apply_google_inbound_change: {
         Args: {
           p_actor_user_id: string
@@ -5189,6 +5566,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      assign_opportunity_case_number: {
+        Args: { p_opportunity_id: string }
+        Returns: Json
       }
       begin_calendar_channel: {
         Args: {
@@ -5276,6 +5657,16 @@ export type Database = {
       complete_activity: {
         Args: { p_activity_id: string; p_lock_version: number }
         Returns: undefined
+      }
+      complete_case_service_step: {
+        Args: {
+          p_expected_version: number
+          p_idempotency_key?: string
+          p_next_current_step_id?: string
+          p_opportunity_id: string
+          p_step_id: string
+        }
+        Returns: Json
       }
       connect_calendar_account: {
         Args: {
@@ -5492,6 +5883,15 @@ export type Database = {
         }
         Returns: string
       }
+      create_service_type: {
+        Args: {
+          p_name: string
+          p_steps: string[]
+          p_suggestion_code?: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       create_stage_requirement: {
         Args: {
           p_field_type: Database["public"]["Enums"]["stage_requirement_type"]
@@ -5691,6 +6091,7 @@ export type Database = {
         Args: { p_workspace_id: string }
         Returns: Json
       }
+      get_case_service: { Args: { p_opportunity_id: string }; Returns: Json }
       get_client: { Args: { p_client_id: string }; Returns: Json }
       get_conflict_check: { Args: { p_lead_id: string }; Returns: Json }
       get_contact_merge_history: {
@@ -5893,6 +6294,18 @@ export type Database = {
         Returns: Json
       }
       list_calendar_scheduler_heartbeats: { Args: never; Returns: Json }
+      list_case_service_history: {
+        Args: {
+          p_before?: string
+          p_before_id?: string
+          p_limit?: number
+          p_opportunity_id: string
+        }
+        Returns: {
+          has_more: boolean
+          items: Json
+        }[]
+      }
       list_clients: {
         Args: {
           p_page?: number
@@ -6013,6 +6426,7 @@ export type Database = {
         Args: { p_actor_user_id: string; p_connection_id: string }
         Returns: Json
       }
+      list_service_types: { Args: { p_workspace_id: string }; Returns: Json }
       list_status_track_history: {
         Args: {
           p_before?: string
@@ -6229,15 +6643,46 @@ export type Database = {
         }
         Returns: string
       }
+      remove_case_service_plan: {
+        Args: {
+          p_acknowledge_records?: boolean
+          p_expected_version: number
+          p_idempotency_key?: string
+          p_opportunity_id: string
+        }
+        Returns: Json
+      }
       remove_contact_email: { Args: { p_email_id: string }; Returns: undefined }
       remove_contact_phone: { Args: { p_phone_id: string }; Returns: undefined }
       remove_membership: {
         Args: { p_membership_id: string }
         Returns: undefined
       }
+      reopen_case_service_step: {
+        Args: {
+          p_expected_version: number
+          p_idempotency_key?: string
+          p_make_current?: boolean
+          p_opportunity_id: string
+          p_progress_status?: Database["public"]["Enums"]["case_progress_status"]
+          p_step_id: string
+        }
+        Returns: Json
+      }
       reorder_pipeline_stages: {
         Args: { p_ordered_stage_ids: string[]; p_pipeline_id: string }
         Returns: undefined
+      }
+      replace_case_service_plan: {
+        Args: {
+          p_acknowledge_records?: boolean
+          p_current_step_position?: number
+          p_expected_version: number
+          p_idempotency_key?: string
+          p_opportunity_id: string
+          p_service_type_id: string
+        }
+        Returns: Json
       }
       request_privacy_export: {
         Args: {
@@ -6359,6 +6804,15 @@ export type Database = {
         }
         Returns: undefined
       }
+      set_case_service_current_step: {
+        Args: {
+          p_expected_version: number
+          p_idempotency_key?: string
+          p_opportunity_id: string
+          p_step_id: string
+        }
+        Returns: Json
+      }
       set_contact_cpf_cnpj: {
         Args: {
           p_blind_index_base64: string
@@ -6436,6 +6890,14 @@ export type Database = {
           p_idempotency_key?: string
           p_opportunity_id: string
           p_status: Database["public"]["Enums"]["case_progress_status"]
+        }
+        Returns: Json
+      }
+      set_service_type_archived: {
+        Args: {
+          p_archived: boolean
+          p_expected_version: number
+          p_service_type_id: string
         }
         Returns: Json
       }
@@ -6729,6 +7191,15 @@ export type Database = {
           p_stage_id: string
         }
         Returns: undefined
+      }
+      update_service_type: {
+        Args: {
+          p_expected_version: number
+          p_name: string
+          p_service_type_id: string
+          p_steps: string[]
+        }
+        Returns: Json
       }
       update_stage_requirement: {
         Args: { p_required_for_win: boolean; p_requirement_id: string }

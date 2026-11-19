@@ -8,6 +8,7 @@ import {
   CalendarDays,
   ScrollText,
   SlidersHorizontal,
+  ListChecks,
   type LucideIcon,
 } from "lucide-react";
 
@@ -36,6 +37,7 @@ export default async function ConfiguracoesPage() {
   const canConnectCalendar = roleHasPermission(membership.role, "calendar.connect_own");
   const canViewAudit = roleHasPermission(membership.role, "audit_log.view");
   const canManageCustomFields = roleHasPermission(membership.role, "custom_field.manage");
+  const canManageServiceCatalog = roleHasPermission(membership.role, "service_catalog.manage");
 
   // "Pipelines" só aparece para quem tem a permissão — diferente das
   // seções de fase futura abaixo (que todo mundo vê como "ainda não
@@ -75,6 +77,16 @@ export default async function ConfiguracoesPage() {
             icon: Workflow,
             title: "Pipelines",
             description: "Etapas, requisitos de avanço e motivos de perda.",
+          },
+        ]
+      : []),
+    ...(canManageServiceCatalog
+      ? [
+          {
+            href: "/configuracoes/tipos-de-servico" as Route,
+            icon: ListChecks,
+            title: "Tipos de serviço",
+            description: "Roteiros de etapas que os casos ganhos podem receber.",
           },
         ]
       : []),

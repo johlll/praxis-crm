@@ -63,7 +63,30 @@ function option(id: string, over: Record<string, unknown> = {}) {
     isLinked: false,
     caseProgressStatus: null,
     createdAt: "2026-11-16T12:05:00.000Z",
+    caseNumber: null,
+    serviceTypeName: null,
+    serviceStepName: null,
+    serviceStepPosition: null,
+    serviceStepsTotal: null,
+    serviceStepsCompleted: null,
     ...over,
+  };
+}
+
+
+/** Serviço do caso sem número e sem roteiro (o estado de todo caso antigo). */
+function noService(o: { opportunityId: string; status: string; caseProgressStatus: string | null }) {
+  return {
+    opportunityId: o.opportunityId,
+    opportunityStatus: o.status,
+    applicable: o.status === "won",
+    caseNumber: null,
+    version: 0,
+    status: o.status === "won" ? (o.caseProgressStatus ?? "nao_informado") : null,
+    automationPaused: false,
+    manualDecidedAt: null,
+    plan: null,
+    previousPlans: 0,
   };
 }
 
@@ -93,6 +116,9 @@ function focusOf(o: ReturnType<typeof option>, over: Record<string, unknown> = {
     stageMoves: [{ id: "m1", occurredAt: "2026-11-17T09:00:00.000Z", fromStageName: "Contato", toStageName: "Qualificar", actorName: "Paula" }],
     pendingActivities: [],
     doneActivities: null,
+    service: noService(o),
+    serviceHistory: null,
+    serviceTypes: null,
     ...over,
   };
 }
@@ -179,7 +205,7 @@ describe("cabeçalho do caso e abas", () => {
     render(panel(ctx({ items: [a], focus: focusOf(a), source: "lead" })));
     expect(screen.getByRole("region", { name: "Andamento do serviço" })).toBeTruthy();
     expect(screen.getAllByTitle("Serviço: Em análise").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText(/As etapas do serviço ainda não são configuradas/)).toBeTruthy();
+    expect(screen.getByText(/Este caso não tem roteiro de etapas/)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/protocolo|sentença/i);
     expect(screen.getByText(/Único caso do lead desta conversa/)).toBeTruthy();
   });

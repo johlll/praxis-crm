@@ -1,12 +1,14 @@
 import { CASE_PROGRESS_STATUS_LABEL, type CaseProgressStatus } from "@/modules/status-tracks/schema";
 import type { CaseDefaultSource, ConversationCaseOption } from "@/modules/status-tracks/queries";
+import { formatCaseNumber } from "@/modules/case-service/schema";
 
 /**
  * Conversas + IA — painel do caso: regras puras de exibição do caso (sem banco e sem
  * `server-only`, para valer no servidor e no navegador e ser testado sem rede).
  *
- * Tudo vem de dados gravados: área do lead, etapa do Kanban, andamento registrado,
- * data de abertura. Nenhum código, tipo de serviço ou número de processo é inventado.
+ * Tudo vem de dados gravados: área do lead, etapa do Kanban, andamento registrado, data de abertura,
+ * número interno e roteiro (etapa B). Nenhum código, tipo de serviço ou número de processo é inventado:
+ * sem número gravado, o caso aparece sem número.
  */
 
 // ---------------------------------------------------------------------
@@ -34,11 +36,19 @@ export type CaseBadge = {
   progress: CaseProgressStatus | null;
 };
 
-export function caseBadge(o: Pick<ConversationCaseOption, "status" | "stageName" | "caseProgressStatus">): CaseBadge {
+type BadgeInput = Pick<ConversationCaseOption, "status" | "stageName" | "caseProgressStatus"> &
+  Partial<Pick<ConversationCaseOption, "serviceStepName" | "serviceStepPosition" | "serviceStepsTotal">>;
+
+export function caseBadge(o: BadgeInput): CaseBadge {
   if (o.status === "won") {
     const progress: CaseProgressStatus = o.caseProgressStatus ?? "nao_informado";
     const label = progress === "nao_informado" ? "Andamento não informado" : CASE_PROGRESS_STATUS_LABEL[progress];
-    return { kind: "service", prefix: "Serviço", label, full: `Serviço: ${label}`, progress };
+    // O selo é o ANDAMENTO (mesmo valor na lista, no cabeçalho e no painel); a etapa atual do roteiro vai
+    // só na frase completa (dica e leitor de tela), sem virar outro estado.
+    const step = o.serviceStepName
+      ? ` · etapa atual: ${o.serviceStepName}${o.serviceStepPosition && o.serviceStepsTotal ? ` (${o.serviceStepPosition} de ${o.serviceStepsTotal})` : ""}`
+      : "";
+    return { kind: "service", prefix: "Serviço", label, full: `Serviço: ${label}${step}`, progress };
   }
   if (o.status === "lost") {
     return { kind: "lost", prefix: "Oportunidade", label: "Perdida", full: "Oportunidade perdida", progress: null };
@@ -54,8 +64,12 @@ const DATE = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", d
 const TIME = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
 
 export type CaseIdentity = {
-  /** Assunto do caso: a área do lead (texto gravado), ou "Oportunidade sem área". */
+  /** "Caso #0042" quando há número interno; senão o assunto (área do lead ou "Oportunidade sem área"). */
   title: string;
+  /** Assunto: a área do lead (texto gravado), ou "Oportunidade sem área". */
+  subject: string;
+  /** Número interno formatado ("#0042"), ou nulo. */
+  number: string | null;
   /** "Aberta em 12/03/2026" (sempre). */
   opened: string;
   /**
@@ -72,7 +86,8 @@ function sameShape(a: ConversationCaseOption, b: ConversationCaseOption): boolea
 export function caseIdentity(o: ConversationCaseOption, all: readonly ConversationCaseOption[] = []): CaseIdentity {
   const created = new Date(o.createdAt);
   const opened = `Aberta em ${DATE.format(created)}`;
-  const twins = all.filter((x) => x.opportunityId !== o.opportunityId && sameShape(x, o));
+  // Com número interno o caso já se distingue dos parecidos; sem número, entra o desempate real.
+  const twins = o.caseNumber != null ? [] : all.filter((x) => x.opportunityId !== o.opportunityId && sameShape(x, o));
   let extra: string | null = null;
   if (twins.length > 0) {
     const sameDay = twins.filter((x) => DATE.format(new Date(x.createdAt)) === DATE.format(created));
@@ -81,7 +96,15 @@ export function caseIdentity(o: ConversationCaseOption, all: readonly Conversati
       extra = sameMinute.length > 0 ? `ref. ${o.opportunityId.slice(0, 8).toUpperCase()}` : `às ${TIME.format(created)}`;
     }
   }
-  return { title: o.legalArea?.trim() || "Oportunidade sem área", opened, extra };
+  const subject = o.legalArea?.trim() || "Oportunidade sem área";
+  const number = o.caseNumber != null ? formatCaseNumber(o.caseNumber) : null;
+  return { title: number ? `Caso ${number}` : subject, subject, number, opened, extra };
+}
+
+/** Etiqueta do caso na lista e no cabeçalho da conversa: "#0042 · Imobiliário" ou só a área. */
+export function caseChipLabel(o: Pick<ConversationCaseOption, "legalArea" | "caseNumber">): string {
+  const subject = o.legalArea?.trim() || "Oportunidade sem área";
+  return o.caseNumber != null ? `${formatCaseNumber(o.caseNumber)} · ${subject}` : subject;
 }
 
 /** Uma linha só: "Aberta em 12/03/2026 às 14:05". */

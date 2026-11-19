@@ -15,6 +15,14 @@ import {
   type StatusTrackHistoryPage,
   type StatusTrackState,
 } from "@/modules/status-tracks/queries";
+import {
+  getCaseService,
+  listCaseServiceHistory,
+  listServiceTypes,
+  CaseServiceLoadError,
+  type CaseServiceHistoryPage,
+} from "@/modules/case-service/queries";
+import type { CaseService, ServiceTypeItem } from "@/modules/case-service/schema";
 import { commercialSteps, type CaseTab, type FocusSource, type Step } from "./case-display";
 
 /**
@@ -67,6 +75,15 @@ export type FocusCase = {
   pendingActivities: ActivityListItem[];
   /** Concluídas mais recentes — só carregadas na aba Tarefas. */
   doneActivities: { items: ActivityListItem[]; total: number } | null;
+  /**
+   * Etapa B: número interno, roteiro ativo (etapas copiadas, etapa atual, conclusões registradas) e a versão
+   * ÚNICA da trilha case_progress (andamento + roteiro).
+   */
+  service: CaseService;
+  /** Histórico do roteiro — só carregado na aba Histórico. */
+  serviceHistory: CaseServiceHistoryPage | null;
+  /** Catálogo ativo do escritório — só carregado na edição (aplicar ou trocar o roteiro). */
+  serviceTypes: ServiceTypeItem[] | null;
 };
 
 export type ConversationContext = {
@@ -144,6 +161,7 @@ export const loadConversationContext = cache(async function loadConversationCont
   workspaceId: string,
   userId: string,
   tab: CaseTab,
+  editing = false,
 ): Promise<ConversationContext | null> {
   const opts = { workspaceId, userId, tab };
   const [attendance, cases, members] = await Promise.all([
@@ -171,7 +189,7 @@ export const loadConversationContext = cache(async function loadConversationCont
   }
 
   const option = cases.items.find((o) => o.opportunityId === resolved.id)!;
-  const [opportunity, commercial, progress, pending, done] = await Promise.all([
+  const [opportunity, commercial, progress, pending, done, service, serviceHistory, serviceTypes] = await Promise.all([
     getOpportunity(option.opportunityId),
     loadTrack("commercial_stage", option.opportunityId),
     option.status === "won" ? loadTrack("case_progress", option.opportunityId) : Promise.resolve(null),
@@ -184,7 +202,11 @@ export const loadConversationContext = cache(async function loadConversationCont
           pageSize: DONE_ACTIVITIES_LIMIT,
         })
       : Promise.resolve(null),
+    getCaseService(option.opportunityId),
+    opts.tab === "historico" ? listCaseServiceHistory(option.opportunityId) : Promise.resolve(null),
+    editing && option.status === "won" ? listServiceTypes(opts.workspaceId) : Promise.resolve(null),
   ]);
+  if (!service) throw new CaseServiceLoadError(`o serviço do caso ${option.opportunityId}`);
 
   // Etapas do pipeline: nomes das movimentações e, para oportunidade aberta, o andamento comercial.
   const stages = opportunity ? await listPipelineStages(opportunity.pipelineId) : [];
@@ -224,6 +246,9 @@ export const loadConversationContext = cache(async function loadConversationCont
       stageMoves: opportunity ? mapStageMoves(opportunity.history, stages, members) : [],
       pendingActivities: pending.items,
       doneActivities: done ? { items: done.items, total: done.total } : null,
+      service,
+      serviceHistory,
+      serviceTypes: serviceTypes ? serviceTypes.filter((t) => !t.archived) : null,
     },
   };
 });

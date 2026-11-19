@@ -175,7 +175,17 @@ export type ConversationCaseOption = {
   /** Só para oportunidade ganha ("nao_informado" quando nunca corrigido). */
   caseProgressStatus: CaseProgressStatus | null;
   createdAt: string;
+  /** Número interno do caso (etapa B); nulo = sem número (nada é inventado). */
+  caseNumber: number | null;
+  /** Roteiro ativo (só oportunidade ganha): tipo, etapa atual e contagens; nulos sem roteiro. */
+  serviceTypeName: string | null;
+  serviceStepName: string | null;
+  serviceStepPosition: number | null;
+  serviceStepsTotal: number | null;
+  serviceStepsCompleted: number | null;
 };
+
+const numOrNull = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 
 export function mapCaseOption(row: Record<string, unknown>): ConversationCaseOption {
   return {
@@ -189,6 +199,12 @@ export function mapCaseOption(row: Record<string, unknown>): ConversationCaseOpt
     isLinked: row.is_linked === true,
     caseProgressStatus: (row.case_progress_status as CaseProgressStatus | null) ?? null,
     createdAt: row.created_at as string,
+    caseNumber: numOrNull(row.case_number),
+    serviceTypeName: (row.service_type_name as string | null) ?? null,
+    serviceStepName: (row.service_step_name as string | null) ?? null,
+    serviceStepPosition: numOrNull(row.service_step_position),
+    serviceStepsTotal: numOrNull(row.service_steps_total),
+    serviceStepsCompleted: numOrNull(row.service_steps_completed),
   };
 }
 

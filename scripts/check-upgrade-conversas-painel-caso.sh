@@ -114,6 +114,8 @@ do \$check\$
 declare
   v_new text[] := array['case', 'case_count', 'case_source'];
   v_case_new text[] := array['case_count', 'default_opportunity_id', 'default_source'];
+  v_item_later text[] := array['case_number', 'service_type_name', 'service_step_name', 'service_step_position',
+                               'service_steps_total', 'service_steps_completed'];
   v_n integer;
   v_diff integer;
 begin
@@ -139,7 +141,13 @@ begin
   select count(*) into v_diff
   from public.upgrade_check_before b
   join public.upgrade_check_after a on a.who = b.who and a.kind = 'case' and a.conv = b.conv
-  where b.kind = 'case' and (a.body - v_case_new) is distinct from b.body;
+  -- Cada item ignora SÓ as chaves acrescentadas depois (etapa B do painel: número interno e roteiro);
+  -- todo campo que já existia continua comparado.
+  where b.kind = 'case'
+    and jsonb_set(a.body - v_case_new, '{items}', (
+          select coalesce(jsonb_agg(i - v_item_later order by o), '[]'::jsonb)
+          from jsonb_array_elements(a.body -> 'items') with ordinality x(i, o)))
+        is distinct from b.body;
   if v_diff <> 0 then
     raise exception 'as opções de caso mudaram em % conversa(s)', v_diff;
   end if;

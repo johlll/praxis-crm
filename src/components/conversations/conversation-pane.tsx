@@ -16,7 +16,7 @@ import { MESSAGE_AUTHOR_LABEL, contentKindLabel, type InboxParams } from "@/modu
 import type { EvidenceCandidate } from "@/modules/conversations/context-format";
 import { listAllOpportunities, type OpportunityListItem } from "@/modules/opportunities/queries";
 import { isContactAnonymized } from "@/modules/contacts/queries";
-import { caseBadge, caseCountLabel, caseIdentity } from "@/modules/conversations/case-display";
+import { caseBadge, caseChipLabel, caseCountLabel } from "@/modules/conversations/case-display";
 import type { AttendanceStatus } from "@/modules/status-tracks/schema";
 import { ConversationThread } from "./conversation-thread";
 import { LinkReviewBanner } from "./link-review-banner";
@@ -117,7 +117,7 @@ export async function ConversationCaseLine({
 }) {
   let context: ConversationContext | null = null;
   try {
-    context = await loadConversationContext(conversation.id, params.caso, session.workspaceId, session.userId, params.aba);
+    context = await loadConversationContext(conversation.id, params.caso, session.workspaceId, session.userId, params.aba, params.editar);
   } catch {
     return null;
   }
@@ -128,7 +128,7 @@ export async function ConversationCaseLine({
   return (
     <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
       {focus ? (
-        <CaseSubjectChips subject={caseIdentity(focus.option, context.cases.items).title} badge={caseBadge(focus.option)} />
+        <CaseSubjectChips subject={caseChipLabel(focus.option)} badge={caseBadge(focus.option)} />
       ) : n > 1 ? (
         <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-label font-bold text-text-secondary">
           {caseCountLabel(n)}
@@ -165,7 +165,7 @@ export async function ContextSection({
     conversation.contactId ? isContactAnonymized(conversation.contactId).catch(() => true) : Promise.resolve(false),
   ]);
   try {
-    context = await loadConversationContext(conversation.id, params.caso, session.workspaceId, session.userId, params.aba);
+    context = await loadConversationContext(conversation.id, params.caso, session.workspaceId, session.userId, params.aba, params.editar);
   } catch (error) {
     contextFailed = true;
     console.error("Falha ao carregar o contexto da conversa", error);
@@ -190,6 +190,8 @@ export async function ContextSection({
         editProgress: roleHasPermission(session.role, "case.progress_edit"),
         pauseCommercial: roleHasPermission(session.role, "opportunity.edit"),
         editActivities: !anonymized && roleHasPermission(session.role, "activity.edit"),
+        assignCaseNumber: !anonymized && roleHasPermission(session.role, "case.number_assign"),
+        manageServiceCatalog: roleHasPermission(session.role, "service_catalog.manage"),
       }}
       evidence={evidenceCandidates(items)}
       consentNeedsAttention={Boolean(conversation.contactId) && !hasActiveWhatsAppConsent(consents)}
