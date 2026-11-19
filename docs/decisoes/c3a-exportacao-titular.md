@@ -96,3 +96,9 @@ usuário.
 
 Anonimização, exclusão, retenção automática, preservação legal e prazo de leads perdidos —
 dependem da política jurídica a definir com o Dr. Henrique. Nada disso existe nesta etapa.
+
+## Acréscimos posteriores
+
+- **Painel do caso, etapa B** ([conversas-painel-servico.md](conversas-painel-servico.md)): seções `case_numbers`,
+  `case_service_plans` (com as etapas copiadas e as datas de conclusão) e `case_service_history`, sem usuário interno e
+  sem chave de idempotência. As seções anteriores ficaram iguais.

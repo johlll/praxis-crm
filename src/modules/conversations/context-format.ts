@@ -6,6 +6,7 @@ import {
   type StatusTrack,
 } from "@/modules/status-tracks/schema";
 import type { StatusTrackEvent, StatusTrackEvidence } from "@/modules/status-tracks/queries";
+import { formatCaseNumber, serviceEventText, type CaseServiceEvent } from "@/modules/case-service/schema";
 import { MESSAGE_AUTHOR_LABEL, contentKindLabel } from "./inbox";
 import { messageAuthorKind } from "./message-author";
 
@@ -52,6 +53,9 @@ export function caseHistoryExtras(input: {
   createdAt: string;
   wonAt: string | null;
   stageMoves: readonly { id: string; occurredAt: string; fromStageName: string | null; toStageName: string; actorName: string | null }[];
+  /** Etapa B: o número interno (quando foi atribuído e como) e os eventos do roteiro do serviço. */
+  caseNumber?: { number: number; assignedVia: "manual" | "win"; assignedAt: string; assignedByName: string | null } | null;
+  serviceEvents?: readonly CaseServiceEvent[];
 }): CaseHistoryExtra[] {
   const out: CaseHistoryExtra[] = input.stageMoves.map((m) => ({
     id: `move:${m.id}`,
@@ -77,6 +81,29 @@ export function caseHistoryExtras(input: {
       title: "Oportunidade ganha",
       detail: "A partir daqui o caso tem andamento do serviço.",
       actorLabel: null,
+    });
+  }
+  if (input.caseNumber) {
+    out.push({
+      id: `number:${input.opportunityId}`,
+      occurredAt: input.caseNumber.assignedAt,
+      tag: "Identificação",
+      title: `Número interno ${formatCaseNumber(input.caseNumber.number)} atribuído`,
+      detail: input.caseNumber.assignedVia === "win" ? "No ganho da oportunidade." : "Por atribuição manual.",
+      actorLabel: input.caseNumber.assignedByName,
+    });
+  }
+  for (const e of input.serviceEvents ?? []) {
+    out.push({
+      id: `service:${e.id}`,
+      occurredAt: e.occurredAt,
+      tag: "Roteiro do serviço",
+      title: serviceEventText(e),
+      // A mudança do andamento feita na mesma operação aparece também no histórico do andamento.
+      detail: e.progressFrom && e.progressTo
+        ? `Andamento: ${CASE_PROGRESS_STATUS_LABEL[e.progressFrom]} → ${CASE_PROGRESS_STATUS_LABEL[e.progressTo]}`
+        : null,
+      actorLabel: e.actorName ?? "Alguém da equipe",
     });
   }
   return out;

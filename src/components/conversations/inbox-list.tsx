@@ -17,7 +17,7 @@ import {
 import { ConversationsPagination } from "./conversations-pagination";
 import { LinkPending } from "./link-pending";
 import { ScrollMemoryList } from "./scroll-memory-list";
-import { caseBadge, caseCountLabel } from "@/modules/conversations/case-display";
+import { caseBadge, caseChipLabel, caseCountLabel } from "@/modules/conversations/case-display";
 import { AttendanceChip, CaseSubjectChips } from "./context/case-badge";
 
 /**
@@ -180,7 +180,7 @@ export function InboxList({
                     </span>
                     <span className="mt-1 flex min-w-0 flex-wrap gap-1">
                       {c.caseItem ? (
-                        <CaseSubjectChips subject={c.caseItem.legalArea ?? "Oportunidade sem área"} badge={caseBadge(c.caseItem)} />
+                        <CaseSubjectChips subject={caseChipLabel(c.caseItem)} badge={caseBadge(c.caseItem)} />
                       ) : c.caseCount > 1 ? (
                         <span
                           title="Vários casos e nenhum vinculado a esta conversa"

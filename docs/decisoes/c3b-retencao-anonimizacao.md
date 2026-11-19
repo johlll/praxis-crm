@@ -148,3 +148,10 @@ e contato inexistente desfazem a chamada sem rastro. O texto de erro do banco nu
 
 - Conversa de WhatsApp ligada **a outro contato** que só casa pelo telefone também bloqueia (revisão humana).
 - Anonimização de clientes, PDFs/armazenamento externo, mesclagens e agenda: fora desta PR.
+
+## Acréscimos posteriores
+
+- **Painel do caso, etapa B** ([conversas-painel-servico.md](conversas-painel-servico.md)): número interno, roteiros,
+  etapas copiadas e histórico do roteiro são **esqueleto** (códigos, datas e nomes de etapa do catálogo; sem texto livre
+  por caso). A anonimização não precisa apagá-los e não mudou; depois de `contacts.anonymized_at`, um gatilho próprio
+  recusa `INSERT`/`UPDATE` neles com `contact_anonymized`. Exclusão administrativa da oportunidade leva tudo em cascata.

@@ -52,6 +52,12 @@ function opt(over: Partial<ConversationCaseOption> = {}): ConversationCaseOption
     isLinked: false,
     caseProgressStatus: null,
     createdAt: "2026-11-16T12:05:00.000Z",
+    caseNumber: null,
+    serviceTypeName: null,
+    serviceStepName: null,
+    serviceStepPosition: null,
+    serviceStepsTotal: null,
+    serviceStepsCompleted: null,
     ...over,
   };
 }
@@ -82,7 +88,7 @@ describe("identificação do caso: só dados gravados, desempate real entre caso
   it("sem gêmeos: só a data de abertura", () => {
     const a = opt();
     const other = opt({ opportunityId: OPP_B, legalArea: "Inventário" });
-    expect(caseIdentity(a, [a, other])).toEqual({ title: "Usucapião", opened: "Aberta em 16/11/2026", extra: null });
+    expect(caseIdentity(a, [a, other])).toEqual({ title: "Usucapião", subject: "Usucapião", number: null, opened: "Aberta em 16/11/2026", extra: null });
   });
   it("mesma área e etapa em outra data: a data já distingue", () => {
     const a = opt();
@@ -274,10 +280,14 @@ describe("contrato da migration e promessas que o painel não faz", () => {
     expect(code).toMatch(/v_resolution := private\.conversation_case_resolution\(v_conv\.id, v_target\.role, v_actor\)/);
     expect(code).toMatch(/cross join lateral \(select private\.conversation_case_resolution\(p\.id, v_role, v_actor\) as r\) cr/);
   });
-  it("o painel não inventa código de caso, tipo de serviço, processo, protocolo, sentença, documentos nem observações", () => {
+  it("o painel não inventa código de caso, processo, protocolo, sentença, documentos nem observações (número e tipo só de dados gravados)", () => {
     const panel = read("src/components/conversations/conversation-context-panel.tsx");
     const visible = panel.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
-    expect(visible).not.toMatch(/Protocolo|Sentença|Processo|Documentos|Observações|Imóvel|#IM|Tipo de serviço/);
+    // Etapa B: "Nº interno" e "Tipo de serviço" vêm do banco (número atribuído, roteiro aplicado); sem registro,
+    // aparecem como "Não atribuído" e "Sem roteiro aplicado" — nunca um código de exemplo.
+    expect(visible).not.toMatch(/Protocolo|Sentença|Processo|Documentos|Observações|Imóvel|#IM/);
+    expect(visible).toMatch(/Não atribuído/);
+    expect(visible).toMatch(/Sem roteiro aplicado/);
     expect(visible).not.toMatch(/Vit[óo]ria/);
   });
   it("na consulta não há formulário: editores só dentro da edição", () => {

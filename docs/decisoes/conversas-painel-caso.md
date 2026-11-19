@@ -4,6 +4,10 @@ Primeira entrega do painel fiel à referência de **hierarquia e interação** (
 abas horizontais, Resumo em cartões, formulários fora da consulta). Não conclui todas as funcionalidades da
 referência: o que falta está registrado no fim, com a ordem das próximas entregas.
 
+> **Etapa B entregue em seguida:** número interno do caso, catálogo de tipos de serviço, roteiro aplicado ao caso e
+> marcos concluídos, convivendo com `case_progress` — ver [conversas-painel-servico.md](conversas-painel-servico.md).
+> Os itens 1 a 4 das "Próximas entregas" abaixo saíram dali; 5 a 8 continuam pendentes.
+
 Base: fundação das trilhas ([conversas-ia-fundacao.md](conversas-ia-fundacao.md), #356) e interface
 ([conversas-interface.md](conversas-interface.md), #357). Esta PR mantém o acabamento do Praxis e **substitui só a
 organização do painel**; segurança, permissões, versão, idempotência e o isolamento entre casos da #357 continuam.
@@ -152,6 +156,9 @@ histórico de migrations. A ordem tem de ser conferida antes de qualquer publica
 - Validação local com dados sintéticos em 1440, 1280, 1100, 1024, 768 e 390 px (descrição da PR).
 
 ## Próximas entregas (registradas, não implementadas aqui)
+
+Itens 1 a 4 **entregues na etapa B** ([conversas-painel-servico.md](conversas-painel-servico.md)); 5 a 8 continuam
+pendentes.
 
 1. **Número interno do caso** — aprovado como conceito, sempre separado do número judicial. Sem numerar
    retroativamente todos os registros por migration sem revisão específica.

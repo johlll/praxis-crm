@@ -229,4 +229,50 @@ test.describe.serial("conversas + simulador de WhatsApp — A7", () => {
     await page.goto("/configuracoes/simulador-whatsapp");
     await expect(page.getByRole("heading", { name: "404" })).toBeVisible();
   });
+
+  test("8. número interno só por atribuição explícita (uma vez) e catálogo de serviços só com cópia escolhida", async ({ page }) => {
+    await login(page, SEED_USERS.ana.email);
+    await page.goto(conversationUrl);
+    await openContext(page);
+    const panel = page.locator("#painel-contexto");
+
+    // Caso aberto sem número: nada inventado no Resumo.
+    const info = panel.getByRole("region", { name: "Informações do caso" });
+    await expect(info.getByText("Não atribuído")).toBeVisible();
+
+    await panel.getByRole("link", { name: "Editar situação e andamento" }).click();
+    await expect(page).toHaveURL(/editar=1/);
+    const ident = panel.getByRole("region", { name: "Identificação do caso" });
+    await ident.getByRole("button", { name: "Atribuir número interno" }).click();
+    await ident.getByRole("button", { name: "Confirmar" }).click();
+    await expect(ident.getByText("O número não muda.", { exact: false })).toBeVisible();
+    await expect(ident.getByRole("button", { name: "Atribuir número interno" })).toHaveCount(0);
+
+    // Cabeçalho do caso e lista mostram o mesmo número.
+    await expect(panel.getByRole("heading", { name: /Caso #\d{4}/ })).toBeVisible();
+    const number = ((await panel.getByRole("heading", { name: /Caso #\d{4}/ }).textContent()) ?? "").match(/#\d{4,}/)?.[0];
+    expect(number).toBeTruthy();
+    await closeContext(page);
+    const list = page.getByRole("region", { name: "Lista de conversas" });
+    await expect(list.getByRole("link", { name: /Contato E2E A7/ }).getByText(new RegExp(`${number} ·`))).toBeVisible();
+
+    // Catálogo: os modelos sugeridos só viram tipo do escritório pela cópia escolhida (e editável).
+    await page.goto("/configuracoes/tipos-de-servico");
+    await expect(page.getByText("Nenhum tipo de serviço ainda", { exact: false })).toBeVisible();
+    const suggestion = page.getByRole("listitem").filter({ hasText: "Consultoria ou parecer" });
+    await suggestion.getByRole("button", { name: "Copiar para o catálogo" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByLabel("Etapa 1", { exact: true })).toHaveValue("Recebimento das informações");
+    await dialog.getByLabel("Nome").fill("Consultoria (e2e)");
+    await dialog.getByRole("button", { name: "Criar tipo" }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByText("Consultoria (e2e)")).toBeVisible();
+    await expect(page.getByText("nenhum caso usa agora", { exact: false })).toBeVisible();
+  });
+
+  test("9. visualizador não configura o catálogo de tipos de serviço", async ({ page }) => {
+    await login(page, SEED_USERS.elisa.email);
+    await page.goto("/configuracoes/tipos-de-servico");
+    await expect(page.getByRole("heading", { name: "404" })).toBeVisible();
+  });
 });

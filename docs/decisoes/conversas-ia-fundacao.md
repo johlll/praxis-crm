@@ -109,6 +109,10 @@ continua `unresolved`. `messageAuthorKind` (servidor) nunca promove isso a um no
 
 ## Contrato para as próximas PRs (sem implementação aqui)
 
+> **Roteiro do serviço (etapa B do painel):** as etapas do serviço e os marcos concluídos fazem parte da trilha
+> `case_progress` — mesma versão, mesma trava e mesma pausa. Regras e consequências para o aplicador em
+> [conversas-painel-servico.md](conversas-painel-servico.md#4-convivência-com-case_progress-decidida-antes-das-gravações).
+
 - Cliente relatando "enviei" **não** comprova recebimento.
 - Arquivo efetivamente recebido **não** significa documento aprovado (`documentos_recebidos` é "ainda
   não analisados").

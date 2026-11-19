@@ -278,6 +278,14 @@ jobs:
         # antes dos passos que recriam o banco local.
         run: bash scripts/c3b-retention-concurrency-check.sh
 
+      - name: Teste de concorrência real (painel do caso, etapa B — número interno e roteiro do serviço)
+        # Números pedidos ao mesmo tempo (distintos, sem buraco, um só por caso), a mesma etapa concluída
+        # por três sessões com a mesma versão (uma conclui, as outras recebem track_conflict), a mesma
+        # chave repetida ao mesmo tempo (um evento só) e o modelo editado durante a aplicação (a cópia é
+        # da versão nova inteira) — ver scripts/painel-servico-concurrency-check.sh. Workspace próprio;
+        # roda antes dos passos que recriam o banco local.
+        run: bash scripts/painel-servico-concurrency-check.sh
+
       - name: Instalar cliente PostgreSQL 17 e age (backup — B6c)
         # Mesmas versões fixas do modelo de backup (docs/backup/modelo-repositorio-privado):
         # cliente PostgreSQL 17 do PGDG e age 1.3.2 conferido por SHA-256.
@@ -431,6 +439,12 @@ jobs:
         # escrito — ver scripts/check-upgrade-conversas-painel-caso.sh. Recria o banco local, por isso
         # roda no fim.
         run: bash scripts/check-upgrade-conversas-painel-caso.sh
+
+      - name: Atualização a partir da versão anterior (painel do caso, etapa B — número e roteiro)
+        # Lista, opções de caso, trilha do andamento, histórico e exportação do titular devolvem o mesmo
+        # de antes nas chaves e seções antigas; a migration não numera caso nem aplica roteiro; nenhuma
+        # linha antiga muda — ver scripts/check-upgrade-conversas-painel-servico.sh. Recria o banco local.
+        run: bash scripts/check-upgrade-conversas-painel-servico.sh
 
       - name: Publicar relatório do Playwright (só se algo falhar)
         if: failure()

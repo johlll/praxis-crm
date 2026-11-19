@@ -6,7 +6,9 @@ import {
   CalendarClock,
   CalendarDays,
   FileSignature,
+  Hash,
   Info,
+  ListChecks,
   Layers,
   Link2,
   Pencil,
@@ -43,11 +45,13 @@ import {
   CASE_TABS,
   CASE_TAB_LABEL,
   caseBadge,
+  caseChipLabel,
   caseCountLabel,
   caseIdentity,
   caseOpenedLine,
   focusNote,
 } from "@/modules/conversations/case-display";
+import { formatCaseNumber, serviceProgressCounts, serviceStepItems } from "@/modules/case-service/schema";
 import { ActivitiesSection } from "@/components/activities/activities-section";
 import { ACTIVITY_TYPE_LABEL } from "@/components/activities/labels";
 import { LinkPending } from "./link-pending";
@@ -60,6 +64,8 @@ import { AttendanceChip, CaseBadgeChip } from "./context/case-badge";
 import { CaseStepper } from "./context/case-stepper";
 import { CaseSwitcher } from "./context/case-switcher";
 import { ConsentDisclosure } from "./context/consent-disclosure";
+import { ServiceStepper } from "./context/service-stepper";
+import { CaseNumberControl, ServicePlanEditor } from "./context/service-plan-editor";
 
 const ATTENDANCE_OPTIONS = ATTENDANCE_STATUSES.filter((s) => s !== "nao_informado").map((s) => ({
   value: s,
@@ -82,6 +88,10 @@ export type ContextPermissions = {
   pauseCommercial: boolean;
   /** activity.edit (e contato não anonimizado) — cria e altera tarefas na aba Tarefas. */
   editActivities?: boolean;
+  /** case.number_assign (e contato não anonimizado) — atribui o número interno a um caso sem número. */
+  assignCaseNumber?: boolean;
+  /** service_catalog.manage — atalho para o catálogo quando ele está vazio. */
+  manageServiceCatalog?: boolean;
 };
 
 type PanelConversation = {
@@ -176,8 +186,12 @@ export function ConversationContextPanel({
 
   const { focus } = context;
   const status = focus?.option.status ?? null;
+  const canAssignNumber = Boolean(focus && !focus.service.caseNumber && status !== "lost" && permissions.assignCaseNumber);
   const canEditAny =
-    permissions.editAttendance || (status === "won" && permissions.editProgress) || (status === "open" && permissions.pauseCommercial);
+    permissions.editAttendance ||
+    (status === "won" && permissions.editProgress) ||
+    (status === "open" && permissions.pauseCommercial) ||
+    canAssignNumber;
   const editing = params.editar && canEditAny;
   const hrefWith = (over: Partial<InboxParams>) => inboxHref(conversation.id, { ...params, ...over }, { keepCase: true });
 
@@ -276,7 +290,7 @@ function CaseHeader({
     return {
       id: o.opportunityId,
       href: inboxHref(conversation.id, { ...params, caso: o.opportunityId }, { keepCase: true }),
-      title: id.title,
+      title: caseChipLabel(o),
       openedLine: caseOpenedLine(id),
       badge: caseBadge(o),
       isLinked: o.isLinked,
@@ -301,13 +315,22 @@ function CaseHeader({
   let identityBlock: ReactNode;
   if (focus) {
     const id = caseIdentity(focus.option, cases.items);
+    const plan = focus.service.plan;
+    // Com número: "Caso #0042" e, abaixo, tipo de serviço · área (como na referência). Sem número: a área é o título.
+    const subtitle = id.number
+      ? [plan?.serviceTypeName, id.subject].filter(Boolean).join(" · ")
+      : (plan?.serviceTypeName ?? null);
     identityBlock = (
       <>
         <span className="flex size-11 shrink-0 items-center justify-center rounded-input bg-primary-tint text-primary" aria-hidden>
           <Briefcase size={20} />
         </span>
         <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <h3 className="m-0 text-body font-bold leading-snug text-text [overflow-wrap:anywhere]">{id.title}</h3>
+          <h3 className="m-0 text-body font-bold leading-snug text-text [overflow-wrap:anywhere]">
+            {id.number ? <span className="sr-only">Número interno do caso: </span> : null}
+            {id.title}
+          </h3>
+          {subtitle ? <p className="m-0 text-meta font-semibold text-text-secondary [overflow-wrap:anywhere]">{subtitle}</p> : null}
           <p className="m-0 text-meta text-text-tertiary">{caseOpenedLine(id)}</p>
           <div className="flex min-w-0 flex-wrap gap-1">
             <CaseBadgeChip badge={caseBadge(focus.option)} wrap />
@@ -440,7 +463,7 @@ function CaseChooser({ conversation, context, params }: { conversation: PanelCon
                 href={inboxHref(conversation.id, { ...params, caso: o.opportunityId }, { keepCase: true }) as never}
                 className="flex flex-col gap-1.5 rounded-input border border-border bg-surface-subtle px-3 py-2.5 no-underline transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
               >
-                <span className="text-small font-semibold text-text [overflow-wrap:anywhere]">{id.title}</span>
+                <span className="text-small font-semibold text-text [overflow-wrap:anywhere]">{caseChipLabel(o)}</span>
                 <span className="text-meta text-text-tertiary">{caseOpenedLine(id)}</span>
                 <span className="flex flex-wrap gap-1">
                   <CaseBadgeChip badge={caseBadge(o)} className="w-fit" />
@@ -493,6 +516,18 @@ function CaseSummary({
               (conversation.contactName ?? "Contato a definir")
             )}
           </InfoRow>
+          <InfoRow icon={Hash} label="Nº interno">
+            {focus.service.caseNumber ? (
+              formatCaseNumber(focus.service.caseNumber.number)
+            ) : (
+              <span className="font-normal text-text-tertiary">Não atribuído</span>
+            )}
+          </InfoRow>
+          {o.status === "won" ? (
+            <InfoRow icon={ListChecks} label="Tipo de serviço">
+              {focus.service.plan?.serviceTypeName ?? <span className="font-normal text-text-tertiary">Sem roteiro aplicado</span>}
+            </InfoRow>
+          ) : null}
           <InfoRow icon={Scale} label="Área">
             {o.legalArea ?? <span className="font-normal text-text-tertiary">Não informada</span>}
           </InfoRow>
@@ -600,21 +635,43 @@ function ProgressCard({ focus }: { focus: FocusCase }) {
   }
   const state = focus.progress?.state;
   const badge = caseBadge(o);
+  const plan = focus.service.plan;
+  const counts = plan ? serviceProgressCounts(plan) : null;
   return (
     <Card title="Andamento do serviço">
-      <CaseBadgeChip badge={badge} className="w-fit" />
+      <div className="flex flex-wrap items-center gap-2">
+        <CaseBadgeChip badge={badge} className="w-fit" />
+        {counts ? (
+          <span className="text-meta text-text-tertiary">
+            {counts.completed} de {counts.total} {counts.total === 1 ? "etapa concluída" : "etapas concluídas"}
+          </span>
+        ) : null}
+      </div>
+      {plan ? <ServiceStepper steps={serviceStepItems(plan)} label={`Etapas do roteiro ${plan.serviceTypeName}`} /> : null}
+      {plan && counts ? (
+        <Muted>
+          {counts.current
+            ? `Etapa atual: ${counts.current.name}.`
+            : counts.completed === counts.total
+              ? "Todas as etapas têm conclusão registrada."
+              : "Nenhuma etapa atual definida."}{" "}
+          Só aparecem como concluídas as etapas com conclusão registrada; a posição não conclui nada.
+        </Muted>
+      ) : null}
       {badge.progress === "nao_informado" ? (
         <Muted>Ainda sem registro de andamento para este caso. Nada foi inferido.</Muted>
       ) : state?.manualDecidedAt ? (
-        <Muted>Registrado por decisão manual em {formatStamp(state.manualDecidedAt)}.</Muted>
+        <Muted>Última decisão manual em {formatStamp(state.manualDecidedAt)}.</Muted>
       ) : null}
-      <p className="m-0 flex items-start gap-1.5 rounded-input bg-surface-subtle px-3 py-2 text-meta text-text-tertiary">
-        <Info size={13} className="mt-px shrink-0" aria-hidden />
-        <span>
-          As etapas do serviço ainda não são configuradas no Praxis. O que aparece acima é o andamento registrado; não há
-          roteiro de etapas para este caso.
-        </span>
-      </p>
+      {!plan ? (
+        <p className="m-0 flex items-start gap-1.5 rounded-input bg-surface-subtle px-3 py-2 text-meta text-text-tertiary">
+          <Info size={13} className="mt-px shrink-0" aria-hidden />
+          <span>
+            Este caso não tem roteiro de etapas{focus.service.previousPlans > 0 ? " ativo (os anteriores estão no Histórico)" : ""}. O
+            que aparece acima é o andamento registrado. Um roteiro só é aplicado por escolha, na edição do caso.
+          </span>
+        </p>
+      ) : null}
     </Card>
   );
 }
@@ -705,13 +762,15 @@ function CaseHistory({ conversation, context }: { conversation: PanelConversatio
         createdAt: focus.option.createdAt,
         wonAt: focus.wonAt,
         stageMoves: focus.stageMoves,
+        caseNumber: focus.service.caseNumber,
+        serviceEvents: focus.serviceHistory?.items ?? [],
       })
     : [];
   return (
     <>
       <Muted>
         {focus
-          ? "Mudanças de andamento e de etapa comercial, pausas das alterações automáticas, a situação do atendimento desta conversa e os marcos da oportunidade. Cada evento aparece uma vez, da fonte que o registra."
+          ? "Mudanças de andamento, do roteiro do serviço e da etapa comercial, pausas das alterações automáticas, a situação do atendimento desta conversa e os marcos da oportunidade. Cada evento aparece uma vez, da fonte que o registra."
           : "Sem caso em foco, aparece só a situação do atendimento desta conversa."}
       </Muted>
       <HistoryTimeline
@@ -770,12 +829,31 @@ function CaseEdit({
     <TrackBusyProvider>
       <div className="flex flex-col gap-3 p-4">
         <div className="flex items-center justify-between gap-2">
-          <h3 className="m-0 text-body font-bold text-text">Editar situação e andamento</h3>
+          <h3 className="m-0 text-body font-bold text-text">Editar o caso e o atendimento</h3>
           <Link href={closeHref as never} className="inline-flex items-center gap-1 text-small font-semibold text-primary hover:underline">
             <ArrowLeft size={14} aria-hidden />
             Voltar ao caso
           </Link>
         </div>
+
+        {o ? (
+          <EditSection title="Identificação do caso" hint="Número interno do escritório, separado de qualquer número de processo.">
+            {focus?.service.caseNumber ? (
+              <Muted>
+                Número interno{" "}
+                <span className="font-semibold text-text-secondary">{formatCaseNumber(focus.service.caseNumber.number)}</span>,
+                atribuído em {formatStamp(focus.service.caseNumber.assignedAt)}
+                {focus.service.caseNumber.assignedVia === "win" ? " no ganho da oportunidade" : ""}. O número não muda.
+              </Muted>
+            ) : (
+              <CaseNumberControl
+                opportunityId={o.opportunityId}
+                canAssign={permissions.assignCaseNumber === true}
+                closed={o.status === "lost"}
+              />
+            )}
+          </EditSection>
+        ) : null}
 
         <EditSection title="Situação do atendimento" hint="Pertence a esta conversa, não ao caso.">
           <div className="flex flex-col gap-1.5">
@@ -829,9 +907,30 @@ function CaseEdit({
               ) : (
                 <Muted>Seu perfil não altera o andamento do caso. Alterar a situação do atendimento não muda o andamento.</Muted>
               )}
+              {focus.service.plan ? (
+                <Muted>
+                  “Concluído” só é aceito com todas as etapas do roteiro concluídas. Aguardar informações (aguardando documentos,
+                  cliente ou terceiros) não mexe no roteiro.
+                </Muted>
+              ) : null}
             </>
           )}
         </EditSection>
+
+        {focus && o?.status === "won" ? (
+          <EditSection
+            title="Roteiro do serviço"
+            hint="Etapas copiadas do tipo de serviço para este caso, com a etapa atual e as conclusões registradas."
+          >
+            <ServicePlanEditor
+              opportunityId={o.opportunityId}
+              service={focus.service}
+              serviceTypes={focus.serviceTypes}
+              canEdit={permissions.editProgress}
+              canManageCatalog={permissions.manageServiceCatalog === true}
+            />
+          </EditSection>
+        ) : null}
 
         {o ? (
           <EditSection title="Etapa comercial" hint="A etapa muda pelo Pipeline, onde fica o histórico canônico das movimentações.">
