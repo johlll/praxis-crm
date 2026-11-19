@@ -194,6 +194,7 @@ export async function ContextSection({
         manageServiceCatalog: roleHasPermission(session.role, "service_catalog.manage"),
         addCaseNote: !anonymized && roleHasPermission(session.role, "case_note.add"),
       }}
+      draftScope={`${session.workspaceId}:${session.userId}`}
       evidence={evidenceCandidates(items)}
       consentNeedsAttention={Boolean(conversation.contactId) && !hasActiveWhatsAppConsent(consents)}
       consentSlot={

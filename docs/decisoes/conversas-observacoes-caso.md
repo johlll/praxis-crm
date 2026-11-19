@@ -44,18 +44,55 @@ Fora desta entrega: Documentos e automação/IA (continuam pendentes).
   também para quem só acrescenta observações.
 - **Nenhuma aba nova.**
 
-### Rascunho e troca de caso
+### Rascunho, troca de caso e Voltar/Avançar
 
-- O compositor tem identidade **`case_note:<oportunidade>`**: trocar de caso cria outro, então o rascunho, o
-  erro, a confirmação e a chave de um caso **nunca** passam para outro, e nada é enviado ao alvo novo.
-- Com texto não registrado, qualquer link interno que saia da tela atual (outro caso, outra aba, "Voltar ao
-  caso", outra conversa, menu) é interceptado **antes** da navegação e a seção mostra: "A observação para
-  *caso* ainda não foi registrada. Se você sair agora, o texto será descartado." com **Continuar escrevendo** e
-  **Descartar e sair**. Fechar ou recarregar a aba usa o aviso do navegador. Durante a gravação, o aviso diz para
-  aguardar a confirmação.
-- Se a tela mudar de caso por outro caminho (voltar do navegador) com uma gravação em andamento, a gravação vai
-  para o caso **original** (o pedido já levava o id dele) e a resposta não aparece no caso novo.
-- O **rascunho da mensagem do WhatsApp** não é tocado (a caixa de mensagem não é remontada na troca de caso).
+O rascunho não vive dentro do editor: fica num **guardador na memória da aba**
+(`src/components/conversations/context/case-note-drafts.ts`), **um por caso**, no escopo **escritório + pessoa**.
+Nada vai para o servidor, `localStorage`, `sessionStorage` ou IndexedDB.
+
+- **Isolamento**: o editor tem identidade **`case_note:<oportunidade>`** e lê só o rascunho do seu caso. Rascunho,
+  erro, confirmação e chave de um caso **nunca** passam para outro, e nada é enviado ao alvo novo. Outra pessoa
+  ou outro escritório na mesma aba (por exemplo, depois de sair da conta) começa vazio, e os rascunhos anteriores
+  são esquecidos; a resposta de uma gravação feita no escopo antigo é ignorada.
+- **Links internos** com texto não registrado (outro caso, outra aba do painel, "Voltar ao caso", outra conversa,
+  menu): o clique é interceptado **antes** da navegação e a seção mostra "A observação para *caso* ainda não foi
+  registrada. Se você sair agora, o texto será descartado." com **Continuar escrevendo** e **Descartar e sair**.
+  Descartar apaga o rascunho guardado. Durante a gravação, o aviso diz para aguardar a confirmação.
+- **Voltar/Avançar do navegador** não pode ser interrompido com segurança (o navegador já mudou a URL quando a
+  tela fica sabendo), então ele **não é bloqueado e não descarta nada**: a URL muda normalmente, com os mesmos
+  parâmetros, e o editor que sai da tela deixa o rascunho guardado. Ao voltar ao caso (Avançar, Voltar ou o link
+  "Escrever"), o texto reaparece com "Rascunho recuperado: este texto ainda não foi registrado." Enquanto isso, o
+  Resumo daquele caso (e só dele) avisa "Há uma observação não registrada neste caso." com **Continuar
+  escrevendo**, ou "Uma observação deste caso está sendo enviada." durante a gravação.
+- **Gravação em andamento com a tela em outro lugar** (Voltar, Avançar, troca de caso): o pedido já levava o id
+  do caso e a chave, e a resposta é escrita no rascunho do caso **de origem**, nunca no que estiver na tela.
+  Registrada: ao voltar, o caso mostra a confirmação (uma vez) e a caixa vazia, e a lista é atualizada.
+  Recusada ou sem resposta: ao voltar, o texto e o aviso estão lá, com a mesma chave para a nova tentativa.
+- **Fechar ou recarregar a aba**: o navegador pede confirmação enquanto existir **qualquer** rascunho guardado
+  ou gravação sem resposta, mesmo com o editor fora da tela. Recarregar perde o rascunho (ele só existe na
+  memória da aba); por isso o aviso.
+- **Gaveta** (abaixo de 1400 px): fechar e reabrir só troca classes CSS; o editor continua montado e o texto
+  continua.
+- O **rascunho da mensagem do WhatsApp** não é tocado (a caixa de mensagem não é remontada na troca de caso nem
+  usa este guardador).
+
+### Falha no transporte da gravação
+
+Quando a chamada da Server Action **rejeita** (rede caiu, resposta interrompida, servidor reiniciado), o
+resultado é **desconhecido**: o banco pode ter gravado sem a resposta chegar.
+
+- O editor **não cai** (a rejeição é tratada; o painel e a conversa continuam) e mostra: "Não foi possível
+  confirmar se a observação foi registrada: a conexão falhou antes da resposta. O texto continua aqui. Tente de
+  novo — se ela já tiver sido registrada, não será duplicada."
+- **Texto e chave da mesma intenção ficam**; nenhuma confirmação de sucesso aparece; o botão é liberado.
+- **Nova tentativa** envia o mesmo pedido com a mesma chave. Se o banco já tinha gravado, a resposta é a
+  repetição ("Esta observação já estava registrada neste caso."), **sem observação nem auditoria duplicadas**.
+  Mudar o texto antes de tentar de novo é outra intenção (outra chave).
+- A lista não é recarregada automaticamente depois da falha: sem rede, o recarregamento também falharia (e o
+  Next pode trocá-lo por uma recarga completa da página, que perderia o rascunho). A nova tentativa confirma e
+  atualiza a lista.
+- Se a tela mudar de caso durante a chamada, o aviso fica no caso de origem (ver acima).
+- "Ver anteriores" com a chamada rejeitada: aviso, as já mostradas ficam, "Tentar de novo" com o mesmo cursor.
 
 ## 3. Permissões e gravação
 
@@ -113,8 +150,14 @@ etapa B.
   antigo igual e agora também apagando observações.
 - Unitários `conversas-observacoes-caso.test.ts` (regras, leitura, carga do painel, ações, permissões, contrato
   da migration e da privacidade) e `conversas-observacoes-caso-render.test.tsx` (cartão, estados, paginação,
-  falha, HTML, escrita, chave, aviso de rascunho, troca de caso com gravação em andamento, visualizador).
-- e2e `conversations.spec.ts` (10): escrever pelo lápis, ler no Resumo como texto; visualizador só lê.
+  falha, HTML, escrita, chave, aviso de rascunho, troca de caso com gravação em andamento, visualizador; rascunho
+  guardado com Voltar/Avançar e troca de caso, aviso no Resumo, descarte, escopo por pessoa, gravação registrada
+  ou recusada longe do editor, aviso ao fechar a aba; Promise rejeitada na gravação — com e sem troca de caso — e
+  em "Ver anteriores").
+- e2e `conversations.spec.ts` (10): escrever pelo lápis, ler no Resumo como texto; visualizador só lê. (11):
+  rascunho sobrevive a Voltar/Avançar com aviso no Resumo; a resposta da gravação é interrompida **depois** de o
+  servidor gravar, a tela avisa sem cair, e a nova tentativa devolve "já estava registrada", com uma observação
+  só no cartão.
 
 ## 6. Pendências
 

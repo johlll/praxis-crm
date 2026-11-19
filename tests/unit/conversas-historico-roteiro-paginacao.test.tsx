@@ -134,6 +134,7 @@ function panel(context: ReturnType<typeof ctx>): ReactElement {
       contextFailed={false}
       params={{ q: "", status: "all", page: 1, caso: context.focusId, sel: null, aba: "historico" as never, editar: false }}
       permissions={VIEWER}
+      draftScope="ws-teste:pessoa-teste"
       evidence={[]}
       consentSlot={<p>consentimento</p>}
     />

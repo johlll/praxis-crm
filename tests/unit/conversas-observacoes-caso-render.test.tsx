@@ -107,7 +107,10 @@ const OWNER = { editAttendance: true, editProgress: true, pauseCommercial: true,
 const SALES = { editAttendance: true, editProgress: false, pauseCommercial: true, editActivities: true, assignCaseNumber: true, manageServiceCatalog: false, addCaseNote: true };
 const VIEWER = { editAttendance: false, editProgress: false, pauseCommercial: false, editActivities: false, assignCaseNumber: false, manageServiceCatalog: false, addCaseNote: false };
 
-function panel(context: ReturnType<typeof ctx>, opts: { editar?: boolean; perms?: typeof OWNER } = {}): ReactElement {
+/** Escopo dos rascunhos guardados na aba (escritório:pessoa); novo a cada teste. */
+let SCOPE = "";
+
+function panel(context: ReturnType<typeof ctx>, opts: { editar?: boolean; perms?: typeof OWNER; scope?: string } = {}): ReactElement {
   return (
     <ConversationContextPanel
       conversation={{ id: CONV, contactId: "c1000000-0000-4000-8000-000000000001", contactName: "Maria Santos", waId: "+5541999990101", leadId: "1ead0000-0000-4000-8000-000000000001", legalArea: "Imobiliário", needsLinkReview: false }}
@@ -115,6 +118,7 @@ function panel(context: ReturnType<typeof ctx>, opts: { editar?: boolean; perms?
       contextFailed={false}
       params={{ q: "", status: "all", page: 1, caso: context.focusId, sel: null, aba: "resumo" as never, editar: opts.editar ?? false }}
       permissions={opts.perms ?? OWNER}
+      draftScope={opts.scope ?? SCOPE}
       evidence={[]}
       consentSlot={<p>consentimento</p>}
     />
@@ -129,6 +133,7 @@ const LOAD_MORE = /^(Ver anteriores|Tentar de novo)$/;
 beforeEach(() => {
   for (const fn of [...Object.values(trackActions), ...Object.values(serviceActions), ...Object.values(noteActions), ...Object.values(router)]) fn.mockReset();
   trackActions.loadStatusTrackHistoryAction.mockResolvedValue({ ok: true, page: emptyHistory });
+  SCOPE = `ws-${crypto.randomUUID()}:user-${crypto.randomUUID()}`;
 });
 afterEach(cleanup);
 
@@ -329,5 +334,193 @@ describe("Edição: escrever uma observação", () => {
     cleanup();
     render(panel(ctx(OPP_A, "Imobiliário", 42, { status: "ok", page: page(all, null, 3) }), { perms: VIEWER, editar: true }));
     expect(screen.queryByLabelText(/Nova observação para/)).toBeNull();
+  });
+});
+
+/**
+ * Voltar/Avançar do navegador e troca de caso DESMONTAM o editor (a URL muda, a edição some ou outro caso entra).
+ * O rascunho fica guardado na memória da aba — nunca no servidor nem no armazenamento do navegador —, isolado por
+ * pessoa/escritório e por caso, e volta quando a pessoa retorna ao caso. A gravação continua ligada ao caso de
+ * origem mesmo com o editor desmontado. Rerender sem `editar` = Voltar ao Resumo; com outro caso = histórico.
+ */
+describe("Rascunho guardado na aba (Voltar/Avançar, troca de caso)", () => {
+  const A = () => ctx(OPP_A, "Imobiliário", 42, { status: "ok", page: page([], null, 3) });
+  const B = () => ctx(OPP_B, "Tributário", null, { status: "ok", page: page([], null, 3) });
+  const box = () => screen.getByLabelText(/Nova observação para/) as HTMLTextAreaElement;
+  const unload = () => {
+    const ev = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  };
+
+  it("Voltar e Avançar: o rascunho do caso volta com aviso; o outro caso nunca o recebe; nada é enviado", () => {
+    const v = render(panel(A(), { editar: true }));
+    fireEvent.change(box(), { target: { value: "Rascunho do caso A" } });
+    v.rerender(panel(A())); // Voltar: Resumo, editor desmontado
+    expect(screen.queryByLabelText(/Nova observação para/)).toBeNull();
+    v.rerender(panel(B(), { editar: true })); // histórico leva ao outro caso
+    expect(box().value).toBe("");
+    expect(screen.queryByText(/Rascunho recuperado/)).toBeNull();
+    v.rerender(panel(A(), { editar: true })); // Avançar de volta ao caso A
+    expect(box().value).toBe("Rascunho do caso A");
+    expect(screen.getByText(/Rascunho recuperado/).textContent).toMatch(/ainda não foi registrado/);
+    expect(noteActions.addCaseNoteAction).not.toHaveBeenCalled();
+  });
+
+  it("o Resumo do caso avisa que há observação não registrada (só no caso dela), com o caminho para continuar", () => {
+    const v = render(panel(A(), { editar: true }));
+    fireEvent.change(box(), { target: { value: "Rascunho do caso A" } });
+    v.rerender(panel(A()));
+    const hint = within(card()).getByRole("status");
+    expect(hint.textContent).toMatch(/observação não registrada/);
+    expect(within(hint).getByRole("link", { name: "Continuar escrevendo" }).getAttribute("href")).toMatch(/editar=1.*#observacoes$/);
+    v.rerender(panel(B()));
+    expect(within(card()).queryByRole("status")).toBeNull();
+  });
+
+  it("'Descartar e sair' apaga o rascunho guardado: ao voltar ao caso, a caixa está vazia", async () => {
+    const v = render(panel(A(), { editar: true }));
+    fireEvent.change(box(), { target: { value: "Rascunho descartado" } });
+    const link = document.createElement("a");
+    link.href = `/conversas/${CONV}?caso=${OPP_B}`;
+    document.body.appendChild(link);
+    link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Descartar e sair" }));
+    link.remove();
+    v.rerender(panel(B(), { editar: true }));
+    v.rerender(panel(A(), { editar: true }));
+    expect(box().value).toBe("");
+    expect(screen.queryByText(/Rascunho recuperado/)).toBeNull();
+  });
+
+  it("outra pessoa ou outro escritório na mesma aba não vê o rascunho (e o rascunho anterior é esquecido)", () => {
+    const v = render(panel(A(), { editar: true }));
+    fireEvent.change(box(), { target: { value: "Rascunho de quem saiu" } });
+    v.rerender(panel(A(), { editar: true, scope: "ws-outro:user-outro" }));
+    expect(box().value).toBe("");
+    v.rerender(panel(A(), { editar: true }));
+    expect(box().value).toBe("");
+  });
+
+  it("gravação em andamento e Voltar: o resultado fica no caso de ORIGEM; ao voltar, confirmação e caixa vazia", async () => {
+    let finish: (v: unknown) => void = () => {};
+    noteActions.addCaseNoteAction.mockImplementationOnce(() => new Promise((r) => (finish = r)));
+    const v = render(panel(A(), { editar: true }));
+    fireEvent.change(box(), { target: { value: "Observação lenta do A" } });
+    fireEvent.click(screen.getByRole("button", { name: "Registrar observação" }));
+    v.rerender(panel(A())); // Voltar durante a gravação
+    expect(within(card()).getByRole("status").textContent).toMatch(/sendo enviada/);
+    v.rerender(panel(B(), { editar: true }));
+    await act(async () => finish({ ok: true, replayed: false, note: { ...notes(OPP_A, "a", 1)[0]!, createdAt: "2026-11-19T13:00:00.000Z" } }));
+    expect(screen.queryByText(/Observação registrada/)).toBeNull(); // nunca sob o outro caso
+    expect(box().value).toBe("");
+    v.rerender(panel(A(), { editar: true }));
+    expect(box().value).toBe("");
+    expect(screen.getByText(/Observação registrada em/)).toBeTruthy();
+    expect(screen.queryByText(/Rascunho recuperado/)).toBeNull();
+    expect(router.refresh).toHaveBeenCalled();
+    expect(noteActions.addCaseNoteAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("gravação que falha com o editor fora da tela: ao voltar, o texto e o aviso estão lá; repetir usa a MESMA chave", async () => {
+    let finish: (v: unknown) => void = () => {};
+    noteActions.addCaseNoteAction.mockImplementationOnce(() => new Promise((r) => (finish = r)));
+    const v = render(panel(A(), { editar: true }));
+    fireEvent.change(box(), { target: { value: "Observação que falha longe" } });
+    fireEvent.click(screen.getByRole("button", { name: "Registrar observação" }));
+    v.rerender(panel(A()));
+    await act(async () => finish({ ok: false, error: "Não foi possível registrar a observação. Tente de novo." }));
+    v.rerender(panel(A(), { editar: true }));
+    expect(box().value).toBe("Observação que falha longe");
+    expect(screen.getByRole("alert").textContent).toMatch(/Não foi possível registrar/);
+    noteActions.addCaseNoteAction.mockResolvedValueOnce({ ok: false, error: "x" });
+    fireEvent.click(screen.getByRole("button", { name: "Registrar observação" }));
+    await waitFor(() => expect(noteActions.addCaseNoteAction).toHaveBeenCalledTimes(2));
+    const [k1, k2] = noteActions.addCaseNoteAction.mock.calls.map((c) => (c[0] as { idempotencyKey: string }).idempotencyKey);
+    expect(k2).toBe(k1);
+  });
+
+  it("o guardado só responde ao escopo atual (sem lampejo do rascunho de outra pessoa) e ignora resposta de escopo antigo", async () => {
+    const { readCaseNoteDraft, writeCaseNoteDraft } = await import("@/components/conversations/context/case-note-drafts");
+    writeCaseNoteDraft(SCOPE, OPP_A, { body: "Rascunho da pessoa 1" });
+    expect(readCaseNoteDraft("ws-x:pessoa-2", OPP_A).body).toBe("");
+    expect(readCaseNoteDraft(SCOPE, OPP_A).body).toBe("Rascunho da pessoa 1");
+    // Resposta de uma gravação feita por outro escopo (quem saiu da conta): não cria nem altera nada.
+    writeCaseNoteDraft("ws-x:pessoa-2", OPP_A, { error: "falhou" }, { settle: true });
+    expect(readCaseNoteDraft(SCOPE, OPP_A)).toMatchObject({ body: "Rascunho da pessoa 1", error: null });
+    expect(readCaseNoteDraft("ws-x:pessoa-2", OPP_A).error).toBeNull();
+  });
+
+  it("fechar ou recarregar a aba: o navegador avisa enquanto houver rascunho guardado, mesmo fora da tela", () => {
+    const v = render(panel(A(), { editar: true }));
+    expect(unload()).toBe(false);
+    fireEvent.change(box(), { target: { value: "Rascunho antes de fechar" } });
+    v.rerender(panel(A())); // editor desmontado
+    expect(unload()).toBe(true);
+    v.rerender(panel(A(), { editar: true }));
+    fireEvent.change(box(), { target: { value: "   " } });
+    expect(unload()).toBe(false);
+  });
+});
+
+/**
+ * Rejeição da chamada (falha no transporte da Server Action): o servidor pode ter gravado sem a resposta chegar.
+ * O editor não cai, mantém o texto e a chave da MESMA intenção, avisa que o resultado é desconhecido e libera nova
+ * tentativa — que reencontra o mesmo pedido no banco (repetição), sem duplicar.
+ */
+describe("Falha no transporte da gravação (Promise rejeitada)", () => {
+  const A = () => ctx(OPP_A, "Imobiliário", 42, { status: "ok", page: page([], null, 3) });
+  const B = () => ctx(OPP_B, "Tributário", null, { status: "ok", page: page([], null, 3) });
+  const box = () => screen.getByLabelText(/Nova observação para/) as HTMLTextAreaElement;
+
+  it("painel de pé, texto e chave mantidos, aviso legível, nada de sucesso; repetir devolve o registro existente", async () => {
+    noteActions.addCaseNoteAction.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    render(panel(A(), { editar: true }));
+    fireEvent.change(box(), { target: { value: "Observação com resposta perdida" } });
+    fireEvent.click(screen.getByRole("button", { name: "Registrar observação" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/Não foi possível confirmar se a observação foi registrada/);
+    expect(alert.textContent).not.toMatch(/Failed to fetch/);
+    expect(screen.getByRole("region", { name: "Observações do caso" })).toBeTruthy();
+    expect(box().value).toBe("Observação com resposta perdida");
+    expect(screen.queryByText(/Observação registrada em|já estava registrada/)).toBeNull();
+    const retry = screen.getByRole("button", { name: "Registrar observação" }) as HTMLButtonElement;
+    expect(retry.disabled).toBe(false);
+    noteActions.addCaseNoteAction.mockResolvedValueOnce({ ok: true, replayed: true, note: { ...notes(OPP_A, "a", 1)[0]!, body: "Observação com resposta perdida" } });
+    fireEvent.click(retry);
+    expect(await screen.findByText("Esta observação já estava registrada neste caso.")).toBeTruthy();
+    const [k1, k2] = noteActions.addCaseNoteAction.mock.calls.map((c) => (c[0] as { idempotencyKey: string }).idempotencyKey);
+    expect(k2).toBe(k1);
+    expect(noteActions.addCaseNoteAction.mock.calls[1]![0]).toEqual(noteActions.addCaseNoteAction.mock.calls[0]![0]);
+    expect(box().value).toBe("");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("rejeição com troca de caso no meio: nada aparece sob o outro caso; o caso de origem guarda texto e aviso", async () => {
+    let fail: (e: unknown) => void = () => {};
+    noteActions.addCaseNoteAction.mockImplementationOnce(() => new Promise((_, rej) => (fail = rej)));
+    const v = render(panel(A(), { editar: true }));
+    fireEvent.change(box(), { target: { value: "Observação do A com transporte falho" } });
+    fireEvent.click(screen.getByRole("button", { name: "Registrar observação" }));
+    v.rerender(panel(B(), { editar: true }));
+    await act(async () => fail(new TypeError("Failed to fetch")));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(box().value).toBe("");
+    v.rerender(panel(A(), { editar: true }));
+    expect(box().value).toBe("Observação do A com transporte falho");
+    expect(screen.getByRole("alert").textContent).toMatch(/Não foi possível confirmar/);
+  });
+
+  it("'Ver anteriores' com a chamada rejeitada: aviso, mantém as mostradas e deixa tentar de novo", async () => {
+    const all = notes(OPP_A, "a", 8);
+    noteActions.loadCaseNotesAction
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockImplementation(async (input: { before: string; beforeId: string }) => ({ ok: true, page: page(all, input, 10) }));
+    render(panel(ctx(OPP_A, "Imobiliário", 42, { status: "ok", page: page(all, null, 3) })));
+    fireEvent.click(within(card()).getByRole("button", { name: "Ver anteriores" }));
+    expect((await within(card()).findByRole("alert")).textContent).toMatch(/Não foi possível carregar/);
+    expect(shown(card())).toHaveLength(3);
+    fireEvent.click(within(card()).getByRole("button", { name: "Tentar de novo" }));
+    await waitFor(() => expect(shown(card())).toHaveLength(8));
   });
 });

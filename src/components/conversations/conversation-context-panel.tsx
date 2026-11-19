@@ -67,7 +67,7 @@ import { CaseSwitcher } from "./context/case-switcher";
 import { ConsentDisclosure } from "./context/consent-disclosure";
 import { ServiceStepper } from "./context/service-stepper";
 import { CaseNumberControl, ServicePlanEditor } from "./context/service-plan-editor";
-import { CaseNoteComposer, CaseNotesList, CaseNotesUnavailable } from "./context/case-notes";
+import { CaseNoteComposer, CaseNoteDraftHint, CaseNotesList, CaseNotesUnavailable } from "./context/case-notes";
 
 const ATTENDANCE_OPTIONS = ATTENDANCE_STATUSES.filter((s) => s !== "nao_informado").map((s) => ({
   value: s,
@@ -168,6 +168,7 @@ export function ConversationContextPanel({
   contextFailed,
   params,
   permissions,
+  draftScope,
   evidence,
   consentSlot,
   consentNeedsAttention = false,
@@ -177,6 +178,8 @@ export function ConversationContextPanel({
   contextFailed: boolean;
   params: InboxParams;
   permissions: ContextPermissions;
+  /** Escritório:pessoa — escopo dos rascunhos de observação guardados na memória da aba. */
+  draftScope: string;
   evidence: EvidenceCandidate[];
   consentSlot: ReactNode;
   /** Sem consentimento vigente: a seção de consentimento já vem aberta. */
@@ -230,6 +233,7 @@ export function ConversationContextPanel({
           conversation={conversation}
           context={context}
           permissions={permissions}
+          draftScope={draftScope}
           evidence={evidence}
           closeHref={hrefWith({ editar: false })}
         />
@@ -278,6 +282,7 @@ export function ConversationContextPanel({
                 consentSlot={consentSlot}
                 consentNeedsAttention={consentNeedsAttention}
                 writeNoteHref={permissions.addCaseNote ? `${hrefWith({ editar: true })}#observacoes` : null}
+                draftScope={draftScope}
               />
             )}
           </div>
@@ -505,6 +510,7 @@ function CaseSummary({
   consentSlot,
   consentNeedsAttention,
   writeNoteHref,
+  draftScope,
 }: {
   conversation: PanelConversation;
   context: ConversationContext;
@@ -513,6 +519,7 @@ function CaseSummary({
   consentNeedsAttention: boolean;
   /** Edição com a seção de observações (só para quem acrescenta). O Resumo continua sendo consulta. */
   writeNoteHref: string | null;
+  draftScope: string;
 }) {
   const { focus, cases } = context;
   if (!focus) {
@@ -638,6 +645,7 @@ function CaseSummary({
           ) : null
         }
       >
+        {writeNoteHref ? <CaseNoteDraftHint opportunityId={focus.option.opportunityId} draftScope={draftScope} href={writeNoteHref} /> : null}
         <CaseNotesBlock focus={focus} />
       </Card>
 
@@ -873,12 +881,14 @@ function CaseEdit({
   conversation,
   context,
   permissions,
+  draftScope,
   evidence,
   closeHref,
 }: {
   conversation: PanelConversation;
   context: ConversationContext;
   permissions: ContextPermissions;
+  draftScope: string;
   evidence: EvidenceCandidate[];
   closeHref: string;
 }) {
@@ -927,6 +937,7 @@ function CaseEdit({
                 key={`case_note:${o.opportunityId}`}
                 opportunityId={o.opportunityId}
                 caseLabel={caseChipLabel(o)}
+                draftScope={draftScope}
               />
             ) : (
               <Muted>Seu perfil só lê as observações deste caso.</Muted>
