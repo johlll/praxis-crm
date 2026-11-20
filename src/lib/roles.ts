@@ -189,7 +189,11 @@ export type Permission =
   // trocar e remover roteiro, concluir e reabrir etapas e definir a etapa atual seguem case.progress_edit
   // (o roteiro é parte do andamento do serviço). O banco repete as três faixas.
   | "case.number_assign"
-  | "service_catalog.manage";
+  | "service_catalog.manage"
+  // Observações por caso (docs/decisoes/conversas-observacoes-caso.md): acrescentar uma observação a um
+  // caso, na mesma faixa de lead_note.edit (owner, admin, manager, lawyer, sales). Ler segue o alcance do caso
+  // (visualizador lê). O banco repete a faixa, o escritório, o alcance e o bloqueio de contato anonimizado.
+  | "case_note.add";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -240,6 +244,7 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "privacy.manage": new Set<Role>(["owner", "admin"]),
   "case.number_assign": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
   "service_catalog.manage": new Set<Role>(["owner", "admin", "manager"]),
+  "case_note.add": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {

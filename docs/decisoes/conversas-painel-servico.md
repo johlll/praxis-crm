@@ -239,8 +239,8 @@ atualização). Sem roteiro, o andamento não ganha restrição nova.
 
 ## 9. Pendências (registradas, não implementadas)
 
-1. **Observações por caso** — notas acrescentadas e vinculadas ao caso, preservando as notas gerais do lead (próxima
-   entrega).
+1. **Observações por caso** — notas acrescentadas e vinculadas ao caso, preservando as notas gerais do lead.
+   **Entregue** em [conversas-observacoes-caso.md](conversas-observacoes-caso.md).
 2. **Documentos** — acesso, armazenamento, conferência humana (arquivo recebido não é documento analisado) e retenção
    reais.
 3. **Automação** — aplicador e extrator seguindo o contrato da seção 4; nada automático nesta entrega.

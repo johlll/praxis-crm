@@ -275,4 +275,82 @@ test.describe.serial("conversas + simulador de WhatsApp — A7", () => {
     await page.goto("/configuracoes/tipos-de-servico");
     await expect(page.getByRole("heading", { name: "404" })).toBeVisible();
   });
+
+  test("10. observação do caso: escrita pelo lápis, lida no Resumo como texto; visualizador só lê", async ({ page }) => {
+    await login(page, SEED_USERS.ana.email);
+    await page.goto(conversationUrl);
+    await openContext(page);
+    const panel = page.locator("#painel-contexto");
+    const card = panel.getByRole("region", { name: "Observações" });
+    await expect(card.getByText("Nenhuma observação registrada neste caso.")).toBeVisible();
+    await expect(card.getByRole("textbox")).toHaveCount(0);
+
+    await card.getByRole("link", { name: "Escrever" }).click();
+    await expect(page).toHaveURL(/editar=1/);
+    const section = panel.getByRole("region", { name: "Observações do caso" });
+    await expect(section.getByText(/Nova observação para/)).toBeVisible();
+    await section.getByRole("textbox").fill("Cliente acompanha pelo WhatsApp.\n<b>sem negrito</b>");
+    await section.getByRole("button", { name: "Registrar observação" }).click();
+    await expect(section.getByText(/Observação registrada em/)).toBeVisible();
+    await expect(section.getByRole("textbox")).toHaveValue("");
+
+    await panel.getByRole("link", { name: "Voltar ao caso" }).click();
+    await expect(card.getByText("<b>sem negrito</b>", { exact: false })).toBeVisible();
+    await expect(card.locator("b")).toHaveCount(0);
+    await expect(card.getByText(/Cliente acompanha pelo WhatsApp\./)).toBeVisible();
+
+    await page.context().clearCookies();
+    await login(page, SEED_USERS.elisa.email);
+    await page.goto(conversationUrl);
+    await openContext(page);
+    await expect(card.getByText(/Cliente acompanha pelo WhatsApp\./)).toBeVisible();
+    await expect(card.getByRole("link", { name: "Escrever" })).toHaveCount(0);
+  });
+
+  test("11. rascunho da observação sobrevive a Voltar/Avançar; resposta perdida não derruba o painel nem duplica", async ({ page }) => {
+    await login(page, SEED_USERS.ana.email);
+    await page.goto(conversationUrl);
+    await openContext(page);
+    const panel = page.locator("#painel-contexto");
+    const card = panel.getByRole("region", { name: "Observações" });
+    const section = panel.getByRole("region", { name: "Observações do caso" });
+    await card.getByRole("link", { name: "Escrever" }).click();
+    await expect(page).toHaveURL(/editar=1/);
+    const editUrl = page.url();
+    await section.getByRole("textbox").fill("Rascunho que sobrevive ao Voltar");
+
+    // Voltar do navegador: a URL volta ao Resumo, o rascunho fica guardado na aba e o Resumo avisa.
+    await page.goBack();
+    await expect(page).not.toHaveURL(/editar=1/);
+    await expect(card.getByRole("status")).toContainText("observação não registrada");
+    await page.goForward();
+    await expect(page).toHaveURL(editUrl);
+    await expect(section.getByRole("textbox")).toHaveValue("Rascunho que sobrevive ao Voltar");
+    await expect(section.getByText(/Rascunho recuperado/)).toBeVisible();
+
+    // A resposta da gravação se perde DEPOIS de o servidor gravar: aviso de resultado desconhecido, texto mantido;
+    // a nova tentativa reencontra o mesmo pedido ("já estava registrada") e não duplica.
+    const text = "Observação com a resposta perdida no caminho";
+    let cut = true;
+    await page.route("**/conversas/**", async (route) => {
+      const req = route.request();
+      if (cut && req.method() === "POST" && req.headers()["next-action"] && (req.postData() ?? "").includes(text)) {
+        cut = false;
+        await route.fetch();
+        await route.abort("failed");
+        return;
+      }
+      await route.continue();
+    });
+    await section.getByRole("textbox").fill(text);
+    await section.getByRole("button", { name: "Registrar observação" }).click();
+    await expect(section.getByRole("alert")).toContainText("Não foi possível confirmar se a observação foi registrada");
+    await expect(section.getByRole("textbox")).toHaveValue(text);
+    await expect(section.getByText(/Observação registrada em/)).toHaveCount(0);
+    await section.getByRole("button", { name: "Registrar observação" }).click();
+    await expect(section.getByText("Esta observação já estava registrada neste caso.")).toBeVisible();
+    await page.unroute("**/conversas/**");
+    await panel.getByRole("link", { name: "Voltar ao caso" }).click();
+    await expect(card.getByText(text, { exact: true })).toHaveCount(1);
+  });
 });

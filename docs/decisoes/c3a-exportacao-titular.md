@@ -102,3 +102,6 @@ dependem da política jurídica a definir com o Dr. Henrique. Nada disso existe 
 - **Painel do caso, etapa B** ([conversas-painel-servico.md](conversas-painel-servico.md)): seções `case_numbers`,
   `case_service_plans` (com as etapas copiadas e as datas de conclusão) e `case_service_history`, sem usuário interno e
   sem chave de idempotência. As seções anteriores ficaram iguais.
+- **Observações por caso** ([conversas-observacoes-caso.md](conversas-observacoes-caso.md)): seção `case_notes` só
+  com a existência (`id`, `opportunity_id`, `created_at`). O texto (`case_notes.body`, texto livre interno) e o autor
+  ficam fora, como `lead_notes.body` — o 12º campo retirado. As seções anteriores ficaram iguais.

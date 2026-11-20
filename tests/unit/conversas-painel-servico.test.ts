@@ -393,8 +393,9 @@ describe("permissões: a mesma faixa no código e no banco", () => {
 describe("contrato da migration", () => {
   const sql = read(MIGRATION);
   const migrations = readdirSync(join(ROOT, "supabase/migrations")).filter((f) => f.endsWith(".sql")).sort();
-  it("é a última, posterior à publicada (20261120120000), e não carrega a da #358", () => {
-    expect(migrations.at(-1)).toBe("20261121120000_conversas_painel_servico.sql");
+  it("vem logo depois da publicada (20261120120000), e não carrega a da #358", () => {
+    const i = migrations.indexOf("20261121120000_conversas_painel_servico.sql");
+    expect(migrations[i - 1]).toBe("20261120120000_conversas_painel_caso.sql");
     expect(migrations).not.toContain("20261119120000_conversas_horario_origem.sql");
     expect(sql).not.toMatch(/origin_time/);
   });

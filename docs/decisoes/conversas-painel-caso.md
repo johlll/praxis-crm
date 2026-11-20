@@ -168,7 +168,8 @@ pendentes.
    execução e conclusão. Antes de criar uma etapa de serviço independente, definir como as duas convivem sem
    contradição.
 4. **Marcos concluídos** — só com registro efetivo de conclusão; nunca inferidos pela posição.
-5. **Observações** — notas acrescentadas e vinculadas ao caso, preservando as notas gerais do lead.
+5. **Observações** — notas acrescentadas e vinculadas ao caso, preservando as notas gerais do lead. **Entregue** em
+   [conversas-observacoes-caso.md](conversas-observacoes-caso.md).
 6. **Documentos** — exigem implementação real de acesso, armazenamento, conferência humana (arquivo recebido não é
    documento analisado) e retenção; propostas em PDF ficam em grupo próprio.
 7. **Automação** — a etapa futura de automação deve considerar este modelo. Esta PR **não** declara as etapas do

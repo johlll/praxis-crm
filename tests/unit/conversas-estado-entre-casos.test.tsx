@@ -144,6 +144,7 @@ function panel(focusId: string, opts: { version?: number } = {}): ReactElement {
       // Os editores ficam na edição aberta pelo lápis (editar=1), não na consulta.
       params={{ q: "", status: "all", page: 1, caso: focusId, sel: null, aba: "resumo", editar: true }}
       permissions={{ editAttendance: true, editProgress: true, pauseCommercial: true }}
+      draftScope="ws-teste:pessoa-teste"
       evidence={MSGS.map((id, i) => ({ id, createdAt: `2026-11-17T1${i}:00:00+00:00`, authorLabel: "Cliente", excerpt: `Mensagem ${i + 1}` }))}
       consentSlot={null}
     />

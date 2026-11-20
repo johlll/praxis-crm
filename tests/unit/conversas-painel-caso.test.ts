@@ -280,12 +280,13 @@ describe("contrato da migration e promessas que o painel não faz", () => {
     expect(code).toMatch(/v_resolution := private\.conversation_case_resolution\(v_conv\.id, v_target\.role, v_actor\)/);
     expect(code).toMatch(/cross join lateral \(select private\.conversation_case_resolution\(p\.id, v_role, v_actor\) as r\) cr/);
   });
-  it("o painel não inventa código de caso, processo, protocolo, sentença, documentos nem observações (número e tipo só de dados gravados)", () => {
+  it("o painel não inventa código de caso, processo, protocolo, sentença nem documentos (número, tipo e observações só de dados gravados)", () => {
     const panel = read("src/components/conversations/conversation-context-panel.tsx");
     const visible = panel.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
     // Etapa B: "Nº interno" e "Tipo de serviço" vêm do banco (número atribuído, roteiro aplicado); sem registro,
-    // aparecem como "Não atribuído" e "Sem roteiro aplicado" — nunca um código de exemplo.
-    expect(visible).not.toMatch(/Protocolo|Sentença|Processo|Documentos|Observações|Imóvel|#IM/);
+    // aparecem como "Não atribuído" e "Sem roteiro aplicado" — nunca um código de exemplo. Observações por caso:
+    // só as registradas (list_case_notes); sem registro, "Nenhuma observação registrada neste caso".
+    expect(visible).not.toMatch(/Protocolo|Sentença|Processo|Documentos|Imóvel|#IM/);
     expect(visible).toMatch(/Não atribuído/);
     expect(visible).toMatch(/Sem roteiro aplicado/);
     expect(visible).not.toMatch(/Vit[óo]ria/);

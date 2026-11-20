@@ -153,6 +153,7 @@ function panel(context: ReturnType<typeof ctx>, opts: { aba?: string; editar?: b
       contextFailed={false}
       params={{ q: "", status: "all", page: 1, caso: null, sel: null, aba: (opts.aba ?? "resumo") as never, editar: opts.editar ?? false }}
       permissions={opts.perms ?? OWNER}
+      draftScope="ws-teste:pessoa-teste"
       evidence={[]}
       consentSlot={<p>consentimento</p>}
     />
