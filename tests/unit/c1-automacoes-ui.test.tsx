@@ -3,7 +3,7 @@
  * pausar, arquivar em dois passos) e o formulário (campos por gatilho, estado
  * limpo a cada abertura, erro sanitizado, nada de campo livre).
  */
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { simulateMock, statusMock, saveMock, processMock } = vi.hoisted(() => ({
@@ -292,9 +292,49 @@ describe("processar agora", () => {
     render(<ProcessNowButton />);
     fireEvent.click(screen.getByRole("button", { name: "Processar agora" }));
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Nada pendente agora."));
+    expect(processMock).toHaveBeenCalledTimes(1);
+
+    // O texto do resultado aparece num render ANTERIOR ao fim da transição: só depois dela o botão volta a ser
+    // "Processar agora" e fica habilitado. A segunda interação espera por isso, explicitamente.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Processar agora" })).toBeEnabled());
 
     processMock.mockResolvedValueOnce({ ok: false, error: "Você não tem permissão para fazer isso." });
     fireEvent.click(screen.getByRole("button", { name: "Processar agora" }));
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Você não tem permissão para fazer isso."));
+    expect(screen.getByRole("status")).not.toHaveTextContent("Nada pendente agora.");
+    expect(processMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("o botão fica bloqueado enquanto processa e volta quando a operação termina (promessa pendente controlada)", async () => {
+    let finish: (v: unknown) => void = () => {};
+    processMock.mockImplementationOnce(() => new Promise((r) => (finish = r)));
+    render(<ProcessNowButton />);
+    fireEvent.click(screen.getByRole("button", { name: "Processar agora" }));
+
+    // Enquanto a promessa está pendente: botão com o nome de espera, desabilitado, sem resultado na tela.
+    const busy = screen.getByRole("button", { name: "Processando…" });
+    expect(busy).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Processar agora" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    fireEvent.click(busy); // clique no botão bloqueado não dispara outra chamada
+    expect(processMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => finish({ ok: true, events: 3, executions: 2 }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Processar agora" })).toBeEnabled());
+    expect(screen.getByRole("status")).toHaveTextContent("3 evento(s) lido(s) e 2 execução(ões) tentada(s).");
+    expect(screen.queryByRole("button", { name: "Processando…" })).not.toBeInTheDocument();
+
+    // Disponível de novo: a segunda ação é uma nova chamada e o resultado da primeira sai da tela ao clicar,
+    // então o texto que aparecer depois só pode ter vindo da segunda.
+    let finish2: (v: unknown) => void = () => {};
+    processMock.mockImplementationOnce(() => new Promise((r) => (finish2 = r)));
+    fireEvent.click(screen.getByRole("button", { name: "Processar agora" }));
+    expect(processMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: "Processando…" })).toBeDisabled();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    await act(async () => finish2({ ok: true, events: 0, executions: 0 }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Processar agora" })).toBeEnabled());
+    expect(screen.getByRole("status")).toHaveTextContent("Nada pendente agora.");
+    expect(processMock).toHaveBeenCalledTimes(2);
   });
 });
