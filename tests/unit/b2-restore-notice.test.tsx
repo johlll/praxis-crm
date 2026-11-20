@@ -108,6 +108,49 @@ describe("confirmação da restauração sobrevive à atualização da tela", ()
     fireEvent.click(screen.getByRole("button", { name: "Restaurar valor do CRM" }));
     const error = await screen.findByText("A atividade mudou depois do conflito.");
     expect(error.closest("[data-slot=alert]")?.className).toMatch(/danger/);
-    expect(screen.getByRole("button", { name: "Restaurar valor do CRM" })).toBeTruthy();
+    expect(error.closest("[data-restore-outcome]")?.getAttribute("data-restore-outcome")).toBe("refused");
+
+    // O erro entra no DOM num render ANTERIOR ao fim da transição: só depois dela o botão volta a ser
+    // "Restaurar valor do CRM" e fica habilitado. A consulta ao botão normal espera por isso, explicitamente.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Restaurar valor do CRM" })).toBeEnabled());
+    expect(screen.queryByRole("button", { name: /Restaurando/ })).toBeNull();
+    expect(m.restoreAction).toHaveBeenCalledTimes(1);
+    expect(m.restoreAction).toHaveBeenCalledWith(CONFLICT_ID);
+    // nada de sucesso: nem aviso de "restaurado", nem desfecho sincronizado ou só no CRM
+    expect(screen.queryByText(/Valor do CRM restaurado/)).toBeNull();
+    expect(document.querySelector('[data-restore-outcome="synced"], [data-restore-outcome="crm_only"]')).toBeNull();
+  });
+
+  it("recusa e nova tentativa (promessas controladas): bloqueado durante cada chamada, disponível depois, e o resultado novo substitui o antigo", async () => {
+    let refuse!: (v: unknown) => void;
+    let accept!: (v: unknown) => void;
+    m.restoreAction
+      .mockImplementationOnce(() => new Promise((r) => (refuse = r)))
+      .mockImplementationOnce(() => new Promise((r) => (accept = r)));
+    render(timeline([conflict(false)]));
+
+    // 1ª chamada pendente: nome de espera, desabilitado, sem resultado; o botão normal não existe.
+    fireEvent.click(screen.getByRole("button", { name: "Restaurar valor do CRM" }));
+    const busy = screen.getByRole("button", { name: "Restaurando…" });
+    expect(busy).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Restaurar valor do CRM" })).toBeNull();
+    expect(document.querySelector("[data-restore-outcome]")).toBeNull();
+    fireEvent.click(busy); // clique no botão bloqueado não repete a chamada
+    expect(m.restoreAction).toHaveBeenCalledTimes(1);
+
+    // recusa: erro visível, depois o botão volta habilitado
+    await act(async () => refuse({ ok: false, error: "A atividade mudou depois do conflito." }));
+    expect(await screen.findByText("A atividade mudou depois do conflito.")).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Restaurar valor do CRM" })).toBeEnabled());
+
+    // 2ª chamada: é NOVA (2 chamadas, mesmo conflito); o erro antigo não vale como prova do resultado dela
+    fireEvent.click(screen.getByRole("button", { name: "Restaurar valor do CRM" }));
+    expect(m.restoreAction).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: "Restaurando…" })).toBeDisabled();
+    await act(async () => accept({ ok: true, notice: { level: "success", message: "Valor do CRM restaurado. Google Agenda atualizado." } }));
+    expect(await screen.findByText("Valor do CRM restaurado. Google Agenda atualizado.")).toBeTruthy();
+    expect(screen.queryByText("A atividade mudou depois do conflito.")).toBeNull();
+    expect(m.restoreAction).toHaveBeenNthCalledWith(2, CONFLICT_ID);
+    expect(m.restoreAction).toHaveBeenCalledTimes(2);
   });
 });

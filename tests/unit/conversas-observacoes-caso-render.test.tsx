@@ -520,7 +520,49 @@ describe("Falha no transporte da gravação (Promise rejeitada)", () => {
     fireEvent.click(within(card()).getByRole("button", { name: "Ver anteriores" }));
     expect((await within(card()).findByRole("alert")).textContent).toMatch(/Não foi possível carregar/);
     expect(shown(card())).toHaveLength(3);
-    fireEvent.click(within(card()).getByRole("button", { name: "Tentar de novo" }));
+    // O aviso entra no DOM num render ANTERIOR ao fim da transição: o botão só passa a ser "Tentar de novo"
+    // (e a ficar habilitado) depois dela. A interação espera por isso, explicitamente.
+    const retry = await within(card()).findByRole("button", { name: "Tentar de novo" });
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
     await waitFor(() => expect(shown(card())).toHaveLength(8));
+    expect(noteActions.loadCaseNotesAction).toHaveBeenCalledTimes(2);
+    expect(noteActions.loadCaseNotesAction.mock.calls[1]![0]).toEqual(noteActions.loadCaseNotesAction.mock.calls[0]![0]);
+  });
+
+  it("'Ver anteriores' (promessas controladas): bloqueado durante a busca, 'Tentar de novo' depois da falha, e a nova tentativa usa o mesmo cursor", async () => {
+    const all = notes(OPP_A, "a", 8);
+    let fail!: (e: unknown) => void;
+    let ok!: (v: unknown) => void;
+    noteActions.loadCaseNotesAction
+      .mockImplementationOnce(() => new Promise((_, rej) => (fail = rej)))
+      .mockImplementationOnce(() => new Promise((r) => (ok = r)));
+    render(panel(ctx(OPP_A, "Imobiliário", 42, { status: "ok", page: page(all, null, 3) })));
+
+    // 1ª busca pendente: "Carregando…" desabilitado; "Ver anteriores" não existe; clique no bloqueado não busca de novo.
+    fireEvent.click(within(card()).getByRole("button", { name: "Ver anteriores" }));
+    const busy = within(card()).getByRole("button", { name: "Carregando…" });
+    expect(busy).toBeDisabled();
+    expect(within(card()).queryByRole("button", { name: "Ver anteriores" })).toBeNull();
+    fireEvent.click(busy);
+    expect(noteActions.loadCaseNotesAction).toHaveBeenCalledTimes(1);
+
+    // chamada rejeitada: aviso, as 3 já mostradas ficam e o botão vira "Tentar de novo", habilitado
+    await act(async () => fail(new TypeError("Failed to fetch")));
+    expect((await within(card()).findByRole("alert")).textContent).toMatch(/Não foi possível carregar/);
+    await waitFor(() => expect(within(card()).getByRole("button", { name: "Tentar de novo" })).toBeEnabled());
+    expect(shown(card())).toHaveLength(3);
+
+    // 2ª busca: é NOVA, com o MESMO cursor; o aviso antigo sai ao clicar e não vale como prova do resultado dela
+    fireEvent.click(within(card()).getByRole("button", { name: "Tentar de novo" }));
+    expect(noteActions.loadCaseNotesAction).toHaveBeenCalledTimes(2);
+    expect(noteActions.loadCaseNotesAction.mock.calls[1]![0]).toEqual(noteActions.loadCaseNotesAction.mock.calls[0]![0]);
+    expect(within(card()).getByRole("button", { name: "Carregando…" })).toBeDisabled();
+    expect(within(card()).queryByRole("alert")).toBeNull();
+    await act(async () => ok({ ok: true, page: page(all, { before: all[2]!.createdAt, beforeId: all[2]!.id }, 10) }));
+    await waitFor(() => expect(shown(card())).toHaveLength(8));
+    expect(within(card()).queryByRole("button", { name: LOAD_MORE })).toBeNull();
+    expect(within(card()).queryByRole("button", { name: "Carregando…" })).toBeNull();
+    expect(noteActions.loadCaseNotesAction).toHaveBeenCalledTimes(2);
   });
 });
