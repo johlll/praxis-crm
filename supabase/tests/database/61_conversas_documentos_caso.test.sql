@@ -53,7 +53,10 @@ create function pg_temp.subir(p_doc uuid, p_size bigint) returns void language s
   select 'case-documents', storage_path, jsonb_build_object('size', p_size, 'mimetype', declared_type)
   from public.case_documents where id = p_doc
 $f$;
+-- Simula a remoção pela API do Storage. O Supabase real recusa DELETE direto em storage.objects
+-- (storage.protect_delete) sem esta configuração da sessão; ela vale só nesta transação de teste.
 create function pg_temp.apagar_objeto(p_doc uuid) returns void language sql security definer as $f$
+  select set_config('storage.allow_delete_query', 'true', true);
   delete from storage.objects where bucket_id = 'case-documents'
     and name = (select storage_path from public.case_documents where id = p_doc)
 $f$;
@@ -333,6 +336,7 @@ set local role service_role;
 select is((select jsonb_array_length(case_document_cleanup_claim(10) -> 'objects')), 0, 'outro processador não pega o que já está reservado');
 select ok(not case_document_cleanup_complete((:'q2')::uuid), 'objeto ainda no Storage: continua na fila');
 reset role;
+select set_config('storage.allow_delete_query', 'true', true);
 delete from storage.objects where bucket_id = 'case-documents' and name = :'p2';
 set local role service_role;
 select ok(case_document_cleanup_complete((:'q2')::uuid), 'objeto apagado: sai da fila');

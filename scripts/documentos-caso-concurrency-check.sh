@@ -214,7 +214,13 @@ fi
 
 echo "== 5. duas conclusões de remoção simultâneas"
 ANTES="$FAILS"
-psql_as doc_setup -c "delete from storage.objects where bucket_id = 'case-documents' and name = (select storage_path from public.case_documents where id = '$DOC')" >/dev/null
+# Simula a remoção pela API do Storage (o Supabase real recusa DELETE direto sem esta configuração da sessão).
+psql_as doc_setup >/dev/null <<SQL
+begin;
+select set_config('storage.allow_delete_query', 'true', true);
+delete from storage.objects where bucket_id = 'case-documents' and name = (select storage_path from public.case_documents where id = '$DOC');
+commit;
+SQL
 open_gate
 PIDS=(); OUTS=()
 for n in 1 2; do
