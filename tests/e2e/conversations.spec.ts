@@ -353,4 +353,31 @@ test.describe.serial("conversas + simulador de WhatsApp — A7", () => {
     await panel.getByRole("link", { name: "Voltar ao caso" }).click();
     await expect(card.getByText(text, { exact: true })).toHaveCount(1);
   });
+
+  test("12. aba Documentos: entre Tarefas e Histórico; recebimento FECHADO até a ativação do backup; visualizador só consulta", async ({ page }) => {
+    // No CI a variável CASE_DOCUMENTS_UPLOAD_ENABLED não existe e o portão do banco nasce fechado: o recebimento
+    // está bloqueado para todos, inclusive para a dona. Leitura, abertura e conferência não dependem disso.
+    await login(page, SEED_USERS.ana.email);
+    await page.goto(conversationUrl);
+    await openContext(page);
+    const panel = page.locator("#painel-contexto");
+    const tabs = panel.getByRole("navigation", { name: "Seções do caso" }).getByRole("link");
+    await expect(tabs).toHaveText([/^Resumo/, /^Tarefas/, /^Documentos/, /^Histórico/]);
+    await panel.getByRole("link", { name: /^Documentos/ }).click();
+    await expect(page).toHaveURL(/aba=documentos/);
+    const received = panel.getByRole("region", { name: "Documentos recebidos" });
+    await expect(received.getByRole("note")).toContainText("aguarda a ativação do backup dos arquivos");
+    await expect(received.getByRole("button", { name: /Escolher arquivo/ })).toHaveCount(0);
+    await expect(received.locator('input[type="file"]')).toHaveCount(0);
+    await expect(received.getByText("Nenhum documento recebido neste caso.")).toBeVisible();
+    await expect(panel.getByRole("region", { name: "Propostas geradas pelo Praxis" })).toBeVisible();
+
+    await page.context().clearCookies();
+    await login(page, SEED_USERS.elisa.email);
+    await page.goto(conversationUrl);
+    await openContext(page);
+    await panel.getByRole("link", { name: /^Documentos/ }).click();
+    await expect(received.getByRole("note")).toContainText("só consulta");
+    await expect(received.getByRole("button")).toHaveCount(0);
+  });
 });

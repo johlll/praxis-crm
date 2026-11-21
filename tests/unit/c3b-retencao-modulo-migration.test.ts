@@ -25,6 +25,10 @@ const root = resolve(import.meta.dirname, "../..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8").split("\r").join("");
 const sql = read("supabase/migrations/20261113120000_c3b_retencao_anonimizacao.sql");
 const code = sql.replace(/--.*$/gm, "");
+// Acréscimo posterior (docs/decisoes/conversas-documentos-caso.md): a avaliação vigente é a da migration dos
+// documentos por caso, que acrescenta `case_document_present` e mantém o resto.
+const laterCode = read("supabase/migrations/20261123120000_conversas_documentos_caso.sql").replace(/--.*$/gm, "");
+const assessNow = laterCode.slice(laterCode.indexOf("create or replace function private.privacy_retention_assess("));
 const types = read("src/server/types/database.ts");
 const catalog = read("src/modules/audit/catalog.ts");
 const workflow = read(".github/workflows/ci.yml");
@@ -55,10 +59,10 @@ describe("parte pura", () => {
   });
 
   it("os códigos do front são exatamente os que o banco usa", () => {
-    for (const reason of BLOCK_REASON_CODES) expect(code).toContain(`'${reason}'`);
+    for (const reason of BLOCK_REASON_CODES) expect(code + assessNow).toContain(`'${reason}'`);
     for (const reason of HOLD_REASON_CODES) expect(code).toContain(`'${reason}'`);
     // E o banco não inventa código de bloqueio que a tela não conheça.
-    const used = [...code.matchAll(/array_append\(v_reasons, '([a-z_]+)'\)/g)].map((m) => m[1]).sort();
+    const used = [...assessNow.matchAll(/array_append\(v_reasons, '([a-z_]+)'\)/g)].map((m) => m[1]).sort();
     expect(used).toEqual([...BLOCK_REASON_CODES].sort());
   });
 

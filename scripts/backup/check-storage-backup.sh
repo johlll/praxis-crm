@@ -15,8 +15,9 @@
 # 11 inclusão e remoção durante o backup detectadas; 12 pacote só com itens permitidos; 13 checksum válido;
 # 14 checksum inválido (e pacote adulterado) bloqueia; 15 chave privada errada bloqueia; 16 destino
 # Production/hospedado recusado antes de qualquer chamada; 17 destino não vazio recusado; 18 restauração
-# local fiel (quantidade, tamanhos e hashes). Os itens 19 a 21 (constraints do banco, workflow-modelo e
-# ausência de segredos no repositório) são cobertos pelos outros passos do CI e por tests/unit.
+# local fiel (quantidade, tamanhos e hashes); 19 o bucket dos documentos por caso (case-documents) — só por
+# escolha explícita, ida e volta fiel, sem cruzar buckets, padrão inalterado. Constraints do banco,
+# workflow-modelo e ausência de segredos no repositório são cobertos pelos outros passos do CI e por tests/unit.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -60,10 +61,17 @@ clear_bucket() {
         [ -n "$k" ] && s3 s3api delete-object --bucket "$BUCKET" --key "$k" >/dev/null 2>&1 || true
       done
 }
+clear_cd() {
+  local k
+  s3 s3api list-objects-v2 --bucket "case-documents" --output json --no-paginate 2>/dev/null     | jq -r '(.Contents // [])[].Key' | while IFS= read -r k; do
+        [ -n "$k" ] && s3 s3api delete-object --bucket "case-documents" --key "$k" >/dev/null 2>&1 || true
+      done
+}
 cleanup() {
   local rc=$?
   trap - EXIT
   clear_bucket >/dev/null 2>&1 || true
+  clear_cd >/dev/null 2>&1 || true
   rm -rf "$ROOT"
   exit "$rc"
 }
@@ -377,6 +385,66 @@ expect_rc "servidor não local sem autorização de descartável" 77 "$rc"
 log_has "ERRO: destino_recusado:nao_local" && ok "mensagem fechada: destino_recusado:nao_local" || bad "mensagem ausente"
 [ ! -s "$ARGLOG" ] && ok "nenhuma chamada ao S3 em nenhuma recusa" || bad "houve chamada ao S3 antes da recusa"
 tmp_empty && ok "nenhum texto claro sobrou" || bad "sobrou temporário"
+
+echo "== 19. documentos por caso (case-documents): aceito SÓ por escolha explícita; ida e volta fiel; não cruza buckets"
+CD="case-documents"
+s3 s3api head-bucket --bucket "$CD" >/dev/null 2>&1 || s3 s3api create-bucket --bucket "$CD" >/dev/null
+clear_cd
+# Arquivos SINTÉTICOS (sem PII) nos três formatos aceitos, nos caminhos que o app gera (escritório/caso/documento).
+mk_pdf "$ROOT/src/cd1.pdf" 91
+{ printf '\211PNG\r\n\032\n'; head -c 333 /dev/urandom; printf '\000\000\000\000IEND\256B`\202'; } >"$ROOT/src/cd2.png"
+{ printf '\377\330\377\340'; head -c 277 /dev/urandom; printf '\377\331'; } >"$ROOT/src/cd3.jpg"
+cd_key() { printf 'ws-sintetico/caso-001/doc-%03d' "$1"; }
+s3 s3api put-object --bucket "$CD" --key "$(cd_key 1)" --body "$ROOT/src/cd1.pdf" --content-type application/pdf >/dev/null
+s3 s3api put-object --bucket "$CD" --key "$(cd_key 2)" --body "$ROOT/src/cd2.png" --content-type image/png >/dev/null
+s3 s3api put-object --bucket "$CD" --key "$(cd_key 3)" --body "$ROOT/src/cd3.jpg" --content-type image/jpeg >/dev/null
+tot_cd=$(( $(wc -c <"$ROOT/src/cd1.pdf") + $(wc -c <"$ROOT/src/cd2.png") + $(wc -c <"$ROOT/src/cd3.jpg") ))
+
+rc=0; run_backup "$ROOT/o19" BACKUP_STORAGE_BUCKET="$CD" || rc=$?
+expect_rc "backup do bucket case-documents escolhido explicitamente" 0 "$rc"
+PK19="$(the_pkg "$ROOT/o19")"
+unpack "$PK19"
+[ "$(jq -r '.bucket' "$ROOT/insp/manifest.json")" = "$CD" ] && ok "o manifesto (cifrado) registra o bucket case-documents" || bad "bucket do manifesto"
+[ "$(jq -r '.object_count' "$ROOT/insp/manifest.json")" = "3" ] && [ "$(jq -r '.total_bytes' "$ROOT/insp/manifest.json")" = "$tot_cd" ]   && ok "3 objetos e $tot_cd bytes no pacote" || bad "contagem do backup dos documentos"
+rm -rf "$ROOT/insp" "$ROOT/insp.tar.gz" "$ROOT/insp.lista"
+
+# Sem a escolha explícita, nada muda: o padrão continua sendo SÓ proposal-documents (vazio aqui).
+rc=0; run_backup "$ROOT/o19d" || rc=$?
+expect_rc "backup padrão (sem variável)" 0 "$rc"
+PK19D="$(the_pkg "$ROOT/o19d")"
+unpack "$PK19D"
+[ "$(jq -r '.bucket' "$ROOT/insp/manifest.json")" = "$BUCKET" ] && [ "$(jq -r '.object_count' "$ROOT/insp/manifest.json")" = "0" ] \
+  && ok "padrão continua sendo proposal-documents (os documentos de caso não entram sem escolha explícita)" || bad "o padrão mudou"
+rm -rf "$ROOT/insp" "$ROOT/insp.tar.gz" "$ROOT/insp.lista"
+
+# Lista fechada: qualquer outro bucket continua recusado nos dois sentidos.
+rc=0; run_backup "$ROOT/o19x" BACKUP_STORAGE_BUCKET="case-documents-copia" || rc=$?
+expect_rc "bucket fora da lista fechada no backup" 64 "$rc"
+rc=0; run_restore "$PK19" "$PK19.sha256" "$ROOT/keys/id1.txt" RESTORE_STORAGE_BUCKET="qualquer-bucket" || rc=$?
+expect_rc "bucket fora da lista fechada na restauração" 64 "$rc"
+log_has "ERRO: bucket_recusado" && ok "mensagem fechada: bucket_recusado" || bad "mensagem bucket_recusado ausente"
+
+# O pacote dos documentos NUNCA volta para o bucket das propostas (nem o contrário).
+rc=0; run_restore "$PK19" "$PK19.sha256" "$ROOT/keys/id1.txt" || rc=$?
+expect_rc "pacote de case-documents restaurado no bucket padrão (proposal-documents)" 65 "$rc"
+log_has "ERRO: manifesto_invalido" && ok "recusado: o manifesto é de outro bucket" || bad "pacote cruzou de bucket"
+[ "$(s3 s3api list-objects-v2 --bucket "$BUCKET" --output json --no-paginate | jq '(.Contents // []) | length')" = "0" ] && ok "bucket das propostas continua vazio" || bad "bucket das propostas foi escrito"
+
+# Restauração fiel no bucket de origem, esvaziado.
+clear_cd
+rc=0; run_restore "$PK19" "$PK19.sha256" "$ROOT/keys/id1.txt" RESTORE_STORAGE_BUCKET="$CD" || rc=$?
+expect_rc "restauração dos documentos no bucket case-documents vazio" 0 "$rc"
+log_has "storage_restauracao_validada: objetos=3 bytes=$tot_cd" && ok "restauração validada: 3 objetos e $tot_cd bytes" || bad "linha de validação ausente"
+fiel=1
+for n in 1 2 3; do
+  case "$n" in 1) src="$ROOT/src/cd1.pdf" ;; 2) src="$ROOT/src/cd2.png" ;; *) src="$ROOT/src/cd3.jpg" ;; esac
+  s3 s3api get-object --bucket "$CD" --key "$(cd_key "$n")" "$ROOT/volta.bin" >/dev/null
+  [ "$(sha256_of "$ROOT/volta.bin")" = "$(sha256_of "$src")" ] || fiel=0
+  rm -f "$ROOT/volta.bin"
+done
+[ "$fiel" = 1 ] && ok "PDF, PNG e JPEG restaurados com o mesmo SHA-256 da origem (conferido por fora do script)" || bad "documento restaurado diferente"
+tmp_empty && ok "nenhum texto claro sobrou" || bad "sobrou temporário"
+clear_cd
 
 echo
 if [ "$FAILS" -eq 0 ]; then

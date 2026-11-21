@@ -185,3 +185,8 @@ pendentes.
   eles podem entrar entre eventos já mostrados de outra fonte; as movimentações comerciais vêm completas.
 - A aba Tarefas mostra as 20 concluídas mais recentes; o total completo fica na página da oportunidade.
 - Não há contador de não lidas nem "Para humano" (sem fonte), como na #357.
+
+## Acréscimo posterior
+
+- **Documentos** virou aba funcional, entre Tarefas e Histórico, em entrega própria: ver
+  [conversas-documentos-caso.md](conversas-documentos-caso.md).

@@ -174,13 +174,14 @@ export function commercialSteps(stages: readonly StageOption[], currentStageId: 
 // Abas do painel
 // ---------------------------------------------------------------------
 
-/** Documentos fica fora desta entrega (registrado em docs/decisoes/conversas-painel-caso.md). */
-export const CASE_TABS = ["resumo", "tarefas", "historico"] as const;
+/** Ordem da referência: Resumo · Tarefas · Documentos · Histórico (docs/decisoes/conversas-documentos-caso.md). */
+export const CASE_TABS = ["resumo", "tarefas", "documentos", "historico"] as const;
 export type CaseTab = (typeof CASE_TABS)[number];
 
 export const CASE_TAB_LABEL: Record<CaseTab, string> = {
   resumo: "Resumo",
   tarefas: "Tarefas",
+  documentos: "Documentos",
   historico: "Histórico",
 };
 

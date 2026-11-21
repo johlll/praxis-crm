@@ -167,7 +167,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("cabeçalho do caso e abas", () => {
-  it("assunto, abertura, selo com a natureza e lápis; abas Resumo · Tarefas · Histórico (sem Documentos)", () => {
+  it("assunto, abertura, selo com a natureza e lápis; abas Resumo · Tarefas · Documentos · Histórico", () => {
     const a = option(OPP_A, { isLinked: true });
     render(panel(ctx({ items: [a], focus: focusOf(a), linked: OPP_A })));
     expect(screen.getByRole("heading", { name: "Usucapião" })).toBeTruthy();
@@ -175,8 +175,7 @@ describe("cabeçalho do caso e abas", () => {
     expect(screen.getByTitle("Comercial: Qualificar")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Editar situação e andamento" }).getAttribute("href")).toContain("editar=1");
     const tabs = within(screen.getByRole("navigation", { name: "Seções do caso" })).getAllByRole("link").map((l) => l.textContent);
-    expect(tabs).toEqual(["Resumo", "Tarefas", "Histórico"]);
-    expect(screen.queryByText(/Documentos/)).toBeNull();
+    expect(tabs).toEqual(["Resumo", "Tarefas", "Documentos", "Histórico"]);
     expect(screen.getByText("Caso vinculado a esta conversa.")).toBeTruthy();
   });
 

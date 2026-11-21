@@ -12,6 +12,7 @@ import {
   ListChecks,
   Layers,
   Link2,
+  Paperclip,
   Pencil,
   Scale,
   Trophy,
@@ -68,6 +69,7 @@ import { ConsentDisclosure } from "./context/consent-disclosure";
 import { ServiceStepper } from "./context/service-stepper";
 import { CaseNumberControl, ServicePlanEditor } from "./context/service-plan-editor";
 import { CaseNoteComposer, CaseNoteDraftHint, CaseNotesList, CaseNotesUnavailable } from "./context/case-notes";
+import { CaseDocumentUploader, CaseDocumentsList, UploadBlockedNotice, type UploadBlock } from "./context/case-documents";
 
 const ATTENDANCE_OPTIONS = ATTENDANCE_STATUSES.filter((s) => s !== "nao_informado").map((s) => ({
   value: s,
@@ -96,6 +98,16 @@ export type ContextPermissions = {
   manageServiceCatalog?: boolean;
   /** case_note.add (e contato não anonimizado) — acrescenta observações ao caso, pela edição (lápis). */
   addCaseNote?: boolean;
+  /** case_document.upload (e contato não anonimizado) — anexa documentos ao caso, na aba Documentos. */
+  uploadDocuments?: boolean;
+  /** case_document.review (e contato não anonimizado) — registra a conferência humana dos documentos. */
+  reviewDocuments?: boolean;
+  /** case_document.remove (e contato não anonimizado) — remoção controlada, com motivo. */
+  removeDocuments?: boolean;
+  /** Contato anonimizado: documentos só para consulta. */
+  contactAnonymized?: boolean;
+  /** Trava do servidor do recebimento de documentos (variável de ambiente; ausente = fechado). */
+  documentsUploadServerEnabled?: boolean;
 };
 
 type PanelConversation = {
@@ -240,7 +252,8 @@ export function ConversationContextPanel({
       ) : (
         <>
           <nav aria-label="Seções do caso" className="mt-3 border-b border-border px-4">
-            <ul className="m-0 flex list-none gap-5 p-0">
+            {/* Quatro abas (como na referência): distribuídas na largura do painel, sem cortar a última. */}
+            <ul className="m-0 flex list-none justify-between gap-2 p-0">
               {CASE_TABS.map((t) => {
                 const active = params.aba === t;
                 const count = t === "tarefas" && focus ? focus.pendingActivities.length : 0;
@@ -272,6 +285,8 @@ export function ConversationContextPanel({
           <div className="flex flex-col gap-3 p-4">
             {params.aba === "tarefas" ? (
               <CaseTasks conversation={conversation} context={context} canEdit={permissions.editActivities === true} params={params} />
+            ) : params.aba === "documentos" ? (
+              <CaseDocumentsTab conversation={conversation} context={context} params={params} permissions={permissions} />
             ) : params.aba === "historico" ? (
               <CaseHistory conversation={conversation} context={context} />
             ) : (
@@ -804,6 +819,128 @@ function CaseTasks({
           ) : null}
         </>
       ) : null}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Documentos
+// ---------------------------------------------------------------------
+
+/**
+ * Aba Documentos (docs/decisoes/conversas-documentos-caso.md): documentos recebidos DESTE caso — nunca do
+ * contato inteiro — e, em seção separada, os PDFs de proposta já gerados pelo Praxis e ligados ao caso pela
+ * proposta (nada é copiado). Sem caso em foco, pede a escolha; nunca mistura documentos de casos diferentes.
+ */
+function CaseDocumentsTab({
+  conversation,
+  context,
+  params,
+  permissions,
+}: {
+  conversation: PanelConversation;
+  context: ConversationContext;
+  params: InboxParams;
+  permissions: ContextPermissions;
+}) {
+  const { focus } = context;
+  if (!focus) {
+    return context.cases.items.length > 1 ? (
+      <CaseChooser conversation={conversation} context={context} params={params} />
+    ) : (
+      <Muted>Sem caso em foco não há documentos para mostrar. Os documentos pertencem a um caso, não ao contato.</Muted>
+    );
+  }
+  const o = focus.option;
+  const view = focus.documents;
+  if (!view || view.status === "error") {
+    return (
+      <div role="alert" className="flex flex-col gap-1.5 rounded-input border border-danger/25 bg-danger-bg px-3 py-2.5">
+        <p className="m-0 flex items-center gap-2 text-small font-semibold text-text">
+          <TriangleAlert size={14} className="text-danger" aria-hidden />
+          Não foi possível carregar os documentos deste caso
+        </p>
+        <p className="m-0 text-meta text-text-secondary">Os documentos guardados continuam salvos. Tente novamente em instantes.</p>
+        <ContextRetryButton />
+      </div>
+    );
+  }
+  if (view.status === "unavailable") {
+    return <Muted>Você não tem acesso aos documentos deste caso.</Muted>;
+  }
+
+  const block: UploadBlock = permissions.contactAnonymized
+    ? "anonymized"
+    : !permissions.uploadDocuments
+      ? "no_permission"
+      : !view.uploadGateOpen || !permissions.documentsUploadServerEnabled
+        ? "backup_pending"
+        : null;
+  const can = {
+    upload: block === null,
+    review: permissions.reviewDocuments === true,
+    remove: permissions.removeDocuments === true,
+  };
+  const ready = view.items.filter((d) => d.status === "ready").length;
+
+  return (
+    <>
+      <Muted>
+        Pertencem a <span className="font-semibold text-text-secondary">{caseChipLabel(o)}</span>, não ao contato: outro caso do mesmo cliente tem os
+        seus. Receber um arquivo não conclui etapa nem muda o andamento.
+      </Muted>
+      <Card
+        title="Documentos recebidos"
+        icon={Paperclip}
+        action={
+          ready > 0 ? (
+            <span className="rounded-full bg-surface-muted px-1.5 text-label font-bold tabular-nums text-text-secondary">{ready}</span>
+          ) : undefined
+        }
+      >
+        {block ? (
+          <UploadBlockedNotice block={block} />
+        ) : (
+          <CaseDocumentUploader key={`upload:${o.opportunityId}`} opportunityId={o.opportunityId} caseLabel={caseChipLabel(o)} />
+        )}
+        <CaseDocumentsList key={`docs:${o.opportunityId}`} items={view.items} can={can} />
+      </Card>
+      <Card title="Propostas geradas pelo Praxis" icon={FileSignature}>
+        {view.proposals.status === "error" ? (
+          <p role="alert" className="m-0 text-meta text-danger">
+            Não foi possível carregar as propostas deste caso. Os documentos acima não foram afetados.
+          </p>
+        ) : view.proposals.items.length === 0 ? (
+          <Muted>Nenhuma proposta com PDF gerado neste caso.</Muted>
+        ) : (
+          <ul className="m-0 flex list-none flex-col gap-2 p-0" aria-label="PDFs de proposta deste caso">
+            {view.proposals.items.map((p) => (
+              <li key={p.documentId} className="flex min-w-0 items-start gap-2.5 rounded-input border border-border-subtle px-3 py-2">
+                <FileText size={15} className="mt-0.5 shrink-0 text-text-muted" aria-hidden />
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <p className="m-0 text-small font-semibold text-text">
+                    {p.proposalNumber} · versão {p.version}
+                  </p>
+                  <p className="m-0 text-meta text-text-tertiary">PDF gerado em {formatStamp(p.generatedAt)}</p>
+                  {p.canDownload ? (
+                    <a
+                      href={`/api/proposals/documents/${p.documentId}/download`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-fit text-small font-semibold text-primary hover:underline"
+                    >
+                      Baixar PDF
+                    </a>
+                  ) : (
+                    <p className="m-0 text-meta text-text-tertiary">Seu perfil não baixa o PDF da proposta (ele traz o valor exato).</p>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        <Muted>Estes arquivos são gerados pelas propostas e ficam com elas; não são documentos recebidos do cliente.</Muted>
+      </Card>
     </>
   );
 }

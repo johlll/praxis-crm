@@ -116,6 +116,13 @@ export const AUDIT_ACTION_GROUPS: readonly AuditActionGroup[] = [
     ["proposal.email.accepted_by_provider", "E-mail da proposta aceito pelo provedor"],
     ["proposal.email.failed", "Falha no e-mail da proposta"],
   ]),
+  group("Documentos do caso", [
+    ["case_document.uploaded", "Documento anexado ao caso"],
+    ["case_document.upload_failed", "Envio de documento não concluído"],
+    ["case_document.reviewed", "Conferência de documento registrada"],
+    ["case_document.removal_requested", "Remoção de documento solicitada"],
+    ["case_document.removed", "Documento removido do caso"],
+  ]),
   group("Conversas e mensagens", [
     ["conversation.link_resolved", "Vínculo da conversa resolvido"],
     ["conversation.attendance_changed", "Situação do atendimento alterada"],
