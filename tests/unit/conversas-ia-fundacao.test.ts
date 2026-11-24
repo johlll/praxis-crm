@@ -274,7 +274,8 @@ describe("auditoria e exportação do titular", () => {
   });
 
   it("a exportação exige as duas seções novas, depois das anteriores", () => {
-    expect(PRIVACY_EXPORT_LIST_CATEGORIES.slice(-3)).toEqual(["custom_fields", "status_tracks", "status_track_history"]);
+    // Documentos por caso acrescentou `case_documents` depois delas (só metadados).
+    expect(PRIVACY_EXPORT_LIST_CATEGORIES.slice(-4)).toEqual(["custom_fields", "status_tracks", "status_track_history", "case_documents"]);
   });
 });
 

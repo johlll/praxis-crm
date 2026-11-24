@@ -193,7 +193,14 @@ export type Permission =
   // Observações por caso (docs/decisoes/conversas-observacoes-caso.md): acrescentar uma observação a um
   // caso, na mesma faixa de lead_note.edit (owner, admin, manager, lawyer, sales). Ler segue o alcance do caso
   // (visualizador lê). O banco repete a faixa, o escritório, o alcance e o bloqueio de contato anonimizado.
-  | "case_note.add";
+  | "case_note.add"
+  // Documentos por caso (docs/decisoes/conversas-documentos-caso.md). Enviar arquivo ao caso: a faixa de
+  // case_note.add (owner, admin, manager, lawyer, sales). Registrar a conferência humana e remover um
+  // documento (remoção controlada, com motivo): owner, admin, manager, lawyer. Ler e abrir segue o alcance do
+  // caso (visualizador lê). O banco repete as três faixas, o escritório, o alcance e o portão de recebimento.
+  | "case_document.upload"
+  | "case_document.review"
+  | "case_document.remove";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -245,6 +252,9 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "case.number_assign": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
   "service_catalog.manage": new Set<Role>(["owner", "admin", "manager"]),
   "case_note.add": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
+  "case_document.upload": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
+  "case_document.review": new Set<Role>(["owner", "admin", "manager", "lawyer"]),
+  "case_document.remove": new Set<Role>(["owner", "admin", "manager", "lawyer"]),
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {

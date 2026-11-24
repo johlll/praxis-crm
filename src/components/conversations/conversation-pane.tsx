@@ -16,6 +16,7 @@ import { MESSAGE_AUTHOR_LABEL, contentKindLabel, type InboxParams } from "@/modu
 import type { EvidenceCandidate } from "@/modules/conversations/context-format";
 import { listAllOpportunities, type OpportunityListItem } from "@/modules/opportunities/queries";
 import { isContactAnonymized } from "@/modules/contacts/queries";
+import { caseDocumentsUploadEnabledByServer } from "@/server/case-documents/gate";
 import { caseBadge, caseChipLabel, caseCountLabel } from "@/modules/conversations/case-display";
 import type { AttendanceStatus } from "@/modules/status-tracks/schema";
 import { ConversationThread } from "./conversation-thread";
@@ -193,6 +194,11 @@ export async function ContextSection({
         assignCaseNumber: !anonymized && roleHasPermission(session.role, "case.number_assign"),
         manageServiceCatalog: roleHasPermission(session.role, "service_catalog.manage"),
         addCaseNote: !anonymized && roleHasPermission(session.role, "case_note.add"),
+        uploadDocuments: !anonymized && roleHasPermission(session.role, "case_document.upload"),
+        reviewDocuments: !anonymized && roleHasPermission(session.role, "case_document.review"),
+        removeDocuments: !anonymized && roleHasPermission(session.role, "case_document.remove"),
+        contactAnonymized: anonymized,
+        documentsUploadServerEnabled: caseDocumentsUploadEnabledByServer(),
       }}
       draftScope={`${session.workspaceId}:${session.userId}`}
       evidence={evidenceCandidates(items)}

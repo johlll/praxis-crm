@@ -45,6 +45,9 @@ export const PRIVACY_EXPORT_LIST_CATEGORIES = [
   "custom_fields",
   "status_tracks",
   "status_track_history",
+  // Documentos por caso: só os METADADOS (nome, tipo, tamanho, situação, conferência e datas). O conteúdo dos
+  // arquivos NÃO vai no arquivo de exportação (cada item traz `file_content_included: false`).
+  "case_documents",
 ] as const;
 
 export type PrivacyExportSection = { has_data: boolean; items: unknown[] };

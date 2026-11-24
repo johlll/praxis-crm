@@ -167,14 +167,15 @@ describe("abas e edição na URL: Voltar/Avançar e links funcionam", () => {
     expect(parseInboxParams({}).aba).toBe("resumo");
     expect(parseInboxParams({ aba: "tarefas" }).aba).toBe("tarefas");
     expect(parseInboxParams({ aba: "historico" }).aba).toBe("historico");
-    expect(parseInboxParams({ aba: "documentos" }).aba).toBe("resumo"); // não existe nesta entrega
+    expect(parseInboxParams({ aba: "documentos" }).aba).toBe("documentos");
+    expect(parseInboxParams({ aba: "documento" }).aba).toBe("resumo");
     expect(parseInboxParams({ aba: "<script>" }).aba).toBe("resumo");
     expect(parseInboxParams({ editar: "1" }).editar).toBe(true);
     expect(parseInboxParams({ editar: "true" }).editar).toBe(false);
   });
-  it("Documentos não é aba nesta entrega", () => {
-    expect([...CASE_TABS]).toEqual(["resumo", "tarefas", "historico"]);
-    expect(isCaseTab("documentos")).toBe(false);
+  it("Documentos é aba entre Tarefas e Histórico, como na referência", () => {
+    expect([...CASE_TABS]).toEqual(["resumo", "tarefas", "documentos", "historico"]);
+    expect(isCaseTab("documentos")).toBe(true);
   });
   it("o estado do painel acompanha a conversa aberta e não vai para outra conversa", () => {
     const params = parseInboxParams({ q: "maria", situacao: "novo", caso: OPP_A, aba: "tarefas", editar: "1" });
@@ -286,7 +287,8 @@ describe("contrato da migration e promessas que o painel não faz", () => {
     // Etapa B: "Nº interno" e "Tipo de serviço" vêm do banco (número atribuído, roteiro aplicado); sem registro,
     // aparecem como "Não atribuído" e "Sem roteiro aplicado" — nunca um código de exemplo. Observações por caso:
     // só as registradas (list_case_notes); sem registro, "Nenhuma observação registrada neste caso".
-    expect(visible).not.toMatch(/Protocolo|Sentença|Processo|Documentos|Imóvel|#IM/);
+    // Documentos por caso: a aba e os textos dela existem; documentos mostrados só os gravados (list_case_documents).
+    expect(visible).not.toMatch(/Protocolo|Sentença|Processo|Imóvel|#IM/);
     expect(visible).toMatch(/Não atribuído/);
     expect(visible).toMatch(/Sem roteiro aplicado/);
     expect(visible).not.toMatch(/Vit[óo]ria/);

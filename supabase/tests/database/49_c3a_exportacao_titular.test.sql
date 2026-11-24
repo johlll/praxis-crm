@@ -213,6 +213,15 @@ select complete_case_service_step((:'opp_alfa2')::uuid, (:'etapa_alfa')::uuid, 1
 -- Observações por caso: uma observação (texto livre INTERNO, que não pode sair) popula `case_notes`.
 select add_case_note((:'opp_alfa2')::uuid, 'INTERNO-observacao-caso-ALFA', gen_random_uuid());
 reset role;
+-- Documentos por caso: um documento com pendência registrada (observação INTERNA, que não pode sair) popula
+-- `case_documents` — o arquivo leva só os metadados, nunca o conteúdo nem a observação.
+insert into public.case_documents (id, workspace_id, opportunity_id, status, original_name, declared_type, declared_size,
+  content_type, byte_size, checksum_sha256, storage_path, review_status, review_note, reviewed_by, reviewed_at, review_version,
+  uploaded_by, finalized_at, idempotency_key, request_fingerprint)
+select d.id, (:'ws_um')::uuid, (:'opp_alfa2')::uuid, 'ready', 'Documento ALFA.pdf', 'application/pdf', 100,
+  'application/pdf', 100, repeat('c', 64), :'ws_um' || '/' || :'opp_alfa2' || '/' || d.id, 'com_pendencia', 'INTERNO-pendencia-ALFA',
+  (:'ana')::uuid, now(), 1, (:'ana')::uuid, now(), gen_random_uuid(), 'x'
+from (select gen_random_uuid() as id) d;
 
 -- =====================================================================
 -- 1) Superfície fechada
@@ -409,6 +418,7 @@ select ok(
   and not (:'pacote'::jsonb #> '{data,proposals,0}' ? 'decision_note')
   and not (:'pacote'::jsonb #> '{data,lead_notes,0}' ? 'body')
   and not (:'pacote'::jsonb #> '{data,case_notes,0}' ?| array['body', 'author_name', 'created_by'])
+  and not (:'pacote'::jsonb #> '{data,case_documents,0}' ?| array['review_note', 'storage_path', 'checksum_sha256', 'uploaded_by', 'reviewed_by'])
   and not (:'pacote'::jsonb #> '{data,conflict_checks,0}' ? 'note')
   and not (:'pacote'::jsonb #> '{data,proposal_email_sends,0}' ? 'to_email'),
   'as chaves dos dez campos retirados nem existem mais no conteúdo'

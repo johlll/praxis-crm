@@ -104,7 +104,8 @@ begin
 
   -- Exportação: seções antigas byte a byte; a nova existe e está vazia.
   v_after := private.privacy_export_payload('$WS_UM', '$CONTATO');
-  if (v_after - 'case_notes') is distinct from (select body from public.obs_upgrade_before where k = 'export') then
+  -- `case_documents` vem de uma migration POSTERIOR (aplicada junto no migration up): fora da comparação.
+  if (v_after - 'case_notes' - 'case_documents') is distinct from (select body from public.obs_upgrade_before where k = 'export') then
     raise exception 'a exportação mudou nas seções antigas';
   end if;
   if v_after -> 'case_notes' is distinct from '[]'::jsonb then

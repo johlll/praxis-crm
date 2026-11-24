@@ -10,9 +10,19 @@
 # shellcheck source=lib.sh
 
 PRAXIS_STORAGE_FORMAT="praxis-storage-backup/v1"
+# Bucket PADRÃO (o que o workflow diário usa sem nenhuma variável): os PDFs das propostas (B1), como sempre.
 PRAXIS_STORAGE_BUCKET="proposal-documents"
+# Lista FECHADA de buckets aceitos — nunca um bucket qualquer. `case-documents` (documentos por caso,
+# docs/decisoes/conversas-documentos-caso.md) só entra por escolha EXPLÍCITA (BACKUP_STORAGE_BUCKET /
+# RESTORE_STORAGE_BUCKET); o workflow diário NÃO foi alterado. Ativar o backup dos documentos é uma etapa
+# própria, obrigatória antes do primeiro upload real (destino, capacidade e teste de recuperação).
+PRAXIS_STORAGE_BUCKETS=("proposal-documents" "case-documents")
 
-storage_bucket_ok() { [ "$1" = "$PRAXIS_STORAGE_BUCKET" ]; }
+storage_bucket_ok() {
+  local b
+  for b in "${PRAXIS_STORAGE_BUCKETS[@]}"; do [ "$1" = "$b" ] && return 0; done
+  return 1
+}
 
 # Host do endpoint (sem esquema, usuário, porta ou caminho), em minúsculas. Devolve 1 se não for http(s).
 s3_endpoint_host() {

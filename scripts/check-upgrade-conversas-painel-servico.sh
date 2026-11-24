@@ -129,7 +129,7 @@ declare
                              'service_steps_total', 'service_steps_completed'];
   v_export_new text[] := array['case_numbers', 'case_service_plans', 'case_service_history'];
   -- Seções acrescentadas por migrations POSTERIORES (aplicadas junto no migration up): fora da comparação.
-  v_export_later text[] := array['case_notes'];
+  v_export_later text[] := array['case_notes', 'case_documents'];
   v_diff integer;
   v_after jsonb;
   v_service jsonb;

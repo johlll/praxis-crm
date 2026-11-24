@@ -25,6 +25,8 @@ import {
 import type { CaseService, ServiceTypeItem } from "@/modules/case-service/schema";
 import { listCaseNotes } from "@/modules/case-notes/queries";
 import { CASE_NOTES_SUMMARY, type CaseNotesPage } from "@/modules/case-notes/schema";
+import { listCaseDocuments, listCaseProposalPdfs, type CaseProposalPdf } from "@/modules/case-documents/queries";
+import type { CaseDocument } from "@/modules/case-documents/schema";
 import { commercialSteps, type CaseTab, type FocusSource, type Step } from "./case-display";
 
 /**
@@ -62,6 +64,21 @@ export type StageMove = {
  */
 export type CaseNotesView = { status: "ok"; page: CaseNotesPage } | { status: "error" } | { status: "unavailable" };
 
+/**
+ * Documentos do caso (aba Documentos). Mesmo contrato das observações: falha de leitura é estado PRÓPRIO (aviso
+ * com nova tentativa), sem alcance é `unavailable` — nunca "nenhum documento". As propostas em PDF ligadas ao
+ * caso vêm à parte: a falha delas não esconde os documentos.
+ */
+export type CaseDocumentsView =
+  | {
+      status: "ok";
+      items: CaseDocument[];
+      uploadGateOpen: boolean;
+      proposals: { status: "ok"; items: CaseProposalPdf[] } | { status: "error" };
+    }
+  | { status: "error" }
+  | { status: "unavailable" };
+
 export type FocusCase = {
   option: ConversationCaseOption;
   responsible: string | null;
@@ -94,7 +111,26 @@ export type FocusCase = {
   serviceTypes: ServiceTypeItem[] | null;
   /** Observações do caso — carregadas no Resumo e na edição. `null` nas outras abas. */
   notes: CaseNotesView | null;
+  /** Documentos do caso e PDFs de proposta ligados a ele — só carregados na aba Documentos. */
+  documents: CaseDocumentsView | null;
 };
+
+/** Documentos do caso sem derrubar o painel: falha → `error`; sem alcance → `unavailable`. */
+export async function loadCaseDocumentsView(opportunityId: string, leadId: string): Promise<CaseDocumentsView> {
+  try {
+    const [docs, proposals] = await Promise.all([
+      listCaseDocuments(opportunityId),
+      listCaseProposalPdfs(leadId, opportunityId).then(
+        (items) => ({ status: "ok" as const, items }),
+        () => ({ status: "error" as const }),
+      ),
+    ]);
+    if (!docs) return { status: "unavailable" };
+    return { status: "ok", items: docs.items, uploadGateOpen: docs.uploadGateOpen, proposals };
+  } catch {
+    return { status: "error" };
+  }
+}
 
 /** Primeira página de observações, sem derrubar o painel: falha → `error`; sem alcance → `unavailable`. */
 export async function loadCaseNotesView(opportunityId: string): Promise<CaseNotesView> {
@@ -209,7 +245,7 @@ export const loadConversationContext = cache(async function loadConversationCont
   }
 
   const option = cases.items.find((o) => o.opportunityId === resolved.id)!;
-  const [opportunity, commercial, progress, pending, done, service, serviceHistory, serviceTypes, notes] = await Promise.all([
+  const [opportunity, commercial, progress, pending, done, service, serviceHistory, serviceTypes, notes, documents] = await Promise.all([
     getOpportunity(option.opportunityId),
     loadTrack("commercial_stage", option.opportunityId),
     option.status === "won" ? loadTrack("case_progress", option.opportunityId) : Promise.resolve(null),
@@ -226,6 +262,7 @@ export const loadConversationContext = cache(async function loadConversationCont
     opts.tab === "historico" ? listCaseServiceHistory(option.opportunityId) : Promise.resolve(null),
     editing && option.status === "won" ? listServiceTypes(opts.workspaceId) : Promise.resolve(null),
     editing || opts.tab === "resumo" ? loadCaseNotesView(option.opportunityId) : Promise.resolve(null),
+    !editing && opts.tab === "documentos" ? loadCaseDocumentsView(option.opportunityId, option.leadId) : Promise.resolve(null),
   ]);
   if (!service) throw new CaseServiceLoadError(`o serviço do caso ${option.opportunityId}`);
 
@@ -271,6 +308,7 @@ export const loadConversationContext = cache(async function loadConversationCont
       serviceHistory,
       serviceTypes: serviceTypes ? serviceTypes.filter((t) => !t.archived) : null,
       notes,
+      documents,
     },
   };
 });

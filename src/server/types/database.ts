@@ -1042,6 +1042,171 @@ export type Database = {
           },
         ]
       }
+      case_document_storage_cleanup: {
+        Row: {
+          attempts: number
+          bucket: string
+          claimed_until: string | null
+          document_id: string
+          enqueued_at: string
+          id: string
+          reason: string
+          storage_path: string
+          watch_until: string
+          workspace_id: string
+        }
+        Insert: {
+          attempts?: number
+          bucket?: string
+          claimed_until?: string | null
+          document_id: string
+          enqueued_at?: string
+          id?: string
+          reason: string
+          storage_path: string
+          watch_until?: string
+          workspace_id: string
+        }
+        Update: {
+          attempts?: number
+          bucket?: string
+          claimed_until?: string | null
+          document_id?: string
+          enqueued_at?: string
+          id?: string
+          reason?: string
+          storage_path?: string
+          watch_until?: string
+          workspace_id?: string
+        }
+        Relationships: []
+      }
+      case_document_upload_gate: {
+        Row: {
+          backup_activation_ref: string | null
+          changed_at: string
+          enabled: boolean
+          singleton: boolean
+        }
+        Insert: {
+          backup_activation_ref?: string | null
+          changed_at?: string
+          enabled?: boolean
+          singleton?: boolean
+        }
+        Update: {
+          backup_activation_ref?: string | null
+          changed_at?: string
+          enabled?: boolean
+          singleton?: boolean
+        }
+        Relationships: []
+      }
+      case_documents: {
+        Row: {
+          abandon_code: string | null
+          abandoned_at: string | null
+          byte_size: number | null
+          checksum_sha256: string | null
+          content_type: string | null
+          created_at: string
+          declared_size: number
+          declared_type: string
+          finalized_at: string | null
+          id: string
+          idempotency_key: string
+          opportunity_id: string
+          original_name: string
+          removal_reason: string | null
+          removal_requested_at: string | null
+          removal_requested_by: string | null
+          request_fingerprint: string
+          review_note: string | null
+          review_status: string
+          review_version: number
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: string
+          storage_path: string
+          upload_window_until: string
+          uploaded_by: string
+          workspace_id: string
+        }
+        Insert: {
+          abandon_code?: string | null
+          abandoned_at?: string | null
+          byte_size?: number | null
+          checksum_sha256?: string | null
+          content_type?: string | null
+          created_at?: string
+          declared_size: number
+          declared_type: string
+          finalized_at?: string | null
+          id?: string
+          idempotency_key: string
+          opportunity_id: string
+          original_name: string
+          removal_reason?: string | null
+          removal_requested_at?: string | null
+          removal_requested_by?: string | null
+          request_fingerprint: string
+          review_note?: string | null
+          review_status?: string
+          review_version?: number
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          storage_path: string
+          upload_window_until?: string
+          uploaded_by: string
+          workspace_id: string
+        }
+        Update: {
+          abandon_code?: string | null
+          abandoned_at?: string | null
+          byte_size?: number | null
+          checksum_sha256?: string | null
+          content_type?: string | null
+          created_at?: string
+          declared_size?: number
+          declared_type?: string
+          finalized_at?: string | null
+          id?: string
+          idempotency_key?: string
+          opportunity_id?: string
+          original_name?: string
+          removal_reason?: string | null
+          removal_requested_at?: string | null
+          removal_requested_by?: string | null
+          request_fingerprint?: string
+          review_note?: string | null
+          review_status?: string
+          review_version?: number
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          storage_path?: string
+          upload_window_until?: string
+          uploaded_by?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_documents_opportunity_fkey"
+            columns: ["workspace_id", "opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "case_documents_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       case_notes: {
         Row: {
           body: string
@@ -5661,6 +5826,33 @@ export type Database = {
         }
         Returns: string
       }
+      begin_case_document: {
+        Args: {
+          p_actor_user_id: string
+          p_declared_size: number
+          p_declared_type: string
+          p_idempotency_key: string
+          p_name: string
+          p_opportunity_id: string
+        }
+        Returns: Json
+      }
+      begin_case_document_abandon: {
+        Args: {
+          p_actor_user_id: string
+          p_document_id: string
+          p_error_code: string
+        }
+        Returns: Json
+      }
+      begin_case_document_removal: {
+        Args: {
+          p_actor_user_id: string
+          p_document_id: string
+          p_reason: string
+        }
+        Returns: Json
+      }
       begin_proposal_document: {
         Args: { p_actor_user_id: string; p_proposal_id: string }
         Returns: {
@@ -5672,6 +5864,11 @@ export type Database = {
       cancel_workspace_invitation: {
         Args: { p_invitation_id: string }
         Returns: undefined
+      }
+      case_document_cleanup_claim: { Args: { p_limit?: number }; Returns: Json }
+      case_document_cleanup_complete: {
+        Args: { p_cleanup_id: string }
+        Returns: boolean
       }
       claim_calendar_channel_renewal: {
         Args: {
@@ -6076,6 +6273,24 @@ export type Database = {
         }
         Returns: undefined
       }
+      finalize_case_document: {
+        Args: {
+          p_actor_user_id: string
+          p_byte_size: number
+          p_checksum_sha256: string
+          p_content_type: string
+          p_document_id: string
+        }
+        Returns: Json
+      }
+      finalize_case_document_abandon: {
+        Args: { p_actor_user_id: string; p_document_id: string }
+        Returns: boolean
+      }
+      finalize_case_document_removal: {
+        Args: { p_actor_user_id: string; p_document_id: string }
+        Returns: boolean
+      }
       finalize_proposal_document: {
         Args: {
           p_actor_user_id: string
@@ -6147,6 +6362,10 @@ export type Database = {
         Args: { p_workspace_id: string }
         Returns: Json
       }
+      get_case_document_for_download: {
+        Args: { p_document_id: string }
+        Returns: Json
+      }
       get_case_service: { Args: { p_opportunity_id: string }; Returns: Json }
       get_client: { Args: { p_client_id: string }; Returns: Json }
       get_conflict_check: { Args: { p_lead_id: string }; Returns: Json }
@@ -6213,6 +6432,10 @@ export type Database = {
         Returns: Json
       }
       get_opportunity: { Args: { p_opportunity_id: string }; Returns: Json }
+      get_pending_case_document: {
+        Args: { p_document_id: string }
+        Returns: Json
+      }
       get_pipeline_board: { Args: { p_pipeline_id: string }; Returns: Json }
       get_privacy_export_payload: {
         Args: {
@@ -6350,6 +6573,7 @@ export type Database = {
         Returns: Json
       }
       list_calendar_scheduler_heartbeats: { Args: never; Returns: Json }
+      list_case_documents: { Args: { p_opportunity_id: string }; Returns: Json }
       list_case_notes: {
         Args: {
           p_before?: string
@@ -6871,6 +7095,15 @@ export type Database = {
           p_connection_id: string
         }
         Returns: undefined
+      }
+      set_case_document_review: {
+        Args: {
+          p_document_id: string
+          p_expected_version: number
+          p_note: string
+          p_review_status: string
+        }
+        Returns: Json
       }
       set_case_service_current_step: {
         Args: {

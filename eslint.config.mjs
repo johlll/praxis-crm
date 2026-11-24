@@ -140,6 +140,30 @@ export default tseslint.config(
   },
   {
     /**
+     * Documentos por caso: `src/server/case-documents/admin/supabase.ts` é o ÚNICO arquivo do módulo autorizado
+     * a construir um cliente `service_role` cru. As funções que gravam o documento (envio em duas fases, remoção
+     * e limpeza) têm EXECUTE só para service_role, e o bucket `case-documents` não tem policy para sessões.
+     */
+    files: ["src/server/case-documents/**/*.{ts,tsx}"],
+    ignores: ["src/server/case-documents/admin/supabase.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@supabase/supabase-js"],
+              importNames: ["createClient"],
+              message:
+                "Não construa outro cliente service_role aqui — importe createCaseDocumentsAdminSupabaseClient de @/server/case-documents/admin/supabase.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    /**
      * C3a: `src/server/privacy/admin/supabase.ts` é o ÚNICO arquivo da exportação de
      * dados do titular autorizado a construir um cliente `service_role` cru. As três
      * RPCs da exportação têm EXECUTE só para service_role (a leitura devolve o conjunto
