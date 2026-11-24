@@ -172,7 +172,7 @@ describe("contrato da migration", () => {
     expect(code).not.toMatch(/create policy/i);
   });
   it("funções de escrita do arquivo: EXECUTE só para service_role; begin e finalize conferem o portão", () => {
-    for (const fn of ["begin_case_document", "finalize_case_document", "abandon_case_document", "begin_case_document_removal", "finalize_case_document_removal", "case_document_cleanup_claim", "case_document_cleanup_complete"]) {
+    for (const fn of ["begin_case_document", "finalize_case_document", "begin_case_document_abandon", "finalize_case_document_abandon", "begin_case_document_removal", "finalize_case_document_removal", "case_document_cleanup_claim", "case_document_cleanup_complete"]) {
       expect(code).toMatch(new RegExp(`revoke all on function public\\.${fn}\\([^)]*\\) from public, anon, authenticated;`));
       expect(code).toMatch(new RegExp(`grant execute on function public\\.${fn}\\([^)]*\\) to service_role;`));
     }

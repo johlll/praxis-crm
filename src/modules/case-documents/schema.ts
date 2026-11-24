@@ -28,6 +28,16 @@ export const CASE_DOCUMENT_TYPE_LABEL: Record<CaseDocumentType, string> = {
 /** O que o seletor de arquivo oferece (a extensão só ajuda a escolher; quem decide é o conteúdo, no servidor). */
 export const CASE_DOCUMENT_ACCEPT = ".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png";
 
+/**
+ * Arquivo recusado ou envio interrompido: "Nada foi guardado" SÓ com a confirmação do banco e do Storage
+ * (cancelamento concluído). Sem ela, a tela diz exatamente o que se sabe.
+ */
+export const DISCARD_CONFIRMED = "Nada foi guardado.";
+export const DISCARD_PENDING =
+  "O arquivo não ficou visível no caso; a exclusão do que chegou ao armazenamento ficou registrada para a limpeza.";
+export const DISCARD_UNCONFIRMED =
+  "O arquivo não ficou visível no caso, mas não foi possível confirmar a exclusão agora; ela ficou registrada para a limpeza.";
+
 export const REVIEW_STATUSES = ["recebido", "conferido", "com_pendencia"] as const;
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
 

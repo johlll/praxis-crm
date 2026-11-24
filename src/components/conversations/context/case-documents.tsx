@@ -16,6 +16,8 @@ import {
 } from "@/modules/case-documents/actions";
 import {
   CASE_DOCUMENT_ACCEPT,
+  DISCARD_PENDING,
+  DISCARD_UNCONFIRMED,
   CASE_DOCUMENT_NOTE_MAX,
   CASE_DOCUMENT_TYPE_LABEL,
   REMOVAL_REASONS,
@@ -92,6 +94,19 @@ type UploadPhase =
 
 const STEP_TEXT = { reservando: "Preparando o envio…", enviando: "Enviando o arquivo…", conferindo: "Conferindo o arquivo…" } as const;
 
+/**
+ * Envio interrompido: a mensagem segue o que o servidor CONFIRMOU no cancelamento (reserva no banco + exclusão
+ * no Storage). "Nada foi guardado" só com `abandoned`.
+ */
+export function interruptedUploadMessage(result: Awaited<ReturnType<typeof abandonCaseDocumentUploadAction>> | null): string {
+  const lead = "O envio do arquivo não foi concluído.";
+  // Texto anterior mantido para o caso confirmado.
+  if (result?.ok && result.outcome === "abandoned") return `${lead} Nada foi guardado; tente de novo.`;
+  if (result?.ok && result.outcome === "cleanup_pending") return `${lead} ${DISCARD_PENDING} Tente de novo.`;
+  if (result?.ok && result.outcome === "already_absent") return `${lead} O arquivo não ficou visível no caso. Tente de novo.`;
+  return `${lead} ${DISCARD_UNCONFIRMED} Tente de novo.`;
+}
+
 function isAlreadyExists(error: unknown): boolean {
   const e = error as { statusCode?: unknown; status?: unknown; message?: unknown; error?: unknown } | null;
   const status = String(e?.statusCode ?? e?.status ?? "");
@@ -140,12 +155,14 @@ export function CaseDocumentUploader({ opportunityId, caseLabel }: { opportunity
       }
       // Repetição de um envio que já tinha chegado: o objeto existe — segue para a conferência.
       if (uploadError && !isAlreadyExists(uploadError)) {
-        await abandonCaseDocumentUploadAction({ documentId: begun.documentId, reason: "upload_interrupted" }).catch(() => undefined);
-        setPhase({
-          kind: "error",
-          message: "O envio do arquivo não foi concluído. Nada foi guardado; tente de novo.",
-          retry: { file, type, key: crypto.randomUUID() },
-        });
+        const cancelled = await abandonCaseDocumentUploadAction({ documentId: begun.documentId, reason: "upload_interrupted" }).catch(() => null);
+        if (cancelled && !cancelled.ok && cancelled.concluded) {
+          // Outra chamada (outra aba, repetição) já concluiu este envio: o documento está no caso.
+          setPhase({ kind: "done", fileName: file.name });
+          startRefresh(() => router.refresh());
+          return;
+        }
+        setPhase({ kind: "error", message: interruptedUploadMessage(cancelled), retry: { file, type, key: crypto.randomUUID() } });
         return;
       }
     }

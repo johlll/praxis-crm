@@ -52,14 +52,36 @@ consulta.
   pelo navegador; o nome original é só exibição (sem caminho, sem caracteres de controle nem marcas de direção de
   texto) e aparece sempre como texto.
 - **Envio em duas fases**, direto do navegador ao Storage (o corpo não passa pela função do servidor):
-  1. `begin_case_document` reserva o documento (linha pendente) e o caminho; o servidor devolve um link de envio
-     **daquele** caminho, sem sobrescrita. Limitação do provedor: esse link vale 2 horas.
+  1. `begin_case_document` reserva o documento (linha pendente) e o caminho e abre a **janela do link de envio**
+     (`upload_window_until`); só então o servidor emite um link de envio **daquele** caminho, sem sobrescrita.
   2. O navegador sobe o arquivo.
   3. O servidor baixa o objeto, confere o conteúdo, calcula o SHA-256 e `finalize_case_document` só torna o
      documento visível depois de conferir, no mesmo Postgres (`storage.objects`), que o objeto existe com o mesmo
      tamanho. Repetição com a mesma chave (clique duplo, resposta perdida) devolve o mesmo documento.
-  - Conteúdo inválido, falha ou desistência: o objeto é apagado e a linha pendente sai (`abandon_case_document`).
-    Envio parado há mais de 3 horas sai na limpeza. Nada incompleto fica visível.
+- **Link de envio não é revogável (limitação do provedor).** Ele vale 2 horas a partir da emissão, só para aquele
+  caminho. Apagar a linha ou o objeto **não** o invalida, e `upsert: false` só impede sobrescrever um objeto que exista
+  — com o caminho vazio (depois de um cancelamento ou de uma remoção), um envio atrasado ou um link reutilizado grava
+  de novo (reproduzido com a API real do Storage). Por isso:
+  - cada linha guarda `upload_window_until` = emissão **mais recente** + 2 h de validade + 1 h de folga (um envio que
+    começou dentro da validade pode terminar depois). Repetir o begin para um envio pendente emite link novo e
+    **estende** a janela (nunca encolhe; documento pronto não ganha janela nova);
+  - quando a linha sai antes de a janela fechar (cancelamento, remoção logo depois do envio, cascata), o gatilho põe o
+    caminho na fila de limpeza com `watch_until`, e ele **só sai da fila quando o objeto não existe E a janela
+    fechou**. Um objeto gravado nesse meio-tempo continua rastreado e é apagado pela limpeza;
+  - envio pendente só expira na limpeza depois de a janela fechar (não mais "3 horas desde a criação").
+  - Folga de 1 hora: um envio iniciado dentro da validade e que demore mais que isso para terminar ficaria fora da
+    vigilância. Com o limite de 10 MiB isso não é esperado; é a premissa documentada.
+- **Cancelamento do envio em duas fases** (conteúdo inválido, envio interrompido, desistência):
+  1. `begin_case_document_abandon` **reserva** a transição pendente → `abandoning` sob a trava da linha, **antes** de
+     qualquer exclusão no Storage. A finalização disputa a mesma trava: se ela venceu (documento pronto), o
+     cancelamento é recusado (`document_not_pending`) e **nada é apagado**; se o cancelamento venceu, a finalização é
+     recusada e repetir o begin não emite link novo. Sempre um vencedor só.
+  2. O servidor apaga o objeto (nenhuma transação fica aberta durante a chamada ao Storage).
+  3. `finalize_case_document_abandon` só tira a linha depois de conferir que o objeto saiu; senão o cancelamento fica
+     reservado e a limpeza o conclui.
+  - A tela só diz **"Nada foi guardado"** com essa confirmação (cancelamento concluído). Sem ela, diz que o arquivo não
+    ficou visível e que a exclusão ficou registrada para a limpeza — ou que não foi possível confirmá-la agora. Se a
+    finalização já tinha vencido, a tela mostra o documento recebido.
 - **Abrir/baixar:** `/api/case-documents/<id>?modo=abrir|baixar`, autorizado pela sessão a cada clique, redireciona
   para um link temporário de **60 segundos**, gerado na hora e nunca reaproveitado. Limitação inerente: durante esses
   60 s, quem tiver o link abre o arquivo. No download, o nome é o original **sem acentos** (o cliente do Storage
@@ -76,11 +98,15 @@ consulta.
   "Concluir a remoção"; a limpeza também a retoma. **A exclusão não é dada como concluída enquanto houver limpeza
   pendente.**
 - **Exclusão administrativa** (cascata do escritório, lead ou caso — o app não tem essa ação): o caminho do objeto que
-  ainda existir vai para `case_document_storage_cleanup` (sem FK, sobrevive à exclusão do escritório). A fila só perde
-  a linha quando o banco confirma que o objeto não existe mais.
-- **Quando a limpeza roda:** de forma oportunista, num lote pequeno, depois de cada envio, conferência e remoção (sem
-  agendamento novo nem configuração externa nesta entrega). Pendências ficam registradas no banco até a próxima escrita.
-  Se o volume real pedir, um agendamento dedicado é uma etapa própria (exigiria sincronizar o app no Inngest).
+  ainda existir (ou com janela de envio aberta) vai para `case_document_storage_cleanup` (sem FK, sobrevive à exclusão
+  do escritório). A fila só perde a linha quando o banco confirma que o objeto não existe e a janela fechou.
+- **O que a limpeza faz:** tira envios pendentes cuja janela fechou, conclui remoções e cancelamentos interrompidos
+  (há mais de 2 minutos) e processa a fila. Caminho vigiado sem objeto é reconferido em até 10 minutos (ou no fim da
+  janela), para apagar logo um envio atrasado.
+- **Quando a limpeza roda hoje:** só de forma **oportunista**, num lote pequeno, depois de envio, finalização e remoção
+  (sem agendamento nem configuração externa nesta entrega). **Se ninguém voltar a usar o app, nada é processado**: as
+  pendências ficam registradas no banco (nunca se perdem), mas um objeto atrasado pode continuar no Storage — e nos
+  backups do bucket — até a próxima escrita.
 - **Backups:** cópias de um arquivo removido continuam nos pacotes de backup já gerados até o fim da retenção deles
   (30 dias no desenho atual; o backup dos documentos ainda nem foi ativado).
 
@@ -116,16 +142,25 @@ ou por chamada direta. A tela mostra "O recebimento de documentos aguarda a ativ
 2. Ativar o backup do bucket `case-documents` (os scripts já aceitam o bucket por escolha explícita; o workflow diário
    **não** foi alterado nesta entrega) e fazer um **teste real de recuperação** dos documentos num destino descartável.
 3. Aplicar a migration no hospedado (se ainda não estiver).
-4. Só então abrir as duas travas: a variável na Vercel e o portão no banco, com a referência do registro da ativação.
+4. **Consumidor independente da limpeza** (requisito operacional): uma execução periódica, fora do uso do app, que
+   chame a limpeza (`case_document_cleanup_claim`/`_complete` pelo módulo do servidor) — por exemplo uma função
+   agendada no Inngest, que exige sincronizar o app e recalcular as execuções do plano. **Não foi configurado nesta
+   entrega** (a ordem foi não configurar agendamento externo).
+5. Só então abrir as duas travas: a variável na Vercel e o portão no banco, com a referência do registro da ativação.
 
 ## Testes
 
-pgTAP 61 (superfície, portão, papéis, alcance, dois casos, idempotência, finalização, abandono, conferência com versão,
-remoção em duas fases, fila, efeitos colaterais, exportação, anonimização); concorrência real
-(`scripts/documentos-caso-concurrency-check.sh`: chave repetida, finalizações e conferências simultâneas, remoção ×
-conferência, conclusões simultâneas, anonimização × envio); atualização a partir da versão anterior
+pgTAP 61 (superfície, portão, papéis, alcance, dois casos, idempotência, finalização, cancelamento em duas fases com
+vencedor único, janela do link de envio, caminho vigiado na fila, conferência com versão, remoção em duas fases, fila,
+efeitos colaterais, exportação, anonimização); concorrência real (`scripts/documentos-caso-concurrency-check.sh`: chave
+repetida, finalizações e conferências simultâneas, remoção × conferência, conclusões simultâneas, anonimização × envio,
+finalização × cancelamento nas duas ordens e solta, repetição do begin × cancelamento); **Storage real**
+(`tests/storage-real/documentos-caso.real.ts`, `vitest.storage-real.config.ts`: as server actions e o módulo do servidor
+contra a API do Storage e o Postgres de um ambiente descartável — disputa finalização × cancelamento nas duas ordens,
+falha do Storage, resposta perdida, link válido depois do cancelamento e da remoção, envio em andamento, renovação do
+link; não roda no `npm test` nem no CI); atualização a partir da versão anterior
 (`scripts/check-upgrade-conversas-documentos-caso.sh`); backup e restauração do bucket novo com arquivos sintéticos
 (`scripts/backup/check-storage-backup.sh`, cenário 19); unitários (conteúdo, nome, limites, permissões, travas, ações,
 rota, interface com promessas controladas); e2e (aba e recebimento fechado no app real).
-Os dois scripts novos (concorrência e atualização) rodam localmente; **não foram incluídos no CI** nesta entrega
-porque a ordem foi não alterar workflows.
+Os dois scripts novos (concorrência e atualização) e a suíte do Storage real rodam localmente; **não foram incluídos no
+CI** nesta entrega porque a ordem foi não alterar workflows.

@@ -66,8 +66,12 @@ export async function adminBeginCaseDocument(params: {
 /**
  * Link de ENVIO para um caminho que o banco gerou: o navegador sobe o arquivo direto ao Storage (sem passar
  * pelo limite de corpo da função), sem sobrescrever objeto existente. O Storage aplica o limite de 10 MiB e
- * os tipos do bucket; o servidor confere o conteúdo depois, na finalização. Limitação do provedor: o token de
- * envio vale por 2 horas e só serve para ESTE caminho.
+ * os tipos do bucket; o servidor confere o conteúdo depois, na finalização.
+ *
+ * Limitação do provedor: o token vale 2 horas a partir da emissão, só para ESTE caminho, e NÃO é revogável —
+ * apagar a linha ou o objeto não o invalida (`upsert: false` só impede sobrescrever um objeto que exista).
+ * Por isso só se emite token depois de `begin_case_document` abrir/estender a janela do caminho no banco
+ * (`upload_window_until`), e o caminho continua rastreado até essa janela fechar.
  */
 export async function adminCreateUploadToken(storagePath: string): Promise<{ path: string; token: string }> {
   const admin = createCaseDocumentsAdminSupabaseClient();
@@ -115,25 +119,53 @@ export async function adminFinalizeCaseDocument(params: {
 }
 
 /**
- * Envio que não se completou: tenta apagar o objeto e tira a linha pendente. Se o objeto não sair agora, o
- * gatilho do banco põe o caminho na fila de limpeza — nunca fica arquivo sem registro em algum lugar.
+ * Resultado do cancelamento de um envio:
+ *   - `abandoned`: reserva no banco, objeto apagado no Storage e linha removida — confirmado;
+ *   - `already_absent`: a linha já não existia (cancelamento anterior ou expiração); o que tiver sobrado está
+ *     na fila de limpeza;
+ *   - `cleanup_pending`: o cancelamento está reservado (o documento nunca fica pronto), mas o objeto não saiu
+ *     do Storage agora; a limpeza retoma.
+ * Se a finalização venceu a disputa (documento pronto), lança `document_not_pending` e NADA é apagado.
+ */
+export type AbandonOutcome = "abandoned" | "already_absent" | "cleanup_pending";
+
+/**
+ * Cancelamento em duas fases. 1) `begin_case_document_abandon` reserva a transição (pendente → abandoning) sob
+ * a trava da linha, ANTES de qualquer exclusão no Storage — a finalização disputa a mesma trava e só um vence;
+ * 2) apaga o objeto; 3) `finalize_case_document_abandon` só tira a linha depois de o banco conferir que o
+ * objeto saiu. Nenhuma transação fica aberta durante as chamadas ao Storage.
  */
 export async function adminAbandonCaseDocument(params: {
   documentId: string;
-  storagePath: string | null;
   actorUserId: string;
   errorCode: string;
-}): Promise<void> {
-  if (params.storagePath) await adminRemoveObject(params.storagePath);
+}): Promise<AbandonOutcome> {
   const admin = createCaseDocumentsAdminSupabaseClient();
-  await admin.rpc("abandon_case_document", {
+  const { data, error } = await admin.rpc("begin_case_document_abandon", {
     p_document_id: params.documentId,
     p_actor_user_id: params.actorUserId,
     p_error_code: params.errorCode,
   });
+  if (error) throw new CaseDocumentAdminError(dbCode(error));
+  const row = (data ?? {}) as Record<string, unknown>;
+  if (row.status === "absent") return "already_absent";
+  if (row.status !== "abandoning" || typeof row.storage_path !== "string") throw new CaseDocumentAdminError("abandon_malformed");
+  return finishAbandon(params.documentId, row.storage_path, params.actorUserId);
 }
 
-/** Caminho da linha pendente (para conferir e abandonar), só para quem iniciou o envio. */
+/** Fases 2 e 3 do cancelamento (também usadas pela limpeza, com ator nulo). */
+async function finishAbandon(documentId: string, storagePath: string, actorUserId: string | null): Promise<AbandonOutcome> {
+  if (!(await adminRemoveObject(storagePath))) return "cleanup_pending";
+  const admin = createCaseDocumentsAdminSupabaseClient();
+  const { data, error } = await admin.rpc("finalize_case_document_abandon", {
+    p_document_id: documentId,
+    p_actor_user_id: actorUserId as string,
+  });
+  if (error) return "cleanup_pending";
+  return data === true ? "abandoned" : "already_absent";
+}
+
+/** Remoção controlada, fase 1: marca o documento em remoção e devolve o caminho do objeto. */
 export async function adminBeginRemoval(params: { documentId: string; actorUserId: string; reason: string }): Promise<{ storagePath: string }> {
   const admin = createCaseDocumentsAdminSupabaseClient();
   const { data, error } = await admin.rpc("begin_case_document_removal", {
@@ -178,17 +210,23 @@ export async function adminCreateDownloadUrl(params: { storagePath: string; name
 }
 
 /**
- * Limpeza oportunista, limitada, que nunca falha quem chamou: envios abandonados há mais de 3 horas, remoções
- * interrompidas e objetos da fila (linha apagada por exclusão administrativa). Só tira da fila o que o banco
- * confirma que já não existe no Storage. Devolve contagens (sem caminhos).
+ * Limpeza limitada, que nunca falha quem chamou: envios pendentes cuja janela do link fechou, remoções e
+ * cancelamentos interrompidos e caminhos da fila (linha que saiu com objeto presente ou com link de envio ainda
+ * capaz de gravar). Só tira da fila o que o banco confirma: objeto inexistente E janela fechada. Devolve
+ * contagens (sem caminhos). Hoje roda de forma OPORTUNISTA (depois das escritas do módulo); um consumidor
+ * independente é requisito operacional antes de liberar envios reais (docs/decisoes/conversas-documentos-caso.md).
  */
-export async function adminRunCaseDocumentCleanup(limit = 10): Promise<{ removals: number; objects: number; pending: number }> {
-  const out = { removals: 0, objects: 0, pending: 0 };
+export async function adminRunCaseDocumentCleanup(limit = 10): Promise<{ removals: number; abandons: number; objects: number; pending: number }> {
+  const out = { removals: 0, abandons: 0, objects: 0, pending: 0 };
   try {
     const admin = createCaseDocumentsAdminSupabaseClient();
     const { data, error } = await admin.rpc("case_document_cleanup_claim", { p_limit: limit });
     if (error || !data) return out;
-    const claim = data as { removals?: { document_id: string; storage_path: string }[]; objects?: { cleanup_id: string; storage_path: string }[] };
+    const claim = data as {
+      removals?: { document_id: string; storage_path: string }[];
+      abandons?: { document_id: string; storage_path: string }[];
+      objects?: { cleanup_id: string; storage_path: string }[];
+    };
     for (const r of claim.removals ?? []) {
       if (!(await adminRemoveObject(r.storage_path))) { out.pending += 1; continue; }
       try {
@@ -196,6 +234,10 @@ export async function adminRunCaseDocumentCleanup(limit = 10): Promise<{ removal
       } catch {
         out.pending += 1;
       }
+    }
+    for (const a of claim.abandons ?? []) {
+      if ((await finishAbandon(a.document_id, a.storage_path, null)) === "cleanup_pending") out.pending += 1;
+      else out.abandons += 1;
     }
     for (const o of claim.objects ?? []) {
       if (!(await adminRemoveObject(o.storage_path))) { out.pending += 1; continue; }

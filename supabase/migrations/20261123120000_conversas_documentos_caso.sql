@@ -12,8 +12,17 @@
 --     arquivo direto ao Storage com um link de envio para aquele caminho (sem sobrescrita); o servidor baixa o
 --     objeto, confere a assinatura do conteúdo (PDF/JPEG/PNG — não é antivírus), calcula o hash e
 --     `finalize_case_document` só torna o documento visível depois de conferir, no mesmo Postgres
---     (storage.objects), que o objeto existe com aquele tamanho. Falha → `abandon_case_document` apaga a linha
---     pendente; o objeto que tiver sobrado vai para a fila de limpeza (nunca fica órfão sem registro).
+--     (storage.objects), que o objeto existe com aquele tamanho. Cancelamento (falha, conteúdo inválido,
+--     desistência) também em duas fases: `begin_case_document_abandon` RESERVA a transição (pendente →
+--     `abandoning`) antes de qualquer exclusão no Storage — finalização e cancelamento disputam a mesma trava da
+--     linha e só um vence —, o servidor apaga o objeto e `finalize_case_document_abandon` só tira a linha
+--     depois de conferir que o objeto saiu.
+--   - O link de envio do Storage NÃO é revogável (vale 2 horas a partir da emissão; apagar a linha ou o objeto
+--     não o invalida, e `upsert: false` só impede sobrescrever um objeto que exista). Por isso cada linha guarda
+--     `upload_window_until` — fim da janela em que algum link emitido para aquele caminho ainda pode gravar
+--     (emissão mais recente + 2 h de validade + 1 h de folga para um envio que começou dentro da validade) — e,
+--     quando a linha sai antes disso, o caminho fica na fila de limpeza ATÉ a janela fechar: um envio atrasado
+--     ou um link reutilizado nunca deixa objeto sem rastreamento.
 --   - Recebimento FECHADO até a ativação do backup dos documentos: `public.case_document_upload_gate`
 --     nasce fechado e só abre com a referência do registro da ativação (etapa operacional futura, fora desta
 --     migration). Fechado, `begin` e `finalize` recusam com `case_documents_upload_disabled`. O servidor tem uma
@@ -89,7 +98,7 @@ create table public.case_documents (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.workspaces (id) on delete cascade,
   opportunity_id uuid not null,
-  status text not null default 'pending' check (status in ('pending', 'ready', 'removing')),
+  status text not null default 'pending' check (status in ('pending', 'ready', 'removing', 'abandoning')),
   original_name text not null check (char_length(original_name) between 1 and 180),
   declared_type text not null check (declared_type in ('application/pdf', 'image/jpeg', 'image/png')),
   declared_size bigint not null check (declared_size between 1 and 10485760),
@@ -111,6 +120,13 @@ create table public.case_documents (
   removal_reason text check (removal_reason in ('enviado_por_engano', 'duplicado', 'arquivo_errado', 'solicitacao_do_titular', 'outro')),
   removal_requested_by uuid references auth.users (id) on delete restrict,
   removal_requested_at timestamptz,
+  -- Fim da janela em que um link de envio emitido para este caminho ainda pode gravar: emissão MAIS RECENTE
+  -- + 2 h (validade do link no Storage) + 1 h de folga (envio iniciado dentro da validade). Só cresce, e só
+  -- enquanto o envio está pendente (cada emissão de link passa pelo begin).
+  upload_window_until timestamptz not null default (clock_timestamp() + interval '3 hours'),
+  -- Cancelamento reservado (pendente → abandoning): código fechado do motivo e quando.
+  abandon_code text check (abandon_code ~ '^[a-z_]{1,60}$'),
+  abandoned_at timestamptz,
   constraint case_documents_opportunity_fkey
     foreign key (workspace_id, opportunity_id) references public.opportunities (workspace_id, id) on delete cascade,
   constraint case_documents_idempotency_key unique (workspace_id, idempotency_key),
@@ -119,7 +135,7 @@ create table public.case_documents (
     storage_path = workspace_id::text || '/' || opportunity_id::text || '/' || id::text
   ),
   constraint case_documents_ready_fields check (
-    status = 'pending'
+    status in ('pending', 'abandoning')
     or (content_type is not null and byte_size is not null and checksum_sha256 is not null and finalized_at is not null)
   ),
   constraint case_documents_ready_type check (content_type is null or content_type = declared_type),
@@ -128,14 +144,17 @@ create table public.case_documents (
     or (review_status = 'conferido' and reviewed_by is not null and reviewed_at is not null)
     or (review_status = 'com_pendencia' and reviewed_by is not null and reviewed_at is not null and review_note is not null)
   ),
-  constraint case_documents_review_only_ready check (review_status = 'recebido' or status <> 'pending'),
+  constraint case_documents_review_only_ready check (review_status = 'recebido' or status not in ('pending', 'abandoning')),
   constraint case_documents_removal_fields check (
     (status = 'removing') = (removal_reason is not null and removal_requested_at is not null)
+  ),
+  constraint case_documents_abandon_fields check (
+    (status = 'abandoning') = (abandon_code is not null and abandoned_at is not null)
   )
 );
 
 create index case_documents_opportunity_idx on public.case_documents (opportunity_id, finalized_at desc, id desc);
-create index case_documents_pending_idx on public.case_documents (created_at) where status in ('pending', 'removing');
+create index case_documents_pending_idx on public.case_documents (created_at) where status in ('pending', 'removing', 'abandoning');
 create index case_documents_uploaded_by_idx on public.case_documents (uploaded_by);
 create index case_documents_reviewed_by_idx on public.case_documents (reviewed_by) where reviewed_by is not null;
 create index case_documents_removal_by_idx on public.case_documents (removal_requested_by) where removal_requested_by is not null;
@@ -147,8 +166,10 @@ alter table public.case_documents enable row level security;
 alter table public.case_documents force row level security;
 revoke all on table public.case_documents from public, anon, authenticated, service_role;
 
--- Fila de limpeza de objetos do Storage cuja linha deixou de existir (remoção interrompida, envio abandonado,
--- exclusão administrativa em cascata). Sem FK de propósito: sobrevive à exclusão do escritório.
+-- Fila de limpeza de caminhos do Storage cuja linha deixou de existir (remoção, envio cancelado ou expirado,
+-- exclusão administrativa em cascata): entra quando o objeto existe OU quando um link de envio emitido para o
+-- caminho ainda pode gravar (`watch_until`), e só sai quando o objeto não existe E a janela fechou. Sem FK de
+-- propósito: sobrevive à exclusão do escritório.
 create table public.case_document_storage_cleanup (
   id uuid primary key default gen_random_uuid(),
   bucket text not null default 'case-documents' check (bucket = 'case-documents'),
@@ -158,11 +179,13 @@ create table public.case_document_storage_cleanup (
   reason text not null check (reason in ('remocao', 'envio_abandonado', 'exclusao')),
   enqueued_at timestamptz not null default clock_timestamp(),
   attempts integer not null default 0 check (attempts >= 0),
-  claimed_until timestamptz
+  claimed_until timestamptz,
+  -- Até quando um link de envio emitido para este caminho ainda pode gravar (vem de upload_window_until).
+  watch_until timestamptz not null default clock_timestamp()
 );
 
 comment on table public.case_document_storage_cleanup is
-  'Documentos por caso: objetos do Storage a apagar porque o registro saiu. Consumida pelo servidor (case_document_cleanup_claim/complete), que só tira a linha depois de conferir que o objeto não existe mais.';
+  'Documentos por caso: caminhos do Storage a apagar/vigiar porque o registro saiu. Consumida pelo servidor (case_document_cleanup_claim/complete), que só tira a linha quando o objeto não existe e nenhum link de envio emitido ainda pode gravar (watch_until).';
 
 alter table public.case_document_storage_cleanup enable row level security;
 alter table public.case_document_storage_cleanup force row level security;
@@ -200,6 +223,11 @@ begin
        or new.idempotency_key <> old.idempotency_key or new.request_fingerprint <> old.request_fingerprint then
       raise exception 'case_document_immutable';
     end if;
+    -- A janela do link de envio só cresce, e só enquanto o envio está pendente.
+    if new.upload_window_until <> old.upload_window_until
+       and (old.status <> 'pending' or new.upload_window_until < old.upload_window_until) then
+      raise exception 'case_document_immutable';
+    end if;
     if old.status = 'ready' and (new.content_type is distinct from old.content_type
        or new.byte_size is distinct from old.byte_size or new.checksum_sha256 is distinct from old.checksum_sha256
        or new.finalized_at is distinct from old.finalized_at) then
@@ -207,6 +235,7 @@ begin
     end if;
     if not ((old.status = new.status)
             or (old.status = 'pending' and new.status = 'ready')
+            or (old.status = 'pending' and new.status = 'abandoning')
             or (old.status = 'ready' and new.status = 'removing')) then
       raise exception 'case_document_invalid_transition';
     end if;
@@ -223,8 +252,10 @@ revoke all on function private.case_document_guard() from public, anon, authenti
 create trigger case_documents_guard before insert or update on public.case_documents
   for each row execute function private.case_document_guard();
 
--- Linha saiu e o objeto ainda existe (remoção ainda não concluída, envio abandonado, cascata administrativa):
--- o caminho vai para a fila de limpeza. Nunca um objeto sem registro em algum lugar.
+-- Linha saiu e o objeto ainda existe (cascata administrativa, envio expirado) OU um link de envio emitido para o
+-- caminho ainda pode gravar (remoção/cancelamento logo depois do envio, link reutilizado, envio em andamento):
+-- o caminho vai para a fila e fica nela até o objeto não existir E a janela fechar. Nunca um objeto sem
+-- registro em algum lugar.
 create function private.case_document_enqueue_cleanup()
 returns trigger
 language plpgsql
@@ -232,11 +263,13 @@ security definer
 set search_path = ''
 as $body$
 begin
-  if private.case_document_object_exists(old.storage_path) then
-    insert into public.case_document_storage_cleanup (storage_path, workspace_id, document_id, reason)
+  if private.case_document_object_exists(old.storage_path) or old.upload_window_until > clock_timestamp() then
+    insert into public.case_document_storage_cleanup (storage_path, workspace_id, document_id, reason, watch_until)
     values (old.storage_path, old.workspace_id, old.id,
-            case old.status when 'removing' then 'remocao' when 'pending' then 'envio_abandonado' else 'exclusao' end)
-    on conflict (storage_path) do nothing;
+            case old.status when 'removing' then 'remocao' when 'ready' then 'exclusao' else 'envio_abandonado' end,
+            greatest(old.upload_window_until, clock_timestamp()))
+    on conflict (storage_path) do update
+      set watch_until = greatest(public.case_document_storage_cleanup.watch_until, excluded.watch_until);
   end if;
   return old;
 end;
@@ -449,25 +482,39 @@ begin
   v_name := private.case_document_clean_name(p_name);
   v_fp := md5(concat_ws('|', p_opportunity_id, v_name, p_declared_type, p_declared_size));
 
+  -- A janela do link de envio começa AGORA: o servidor só emite o link depois desta resposta.
   insert into public.case_documents (
     id, workspace_id, opportunity_id, original_name, declared_type, declared_size, storage_path,
-    uploaded_by, idempotency_key, request_fingerprint)
+    uploaded_by, idempotency_key, request_fingerprint, upload_window_until)
   values (
     v_id, v_target.o_workspace_id, p_opportunity_id, v_name, p_declared_type, p_declared_size,
     v_target.o_workspace_id::text || '/' || p_opportunity_id::text || '/' || v_id::text,
-    p_actor_user_id, p_idempotency_key, v_fp)
+    p_actor_user_id, p_idempotency_key, v_fp, clock_timestamp() + interval '3 hours')
   on conflict (workspace_id, idempotency_key) do nothing
   returning * into v_doc;
 
   if v_doc.id is null then
+    -- Repetição: trava a linha (serializa com o cancelamento e a finalização).
     select * into v_doc from public.case_documents
-    where workspace_id = v_target.o_workspace_id and idempotency_key = p_idempotency_key;
+    where workspace_id = v_target.o_workspace_id and idempotency_key = p_idempotency_key
+    for update;
     if v_doc.id is null or v_doc.opportunity_id <> p_opportunity_id or v_doc.request_fingerprint <> v_fp
        or v_doc.uploaded_by <> p_actor_user_id then
       raise exception 'idempotency_conflict';
     end if;
     if v_doc.status = 'removing' then
       raise exception 'idempotency_conflict';
+    end if;
+    if v_doc.status = 'abandoning' then
+      -- Cancelamento já reservado: nenhum link novo para este caminho.
+      raise exception 'document_not_pending';
+    end if;
+    if v_doc.status = 'pending' then
+      -- O servidor vai emitir um link NOVO: a janela passa a contar desta emissão.
+      update public.case_documents
+      set upload_window_until = greatest(upload_window_until, clock_timestamp() + interval '3 hours')
+      where id = v_doc.id
+      returning * into v_doc;
     end if;
     return jsonb_build_object('document_id', v_doc.id, 'storage_path', v_doc.storage_path,
                               'status', v_doc.status, 'replayed', true,
@@ -481,7 +528,7 @@ end;
 $body$;
 
 comment on function public.begin_case_document(uuid, uuid, text, text, bigint, uuid) is
-  'Documentos por caso: reserva o envio (linha pendente + caminho gerado aqui). Só service_role; portão de recebimento, papel, alcance e anonimização conferidos. Idempotente por chave.';
+  'Documentos por caso: reserva o envio (linha pendente + caminho gerado aqui) e abre/estende a janela do link de envio. Só service_role; portão de recebimento, papel, alcance e anonimização conferidos. Idempotente por chave.';
 
 revoke all on function public.begin_case_document(uuid, uuid, text, text, bigint, uuid) from public, anon, authenticated;
 grant execute on function public.begin_case_document(uuid, uuid, text, text, bigint, uuid) to service_role;
@@ -556,10 +603,13 @@ comment on function public.finalize_case_document(uuid, uuid, text, bigint, text
 revoke all on function public.finalize_case_document(uuid, uuid, text, bigint, text) from public, anon, authenticated;
 grant execute on function public.finalize_case_document(uuid, uuid, text, bigint, text) to service_role;
 
--- Envio que falhou (arquivo inválido, upload interrompido): a linha PENDENTE sai; o objeto que existir vai
--- para a fila de limpeza (gatilho). Só quem iniciou. Idempotente: linha já ausente → false.
-create function public.abandon_case_document(p_document_id uuid, p_actor_user_id uuid, p_error_code text)
-returns boolean
+-- Cancelamento do envio (arquivo inválido, envio interrompido, desistência), fase 1: RESERVA a transição
+-- pendente → abandoning sob a trava da linha, ANTES de qualquer exclusão no Storage. A finalização disputa a
+-- mesma trava: se ela venceu (documento pronto), o cancelamento é recusado e o arquivo fica intacto; se o
+-- cancelamento venceu, a finalização recusa. Só quem iniciou. Idempotente: linha ausente → status 'absent';
+-- já reservada → devolve o caminho de novo.
+create function public.begin_case_document_abandon(p_document_id uuid, p_actor_user_id uuid, p_error_code text)
+returns jsonb
 language plpgsql
 security definer
 set search_path = ''
@@ -572,22 +622,67 @@ begin
   end if;
   select * into v_doc from public.case_documents where id = p_document_id for update;
   if v_doc.id is null then
-    return false;
+    return jsonb_build_object('status', 'absent');
   end if;
-  if v_doc.uploaded_by <> p_actor_user_id or v_doc.status <> 'pending' then
+  if v_doc.uploaded_by <> p_actor_user_id then
+    raise exception 'document_not_found';
+  end if;
+  if v_doc.status = 'abandoning' then
+    return jsonb_build_object('status', 'abandoning', 'storage_path', v_doc.storage_path, 'replayed', true);
+  end if;
+  if v_doc.status <> 'pending' then
     raise exception 'document_not_pending';
   end if;
-  delete from public.case_documents where id = v_doc.id;
+
+  update public.case_documents
+  set status = 'abandoning',
+      abandon_code = case when p_error_code ~ '^[a-z_]{1,60}$' then p_error_code else 'unknown' end,
+      abandoned_at = clock_timestamp()
+  where id = v_doc.id
+  returning * into v_doc;
+
   insert into public.audit_logs (workspace_id, actor_user_id, action, resource_type, resource_id, metadata)
   values (v_doc.workspace_id, p_actor_user_id, 'case_document.upload_failed', 'opportunity', v_doc.opportunity_id,
-          jsonb_build_object('document_id', v_doc.id,
-                             'error_code', case when p_error_code ~ '^[a-z_]{1,60}$' then p_error_code else 'unknown' end));
+          jsonb_build_object('document_id', v_doc.id, 'error_code', v_doc.abandon_code));
+  return jsonb_build_object('status', 'abandoning', 'storage_path', v_doc.storage_path, 'replayed', false);
+end;
+$body$;
+
+revoke all on function public.begin_case_document_abandon(uuid, uuid, text) from public, anon, authenticated;
+grant execute on function public.begin_case_document_abandon(uuid, uuid, text) to service_role;
+
+-- Fase 2: só tira a linha reservada se o objeto já saiu do Storage; senão recusa (o cancelamento fica pendente
+-- e a limpeza retoma). Ao sair, o gatilho mantém o caminho vigiado na fila enquanto algum link de envio
+-- emitido ainda puder gravar. Ator nulo = conclusão pela limpeza (sistema). Linha ausente → false.
+create function public.finalize_case_document_abandon(p_document_id uuid, p_actor_user_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $body$
+declare
+  v_doc public.case_documents;
+begin
+  select * into v_doc from public.case_documents where id = p_document_id for update;
+  if v_doc.id is null then
+    return false;
+  end if;
+  if p_actor_user_id is not null and v_doc.uploaded_by <> p_actor_user_id then
+    raise exception 'document_not_found';
+  end if;
+  if v_doc.status <> 'abandoning' then
+    raise exception 'document_not_abandoning';
+  end if;
+  if private.case_document_object_exists(v_doc.storage_path) then
+    raise exception 'storage_object_still_present';
+  end if;
+  delete from public.case_documents where id = v_doc.id;
   return true;
 end;
 $body$;
 
-revoke all on function public.abandon_case_document(uuid, uuid, text) from public, anon, authenticated;
-grant execute on function public.abandon_case_document(uuid, uuid, text) to service_role;
+revoke all on function public.finalize_case_document_abandon(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.finalize_case_document_abandon(uuid, uuid) to service_role;
 
 -- Envio do próprio ator ainda em andamento (ou recém-concluído): o servidor lê daqui o caminho e o tipo
 -- declarado para conferir o conteúdo — nunca do navegador. Outro usuário, outro escritório ou fora do
@@ -604,7 +699,7 @@ declare
   v_doc public.case_documents;
 begin
   v_doc := private.case_document_for_actor(p_document_id, v_actor, false);
-  if v_doc.uploaded_by <> v_actor or v_doc.status not in ('pending', 'ready') then
+  if v_doc.uploaded_by <> v_actor or v_doc.status not in ('pending', 'ready', 'abandoning') then
     raise exception 'document_not_found';
   end if;
   return jsonb_build_object('storagePath', v_doc.storage_path, 'declaredType', v_doc.declared_type, 'status', v_doc.status);
@@ -831,9 +926,10 @@ grant execute on function public.finalize_case_document_removal(uuid, uuid) to s
 -- 10) Limpeza (só service_role): envios abandonados, remoções interrompidas e a fila
 -- =====================================================================
 
--- Pendências de envio com mais de 3 horas (o link de envio do Storage vale 2 horas) saem; o gatilho põe o
--- objeto que existir na fila. Devolve até p_limit itens a processar, reservados por 5 minutos
--- (dois processadores nunca pegam o mesmo).
+-- Envios pendentes cuja janela do link fechou (nenhum link emitido ainda grava) saem; o gatilho põe na fila o
+-- objeto que existir. Devolve até p_limit itens a processar: remoções e cancelamentos interrompidos (a
+-- conclusão é idempotente) e caminhos da fila, estes reservados por 5 minutos (dois processadores nunca pegam
+-- o mesmo).
 create function public.case_document_cleanup_claim(p_limit integer default 20)
 returns jsonb
 language plpgsql
@@ -843,13 +939,14 @@ as $body$
 declare
   v_limit integer := greatest(1, least(coalesce(p_limit, 20), 100));
   v_removals jsonb;
+  v_abandons jsonb;
   v_queue jsonb;
 begin
   delete from public.case_documents d
   where d.id in (
     select x.id from public.case_documents x
-    where x.status = 'pending' and x.created_at < clock_timestamp() - interval '3 hours'
-    order by x.created_at
+    where x.status = 'pending' and x.upload_window_until < clock_timestamp()
+    order by x.upload_window_until
     limit v_limit
     for update skip locked
   );
@@ -863,6 +960,17 @@ begin
   )
   select coalesce(jsonb_agg(jsonb_build_object('document_id', d.id, 'storage_path', d.storage_path)), '[]'::jsonb)
     into v_removals
+  from public.case_documents d where d.id in (select id from picked);
+
+  with picked as (
+    select x.id from public.case_documents x
+    where x.status = 'abandoning' and x.abandoned_at < clock_timestamp() - interval '2 minutes'
+    order by x.abandoned_at
+    limit v_limit
+    for update skip locked
+  )
+  select coalesce(jsonb_agg(jsonb_build_object('document_id', d.id, 'storage_path', d.storage_path)), '[]'::jsonb)
+    into v_abandons
   from public.case_documents d where d.id in (select id from picked);
 
   with picked as (
@@ -881,14 +989,16 @@ begin
     into v_queue
   from upd u;
 
-  return jsonb_build_object('removals', v_removals, 'objects', v_queue);
+  return jsonb_build_object('removals', v_removals, 'abandons', v_abandons, 'objects', v_queue);
 end;
 $body$;
 
 revoke all on function public.case_document_cleanup_claim(integer) from public, anon, authenticated;
 grant execute on function public.case_document_cleanup_claim(integer) to service_role;
 
--- Tira da fila só se o objeto já não existe. Devolve se saiu.
+-- Tira da fila só se o objeto já não existe E nenhum link de envio emitido ainda pode gravar. Devolve se saiu.
+-- Objeto ainda presente → volta para a fila já; janela aberta → nova conferência em até 10 minutos (ou no fim
+-- da janela), para apagar logo um envio atrasado que chegue nesse meio-tempo.
 create function public.case_document_cleanup_complete(p_cleanup_id uuid)
 returns boolean
 language plpgsql
@@ -904,6 +1014,12 @@ begin
   end if;
   if private.case_document_object_exists(v_row.storage_path) then
     update public.case_document_storage_cleanup set claimed_until = null where id = v_row.id;
+    return false;
+  end if;
+  if v_row.watch_until > clock_timestamp() then
+    update public.case_document_storage_cleanup
+    set claimed_until = least(v_row.watch_until, clock_timestamp() + interval '10 minutes')
+    where id = v_row.id;
     return false;
   end if;
   delete from public.case_document_storage_cleanup where id = v_row.id;

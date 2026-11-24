@@ -1052,6 +1052,7 @@ export type Database = {
           id: string
           reason: string
           storage_path: string
+          watch_until: string
           workspace_id: string
         }
         Insert: {
@@ -1063,6 +1064,7 @@ export type Database = {
           id?: string
           reason: string
           storage_path: string
+          watch_until?: string
           workspace_id: string
         }
         Update: {
@@ -1074,6 +1076,7 @@ export type Database = {
           id?: string
           reason?: string
           storage_path?: string
+          watch_until?: string
           workspace_id?: string
         }
         Relationships: []
@@ -1101,6 +1104,8 @@ export type Database = {
       }
       case_documents: {
         Row: {
+          abandon_code: string | null
+          abandoned_at: string | null
           byte_size: number | null
           checksum_sha256: string | null
           content_type: string | null
@@ -1123,10 +1128,13 @@ export type Database = {
           reviewed_by: string | null
           status: string
           storage_path: string
+          upload_window_until: string
           uploaded_by: string
           workspace_id: string
         }
         Insert: {
+          abandon_code?: string | null
+          abandoned_at?: string | null
           byte_size?: number | null
           checksum_sha256?: string | null
           content_type?: string | null
@@ -1149,10 +1157,13 @@ export type Database = {
           reviewed_by?: string | null
           status?: string
           storage_path: string
+          upload_window_until?: string
           uploaded_by: string
           workspace_id: string
         }
         Update: {
+          abandon_code?: string | null
+          abandoned_at?: string | null
           byte_size?: number | null
           checksum_sha256?: string | null
           content_type?: string | null
@@ -1175,6 +1186,7 @@ export type Database = {
           reviewed_by?: string | null
           status?: string
           storage_path?: string
+          upload_window_until?: string
           uploaded_by?: string
           workspace_id?: string
         }
@@ -5608,14 +5620,6 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      abandon_case_document: {
-        Args: {
-          p_actor_user_id: string
-          p_document_id: string
-          p_error_code: string
-        }
-        Returns: boolean
-      }
       accept_workspace_invitation: {
         Args: { p_token: string }
         Returns: {
@@ -5830,6 +5834,14 @@ export type Database = {
           p_idempotency_key: string
           p_name: string
           p_opportunity_id: string
+        }
+        Returns: Json
+      }
+      begin_case_document_abandon: {
+        Args: {
+          p_actor_user_id: string
+          p_document_id: string
+          p_error_code: string
         }
         Returns: Json
       }
@@ -6270,6 +6282,10 @@ export type Database = {
           p_document_id: string
         }
         Returns: Json
+      }
+      finalize_case_document_abandon: {
+        Args: { p_actor_user_id: string; p_document_id: string }
+        Returns: boolean
       }
       finalize_case_document_removal: {
         Args: { p_actor_user_id: string; p_document_id: string }

@@ -8,6 +8,7 @@ import { caseDocumentsUploadEnabledByServer, UPLOAD_DISABLED_MESSAGE } from "@/s
 import { checkUploadedContent } from "@/server/case-documents/content";
 import {
   CaseDocumentAdminError,
+  type AbandonOutcome,
   adminAbandonCaseDocument,
   adminBeginCaseDocument,
   adminBeginRemoval,
@@ -20,6 +21,9 @@ import {
 } from "@/server/case-documents/admin/documents";
 
 import {
+  DISCARD_CONFIRMED,
+  DISCARD_PENDING,
+  DISCARD_UNCONFIRMED,
   beginUploadSchema,
   documentIdSchema,
   isCaseDocumentType,
@@ -47,8 +51,8 @@ const MESSAGES: Record<string, string> = {
   case_document_type_not_allowed: "Formato não aceito. Envie PDF, JPEG ou PNG.",
   case_document_empty: "O arquivo está vazio.",
   case_document_too_large: "O arquivo passa de 10 MB, o limite por documento.",
-  case_document_content_invalid: "O arquivo não é um PDF, JPEG ou PNG válido (ou chegou incompleto). Nada foi guardado.",
-  case_document_content_mismatch: "O conteúdo do arquivo não corresponde ao formato informado. Nada foi guardado.",
+  case_document_content_invalid: "O arquivo não é um PDF, JPEG ou PNG válido (ou chegou incompleto).",
+  case_document_content_mismatch: "O conteúdo do arquivo não corresponde ao formato informado.",
   document_object_missing_or_size_mismatch: "O arquivo não chegou completo ao armazenamento. Tente enviar de novo.",
   document_not_pending: "Este envio já foi concluído ou cancelado.",
   case_document_review_conflict: "Outra pessoa registrou a conferência deste documento antes. Veja a situação atual e decida de novo.",
@@ -60,6 +64,12 @@ const MESSAGES: Record<string, string> = {
 
 function message(code: string, fallback = "Não foi possível concluir. Tente de novo."): string {
   return MESSAGES[code] ?? fallback;
+}
+
+function discardSuffix(outcome: AbandonOutcome | null): string {
+  if (outcome === "abandoned") return DISCARD_CONFIRMED;
+  if (outcome === "cleanup_pending") return DISCARD_PENDING;
+  return DISCARD_UNCONFIRMED;
 }
 
 function codeOf(error: unknown): string {
@@ -122,8 +132,9 @@ export type FinalizeUploadState = { ok: true; document: CaseDocument; replayed: 
 
 /**
  * 2ª fase: baixa o objeto recebido, confere o CONTEÚDO (não é antivírus), calcula o hash e só então o banco
- * torna o documento visível — depois de conferir no Storage o mesmo tamanho. Conteúdo inválido: apaga o objeto
- * e a linha pendente (nada fica visível nem órfão sem registro).
+ * torna o documento visível — depois de conferir no Storage o mesmo tamanho. Conteúdo inválido: cancela o envio
+ * em duas fases (reserva no banco, exclusão no Storage, conferência) e só diz "Nada foi guardado" com essa
+ * confirmação. Se um cancelamento venceu a disputa antes, o banco recusa a finalização.
  */
 export async function finalizeCaseDocumentUploadAction(input: { documentId: string; declaredType: string }): Promise<FinalizeUploadState> {
   const guard = await requirePermissionSafe("case_document.upload");
@@ -138,9 +149,9 @@ export async function finalizeCaseDocumentUploadAction(input: { documentId: stri
   const { data: pending, error: pendingError } = await supabase.rpc("get_pending_case_document", { p_document_id: parsed.data.documentId });
   if (pendingError || !pending) return { ok: false, error: message(codeOf(pendingError), "Envio não encontrado."), abandoned: false };
   const info = pending as { storagePath: string; declaredType: string; status: string };
-  if (info.status === "ready") {
-    // Repetição depois de uma resposta perdida: o documento já está pronto.
-    return { ok: false, error: message("document_not_pending"), abandoned: false };
+  if (info.status !== "pending") {
+    // Pronto (repetição depois de uma resposta perdida) ou com cancelamento já reservado.
+    return { ok: false, error: message("document_not_pending"), abandoned: info.status === "abandoning" };
   }
 
   const bytes = await adminDownloadObject(info.storagePath);
@@ -149,9 +160,18 @@ export async function finalizeCaseDocumentUploadAction(input: { documentId: stri
   const declared = isCaseDocumentType(info.declaredType) ? info.declaredType : input.declaredType;
   const check = checkUploadedContent(bytes, declared);
   if (!check.ok) {
-    await adminAbandonCaseDocument({ documentId: parsed.data.documentId, storagePath: info.storagePath, actorUserId: guard.ctx.userId, errorCode: check.code });
+    let outcome: AbandonOutcome | null = null;
+    try {
+      outcome = await adminAbandonCaseDocument({ documentId: parsed.data.documentId, actorUserId: guard.ctx.userId, errorCode: check.code });
+    } catch (error) {
+      if (codeOf(error) === "document_not_pending") {
+        // A finalização de outra chamada venceu: nada foi apagado.
+        return { ok: false, error: message("document_not_pending"), abandoned: false };
+      }
+      // Sem confirmação: o envio continua pendente (invisível) e expira pela janela do link.
+    }
     await cleanupQuietly();
-    return { ok: false, error: message(check.code), abandoned: true };
+    return { ok: false, error: `${message(check.code)} ${discardSuffix(outcome)}`, abandoned: outcome !== null };
   }
 
   try {
@@ -170,26 +190,30 @@ export async function finalizeCaseDocumentUploadAction(input: { documentId: stri
   }
 }
 
+export type AbandonUploadState =
+  | { ok: true; outcome: AbandonOutcome }
+  | { ok: false; error: string; concluded: boolean };
+
 /**
- * Envio interrompido na tela (falha de rede ao subir, arquivo recusado pelo Storage, desistência): apaga o que
- * tiver chegado e a linha pendente. Idempotente. Sem a trava do recebimento — cancelar nunca fica bloqueado.
+ * Envio interrompido na tela (falha de rede ao subir, arquivo recusado pelo Storage, desistência). Cancela em
+ * duas fases — reserva no banco ANTES de apagar no Storage — e devolve o que de fato aconteceu: `abandoned`
+ * (confirmado), `already_absent` (já não havia envio), `cleanup_pending` (reservado; o objeto ainda não saiu).
+ * Se a finalização já tinha vencido, `concluded: true` e nada é apagado. Idempotente. Sem a trava do
+ * recebimento — cancelar nunca fica bloqueado.
  */
-export async function abandonCaseDocumentUploadAction(input: { documentId: string; reason: string }): Promise<{ ok: boolean }> {
+export async function abandonCaseDocumentUploadAction(input: { documentId: string; reason: string }): Promise<AbandonUploadState> {
   const guard = await requirePermissionSafe("case_document.upload");
-  if ("error" in guard) return { ok: false };
+  if ("error" in guard) return { ok: false, error: guard.error, concluded: false };
   const parsed = documentIdSchema.safeParse({ documentId: input.documentId });
-  if (!parsed.success) return { ok: false };
-  const supabase = await createServerSupabaseClient();
-  const { data } = await supabase.rpc("get_pending_case_document", { p_document_id: parsed.data.documentId });
-  const info = (data ?? null) as { storagePath: string; status: string } | null;
-  if (!info || info.status !== "pending") return { ok: true };
+  if (!parsed.success) return { ok: false, error: "Dados inválidos.", concluded: false };
   const reason = /^[a-z_]{1,60}$/.test(input.reason) ? input.reason : "upload_interrupted";
   try {
-    await adminAbandonCaseDocument({ documentId: parsed.data.documentId, storagePath: info.storagePath, actorUserId: guard.ctx.userId, errorCode: reason });
-  } catch {
-    // A linha pendente expira sozinha (3 horas) e o objeto vai para a fila de limpeza.
+    const outcome = await adminAbandonCaseDocument({ documentId: parsed.data.documentId, actorUserId: guard.ctx.userId, errorCode: reason });
+    return { ok: true, outcome };
+  } catch (error) {
+    const code = codeOf(error);
+    return { ok: false, error: message(code), concluded: code === "document_not_pending" };
   }
-  return { ok: true };
 }
 
 export type ReviewState = { ok: true; document: CaseDocument } | { ok: false; error: string; conflict: boolean };

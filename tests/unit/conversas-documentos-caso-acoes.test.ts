@@ -130,11 +130,44 @@ describe("finalização: conteúdo conferido no servidor", () => {
     expect(m.adminDownload).toHaveBeenCalledWith(`w/${OPP}/${DOC}`);
     expect(m.adminFinalize).toHaveBeenCalledWith(expect.objectContaining({ contentType: "application/pdf", byteSize: PDF.length, checksumSha256: expect.stringMatching(/^[0-9a-f]{64}$/) }));
   });
-  it("conteúdo inválido (HTML com extensão .pdf): apaga objeto e linha pendente, nada fica visível", async () => {
-    m.adminDownload.mockResolvedValue(Uint8Array.from(Buffer.from("<html><script>alert(1)</script></html>")));
+  const HTML = Uint8Array.from(Buffer.from("<html><script>alert(1)</script></html>"));
+  it("conteúdo inválido (HTML com extensão .pdf) com cancelamento CONFIRMADO: “Nada foi guardado”", async () => {
+    m.adminDownload.mockResolvedValue(HTML);
+    m.adminAbandon.mockResolvedValue("abandoned");
     const r = await actions.finalizeCaseDocumentUploadAction({ documentId: DOC, declaredType: "application/pdf" });
-    expect(r).toEqual({ ok: false, error: expect.stringMatching(/não é um PDF, JPEG ou PNG válido/), abandoned: true });
-    expect(m.adminAbandon).toHaveBeenCalledWith(expect.objectContaining({ documentId: DOC, storagePath: `w/${OPP}/${DOC}`, errorCode: "case_document_content_invalid" }));
+    expect(r).toEqual({ ok: false, error: expect.stringMatching(/não é um PDF, JPEG ou PNG válido.*Nada foi guardado\.$/), abandoned: true });
+    // O caminho do cancelamento vem da reserva no banco, não da leitura anterior.
+    expect(m.adminAbandon).toHaveBeenCalledWith({ documentId: DOC, actorUserId: ACTOR, errorCode: "case_document_content_invalid" });
+    expect(m.adminFinalize).not.toHaveBeenCalled();
+  });
+  it("conteúdo inválido com o objeto ainda no Storage: NÃO diz “Nada foi guardado”", async () => {
+    m.adminDownload.mockResolvedValue(HTML);
+    m.adminAbandon.mockResolvedValue("cleanup_pending");
+    const r = await actions.finalizeCaseDocumentUploadAction({ documentId: DOC, declaredType: "application/pdf" });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).not.toMatch(/Nada foi guardado/);
+      expect(r.error).toMatch(/registrada para a limpeza/);
+      expect(r.abandoned).toBe(true);
+    }
+  });
+  it("conteúdo inválido e o banco não confirma o cancelamento: diz que não foi possível confirmar", async () => {
+    m.adminDownload.mockResolvedValue(HTML);
+    m.adminAbandon.mockRejectedValue(new Error("database_error"));
+    const r = await actions.finalizeCaseDocumentUploadAction({ documentId: DOC, declaredType: "application/pdf" });
+    expect(r).toEqual({ ok: false, error: expect.stringMatching(/não foi possível confirmar a exclusão/), abandoned: false });
+  });
+  it("conteúdo inválido mas outra chamada já finalizou: nada é apagado nem anunciado", async () => {
+    m.adminDownload.mockResolvedValue(HTML);
+    m.adminAbandon.mockRejectedValue(new Error("document_not_pending"));
+    const r = await actions.finalizeCaseDocumentUploadAction({ documentId: DOC, declaredType: "application/pdf" });
+    expect(r).toEqual({ ok: false, error: expect.stringMatching(/já foi concluído ou cancelado/), abandoned: false });
+  });
+  it("cancelamento já reservado: a finalização nem baixa o objeto", async () => {
+    m.rpc.mockResolvedValue({ data: { storagePath: `w/${OPP}/${DOC}`, declaredType: "application/pdf", status: "abandoning" }, error: null });
+    const r = await actions.finalizeCaseDocumentUploadAction({ documentId: DOC, declaredType: "application/pdf" });
+    expect(r).toEqual({ ok: false, error: expect.stringMatching(/já foi concluído ou cancelado/), abandoned: true });
+    expect(m.adminDownload).not.toHaveBeenCalled();
     expect(m.adminFinalize).not.toHaveBeenCalled();
   });
   it("objeto ainda não chegou: não finaliza nem abandona (dá para tentar de novo)", async () => {
@@ -143,6 +176,36 @@ describe("finalização: conteúdo conferido no servidor", () => {
     expect(r.ok).toBe(false);
     expect(m.adminAbandon).not.toHaveBeenCalled();
     expect(m.adminFinalize).not.toHaveBeenCalled();
+  });
+});
+
+describe("cancelamento do envio: só anuncia o que o servidor confirmou", () => {
+  it.each(["abandoned", "already_absent", "cleanup_pending"] as const)("resultado %s volta como está", async (outcome) => {
+    m.adminAbandon.mockResolvedValue(outcome);
+    expect(await actions.abandonCaseDocumentUploadAction({ documentId: DOC, reason: "upload_interrupted" })).toEqual({ ok: true, outcome });
+    expect(m.adminAbandon).toHaveBeenCalledWith({ documentId: DOC, actorUserId: ACTOR, errorCode: "upload_interrupted" });
+    // Não lê nada pela sessão antes: a reserva no banco é o primeiro passo.
+    expect(m.rpc).not.toHaveBeenCalled();
+  });
+  it("finalização venceu a disputa: concluded=true, nada apagado", async () => {
+    m.adminAbandon.mockRejectedValue(new Error("document_not_pending"));
+    expect(await actions.abandonCaseDocumentUploadAction({ documentId: DOC, reason: "upload_interrupted" })).toEqual({
+      ok: false, error: expect.stringMatching(/já foi concluído ou cancelado/), concluded: true,
+    });
+  });
+  it("erro do banco: ok=false, sem fingir sucesso", async () => {
+    m.adminAbandon.mockRejectedValue(new Error("database_error"));
+    const r = await actions.abandonCaseDocumentUploadAction({ documentId: DOC, reason: "upload_interrupted" });
+    expect(r).toMatchObject({ ok: false, concluded: false });
+  });
+  it("motivo fora do formato vira upload_interrupted; sem permissão não chama nada", async () => {
+    m.adminAbandon.mockResolvedValue("abandoned");
+    await actions.abandonCaseDocumentUploadAction({ documentId: DOC, reason: "<script>" });
+    expect(m.adminAbandon).toHaveBeenCalledWith(expect.objectContaining({ errorCode: "upload_interrupted" }));
+    m.adminAbandon.mockReset();
+    m.guard.mockResolvedValue({ error: "Você não tem permissão para fazer isso." });
+    expect((await actions.abandonCaseDocumentUploadAction({ documentId: DOC, reason: "upload_interrupted" })).ok).toBe(false);
+    expect(m.adminAbandon).not.toHaveBeenCalled();
   });
 });
 

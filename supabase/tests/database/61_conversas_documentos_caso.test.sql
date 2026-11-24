@@ -4,7 +4,9 @@
 -- portão de recebimento FECHADO por padrão (begin e finalize recusam, inclusive para o owner); com o portão
 -- aberto: o documento pertence ao caso (dois casos do mesmo contato não se misturam, outro escritório não
 -- enxerga), papéis de envio/conferência/remoção, alcance do lead, nome limpo e guardado como texto, limites,
--- idempotência (repetição e conflito), finalização só com o objeto no Storage e o tipo declarado, abandono;
+-- idempotência (repetição e conflito), finalização só com o objeto no Storage e o tipo declarado, cancelamento
+-- em duas fases com vencedor único contra a finalização, janela do link de envio (emissão mais recente) e
+-- caminho vigiado na fila até a janela fechar (envio atrasado ou link reutilizado nunca vira órfão);
 -- conferência com versão (sem sobrescrita silenciosa) e observação obrigatória na pendência; remoção em duas
 -- fases (recusa enquanto o objeto existe); fila de limpeza nas exclusões; nada muda em trilhas, roteiro,
 -- etapa, vínculo, mensagens ou automações; auditoria sem nome nem observação; exportação só com metadados;
@@ -15,7 +17,7 @@
 -- storage.objects, como o teste das propostas).
 
 begin;
-select plan(74);
+select plan(90);
 
 \set ana    '20000000-0000-0000-0000-000000000001'
 \set bruno  '20000000-0000-0000-0000-000000000002'
@@ -114,12 +116,13 @@ select ok(
   'bucket case-documents privado, 10 MiB, só PDF/JPEG/PNG, sem nenhuma policy de Storage');
 select is(
   pg_temp.n($q$select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = 'public' and p.proname in ('begin_case_document', 'finalize_case_document', 'abandon_case_document',
-      'begin_case_document_removal', 'finalize_case_document_removal', 'case_document_cleanup_claim', 'case_document_cleanup_complete')
+    where n.nspname = 'public' and p.proname in ('begin_case_document', 'finalize_case_document', 'begin_case_document_abandon',
+      'finalize_case_document_abandon', 'begin_case_document_removal', 'finalize_case_document_removal', 'case_document_cleanup_claim',
+      'case_document_cleanup_complete')
       and p.prosecdef and p.proconfig = array['search_path=""']
       and has_function_privilege('service_role', p.oid, 'execute')
       and not has_function_privilege('authenticated', p.oid, 'execute') and not has_function_privilege('anon', p.oid, 'execute')$q$),
-  7::bigint, 'as 7 funções de escrita do arquivo: SECURITY DEFINER, search_path vazio, SÓ service_role');
+  8::bigint, 'as 8 funções de escrita do arquivo: SECURITY DEFINER, search_path vazio, SÓ service_role');
 select is(
   pg_temp.n($q$select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public' and p.proname in ('list_case_documents', 'get_case_document_for_download', 'set_case_document_review', 'get_pending_case_document')
@@ -217,18 +220,41 @@ select ok((begin_case_document((:'opa')::uuid, (:'bruno')::uuid, E'C:\\fotos\\<i
   'f0000000-0000-0000-0000-000000000010'::uuid) ->> 'status') = 'ready',
   'repetição depois de pronto devolve o documento pronto (a tela só mostra o resultado)');
 
--- Abandono: a linha pendente sai; o objeto que existir vai para a fila de limpeza.
+-- Documento pronto: o cancelamento é RECUSADO (a finalização venceu) e nada muda.
+select throws_ok(format('select begin_case_document_abandon(%L, %L, %L)', :'d1', :'bruno', 'upload_interrupted'), 'P0001', 'document_not_pending',
+  'documento já pronto: o cancelamento perde e não toca o arquivo');
+
+-- Cancelamento em duas fases: a reserva (pendente → abandoning) vem ANTES de qualquer exclusão no Storage; a
+-- linha só sai quando o objeto já não existe; o caminho continua vigiado enquanto o link de envio puder gravar.
 select begin_case_document((:'opa')::uuid, (:'ana')::uuid, 'foto.png', 'image/png', 500, 'f0000000-0000-0000-0000-000000000011'::uuid) ->> 'document_id' as d2 \gset
 reset role;
 select pg_temp.subir((:'d2')::uuid, 500);
 select pg_temp.t(format('select storage_path from public.case_documents where id = %L', :'d2')) as p2 \gset
 set local role service_role;
-select throws_ok(format('select abandon_case_document(%L, %L, %L)', :'d2', :'bruno', 'x'), 'P0001', 'document_not_pending', 'só quem iniciou abandona');
-select ok(abandon_case_document((:'d2')::uuid, (:'ana')::uuid, 'case_document_content_invalid'), 'abandono tira a linha pendente');
-select ok(not abandon_case_document((:'d2')::uuid, (:'ana')::uuid, 'x'), 'abandonar de novo é inofensivo (linha já não existe)');
+select throws_ok(format('select begin_case_document_abandon(%L, %L, %L)', :'d2', :'bruno', 'x'), 'P0001', 'document_not_found', 'só quem iniciou cancela');
+select is(begin_case_document_abandon((:'d2')::uuid, (:'ana')::uuid, 'case_document_content_invalid') ->> 'status', 'abandoning',
+  'o cancelamento reserva a transição no banco');
+select ok((begin_case_document_abandon((:'d2')::uuid, (:'ana')::uuid, 'outro') ->> 'replayed')::boolean, 'repetir a reserva é idempotente');
+select throws_ok(format('select finalize_case_document(%L, %L, %L, %s, %L)', :'d2', :'ana', 'image/png', 500, :'sha'), 'P0001', 'document_not_pending',
+  'reservado para cancelamento: a finalização perde (vencedor único)');
+select throws_ok(format('select begin_case_document(%L, %L, %L, %L, %s, %L)', :'opa', :'ana', 'foto.png', 'image/png', 500, 'f0000000-0000-0000-0000-000000000011'),
+  'P0001', 'document_not_pending', 'repetir o begin com o cancelamento reservado não emite link novo');
+select throws_ok(format('select finalize_case_document_abandon(%L, %L)', :'d2', :'ana'), 'P0001', 'storage_object_still_present',
+  'enquanto o objeto existe no Storage, a linha reservada não sai');
 reset role;
-select ok(pg_temp.n(format($q$select count(*) from public.case_document_storage_cleanup where storage_path = %L and reason = 'envio_abandonado'$q$, :'p2')) = 1,
-  'o objeto que sobrou do envio abandonado está na fila de limpeza (nunca órfão sem registro)');
+select pg_temp.apagar_objeto((:'d2')::uuid);
+set local role service_role;
+select ok(finalize_case_document_abandon((:'d2')::uuid, (:'ana')::uuid), 'objeto apagado: a linha reservada sai');
+select ok(not finalize_case_document_abandon((:'d2')::uuid, (:'ana')::uuid), 'concluir de novo é inofensivo');
+select is(begin_case_document_abandon((:'d2')::uuid, (:'ana')::uuid, 'x') ->> 'status', 'absent', 'cancelar de novo é inofensivo (resposta perdida)');
+reset role;
+select ok(pg_temp.n(format($q$select count(*) from public.case_document_storage_cleanup where storage_path = %L and reason = 'envio_abandonado'
+    and watch_until > clock_timestamp() + interval '2 hours 50 minutes'$q$, :'p2')) = 1,
+  'sem objeto, mas com link de envio ainda válido: o caminho fica vigiado na fila até a janela fechar');
+-- Envio atrasado com o link ainda válido (o Storage aceita: o link não é revogável): o objeto volta e está rastreado.
+insert into storage.objects (bucket_id, name, metadata) values ('case-documents', :'p2', jsonb_build_object('size', 500, 'mimetype', 'image/png'));
+select ok(pg_temp.n(format($q$select count(*) from public.case_document_storage_cleanup where storage_path = %L$q$, :'p2')) = 1,
+  'o objeto gravado depois do cancelamento continua rastreado (nunca órfão)');
 select is(pg_temp.n($q$select count(*) from public.audit_logs where action = 'case_document.upload_failed' and metadata ->> 'error_code' = 'case_document_content_invalid'$q$),
   1::bigint, 'falha do envio auditada com código fechado');
 
@@ -254,6 +280,25 @@ select throws_ok(format('select get_pending_case_document(%L)', :'d1'), 'P0001',
 select pg_temp.login(:'bruno'::uuid);
 select ok((get_pending_case_document((:'d1')::uuid) ->> 'storagePath') = :'ws_um' || '/' || :'opa' || '/' || :'d1', 'o autor lê o caminho gerado pelo banco');
 reset role;
+
+-- Janela do link de envio: conta da emissão MAIS RECENTE (repetição do begin) e só cresce.
+set local role service_role;
+select begin_case_document((:'opa')::uuid, (:'ana')::uuid, 'janela.pdf', 'application/pdf', 100, 'f0000000-0000-0000-0000-000000000014'::uuid) ->> 'document_id' as d5 \gset
+reset role;
+alter table public.case_documents disable trigger case_documents_guard;
+update public.case_documents set created_at = clock_timestamp() - interval '4 hours', upload_window_until = clock_timestamp() - interval '1 hour'
+where id = (:'d5')::uuid;
+alter table public.case_documents enable trigger case_documents_guard;
+set local role service_role;
+select begin_case_document((:'opa')::uuid, (:'ana')::uuid, 'janela.pdf', 'application/pdf', 100, 'f0000000-0000-0000-0000-000000000014'::uuid) ->> 'status' as st5 \gset
+reset role;
+select ok(:'st5' = 'pending' and pg_temp.n(format($q$select count(*) from public.case_documents where id = %L
+    and upload_window_until > clock_timestamp() + interval '2 hours 50 minutes'$q$, :'d5')) = 1,
+  'repetir o begin (link novo) estende a janela a partir de agora, não de created_at');
+select throws_ok(format($q$update public.case_documents set upload_window_until = upload_window_until - interval '1 minute' where id = %L$q$, :'d5'),
+  'P0001', 'case_document_immutable', 'a janela do link nunca encolhe');
+select throws_ok(format($q$update public.case_documents set upload_window_until = upload_window_until + interval '1 minute' where id = %L$q$, :'d1'),
+  'P0001', 'case_document_immutable', 'documento pronto não ganha janela nova');
 
 -- =====================================================================
 -- 5) Conferência humana com versão
@@ -309,13 +354,14 @@ set local role service_role;
 select ok(finalize_case_document_removal((:'d1')::uuid, (:'ana')::uuid), 'arquivo saiu: o registro é apagado');
 reset role;
 select ok(pg_temp.n(format('select count(*) from public.case_documents where id = %L', :'d1')) = 0
-  and pg_temp.n(format($q$select count(*) from public.case_document_storage_cleanup where document_id = %L$q$, :'d1')) = 0,
-  'sem linha e sem pendência de limpeza depois da remoção concluída');
+  and pg_temp.n(format($q$select count(*) from public.case_document_storage_cleanup where document_id = %L and reason = 'remocao'
+      and watch_until > clock_timestamp()$q$, :'d1')) = 1,
+  'remoção concluída logo depois do envio: sem linha, mas o caminho fica vigiado enquanto o link de envio puder gravar');
 select ok(pg_temp.n($q$select count(*) from public.audit_logs where action = 'case_document.removed' and metadata ->> 'reason' = 'duplicado' and metadata::text not like '%matr%'$q$) = 1,
   'remoção auditada com o motivo e sem o nome do arquivo');
 
 -- =====================================================================
--- 8) Limpeza: envios abandonados há mais de 3 horas e a fila
+-- 8) Limpeza: envios cuja janela do link fechou, cancelamentos interrompidos e a fila
 -- =====================================================================
 
 set local role service_role;
@@ -323,14 +369,18 @@ select begin_case_document((:'opb')::uuid, (:'ana')::uuid, 'velho.pdf', 'applica
 reset role;
 select pg_temp.subir((:'d3')::uuid, 100);
 alter table public.case_documents disable trigger case_documents_guard;
-update public.case_documents set created_at = clock_timestamp() - interval '4 hours' where id = (:'d3')::uuid;
+update public.case_documents set created_at = clock_timestamp() - interval '4 hours', upload_window_until = clock_timestamp() - interval '1 hour'
+where id = (:'d3')::uuid;
+-- d5: criado há 4 horas, mas com link emitido agora (janela aberta) — não pode sair.
 alter table public.case_documents enable trigger case_documents_guard;
 set local role service_role;
 select case_document_cleanup_claim(10) as claim \gset
 reset role;
 select ok(pg_temp.n(format('select count(*) from public.case_documents where id = %L', :'d3')) = 0
   and jsonb_array_length(:'claim'::jsonb -> 'objects') >= 2,
-  'a limpeza tira o envio parado há mais de 3 horas e devolve os objetos da fila (reservados)');
+  'a limpeza tira o envio cuja janela do link fechou e devolve os objetos da fila (reservados)');
+select ok(pg_temp.n(format('select count(*) from public.case_documents where id = %L and status = %L', :'d5', 'pending')) = 1,
+  'envio antigo com link renovado (janela aberta) não sai na limpeza');
 select id as q2 from public.case_document_storage_cleanup where storage_path = :'p2' \gset
 set local role service_role;
 select is((select jsonb_array_length(case_document_cleanup_claim(10) -> 'objects')), 0, 'outro processador não pega o que já está reservado');
@@ -339,7 +389,26 @@ reset role;
 select set_config('storage.allow_delete_query', 'true', true);
 delete from storage.objects where bucket_id = 'case-documents' and name = :'p2';
 set local role service_role;
-select ok(case_document_cleanup_complete((:'q2')::uuid), 'objeto apagado: sai da fila');
+select ok(not case_document_cleanup_complete((:'q2')::uuid), 'objeto apagado, mas o link ainda pode gravar: continua vigiado');
+reset role;
+select ok(pg_temp.n(format($q$select count(*) from public.case_document_storage_cleanup where id = %L
+    and claimed_until between clock_timestamp() + interval '9 minutes' and clock_timestamp() + interval '11 minutes'$q$, :'q2')) = 1,
+  'nova conferência marcada para até 10 minutos (envio atrasado é apagado logo)');
+update public.case_document_storage_cleanup set watch_until = clock_timestamp() - interval '1 second' where id = (:'q2')::uuid;
+set local role service_role;
+select ok(case_document_cleanup_complete((:'q2')::uuid), 'objeto ausente e janela fechada: sai da fila');
+reset role;
+
+-- Cancelamento interrompido (objeto não saiu na hora): a limpeza o devolve para concluir.
+set local role service_role;
+select begin_case_document((:'opb')::uuid, (:'ana')::uuid, 'interrompido.pdf', 'application/pdf', 100, 'f0000000-0000-0000-0000-000000000015'::uuid) ->> 'document_id' as d6 \gset
+select begin_case_document_abandon((:'d6')::uuid, (:'ana')::uuid, 'upload_interrupted');
+reset role;
+update public.case_documents set abandoned_at = clock_timestamp() - interval '3 minutes' where id = (:'d6')::uuid;
+set local role service_role;
+select ok((select bool_or(e ->> 'document_id' = :'d6') from jsonb_array_elements(case_document_cleanup_claim(10) -> 'abandons') e),
+  'cancelamento reservado há mais de 2 minutos volta na limpeza para ser concluído');
+select ok(finalize_case_document_abandon((:'d6')::uuid, null), 'a limpeza conclui o cancelamento (objeto nunca chegou)');
 reset role;
 
 -- Exclusão administrativa em cascata: o caminho do objeto vai para a fila (linha sem FK sobrevive).
@@ -358,8 +427,8 @@ reset role;
 select private.privacy_export_payload((:'ws_um')::uuid, (:'co')::uuid) as pacote \gset
 select ok((select bool_and((e ->> 'file_content_included')::boolean = false and e ? 'name' and not (e ? 'storage_path') and not (e ? 'review_note'))
   from jsonb_array_elements(:'pacote'::jsonb -> 'case_documents') e)
-  and jsonb_array_length(:'pacote'::jsonb -> 'case_documents') = 1,
-  'exportação do titular: só os metadados, sem conteúdo, caminho nem observação interna');
+  and jsonb_array_length(:'pacote'::jsonb -> 'case_documents') = 2,
+  'exportação do titular: só os metadados (pronto e envio pendente), sem conteúdo, caminho nem observação interna');
 select is(pg_temp.t(format($q$select private.privacy_retention_assess(%L, %L) -> 'reasons'$q$, :'ws_um', :'co'))::jsonb ? 'case_document_present', true,
   'avaliação da anonimização bloqueia com case_document_present');
 select throws_ok(format('update public.contacts set anonymized_at = now() where id = %L', :'co'), 'P0001', 'case_document_present',

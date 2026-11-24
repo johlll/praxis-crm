@@ -116,7 +116,7 @@ const one = (view: DocsView, perms: Record<string, unknown> = OWNER) => {
 
 beforeEach(() => {
   for (const f of [...Object.values(docActions), storage.uploadToSignedUrl, router.refresh]) f.mockReset();
-  docActions.abandonCaseDocumentUploadAction.mockResolvedValue({ ok: true });
+  docActions.abandonCaseDocumentUploadAction.mockResolvedValue({ ok: true, outcome: "abandoned" });
   vi.stubGlobal("crypto", { ...globalThis.crypto, randomUUID: vi.fn(() => "f0000000-0000-4000-8000-000000000001") });
 });
 afterEach(() => {
@@ -269,15 +269,42 @@ describe("envio em duas fases (promessas controladas)", () => {
     expect(docActions.beginCaseDocumentUploadAction).not.toHaveBeenCalled();
   });
 
-  it("falha ao subir: cancela a reserva (nada guardado) e oferece nova tentativa", async () => {
+  it("falha ao subir: cancela a reserva (nada guardado, confirmado) e oferece nova tentativa", async () => {
     docActions.beginCaseDocumentUploadAction.mockResolvedValue({ ok: true, documentId: "d9", path: "p", token: "tok", alreadyReady: null });
     storage.uploadToSignedUrl.mockResolvedValue({ data: null, error: { message: "network error", statusCode: "500" } });
     render(<CaseDocumentUploader opportunityId={OPP_A} caseLabel="Caso A" />);
     pick(file());
-    expect(await screen.findByText(/O envio do arquivo não foi concluído/)).toBeTruthy();
+    expect(await screen.findByText("O envio do arquivo não foi concluído. Nada foi guardado; tente de novo.")).toBeTruthy();
     expect(docActions.abandonCaseDocumentUploadAction).toHaveBeenCalledWith({ documentId: "d9", reason: "upload_interrupted" });
     expect(docActions.finalizeCaseDocumentUploadAction).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Tentar de novo" })).toBeTruthy();
+  });
+
+  it.each([
+    [{ ok: true, outcome: "cleanup_pending" }, /registrada para a limpeza/],
+    [{ ok: true, outcome: "already_absent" }, /não ficou visível no caso/],
+    [{ ok: false, error: "x", concluded: false }, /não foi possível confirmar a exclusão/],
+    [null, /não foi possível confirmar a exclusão/],
+  ])("falha ao subir sem confirmação do descarte (%j): não diz “Nada foi guardado”", async (result, text) => {
+    docActions.beginCaseDocumentUploadAction.mockResolvedValue({ ok: true, documentId: "d9", path: "p", token: "tok", alreadyReady: null });
+    storage.uploadToSignedUrl.mockResolvedValue({ data: null, error: { message: "network error", statusCode: "500" } });
+    if (result === null) docActions.abandonCaseDocumentUploadAction.mockRejectedValue(new Error("fetch failed"));
+    else docActions.abandonCaseDocumentUploadAction.mockResolvedValue(result);
+    render(<CaseDocumentUploader opportunityId={OPP_A} caseLabel="Caso A" />);
+    pick(file());
+    const alert = await screen.findByText(text);
+    expect(alert.textContent).not.toMatch(/Nada foi guardado/);
+    expect(screen.getByRole("button", { name: "Tentar de novo" })).toBeTruthy();
+  });
+
+  it("falha ao subir, mas outra chamada já concluiu o envio: mostra recebido e atualiza (nada foi apagado)", async () => {
+    docActions.beginCaseDocumentUploadAction.mockResolvedValue({ ok: true, documentId: "d9", path: "p", token: "tok", alreadyReady: null });
+    storage.uploadToSignedUrl.mockResolvedValue({ data: null, error: { message: "network error", statusCode: "500" } });
+    docActions.abandonCaseDocumentUploadAction.mockResolvedValue({ ok: false, error: "Este envio já foi concluído ou cancelado.", concluded: true });
+    render(<CaseDocumentUploader opportunityId={OPP_A} caseLabel="Caso A" />);
+    pick(file());
+    expect(await screen.findByText(/Documento recebido/)).toBeTruthy();
+    expect(router.refresh).toHaveBeenCalled();
   });
 
   it("repetição de um envio que já chegou (objeto existe): segue para a conferência", async () => {
