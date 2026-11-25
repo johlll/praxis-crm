@@ -71,6 +71,7 @@ export type StatusAutomationErrorCode =
   | "target_not_found"
   | "contact_anonymized"
   | "idempotency_conflict"
+  | "target_busy"
   | "invalid_response"
   | "unknown";
 
@@ -81,7 +82,7 @@ export class StatusAutomationError extends Error {
   }
 }
 
-const DB_CODES: ReadonlySet<string> = new Set(["invalid_proposal", "automation_disabled", "target_not_found", "contact_anonymized", "idempotency_conflict"]);
+const DB_CODES: ReadonlySet<string> = new Set(["invalid_proposal", "automation_disabled", "target_not_found", "contact_anonymized", "idempotency_conflict", "target_busy"]);
 
 const responseSchema = z.discriminatedUnion("outcome", [
   z.object({
