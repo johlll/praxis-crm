@@ -111,7 +111,8 @@ create table public.upgrade_check_rows as
   select 'conversations' as t, md5(string_agg(x::text, '|' order by x.id)) as h from public.conversations x
   union all select 'opportunities', md5(string_agg(x::text, '|' order by x.id)) from public.opportunities x
   union all select 'status_tracks', md5(string_agg(x::text, '|' order by x.id)) from public.status_tracks x
-  union all select 'status_track_events', md5(string_agg(x::text, '|' order by x.id)) from public.status_track_events x
+  -- automation_decision_id vem de migration POSTERIOR (aplicador, nula nas linhas antigas): fora da comparação.
+  union all select 'status_track_events', md5(string_agg((to_jsonb(x) - 'automation_decision_id')::text, '|' order by x.id)) from public.status_track_events x
   union all select 'stage_transitions', md5(string_agg(x::text, '|' order by x.id)) from public.stage_transitions x;
 SQL
 snapshot upgrade_check_before
@@ -129,7 +130,7 @@ declare
                              'service_steps_total', 'service_steps_completed'];
   v_export_new text[] := array['case_numbers', 'case_service_plans', 'case_service_history'];
   -- Seções acrescentadas por migrations POSTERIORES (aplicadas junto no migration up): fora da comparação.
-  v_export_later text[] := array['case_notes', 'case_documents'];
+  v_export_later text[] := array['case_notes', 'case_documents', 'status_track_automation_decisions'];
   v_diff integer;
   v_after jsonb;
   v_service jsonb;
@@ -208,7 +209,7 @@ begin
     select 'conversations' as t, md5(string_agg(x::text, '|' order by x.id)) as h from public.conversations x
     union all select 'opportunities', md5(string_agg(x::text, '|' order by x.id)) from public.opportunities x
     union all select 'status_tracks', md5(string_agg(x::text, '|' order by x.id)) from public.status_tracks x
-    union all select 'status_track_events', md5(string_agg(x::text, '|' order by x.id)) from public.status_track_events x
+    union all select 'status_track_events', md5(string_agg((to_jsonb(x) - 'automation_decision_id')::text, '|' order by x.id)) from public.status_track_events x
     union all select 'stage_transitions', md5(string_agg(x::text, '|' order by x.id)) from public.stage_transitions x
   ) d join public.upgrade_check_rows r using (t)
   where d.h is distinct from r.h;
