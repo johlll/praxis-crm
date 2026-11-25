@@ -360,8 +360,11 @@ grant execute on function public.whatsapp_record_message_origin_time(uuid, times
 -- ---------------------------------------------------------------------
 -- 5) Exportação do titular (C3a): o horário de origem entra em cada mensagem
 --
--- Mesma função, mesma assinatura e as mesmas seções, byte a byte; só a seção `messages` ganha a
--- chave `origin_time` (horário, fonte e motivo). Sem identificador interno, ledger ou entrada.
+-- Mesma função, mesma assinatura e as mesmas seções, byte a byte, da definição PUBLICADA por
+-- 20261123120000_conversas_documentos_caso.sql (inclui `case_notes` e `case_documents`); só a seção
+-- `messages` ganha a chave `origin_time` (horário, fonte e motivo). Sem identificador interno, ledger
+-- ou entrada. (Esta migration nasceu como 20261119120000 e foi renumerada para depois das publicadas
+-- sem nunca ter sido aplicada; partir da versão antiga apagaria as seções acrescentadas depois.)
 -- Retenção/anonimização (C3b): as colunas moram na própria mensagem e saem com ela (a conversa
 -- apagada leva as mensagens em cascata); não guardam texto, telefone nem identidade.
 -- ---------------------------------------------------------------------
@@ -552,6 +555,28 @@ as $body$
         order by x.created_at, x.id)
       from public.lead_notes x where x.workspace_id = p_workspace_id and x.lead_id in (select id from l)
     ), '[]'::jsonb),
+    -- Observações por caso: só a existência (id, caso, data), como lead_notes — o texto livre interno
+    -- e o autor (usuário interno) ficam fora do arquivo automático.
+    'case_notes', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'id', x.id, 'opportunity_id', x.opportunity_id, 'created_at', x.created_at)
+        order by x.created_at, x.id)
+      from public.case_notes x where x.workspace_id = p_workspace_id and x.opportunity_id in (select id from o)
+    ), '[]'::jsonb),
+    -- Documentos por caso: só os METADADOS (nome, tipo, tamanho, situação, conferência e datas). O conteúdo dos
+    -- arquivos NÃO entra no arquivo de exportação (file_content_included = false), nem a observação interna da
+    -- conferência nem quem enviou/conferiu (usuários internos).
+    'case_documents', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'id', x.id, 'opportunity_id', x.opportunity_id, 'name', x.original_name,
+        'content_type', coalesce(x.content_type, x.declared_type),
+        'byte_size', coalesce(x.byte_size, x.declared_size),
+        'status', x.status, 'review_status', x.review_status,
+        'uploaded_at', coalesce(x.finalized_at, x.created_at), 'reviewed_at', x.reviewed_at,
+        'file_content_included', false)
+        order by x.created_at, x.id)
+      from public.case_documents x where x.workspace_id = p_workspace_id and x.opportunity_id in (select id from o)
+    ), '[]'::jsonb),
     'conflict_checks', coalesce((
       select jsonb_agg(jsonb_build_object(
         'id', x.id, 'lead_id', x.lead_id, 'status', x.status,
@@ -672,6 +697,42 @@ as $body$
       join public.status_tracks x on x.id = e.track_id and x.workspace_id = e.workspace_id
       where e.workspace_id = p_workspace_id
         and (x.conversation_id in (select id from cv) or x.opportunity_id in (select id from o))
+    ), '[]'::jsonb),
+    -- Painel do caso (etapa B): número interno, roteiros (com as etapas copiadas e as conclusões) e o
+    -- histórico do roteiro das oportunidades do titular. Sem usuário interno (quem atribuiu, aplicou,
+    -- concluiu ou decidiu) e sem chave de idempotência, como no restante da C3a.
+    'case_numbers', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'opportunity_id', x.opportunity_id, 'number', x.number, 'assigned_via', x.assigned_via,
+        'assigned_at', x.assigned_at) order by x.assigned_at, x.opportunity_id)
+      from public.opportunity_case_numbers x
+      where x.workspace_id = p_workspace_id and x.opportunity_id in (select id from o)
+    ), '[]'::jsonb),
+    'case_service_plans', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'id', x.id, 'opportunity_id', x.opportunity_id, 'service_type', x.service_type_name,
+        'service_type_version', x.service_type_version, 'status', x.status,
+        'current_step_id', x.current_step_id, 'applied_at', x.applied_at, 'ended_at', x.ended_at,
+        'steps', coalesce((
+          select jsonb_agg(jsonb_build_object(
+            'id', s.id, 'position', s.position, 'name', s.name, 'completed_at', s.completed_at)
+            order by s.position)
+          from public.case_service_plan_steps s
+          where s.plan_id = x.id and s.workspace_id = p_workspace_id), '[]'::jsonb))
+        order by x.applied_at, x.id)
+      from public.case_service_plans x
+      where x.workspace_id = p_workspace_id and x.opportunity_id in (select id from o)
+    ), '[]'::jsonb),
+    'case_service_history', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'id', x.id, 'opportunity_id', x.opportunity_id, 'plan_id', x.plan_id, 'op', x.op,
+        'step_id', x.step_id, 'previous_plan_id', x.previous_plan_id,
+        'current_step_before', x.current_step_before, 'current_step_after', x.current_step_after,
+        'progress_from', x.progress_from, 'progress_to', x.progress_to,
+        'from_version', x.from_version, 'to_version', x.to_version, 'actor_kind', x.actor_kind,
+        'occurred_at', x.occurred_at) order by x.occurred_at, x.id)
+      from public.case_service_events x
+      where x.workspace_id = p_workspace_id and x.opportunity_id in (select id from o)
     ), '[]'::jsonb)
   );
 $body$;

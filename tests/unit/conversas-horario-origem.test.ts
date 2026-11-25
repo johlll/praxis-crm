@@ -12,7 +12,7 @@
  *
  * Tudo fictício.
  */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -312,14 +312,24 @@ describe("5. módulo de gravação do horário de origem", () => {
 
 const root = resolve(__dirname, "..", "..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8").split("\r").join("");
-const migration = read("supabase/migrations/20261119120000_conversas_horario_origem.sql");
+const MIGRATION_FILE = "20261124120000_conversas_horario_origem.sql";
+const migration = read(`supabase/migrations/${MIGRATION_FILE}`);
 /** Só o SQL, sem os comentários de linha. */
 const sql = migration
   .split("\n")
   .filter((line) => !line.trim().startsWith("--"))
   .join("\n");
 
-describe("6. migration 20261119120000: forma e superfície", () => {
+describe("6. migration 20261124120000: forma e superfície", () => {
+  it("vem depois de todas as publicadas (renumerada da antiga 20261119120000, nunca aplicada)", () => {
+    const migrations = readdirSync(resolve(root, "supabase/migrations")).filter((f) => f.endsWith(".sql")).sort();
+    const at = migrations.indexOf(MIGRATION_FILE);
+    expect(at).toBeGreaterThan(0);
+    // A última publicada (ledger 124 no hospedado) vem imediatamente antes.
+    expect(migrations[at - 1]).toBe("20261123120000_conversas_documentos_caso.sql");
+    expect(migrations).not.toContain("20261119120000_conversas_horario_origem.sql");
+  });
+
   it("é aditiva: nada é apagado e nenhum efeito da B3 é recriado", () => {
     expect(sql).not.toMatch(/\bdrop\s+(table|column|function|trigger)\b/i);
     expect(sql).not.toMatch(/create\s+(or\s+replace\s+)?function\s+public\.whatsapp_effect_/i);
@@ -387,8 +397,9 @@ describe("6. migration 20261119120000: forma e superfície", () => {
     expect(exportBody).not.toMatch(/inbox_id|whatsapp_effect_ledger|provider_event_id/);
   });
 
-  it("o corpo da exportação é o da fundação, byte a byte, exceto a chave nova", () => {
-    const previous = read("supabase/migrations/20261117130000_conversas_ia_fundacao.sql");
+  it("o corpo da exportação é o PUBLICADO por último (documentos por caso), byte a byte, exceto a chave nova", () => {
+    // Partir de uma versão anterior apagaria as seções case_notes e case_documents.
+    const previous = read("supabase/migrations/20261123120000_conversas_documentos_caso.sql");
     const take = (text: string) => {
       const start = text.lastIndexOf("create or replace function private.privacy_export_payload");
       const body = text.slice(text.indexOf("$body$", start));

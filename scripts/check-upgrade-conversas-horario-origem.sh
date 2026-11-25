@@ -2,11 +2,13 @@
 # Conversas + IA — valida a ATUALIZAÇÃO para o horário de origem das mensagens a partir da versão
 # anterior, com mensagens gravadas ANTES da migration:
 #
-#   1. recria o banco local só até a migration da interface de Conversas (20261118120000);
+#   1. recria o banco local na versão PUBLICADA (20261123120000, documentos por caso);
 #   2. usa a A7 como sempre (simulador, consentimento, envio, status) e a B3 (mensagem recebida e
 #      eco aplicados pelos efeitos), e guarda a linha inteira de cada mensagem e o que a leitura da
 #      A7 devolve;
-#   3. aplica a migration pendente;
+#      e a exportação do titular (C3a) de cada contato com conversa;
+#   3. aplica a migration pendente (a exportação depois dela tem as mesmas seções — inclusive
+#      case_notes e case_documents — e as mesmas mensagens, só com origin_time nulo a mais);
 #   4. confere:
 #      - as linhas das mensagens e a leitura são exatamente as de antes (a migration não altera
 #        dado nenhum) e nenhuma linha foi criada ou apagada;
@@ -20,7 +22,7 @@
 # Roda por último no CI: termina com o banco local na versão atual. Tudo fictício.
 set -euo pipefail
 
-PREVIOUS_VERSION="20261118120000"
+PREVIOUS_VERSION="20261123120000"
 DB_CONTAINER="supabase_db_praxis-crm"
 ANA="20000000-0000-0000-0000-000000000001"
 WS_UM="10000000-0000-0000-0000-000000000001"
@@ -88,6 +90,11 @@ select (select count(*) from public.messages) as messages, (select count(*) from
        (select count(*) from public.whatsapp_effect_ledger) as ledger, (select count(*) from public.contacts) as contacts;
 create table public.upgrade_check_values (chave text primary key, valor text);
 insert into public.upgrade_check_values values ('lc_antes', :'lc_antes'), ('out_in', :'out_in'), ('out_eco', :'out_eco');
+-- Exportação do titular (C3a, com case_notes e case_documents) de cada contato com conversa, antes.
+create table public.upgrade_check_exports as
+select c.id as contact_id, private.privacy_export_payload('$WS_UM', c.id) as body
+from public.contacts c
+where c.workspace_id = '$WS_UM' and exists (select 1 from public.conversations cv where cv.contact_id = c.id);
 SQL
 
 echo "== 3. migration pendente"
@@ -108,6 +115,43 @@ insert into public.upgrade_check_values values ('lc_depois', :'lc_depois');
 create table public.upgrade_check_after_migration as
 select (select count(*) from public.messages) as messages, (select count(*) from public.conversations) as conversations,
        (select count(*) from public.whatsapp_effect_ledger) as ledger, (select count(*) from public.contacts) as contacts;
+
+-- Exportação logo após a migration: as mesmas seções (inclusive case_notes e case_documents, que a
+-- versão antiga desta migration apagaria) e as mesmas mensagens; só a chave origin_time é nova, nula.
+do \$exp\$
+declare
+  v record;
+  v_after jsonb;
+  v_strip jsonb;
+  v_with_messages integer := 0;
+begin
+  if (select count(*) from public.upgrade_check_exports) = 0 then
+    raise exception 'nenhum titular com conversa para comparar a exportação';
+  end if;
+  for v in select * from public.upgrade_check_exports loop
+    v_after := private.privacy_export_payload('$WS_UM', v.contact_id);
+    if not (v_after ? 'case_notes' and v_after ? 'case_documents') then
+      raise exception 'a exportação perdeu case_notes/case_documents';
+    end if;
+    if exists (select 1 from jsonb_array_elements(v_after -> 'messages') e
+               where e -> 'origin_time' is distinct from '{"at": null, "issue": null, "source": null}'::jsonb) then
+      raise exception 'mensagem anterior exportada com origem: %', v_after -> 'messages';
+    end if;
+    v_strip := jsonb_set(v_after, '{messages}', coalesce((
+      select jsonb_agg(e - 'origin_time' order by n) from jsonb_array_elements(v_after -> 'messages') with ordinality as a(e, n)
+    ), '[]'::jsonb));
+    if v_strip is distinct from v.body then
+      raise exception 'a exportação do contato % mudou além da chave origin_time', v.contact_id;
+    end if;
+    if jsonb_array_length(v_after -> 'messages') > 0 then
+      v_with_messages := v_with_messages + 1;
+    end if;
+  end loop;
+  if v_with_messages = 0 then
+    raise exception 'nenhum titular com mensagens: a comparação da exportação não provou nada';
+  end if;
+end;
+\$exp\$;
 
 -- Um evento REENTREGUE depois da migration para uma mensagem anterior não a promove.
 begin;
@@ -220,6 +264,7 @@ drop table public.upgrade_check_messages;
 drop table public.upgrade_check_counts;
 drop table public.upgrade_check_after_migration;
 drop table public.upgrade_check_values;
+drop table public.upgrade_check_exports;
 SQL
 
 echo "OK: a atualização deixou todas as mensagens anteriores intactas e com origem desconhecida; só mensagens novas ganham origem."

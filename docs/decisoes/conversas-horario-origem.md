@@ -1,7 +1,7 @@
 # Conversas + IA — horário de origem das mensagens
 
-Migration: `20261119120000_conversas_horario_origem.sql` (aditiva; **só vale depois de aplicada no
-hospedado**, com autorização). Esta PR entrega **só o registro e a validação do horário de origem**,
+Migration: `20261124120000_conversas_horario_origem.sql` (aditiva; **só vale depois de aplicada no
+hospedado**, com autorização; ver [Ordem da migration](#ordem-da-migration)). Esta PR entrega **só o registro e a validação do horário de origem**,
 pré-requisito do aplicador automático. Não há IA, aplicador, rota que execute alterações, mudança de
 status automática nem mudança de interface. A fundação das trilhas está em
 [conversas-ia-fundacao.md](conversas-ia-fundacao.md) e a interface em
@@ -159,10 +159,30 @@ continua sendo do aplicador. A regra, na ordem:
 
 - **C3a:** a seção `messages` do pacote do titular ganha a chave `origin_time` (`at`, `source`, `issue`);
   mensagem de origem desconhecida exporta nulos. Mesma função e mesma assinatura; as demais seções e
-  chaves ficam byte a byte iguais (teste estático compara o corpo com o da fundação).
+  chaves ficam byte a byte iguais às da última versão publicada (`20261123120000`, com `case_notes` e
+  `case_documents`): o teste estático compara o corpo com o dela, e o script de atualização compara a
+  exportação real de cada titular antes e depois.
 - **C3b:** as colunas moram na própria mensagem; a conversa apagada leva as mensagens em cascata e, com
   elas, a origem. A gravação depois disso devolve `not_found`. As colunas não guardam texto, telefone nem
   identidade.
+
+## Ordem da migration
+
+A migration nasceu como `20261119120000` (18/11) e **nunca foi aplicada** em nenhum ambiente publicado.
+Enquanto a #358 esperava, foram publicadas `20261120120000` a `20261123120000` (ledger 124 no hospedado).
+Aplicá-la com o timestamp antigo deixaria o histórico fora de ordem (o `db push` recusa ou exige
+`--include-all`) e, pior, o `create or replace` de `privacy_export_payload` com o corpo de 18/11 **apagaria**
+as seções `case_notes` e `case_documents` da exportação do titular. Por isso:
+
+- foi renumerada para `20261124120000`, logo depois da última publicada; nenhum arquivo ou registro de
+  migration já aplicada foi alterado, e o ledger hospedado não precisa de reparo;
+- o corpo da exportação parte da versão publicada por `20261123120000` e só acrescenta a chave
+  `origin_time` na seção `messages`;
+- os testes que fixavam a posição das migrations publicadas como "a última" passaram a conferir só a
+  vizinhança delas; o script de atualização desta migration parte da versão publicada (`20261123120000`);
+- o script de atualização da etapa B (`check-upgrade-conversas-painel-servico.sh`) passou a ignorar a chave
+  `origin_time` das mensagens na comparação da exportação, como já ignorava as seções de migrations
+  posteriores.
 
 ## Compatibilidade
 
@@ -184,7 +204,8 @@ avança quando a origem é gravada (a gravação é um `UPDATE` da linha, logo d
 - Unitários `conversas-horario-origem.test.ts`: normalização da origem a partir das fixtures, módulo de
   gravação, checagens estáticas da migration e dos tipos; `b3-2d2b3-*` e `b3-2d2a-*` cobrem a orquestração
   (quando grava, com o quê, e a falha vira nova tentativa).
-- Atualização a partir da versão anterior: `scripts/check-upgrade-conversas-horario-origem.sh`. Os scripts
+- Atualização a partir da versão publicada (`20261123120000`): `scripts/check-upgrade-conversas-horario-origem.sh`,
+  que também compara a exportação de cada titular com conversa (iguais, salvo `origin_time` nulo). Os scripts
   `check-upgrade-b3-2d2b2b2`, `-2b2b3a` e `-2b2b3b`, que comparam a linha inteira de `messages` antes e
   depois de aplicar todas as migrations pendentes, passaram a ignorar **só** as três colunas novas
   (`origin_time_*`); todo campo que já existia continua comparado byte a byte. O teste `29` exclui da sua
