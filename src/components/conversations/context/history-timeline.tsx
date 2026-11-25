@@ -10,7 +10,7 @@ import type { CaseServiceHistoryCursor, CaseServiceHistoryPage } from "@/modules
 import type { CaseServiceEvent } from "@/modules/case-service/schema";
 import { loadStatusTrackHistoryAction } from "@/modules/status-tracks/actions";
 import type { StatusTrackHistoryCursor, StatusTrackHistoryPage } from "@/modules/status-tracks/queries";
-import type { StatusTrack } from "@/modules/status-tracks/schema";
+import { historyActorLabel, type StatusTrack } from "@/modules/status-tracks/schema";
 import {
   TRACK_LABEL,
   TRACK_TAG,
@@ -181,7 +181,7 @@ export function HistoryTimeline({
               <p className="m-0 text-small font-semibold text-text">{d.title}</p>
               {d.detail ? <p className="m-0 text-meta text-text-secondary">{d.detail}</p> : null}
               <p className="m-0 text-meta text-text-tertiary">
-                {e.actorName ?? "Alguém da equipe"} · <time dateTime={e.occurredAt}>{formatStamp(e.occurredAt)}</time>
+                {historyActorLabel(e.actorKind, e.actorName)} · <time dateTime={e.occurredAt}>{formatStamp(e.occurredAt)}</time>
               </p>
               {e.evidenceCount > 0 ? (
                 <div className="mt-0.5 flex flex-col gap-0.5">

@@ -3,7 +3,7 @@ import { toUserMessage } from "@/lib/errors";
 import { DataLoadError, isExpectedAbsence } from "@/server/data/load-error";
 import type { MessageOrigin, MessageSenderClassification } from "@/modules/conversations/queries";
 
-import type { AttendanceStatus, CaseProgressStatus, StatusTrack } from "./schema";
+import { toHistoryActorKind, type AttendanceStatus, type CaseProgressStatus, type HistoryActorKind, type StatusTrack } from "./schema";
 
 /**
  * Conversas + IA (PR 1) — leituras das trilhas de status
@@ -86,8 +86,9 @@ export type StatusTrackEvent = {
   toStatus: string | null;
   fromVersion: number;
   toVersion: number;
-  actorKind: "user";
-  actorUserId: string;
+  actorKind: HistoryActorKind;
+  /** Nulo só na aplicação automática (sem usuário inventado). */
+  actorUserId: string | null;
   actorName: string | null;
   occurredAt: string;
   evidenceCount: number;
@@ -108,8 +109,8 @@ export function mapStatusTrackEvent(row: Record<string, unknown>): StatusTrackEv
     toStatus: (row.to_status as string | null) ?? null,
     fromVersion: Number(row.from_version),
     toVersion: Number(row.to_version),
-    actorKind: row.actor_kind as "user",
-    actorUserId: row.actor_user_id as string,
+    actorKind: toHistoryActorKind(row.actor_kind),
+    actorUserId: (row.actor_user_id as string | null) ?? null,
     actorName: (row.actor_name as string | null) ?? null,
     occurredAt: row.occurred_at as string,
     evidenceCount: Number(row.evidence_count ?? 0),

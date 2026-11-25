@@ -222,6 +222,12 @@ select d.id, (:'ws_um')::uuid, (:'opp_alfa2')::uuid, 'ready', 'Documento ALFA.pd
   'application/pdf', 100, repeat('c', 64), :'ws_um' || '/' || :'opp_alfa2' || '/' || d.id, 'com_pendencia', 'INTERNO-pendencia-ALFA',
   (:'ana')::uuid, now(), 1, (:'ana')::uuid, now(), gen_random_uuid(), 'x'
 from (select gen_random_uuid() as id) d;
+-- Aplicador: uma decisão (recusada) sobre a conversa do titular popula `status_track_automation_decisions` — só
+-- códigos e ids; a chave, a impressão do pedido e a referência do extrator (INTERNA) não saem.
+insert into public.status_track_automation_decisions (workspace_id, idempotency_key, conversation_id, track, change, to_status,
+  expected_version, outcome, reason, evidence_count, extractor_ref, request_fingerprint)
+values ((:'ws_um')::uuid, gen_random_uuid(), (:'conv_alfa')::uuid, 'attendance', 'set_status', 'encerrado',
+  1, 'refused', 'transition_not_automatable', 0, 'INTERNO-extrator-ALFA', md5('alfa'));
 
 -- =====================================================================
 -- 1) Superfície fechada
@@ -419,6 +425,7 @@ select ok(
   and not (:'pacote'::jsonb #> '{data,lead_notes,0}' ? 'body')
   and not (:'pacote'::jsonb #> '{data,case_notes,0}' ?| array['body', 'author_name', 'created_by'])
   and not (:'pacote'::jsonb #> '{data,case_documents,0}' ?| array['review_note', 'storage_path', 'checksum_sha256', 'uploaded_by', 'reviewed_by'])
+  and not (:'pacote'::jsonb #> '{data,status_track_automation_decisions,0}' ?| array['idempotency_key', 'request_fingerprint', 'extractor_ref'])
   and not (:'pacote'::jsonb #> '{data,conflict_checks,0}' ? 'note')
   and not (:'pacote'::jsonb #> '{data,proposal_email_sends,0}' ? 'to_email'),
   'as chaves dos dez campos retirados nem existem mais no conteúdo'

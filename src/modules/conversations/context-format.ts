@@ -1,6 +1,7 @@
 import {
   ATTENDANCE_STATUS_LABEL,
   CASE_PROGRESS_STATUS_LABEL,
+  historyActorLabel,
   type AttendanceStatus,
   type CaseProgressStatus,
   type StatusTrack,
@@ -108,7 +109,7 @@ export function serviceEventExtra(e: CaseServiceEvent): CaseHistoryExtra {
     detail: e.progressFrom && e.progressTo
       ? `Andamento: ${CASE_PROGRESS_STATUS_LABEL[e.progressFrom]} → ${CASE_PROGRESS_STATUS_LABEL[e.progressTo]}`
       : null,
-    actorLabel: e.actorName ?? "Alguém da equipe",
+    actorLabel: historyActorLabel(e.actorKind, e.actorName),
   };
 }
 

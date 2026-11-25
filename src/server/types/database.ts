@@ -1284,7 +1284,8 @@ export type Database = {
       case_service_events: {
         Row: {
           actor_kind: string
-          actor_user_id: string
+          actor_user_id: string | null
+          automation_decision_id: string | null
           current_step_after: string | null
           current_step_before: string | null
           from_version: number
@@ -1308,7 +1309,8 @@ export type Database = {
         }
         Insert: {
           actor_kind?: string
-          actor_user_id: string
+          actor_user_id?: string | null
+          automation_decision_id?: string | null
           current_step_after?: string | null
           current_step_before?: string | null
           from_version: number
@@ -1332,7 +1334,8 @@ export type Database = {
         }
         Update: {
           actor_kind?: string
-          actor_user_id?: string
+          actor_user_id?: string | null
+          automation_decision_id?: string | null
           current_step_after?: string | null
           current_step_before?: string | null
           from_version?: number
@@ -4147,6 +4150,160 @@ export type Database = {
           },
         ]
       }
+      status_track_automation_decision_evidence: {
+        Row: {
+          decision_id: string
+          kind: string
+          message_id: string
+          verdict: string
+          workspace_id: string
+        }
+        Insert: {
+          decision_id: string
+          kind: string
+          message_id: string
+          verdict: string
+          workspace_id: string
+        }
+        Update: {
+          decision_id?: string
+          kind?: string
+          message_id?: string
+          verdict?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "status_track_automation_decision_evidence_decision_fkey"
+            columns: ["workspace_id", "decision_id"]
+            isOneToOne: false
+            referencedRelation: "status_track_automation_decisions"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "status_track_automation_decision_evidence_message_fkey"
+            columns: ["workspace_id", "message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["workspace_id", "id"]
+          },
+        ]
+      }
+      status_track_automation_decisions: {
+        Row: {
+          change: string
+          conversation_id: string
+          decided_at: string
+          event_id: string | null
+          event_source: string | null
+          evidence_count: number
+          evidence_origin_max: string | null
+          expected_version: number
+          extractor_ref: string | null
+          id: string
+          idempotency_key: string
+          opportunity_id: string | null
+          outcome: string
+          reason: string | null
+          request_fingerprint: string
+          step_id: string | null
+          to_status: string | null
+          track: Database["public"]["Enums"]["status_track_kind"]
+          track_id: string | null
+          track_version: number | null
+          workspace_id: string
+        }
+        Insert: {
+          change: string
+          conversation_id: string
+          decided_at?: string
+          event_id?: string | null
+          event_source?: string | null
+          evidence_count: number
+          evidence_origin_max?: string | null
+          expected_version: number
+          extractor_ref?: string | null
+          id?: string
+          idempotency_key: string
+          opportunity_id?: string | null
+          outcome: string
+          reason?: string | null
+          request_fingerprint: string
+          step_id?: string | null
+          to_status?: string | null
+          track: Database["public"]["Enums"]["status_track_kind"]
+          track_id?: string | null
+          track_version?: number | null
+          workspace_id: string
+        }
+        Update: {
+          change?: string
+          conversation_id?: string
+          decided_at?: string
+          event_id?: string | null
+          event_source?: string | null
+          evidence_count?: number
+          evidence_origin_max?: string | null
+          expected_version?: number
+          extractor_ref?: string | null
+          id?: string
+          idempotency_key?: string
+          opportunity_id?: string | null
+          outcome?: string
+          reason?: string | null
+          request_fingerprint?: string
+          step_id?: string | null
+          to_status?: string | null
+          track?: Database["public"]["Enums"]["status_track_kind"]
+          track_id?: string | null
+          track_version?: number | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "status_track_automation_decisions_conversation_fkey"
+            columns: ["workspace_id", "conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "status_track_automation_decisions_opportunity_fkey"
+            columns: ["workspace_id", "opportunity_id"]
+            isOneToOne: false
+            referencedRelation: "opportunities"
+            referencedColumns: ["workspace_id", "id"]
+          },
+          {
+            foreignKeyName: "status_track_automation_decisions_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      status_track_automation_gate: {
+        Row: {
+          activation_ref: string | null
+          enabled: boolean
+          enabled_at: string | null
+          singleton: boolean
+        }
+        Insert: {
+          activation_ref?: string | null
+          enabled?: boolean
+          enabled_at?: string | null
+          singleton?: boolean
+        }
+        Update: {
+          activation_ref?: string | null
+          enabled?: boolean
+          enabled_at?: string | null
+          singleton?: boolean
+        }
+        Relationships: []
+      }
       status_track_event_evidence: {
         Row: {
           event_id: string
@@ -4190,7 +4347,8 @@ export type Database = {
       status_track_events: {
         Row: {
           actor_kind: string
-          actor_user_id: string
+          actor_user_id: string | null
+          automation_decision_id: string | null
           event: string
           evidence_count: number
           from_status: string | null
@@ -4205,7 +4363,8 @@ export type Database = {
         }
         Insert: {
           actor_kind?: string
-          actor_user_id: string
+          actor_user_id?: string | null
+          automation_decision_id?: string | null
           event: string
           evidence_count?: number
           from_status?: string | null
@@ -4220,7 +4379,8 @@ export type Database = {
         }
         Update: {
           actor_kind?: string
-          actor_user_id?: string
+          actor_user_id?: string | null
+          automation_decision_id?: string | null
           event?: string
           evidence_count?: number
           from_status?: string | null
@@ -5766,6 +5926,22 @@ export type Database = {
           p_phone_number_id: string
           p_status: Database["public"]["Enums"]["message_status"]
           p_wa_message_id: string
+        }
+        Returns: Json
+      }
+      apply_status_track_automation: {
+        Args: {
+          p_change: string
+          p_conversation_id: string
+          p_evidence_message_ids: string[]
+          p_expected_version: number
+          p_extractor_ref?: string
+          p_idempotency_key: string
+          p_opportunity_id: string
+          p_step_id: string
+          p_to_status: string
+          p_track: Database["public"]["Enums"]["status_track_kind"]
+          p_workspace_id: string
         }
         Returns: Json
       }
