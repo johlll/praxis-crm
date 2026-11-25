@@ -25,6 +25,7 @@ import {
   type WhatsAppCapabilities,
   type WhatsAppContactIdentity,
   type WhatsAppContentKind,
+  type WhatsAppMessageOriginTime,
   type WhatsAppProvider,
 } from "@/server/whatsapp/provider/contract";
 import { sendYCloudTemplate, sendYCloudText, type YCloudFetch } from "@/server/whatsapp/provider/ycloud-send";
@@ -179,6 +180,16 @@ function optTime(value: unknown): Date | null {
   return RFC3339.safeParse(value).success ? new Date(value as string) : fail();
 }
 
+/**
+ * Horário de ORIGEM da mensagem: só o `sendTime` da própria mensagem, já lido por `optTime`
+ * (RFC 3339 com fuso; ausente → `null`; presente e malformado já invalidou o evento). O `createTime`
+ * do envelope (momento em que o evento foi criado) e o da mensagem (momento em que a YCloud a
+ * registrou) NÃO são horário de origem: sem `sendTime`, o horário é `missing`, nunca uma reserva.
+ */
+function messageOriginTime(sendTime: Date | null): WhatsAppMessageOriginTime {
+  return sendTime === null ? { kind: "missing" } : { kind: "provider_send_time", at: sendTime };
+}
+
 function identity(phone: unknown, bsuid: unknown): WhatsAppContactIdentity | null {
   const p = opt(phone, /^.+$/s);
   const b = opt(bsuid, /^.+$/s);
@@ -272,7 +283,8 @@ function normalizeInbound(env: Envelope): NormalizedWhatsAppEvent {
   const routingKey = routing(m.wabaId, m.to);
   const providerMessageId = req(m.id, WHATSAPP_PROVIDER_MESSAGE_ID_PATTERN);
   const waMessageId = opt(m.wamid, WAMID);
-  const occurredAt = optTime(m.sendTime) ?? env.createdAt;
+  const sendTime = optTime(m.sendTime);
+  const occurredAt = sendTime ?? env.createdAt;
   const sender = identity(m.from, m.fromUserId) ?? fail();
 
   if (m.type === "system") {
@@ -301,6 +313,7 @@ function normalizeInbound(env: Envelope): NormalizedWhatsAppEvent {
     providerMessageId,
     waMessageId,
     occurredAt,
+    originTime: messageOriginTime(sendTime),
     sender,
     senderProfileName: typeof profile === "string" && profile.length > 0 && profile.length <= 256 ? profile : null,
     contentKind: kind,
@@ -312,6 +325,7 @@ function normalizeOutboundObserved(env: Envelope): NormalizedWhatsAppEvent {
   const m = obj(env.raw.whatsappMessage);
   const routingKey = routing(m.wabaId, m.from);
   const kind = contentKind(m.type);
+  const sendTime = optTime(m.sendTime);
   return {
     kind: "message.outbound_observed",
     originCandidate: "business_app",
@@ -320,7 +334,8 @@ function normalizeOutboundObserved(env: Envelope): NormalizedWhatsAppEvent {
     routingKey,
     providerMessageId: req(m.id, WHATSAPP_PROVIDER_MESSAGE_ID_PATTERN),
     waMessageId: opt(m.wamid, WAMID),
-    occurredAt: optTime(m.sendTime) ?? optTime(m.createTime) ?? env.createdAt,
+    occurredAt: sendTime ?? optTime(m.createTime) ?? env.createdAt,
+    originTime: messageOriginTime(sendTime),
     recipient: identity(m.to, recipientBsuid(m)) ?? fail(),
     contentKind: kind,
     text: textOf(kind, m),

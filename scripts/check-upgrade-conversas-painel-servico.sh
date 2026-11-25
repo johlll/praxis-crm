@@ -175,6 +175,10 @@ begin
 
   -- Exportação: seções antigas byte a byte; as novas existem e estão vazias para o titular antigo.
   select a.body into v_after from public.upgrade_check_after a where a.kind = 'export';
+  -- A chave origin_time de cada mensagem vem de migration POSTERIOR (horário de origem): fora da comparação.
+  v_after := jsonb_set(v_after, '{messages}', coalesce((
+    select jsonb_agg(e - 'origin_time' order by n) from jsonb_array_elements(v_after -> 'messages') with ordinality as x(e, n)
+  ), '[]'::jsonb));
   if (v_after - v_export_new - v_export_later) is distinct from (select b.body from public.upgrade_check_before b where b.kind = 'export') then
     raise exception 'a exportação mudou nas seções antigas';
   end if;

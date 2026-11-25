@@ -200,6 +200,8 @@ export class SimulatedWhatsAppProvider implements WhatsAppProvider {
             providerMessageId: event.messageId,
             waMessageId: null,
             occurredAt: new Date(event.occurredAt),
+            // Provedor simulado: quem monta o evento escolhe o horário, então nada aqui prova a origem.
+            originTime: { kind: "missing" },
             sender,
             senderProfileName: null,
             contentKind: "text",

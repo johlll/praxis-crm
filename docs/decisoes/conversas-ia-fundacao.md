@@ -126,9 +126,11 @@ continua `unresolved`. `messageAuthorKind` (servidor) nunca promove isso a um no
 - O aplicador automático só age com: versão igual à lida, trilha não pausada, evidência **válida para
   aquela transição e aquele alvo** e posterior ao marco da última decisão humana. Ambiguidade de caso
   ou falta de evidência = nada muda. Mensagem mais recente sozinha não basta.
-- **Limitação a resolver no aplicador:** `messages` não guarda o horário do provedor, só o de chegada
-  (`created_at`). Uma mensagem antiga que chega atrasada pareceria posterior ao marco. A PR do
-  aplicador precisa gravar e usar o horário do provedor antes de comparar com o marco.
+- **Limitação (registro resolvido em [conversas-horario-origem.md](conversas-horario-origem.md)):**
+  `messages` não guardava o horário do provedor, só o de chegada (`created_at`). Uma mensagem antiga que
+  chega atrasada pareceria posterior ao marco. O horário de origem, a procedência e a regra de comparação
+  com o marco já existem; **o aplicador ainda precisa usá-los** (`private.message_origin_time_verdict`) e
+  tratar tudo que não for `eligible` como "nada muda".
 - Transição comercial automática não inventa requisitos nem contorna os fluxos existentes
   (`move_opportunity_stage`, requisitos, etapas finais); ganho e perda continuam manuais.
 - A autoria comercial por IA (`stage_transitions`) e a ampliação de `actor_kind` serão tratadas na

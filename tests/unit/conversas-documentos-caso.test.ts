@@ -154,9 +154,9 @@ describe("contrato da migration", () => {
   const sql = read(MIGRATION);
   const code = sql.replace(/--.*$/gm, "");
   const migrations = readdirSync(join(ROOT, "supabase/migrations")).filter((f) => f.endsWith(".sql")).sort();
-  it("é a última, logo depois das observações, e não carrega a da #358", () => {
-    expect(migrations.at(-1)).toBe("20261123120000_conversas_documentos_caso.sql");
-    expect(migrations.at(-2)).toBe("20261122120000_conversas_observacoes_caso.sql");
+  it("vem logo depois das observações, e não carrega a da #358", () => {
+    const at = migrations.indexOf("20261123120000_conversas_documentos_caso.sql");
+    expect(migrations[at - 1]).toBe("20261122120000_conversas_observacoes_caso.sql");
     expect(migrations).not.toContain("20261119120000_conversas_horario_origem.sql");
     expect(code).not.toMatch(/origin_time/);
     expect(code).not.toMatch(/^\s*lock table/im);

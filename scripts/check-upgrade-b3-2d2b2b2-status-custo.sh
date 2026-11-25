@@ -92,7 +92,7 @@ reset role;
 commit;
 
 create table public.upgrade_b3d2b2b2_leituras as select * from leituras;
-create table public.upgrade_b3d2b2b2_linhas as select m.id, md5(m::text) as linha from public.messages m;
+create table public.upgrade_b3d2b2b2_linhas as select m.id, md5((to_jsonb(m) - array['origin_time_at', 'origin_time_source', 'origin_time_issue'])::text) as linha from public.messages m;
 create table public.upgrade_b3d2b2b2_estado as
 select (:'r1'::jsonb ->> 'conversation_id') as conv_a7, :'entrada'::text as entrada, :'eco_outcome'::text as eco_outcome;
 create table public.upgrade_b3d2b2b2_contagens as
@@ -154,7 +154,7 @@ begin
 
   select count(*) into v_bad
   from public.upgrade_b3d2b2b2_linhas l left join public.messages m on m.id = l.id
-  where m.id is null or md5(m::text) <> l.linha;
+  where m.id is null or md5((to_jsonb(m) - array['origin_time_at', 'origin_time_source', 'origin_time_issue'])::text) <> l.linha;
   if v_bad <> 0 then
     raise exception '% mensagem(ns) mudaram na migration', v_bad;
   end if;

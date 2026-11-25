@@ -3013,6 +3013,9 @@ export type Database = {
           origin: Database["public"]["Enums"]["whatsapp_message_origin"]
           origin_correlation_kind: string | null
           origin_correlation_ref: string | null
+          origin_time_at: string | null
+          origin_time_issue: string | null
+          origin_time_source: string | null
           provider: Database["public"]["Enums"]["whatsapp_provider"] | null
           provider_cost_amount: number | null
           provider_cost_billable_amount: number | null
@@ -3042,6 +3045,9 @@ export type Database = {
           origin: Database["public"]["Enums"]["whatsapp_message_origin"]
           origin_correlation_kind?: string | null
           origin_correlation_ref?: string | null
+          origin_time_at?: string | null
+          origin_time_issue?: string | null
+          origin_time_source?: string | null
           provider?: Database["public"]["Enums"]["whatsapp_provider"] | null
           provider_cost_amount?: number | null
           provider_cost_billable_amount?: number | null
@@ -3071,6 +3077,9 @@ export type Database = {
           origin?: Database["public"]["Enums"]["whatsapp_message_origin"]
           origin_correlation_kind?: string | null
           origin_correlation_ref?: string | null
+          origin_time_at?: string | null
+          origin_time_issue?: string | null
+          origin_time_source?: string | null
           provider?: Database["public"]["Enums"]["whatsapp_provider"] | null
           provider_cost_amount?: number | null
           provider_cost_billable_amount?: number | null
@@ -7808,6 +7817,14 @@ export type Database = {
           p_reserved: number
           p_skipped: number
           p_started_at: string
+        }
+        Returns: Json
+      }
+      whatsapp_record_message_origin_time: {
+        Args: {
+          p_inbox_id: string
+          p_origin_at: string
+          p_origin_issue?: string
         }
         Returns: Json
       }

@@ -460,6 +460,14 @@ jobs:
         # apaga também as observações — ver scripts/check-upgrade-conversas-observacoes-caso.sh. Recria o banco.
         run: bash scripts/check-upgrade-conversas-observacoes-caso.sh
 
+      - name: Atualização a partir da versão anterior (Conversas — horário de origem das mensagens)
+        # Mensagens gravadas antes da migration (A7 e B3) ficam intactas e com origem DESCONHECIDA
+        # (sem backfill); um evento reentregue depois não promove a mensagem antiga, a mensagem nova
+        # da B3 ganha a origem do provedor e o envio humano ganha crm_accepted — ver
+        # scripts/check-upgrade-conversas-horario-origem.sh. Recria o banco local, por isso roda por
+        # último.
+        run: bash scripts/check-upgrade-conversas-horario-origem.sh
+
       - name: Publicar relatório do Playwright (só se algo falhar)
         if: failure()
         uses: actions/upload-artifact@v4

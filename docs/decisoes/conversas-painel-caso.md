@@ -138,7 +138,8 @@ da lista são as mesmas (conferido pelo script de atualização).
 **Ordem com a #358:** esta migration tem timestamp **posterior** ao da #358 (`20261119120000`). Se as duas forem
 publicadas, a da #358 precisa ser aplicada antes desta; aplicar esta primeiro deixaria a #358 "fora de ordem" no
 histórico de migrations. A ordem tem de ser conferida antes de qualquer publicação — isto **não** autoriza publicar a
-#358.
+#358. *(Resolvido em 24/11/2026: esta migration foi publicada primeiro e a da #358, nunca aplicada, foi renumerada para
+`20261124120000`; ver [conversas-horario-origem.md](conversas-horario-origem.md#ordem-da-migration).)*
 
 ## Testes
 

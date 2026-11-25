@@ -24,6 +24,8 @@ import {
   INBOX_ID,
   INBOX_KEY,
   MESSAGE_ID,
+  OCCURRED,
+  ORIGIN,
   PHONE,
   PHONE_2,
   rawTypeOf,
@@ -83,6 +85,8 @@ beforeEach(async () => {
     whatsapp_inbox_fail: () => ({ data: { outcome: "failed" }, error: null }),
     whatsapp_inbox_release: () => ({ data: { outcome: "released" }, error: null }),
     whatsapp_inbox_dispose: () => ({ data: { outcome: "completed" }, error: null }),
+    // Horário de origem da mensagem: gravado depois do efeito (conversas-horario-origem).
+    whatsapp_record_message_origin_time: () => ({ data: { outcome: "unchanged" }, error: null }),
   };
   rpcLog = [];
   h.rpc.mockReset();
@@ -148,8 +152,43 @@ describe("1. cada tipo: claim → uma RPC do seu efeito → pronto", () => {
     arrange(CASE_OF[kind]);
     dbAnswers(kind, { data: APPLIED_BY_DB[kind] });
     await expect(run()).resolves.toEqual({ outcome: "processed", code: "applied" });
-    expect(rpcLog.map((c) => c.name)).toEqual(["whatsapp_inbox_claim", EFFECT_RPC[kind]]);
+    // Mensagem (recebida ou observada) grava depois o horário de origem; os outros tipos, nunca.
+    expect(rpcLog.map((c) => c.name)).toEqual([
+      "whatsapp_inbox_claim",
+      EFFECT_RPC[kind],
+      ...(kind === "inbound" || kind === "outbound" ? ["whatsapp_record_message_origin_time"] : []),
+    ]);
     expect(finalizations()).toEqual([]);
+  });
+
+  it.each(["inbound", "outbound"] as const)("%s: a gravação da origem manda só a entrada e o horário do evento (sem token, mensagem, fonte ou veredito)", async (kind) => {
+    arrange(CASE_OF[kind]);
+    dbAnswers(kind, { data: APPLIED_BY_DB[kind] });
+    await run();
+    const call = rpcLog.find((c) => c.name === "whatsapp_record_message_origin_time")!;
+    expect(call.args).toEqual({ p_inbox_id: INBOX_ID, p_origin_at: ORIGIN });
+    // O horário de origem é o do campo próprio da mensagem — não o occurredAt do evento.
+    expect(call.args.p_origin_at).not.toBe(OCCURRED);
+    expect(JSON.stringify(call.args)).not.toContain(TOKEN);
+  });
+
+  it.each(["inbound", "outbound"] as const)("%s: evento sem horário de origem manda a dica `missing` e nenhum horário", async (kind) => {
+    arrange({ ...CASE_OF[kind], originTime: { kind: "missing" } });
+    dbAnswers(kind, { data: APPLIED_BY_DB[kind] });
+    await run();
+    const call = rpcLog.find((c) => c.name === "whatsapp_record_message_origin_time")!;
+    expect(call.args).toEqual({ p_inbox_id: INBOX_ID, p_origin_at: null, p_origin_issue: "missing" });
+  });
+
+  it.each(["inbound", "outbound"] as const)("%s: o banco recusa a gravação ou responde fora do contrato — nova tentativa, sem finalizar", async (kind) => {
+    for (const answer of [{ data: null, error: { message: "boom" } }, { data: { outcome: "outro" }, error: null }, { data: null, error: null }]) {
+      rpcLog = [];
+      arrange(CASE_OF[kind]);
+      dbAnswers(kind, { data: APPLIED_BY_DB[kind] });
+      handlers.whatsapp_record_message_origin_time = () => answer;
+      await expect(run()).rejects.toMatchObject({ name: "WhatsAppConsumerRetryableError" });
+      expect(finalizations()).toEqual([]);
+    }
   });
 
   it.each(KINDS)("%s: a RPC recebe o id da entrada e o token do claim — e nenhum workspace, canal, ambiente, provedor nem id do evento", async (kind) => {
