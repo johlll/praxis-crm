@@ -140,7 +140,8 @@ begin
     v_strip := jsonb_set(v_after, '{messages}', coalesce((
       select jsonb_agg(e - 'origin_time' order by n) from jsonb_array_elements(v_after -> 'messages') with ordinality as a(e, n)
     ), '[]'::jsonb));
-    if v_strip is distinct from v.body then
+    -- A seção do aplicador vem de migration POSTERIOR (aplicada junto no migration up): fora da comparação.
+    if (v_strip - 'status_track_automation_decisions') is distinct from v.body then
       raise exception 'a exportação do contato % mudou além da chave origin_time', v.contact_id;
     end if;
     if jsonb_array_length(v_after -> 'messages') > 0 then

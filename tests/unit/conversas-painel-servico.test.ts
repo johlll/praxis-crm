@@ -181,6 +181,7 @@ describe("histórico", () => {
     progressFrom: null,
     progressTo: null,
     toVersion: 1,
+    actorKind: "user",
     actorName: "Ana",
     occurredAt: "2026-11-19T12:00:00.000Z",
   };

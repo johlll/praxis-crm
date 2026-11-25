@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { uuidSchema } from "@/lib/uuid";
-import { CASE_PROGRESS_STATUSES, type CaseProgressStatus } from "@/modules/status-tracks/schema";
+import { CASE_PROGRESS_STATUSES, toHistoryActorKind, type CaseProgressStatus, type HistoryActorKind } from "@/modules/status-tracks/schema";
 
 /**
  * Painel do caso, etapa B — número interno do caso, tipos de serviço e roteiro com marcos concluídos
@@ -196,6 +196,7 @@ export type CaseServiceEvent = {
   progressFrom: CaseProgressStatus | null;
   progressTo: CaseProgressStatus | null;
   toVersion: number;
+  actorKind: HistoryActorKind;
   actorName: string | null;
   occurredAt: string;
 };
@@ -213,6 +214,7 @@ export function mapCaseServiceEvent(row: Record<string, unknown>): CaseServiceEv
     progressFrom: (str(row.progress_from) as CaseProgressStatus | null) ?? null,
     progressTo: (str(row.progress_to) as CaseProgressStatus | null) ?? null,
     toVersion: Number(row.to_version),
+    actorKind: toHistoryActorKind(row.actor_kind),
     actorName: str(row.actor_name),
     occurredAt: row.occurred_at as string,
   };

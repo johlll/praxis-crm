@@ -34,6 +34,21 @@ export const CASE_PROGRESS_STATUSES = [
 ] as const;
 export type CaseProgressStatus = (typeof CASE_PROGRESS_STATUSES)[number];
 
+/**
+ * Autoria de um evento de histórico (trilhas e roteiro). A aplicação automática (aplicador,
+ * docs/decisoes/conversas-aplicador.md) grava sem usuário e NUNCA aparece como pessoa da equipe.
+ */
+export type HistoryActorKind = "user" | "automation";
+export const AUTOMATION_ACTOR_LABEL = "Aplicação automática";
+
+export function toHistoryActorKind(value: unknown): HistoryActorKind {
+  return value === "automation" ? "automation" : "user";
+}
+
+export function historyActorLabel(kind: HistoryActorKind, name: string | null): string {
+  return kind === "automation" ? AUTOMATION_ACTOR_LABEL : (name ?? "Alguém da equipe");
+}
+
 export const ATTENDANCE_STATUS_LABEL: Record<AttendanceStatus, string> = {
   nao_informado: "Não informado",
   novo: "Novo",
