@@ -91,6 +91,28 @@ criada, nenhum secret foi cadastrado, nada foi copiado do Storage hospedado e o 
   verdade num destino local** antes de remover o bloqueio de lançamento. Os PDFs nunca aparecem em log nem em
   artefato em texto claro.
 
+## Documentos por caso (`case-documents`) — preparado, NÃO ativado
+
+Os documentos anexados aos casos (docs/decisoes/conversas-documentos-caso.md) ficam no bucket privado
+`case-documents`. **Eles não estão protegidos pelo backup ativo.** Por isso o recebimento de arquivos nasce FECHADO
+(variável do servidor e portão do banco) e só pode abrir depois da ativação deste backup e de um teste real de
+recuperação — **requisito obrigatório antes do primeiro upload real**.
+
+- **O que mudou nos scripts:** `lib-storage.sh` tem uma lista FECHADA de buckets aceitos (`proposal-documents` e
+  `case-documents`); nunca um bucket qualquer. O padrão continua sendo `proposal-documents`: sem
+  `BACKUP_STORAGE_BUCKET=case-documents`, nada muda. A restauração só aceita o pacote no MESMO bucket de onde ele
+  saiu (documentos nunca caem no bucket das propostas, nem o contrário).
+- **O que NÃO mudou:** o workflow-modelo `backup-diario.yml`, o repositório privado, os secrets, o destino, a
+  retenção e as verificações do backup do banco e das propostas.
+- **Testado:** `check-storage-backup.sh` (cenário 19) faz backup e restauração local fiéis de PDF, PNG e JPEG
+  sintéticos no bucket `case-documents`, recusa bucket fora da lista e o cruzamento de buckets, e confirma que o
+  padrão continua sendo só o das propostas.
+- **Decisão pendente (etapa própria):** destino e capacidade. Pacotes completos diários guardados como artefato por
+  30 dias multiplicam o volume dos documentos e esbarram na cota de armazenamento do Actions — se o envio do artefato
+  falhar, o backup do banco do mesmo job também se perde. Qualquer proposta precisa explicar dependências, expiração e
+  recuperação completa; backup incremental em artefatos temporários não é suficiente por si só.
+- **Cópias em backup:** um arquivo removido do caso continua nos pacotes já gerados até o fim da retenção deles.
+
 ## Confiabilidade do backup: sessão do snapshot e agendamento — PREPARADO, NÃO ativado
 
 Dois defeitos reais apareceram em 14/11/2026, **sem perda de dado**. A correção está no código e no modelo, mas

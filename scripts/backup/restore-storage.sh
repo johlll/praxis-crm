@@ -9,6 +9,8 @@
 #     bash restore-storage.sh --package praxis-storage-backup-<UTC>.tar.gz.age \
 #                             [--checksum praxis-storage-backup-<UTC>.tar.gz.age.sha256] \
 #                             --identity /caminho/local/chave-privada-age.txt
+#   RESTORE_STORAGE_BUCKET (opcional): bucket de destino da lista fechada (padrão "proposal-documents"); o pacote
+#   só volta para o MESMO bucket de onde saiu ("case-documents" para os documentos por caso).
 #
 # O que faz, nesta ordem (qualquer falha para tudo e limpa):
 #   1. recusa destino que pareça o projeto hospedado/Production (só local, ou remoto EXPLICITAMENTE
@@ -125,7 +127,8 @@ rm -f "$WORK/pacote.tar.gz" "$WORK/lista.txt"
 # ---- 5. Manifesto e objetos ----------------------------------------------------------------
 MAN="$PKG/manifest.json"
 [ -f "$MAN" ] || die "manifesto_ausente" 65
-jq -e --arg f "$PRAXIS_STORAGE_FORMAT" --arg b "$PRAXIS_STORAGE_BUCKET" '
+# O pacote só volta para o MESMO bucket de onde saiu (documentos de caso nunca caem no bucket das propostas).
+jq -e --arg f "$PRAXIS_STORAGE_FORMAT" --arg b "$BUCKET" '
   .format == $f and .bucket == $b
   and (.objects | type == "array")
   and .object_count == (.objects | length)

@@ -237,6 +237,34 @@ const KNOWN_ERROR_MESSAGES: Record<string, string> = {
   case_not_selectable: "Este caso não pode ser selecionado nesta conversa.",
   status_track_unavailable: "Não foi possível carregar esta informação agora. Tente novamente.",
   invalid_request: "Pedido inválido. Recarregue a página e tente de novo.",
+  // Painel do caso, etapa B — número interno, catálogo e roteiro do serviço.
+  case_number_immutable: "O número interno de um caso não muda depois de atribuído.",
+  service_type_not_found: "Tipo de serviço não encontrado.",
+  service_type_invalid_name: "Informe um nome de 1 a 80 caracteres.",
+  service_type_invalid_steps: "Confira as etapas: de 1 a 30, cada uma com até 80 caracteres e sem repetir.",
+  service_type_name_taken: "Já existe um tipo de serviço ativo com esse nome.",
+  service_type_limit_reached: "O escritório já tem 100 tipos de serviço ativos. Arquive algum para criar outro.",
+  service_type_archived: "Este tipo de serviço está arquivado. Restaure-o ou escolha outro.",
+  service_type_conflict: "Este tipo de serviço foi alterado por outra pessoa. Recarregue a página e tente de novo.",
+  service_plan_exists: "Este caso já tem um roteiro. Use “Trocar roteiro”.",
+  service_plan_missing: "Este caso não tem roteiro ativo. Recarregue a página.",
+  service_plan_has_records:
+    "Este roteiro já tem etapas concluídas. Confirme que entende que as conclusões ficam no histórico e não passam para o roteiro novo.",
+  service_plan_immutable: "Este roteiro já foi encerrado e faz parte do histórico.",
+  service_history_immutable: "O histórico do roteiro não pode ser alterado.",
+  service_step_not_found: "Etapa não encontrada neste caso. Recarregue a página.",
+  service_step_already_completed: "Esta etapa já está concluída.",
+  service_step_not_completed: "Esta etapa não está concluída.",
+  service_step_completed: "Etapa concluída não pode ser a etapa atual. Reabra a etapa primeiro.",
+  service_step_unchanged: "Essa já é a etapa atual.",
+  service_steps_pending: "Ainda há etapas do roteiro sem conclusão. Conclua todas as etapas antes de dar o serviço como concluído.",
+  service_reopen_status_required: "O serviço está concluído: escolha o novo andamento para reabrir a etapa.",
+  case_concluded: "O serviço está concluído. Reabra o andamento antes de aplicar ou trocar o roteiro.",
+  service_state_invalid: "Não foi possível registrar: a etapa e o andamento ficariam contraditórios.",
+  // Observações por caso.
+  case_note_body_required: "Escreva a observação antes de registrar.",
+  case_note_too_long: "A observação tem até 4.000 caracteres.",
+  case_note_immutable: "Observações registradas não mudam. Para corrigir, registre uma nova observação.",
 };
 
 /** update_lead_basic_fields()/assign_lead()/set_lead_status()/set_lead_value()

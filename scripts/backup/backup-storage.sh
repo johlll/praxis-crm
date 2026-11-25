@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# B6c/C5a.1 — backup CRIPTOGRAFADO do bucket `proposal-documents` do Supabase Storage
+# B6c/C5a.1 — backup CRIPTOGRAFADO de UM bucket do Supabase Storage: `proposal-documents` (padrão) ou, por
+# escolha explícita, `case-documents` (documentos por caso)
 # (formato praxis-storage-backup/v1).
 #
 # Entrada (somente variáveis de ambiente):
@@ -9,7 +10,8 @@
 #   BACKUP_STORAGE_S3_SECRET_ACCESS_KEY  segredo da chave S3 (segredo)
 #   BACKUP_AGE_PUBLIC_KEY                chave PÚBLICA age ("age1..."); a privada NUNCA passa por aqui
 #   BACKUP_OUTPUT_DIR                    pasta de saída (padrão: ./storage-out)
-#   BACKUP_STORAGE_BUCKET                opcional; só aceita "proposal-documents"
+#   BACKUP_STORAGE_BUCKET                opcional; padrão "proposal-documents"; aceita SÓ a lista fechada de
+#                                        lib-storage.sh ("proposal-documents" ou "case-documents")
 #   STORAGE_BACKUP_PAGE_SIZE             opcional; objetos por página da listagem (1 a 1000; padrão 1000)
 #
 # Saída: SOMENTE  praxis-storage-backup-<UTC>.tar.gz.age  e  praxis-storage-backup-<UTC>.tar.gz.age.sha256

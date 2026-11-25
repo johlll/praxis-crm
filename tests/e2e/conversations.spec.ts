@@ -4,7 +4,7 @@ import { SEED_USERS } from "./fixtures";
 import { login } from "./helpers";
 
 /**
- * Conversas + IA (PR 2): a tela tem lista, mensagens e um painel de contexto. O painel é a terceira
+ * Conversas + IA: a tela tem lista, mensagens e o painel do caso (cabeçalho, abas e edição pelo lápis). O painel é a terceira
  * coluna a partir de 1400 px e uma gaveta abaixo disso (o e2e roda em 1280 px). Estes ajudantes
  * abrem e fecham a gaveta só quando ela existe, para o mesmo teste valer nas duas larguras.
  */
@@ -156,11 +156,17 @@ test.describe.serial("conversas + simulador de WhatsApp — A7", () => {
     await expect(list.getByText("Nenhuma conversa encontrada")).toBeVisible();
   });
 
-  test("5. dono corrige a situação, pausa e retoma as alterações automáticas (sem mexer no bot)", async ({ page }) => {
+  test("5. dono corrige a situação pelo lápis, pausa e retoma as alterações automáticas (sem mexer no bot)", async ({ page }) => {
     await login(page, SEED_USERS.ana.email);
     await page.goto(conversationUrl);
     await openContext(page);
     const panel = page.locator("#painel-contexto");
+
+    // Painel do caso: a consulta não expõe formulários; a edição abre pelo lápis, dentro do painel.
+    await expect(panel.getByRole("navigation", { name: "Seções do caso" })).toBeVisible();
+    await expect(panel.getByLabel("Corrigir situação")).toHaveCount(0);
+    await panel.getByRole("link", { name: "Editar situação e andamento" }).click();
+    await expect(page).toHaveURL(/editar=1/);
 
     await expect(panel.getByText("Ainda sem registro de situação")).toBeVisible();
     await expect(panel.getByText("A automação de status ainda não foi ativada", { exact: false })).toBeVisible();
@@ -170,32 +176,48 @@ test.describe.serial("conversas + simulador de WhatsApp — A7", () => {
     await panel.getByLabel("Corrigir situação").selectOption("aguardando_cliente");
     await panel.getByRole("button", { name: "Salvar" }).first().click();
     await expect(panel.getByText("Registrado.", { exact: true }).first()).toBeVisible();
-    await expect(panel.getByText("De “Não informado” para “Aguardando o cliente”")).toBeVisible();
 
-    // A lista (servidor) mostra a nova situação.
-    await closeContext(page);
-    const list = page.getByRole("region", { name: "Lista de conversas" });
-    await expect(list.getByRole("link", { name: /Contato E2E A7/ }).getByText("Aguardando o cliente")).toBeVisible();
-
-    await openContext(page);
     await panel.getByRole("button", { name: "Pausar" }).first().click();
     await expect(panel.getByText("Pausadas por", { exact: false }).first()).toBeVisible();
-    await expect(panel.getByText("Alterações automáticas de status pausadas")).toBeVisible();
     await panel.getByRole("button", { name: "Retomar" }).first().click();
     await expect(panel.getByText("Liberadas (ainda não ativadas)").first()).toBeVisible();
+
+    // O Histórico (aba) mostra de → para e a pausa, com a origem de cada evento.
+    await panel.getByRole("link", { name: "Voltar ao caso" }).click();
+    await expect(page).not.toHaveURL(/editar=1/);
+    await panel.getByRole("link", { name: /^Histórico/ }).click();
+    await expect(page).toHaveURL(/aba=historico/);
+    await expect(panel.getByText("De “Não informado” para “Aguardando o cliente”")).toBeVisible();
+    await expect(panel.getByText("Alterações automáticas de status pausadas")).toBeVisible();
+
+    // A lista (servidor) mostra a nova situação, identificada como situação do atendimento.
+    await closeContext(page);
+    const list = page.getByRole("region", { name: "Lista de conversas" });
+    await expect(list.getByRole("link", { name: /Contato E2E A7/ }).getByTitle("Situação do atendimento: Aguardando o cliente")).toBeVisible();
   });
 
-  test("6. visualizador lê a situação e o histórico, sem nenhum controle de escrita", async ({ page }) => {
+  test("6. visualizador lê situação, caso e histórico, sem lápis nem controle de escrita", async ({ page }) => {
     await login(page, SEED_USERS.elisa.email);
     await page.goto(conversationUrl);
+    // A situação do atendimento aparece no cabeçalho da conversa, identificada.
+    await expect(page.getByTitle("Situação do atendimento: Aguardando o cliente").first()).toBeVisible();
     await openContext(page);
     const panel = page.locator("#painel-contexto");
 
-    await expect(panel.getByText("Aguardando o cliente").first()).toBeVisible();
-    await expect(panel.getByText("Seu perfil só visualiza a situação do atendimento.")).toBeVisible();
+    await expect(panel.getByRole("link", { name: "Editar situação e andamento" })).toHaveCount(0);
+    await panel.getByRole("link", { name: /^Histórico/ }).click();
+    await expect(panel.getByText("De “Não informado” para “Aguardando o cliente”")).toBeVisible();
     await expect(panel.getByLabel("Corrigir situação")).toHaveCount(0);
     await expect(panel.getByRole("button", { name: "Salvar" })).toHaveCount(0);
     await expect(panel.getByRole("button", { name: "Pausar" })).toHaveCount(0);
+
+    // Mesmo com editar=1 no endereço, nada de escrita.
+    const editUrl = new URL(conversationUrl);
+    editUrl.searchParams.set("editar", "1");
+    await page.goto(editUrl.toString());
+    await openContext(page);
+    await expect(panel.getByLabel("Corrigir situação")).toHaveCount(0);
+    await expect(panel.getByRole("button", { name: /Salvar|Pausar|Retomar/ })).toHaveCount(0);
     await closeContext(page);
     await expect(page.getByPlaceholder("Escreva uma mensagem (simulada)…")).toHaveCount(0);
     await expect(page.getByText("Seu perfil só visualiza as conversas", { exact: false })).toBeVisible();
@@ -206,5 +228,156 @@ test.describe.serial("conversas + simulador de WhatsApp — A7", () => {
 
     await page.goto("/configuracoes/simulador-whatsapp");
     await expect(page.getByRole("heading", { name: "404" })).toBeVisible();
+  });
+
+  test("8. número interno só por atribuição explícita (uma vez) e catálogo de serviços só com cópia escolhida", async ({ page }) => {
+    await login(page, SEED_USERS.ana.email);
+    await page.goto(conversationUrl);
+    await openContext(page);
+    const panel = page.locator("#painel-contexto");
+
+    // Caso aberto sem número: nada inventado no Resumo.
+    const info = panel.getByRole("region", { name: "Informações do caso" });
+    await expect(info.getByText("Não atribuído")).toBeVisible();
+
+    await panel.getByRole("link", { name: "Editar situação e andamento" }).click();
+    await expect(page).toHaveURL(/editar=1/);
+    const ident = panel.getByRole("region", { name: "Identificação do caso" });
+    await ident.getByRole("button", { name: "Atribuir número interno" }).click();
+    await ident.getByRole("button", { name: "Confirmar" }).click();
+    await expect(ident.getByText("O número não muda.", { exact: false })).toBeVisible();
+    await expect(ident.getByRole("button", { name: "Atribuir número interno" })).toHaveCount(0);
+
+    // Cabeçalho do caso e lista mostram o mesmo número.
+    await expect(panel.getByRole("heading", { name: /Caso #\d{4}/ })).toBeVisible();
+    const number = ((await panel.getByRole("heading", { name: /Caso #\d{4}/ }).textContent()) ?? "").match(/#\d{4,}/)?.[0];
+    expect(number).toBeTruthy();
+    await closeContext(page);
+    const list = page.getByRole("region", { name: "Lista de conversas" });
+    await expect(list.getByRole("link", { name: /Contato E2E A7/ }).getByText(new RegExp(`${number} ·`))).toBeVisible();
+
+    // Catálogo: os modelos sugeridos só viram tipo do escritório pela cópia escolhida (e editável).
+    await page.goto("/configuracoes/tipos-de-servico");
+    await expect(page.getByText("Nenhum tipo de serviço ainda", { exact: false })).toBeVisible();
+    const suggestion = page.getByRole("listitem").filter({ hasText: "Consultoria ou parecer" });
+    await suggestion.getByRole("button", { name: "Copiar para o catálogo" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByLabel("Etapa 1", { exact: true })).toHaveValue("Recebimento das informações");
+    await dialog.getByLabel("Nome").fill("Consultoria (e2e)");
+    await dialog.getByRole("button", { name: "Criar tipo" }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByText("Consultoria (e2e)")).toBeVisible();
+    await expect(page.getByText("nenhum caso usa agora", { exact: false })).toBeVisible();
+  });
+
+  test("9. visualizador não configura o catálogo de tipos de serviço", async ({ page }) => {
+    await login(page, SEED_USERS.elisa.email);
+    await page.goto("/configuracoes/tipos-de-servico");
+    await expect(page.getByRole("heading", { name: "404" })).toBeVisible();
+  });
+
+  test("10. observação do caso: escrita pelo lápis, lida no Resumo como texto; visualizador só lê", async ({ page }) => {
+    await login(page, SEED_USERS.ana.email);
+    await page.goto(conversationUrl);
+    await openContext(page);
+    const panel = page.locator("#painel-contexto");
+    const card = panel.getByRole("region", { name: "Observações" });
+    await expect(card.getByText("Nenhuma observação registrada neste caso.")).toBeVisible();
+    await expect(card.getByRole("textbox")).toHaveCount(0);
+
+    await card.getByRole("link", { name: "Escrever" }).click();
+    await expect(page).toHaveURL(/editar=1/);
+    const section = panel.getByRole("region", { name: "Observações do caso" });
+    await expect(section.getByText(/Nova observação para/)).toBeVisible();
+    await section.getByRole("textbox").fill("Cliente acompanha pelo WhatsApp.\n<b>sem negrito</b>");
+    await section.getByRole("button", { name: "Registrar observação" }).click();
+    await expect(section.getByText(/Observação registrada em/)).toBeVisible();
+    await expect(section.getByRole("textbox")).toHaveValue("");
+
+    await panel.getByRole("link", { name: "Voltar ao caso" }).click();
+    await expect(card.getByText("<b>sem negrito</b>", { exact: false })).toBeVisible();
+    await expect(card.locator("b")).toHaveCount(0);
+    await expect(card.getByText(/Cliente acompanha pelo WhatsApp\./)).toBeVisible();
+
+    await page.context().clearCookies();
+    await login(page, SEED_USERS.elisa.email);
+    await page.goto(conversationUrl);
+    await openContext(page);
+    await expect(card.getByText(/Cliente acompanha pelo WhatsApp\./)).toBeVisible();
+    await expect(card.getByRole("link", { name: "Escrever" })).toHaveCount(0);
+  });
+
+  test("11. rascunho da observação sobrevive a Voltar/Avançar; resposta perdida não derruba o painel nem duplica", async ({ page }) => {
+    await login(page, SEED_USERS.ana.email);
+    await page.goto(conversationUrl);
+    await openContext(page);
+    const panel = page.locator("#painel-contexto");
+    const card = panel.getByRole("region", { name: "Observações" });
+    const section = panel.getByRole("region", { name: "Observações do caso" });
+    await card.getByRole("link", { name: "Escrever" }).click();
+    await expect(page).toHaveURL(/editar=1/);
+    const editUrl = page.url();
+    await section.getByRole("textbox").fill("Rascunho que sobrevive ao Voltar");
+
+    // Voltar do navegador: a URL volta ao Resumo, o rascunho fica guardado na aba e o Resumo avisa.
+    await page.goBack();
+    await expect(page).not.toHaveURL(/editar=1/);
+    await expect(card.getByRole("status")).toContainText("observação não registrada");
+    await page.goForward();
+    await expect(page).toHaveURL(editUrl);
+    await expect(section.getByRole("textbox")).toHaveValue("Rascunho que sobrevive ao Voltar");
+    await expect(section.getByText(/Rascunho recuperado/)).toBeVisible();
+
+    // A resposta da gravação se perde DEPOIS de o servidor gravar: aviso de resultado desconhecido, texto mantido;
+    // a nova tentativa reencontra o mesmo pedido ("já estava registrada") e não duplica.
+    const text = "Observação com a resposta perdida no caminho";
+    let cut = true;
+    await page.route("**/conversas/**", async (route) => {
+      const req = route.request();
+      if (cut && req.method() === "POST" && req.headers()["next-action"] && (req.postData() ?? "").includes(text)) {
+        cut = false;
+        await route.fetch();
+        await route.abort("failed");
+        return;
+      }
+      await route.continue();
+    });
+    await section.getByRole("textbox").fill(text);
+    await section.getByRole("button", { name: "Registrar observação" }).click();
+    await expect(section.getByRole("alert")).toContainText("Não foi possível confirmar se a observação foi registrada");
+    await expect(section.getByRole("textbox")).toHaveValue(text);
+    await expect(section.getByText(/Observação registrada em/)).toHaveCount(0);
+    await section.getByRole("button", { name: "Registrar observação" }).click();
+    await expect(section.getByText("Esta observação já estava registrada neste caso.")).toBeVisible();
+    await page.unroute("**/conversas/**");
+    await panel.getByRole("link", { name: "Voltar ao caso" }).click();
+    await expect(card.getByText(text, { exact: true })).toHaveCount(1);
+  });
+
+  test("12. aba Documentos: entre Tarefas e Histórico; recebimento FECHADO até a ativação do backup; visualizador só consulta", async ({ page }) => {
+    // No CI a variável CASE_DOCUMENTS_UPLOAD_ENABLED não existe e o portão do banco nasce fechado: o recebimento
+    // está bloqueado para todos, inclusive para a dona. Leitura, abertura e conferência não dependem disso.
+    await login(page, SEED_USERS.ana.email);
+    await page.goto(conversationUrl);
+    await openContext(page);
+    const panel = page.locator("#painel-contexto");
+    const tabs = panel.getByRole("navigation", { name: "Seções do caso" }).getByRole("link");
+    await expect(tabs).toHaveText([/^Resumo/, /^Tarefas/, /^Documentos/, /^Histórico/]);
+    await panel.getByRole("link", { name: /^Documentos/ }).click();
+    await expect(page).toHaveURL(/aba=documentos/);
+    const received = panel.getByRole("region", { name: "Documentos recebidos" });
+    await expect(received.getByRole("note")).toContainText("aguarda a ativação do backup dos arquivos");
+    await expect(received.getByRole("button", { name: /Escolher arquivo/ })).toHaveCount(0);
+    await expect(received.locator('input[type="file"]')).toHaveCount(0);
+    await expect(received.getByText("Nenhum documento recebido neste caso.")).toBeVisible();
+    await expect(panel.getByRole("region", { name: "Propostas geradas pelo Praxis" })).toBeVisible();
+
+    await page.context().clearCookies();
+    await login(page, SEED_USERS.elisa.email);
+    await page.goto(conversationUrl);
+    await openContext(page);
+    await panel.getByRole("link", { name: /^Documentos/ }).click();
+    await expect(received.getByRole("note")).toContainText("só consulta");
+    await expect(received.getByRole("button")).toHaveCount(0);
   });
 });

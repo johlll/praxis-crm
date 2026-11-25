@@ -30,6 +30,7 @@ todos arquivados com o prazo cumprido; **nenhum** destes bloqueios (códigos fec
 | `legal_hold_active` | preservação legal ativa |
 | `merge_history_present` | contato absorveu outro ou tem histórico de mesclagem (o outro contato guarda dado pessoal que a operação não trata) |
 | `proposal_document_present` | proposta com PDF ou e-mail enviado: armazenamento externo, **sem exclusão distribuída** nesta PR |
+| `case_document_present` | documento anexado a um caso (Storage): remover antes pela remoção controlada (acréscimo dos documentos por caso) |
 | `calendar_link_present` | atividade ligada a evento da agenda externa |
 | `pending_outbound_message` | mensagem de saída do WhatsApp ainda em andamento |
 | `unlinked_whatsapp_conversation` | existe conversa ou identidade de WhatsApp que só se acha pelo **telefone** do contato (`wa_id`, telefone da identidade ou o identificador `whatsapp` da B3), sem vínculo com o contato, lead ou oportunidade: **nada é apagado por inferência**; precisa ser vinculada ou revisada antes |
@@ -148,3 +149,23 @@ e contato inexistente desfazem a chamada sem rastro. O texto de erro do banco nu
 
 - Conversa de WhatsApp ligada **a outro contato** que só casa pelo telefone também bloqueia (revisão humana).
 - Anonimização de clientes, PDFs/armazenamento externo, mesclagens e agenda: fora desta PR.
+
+## Acréscimos posteriores
+
+- **Painel do caso, etapa B** ([conversas-painel-servico.md](conversas-painel-servico.md)): número interno, roteiros,
+  etapas copiadas e histórico do roteiro são **esqueleto** (códigos, datas e nomes de etapa do catálogo; sem texto livre
+  por caso). A anonimização não precisa apagá-los e não mudou; depois de `contacts.anonymized_at`, um gatilho próprio
+  recusa `INSERT`/`UPDATE` neles com `contact_anonymized`. Exclusão administrativa da oportunidade leva tudo em cascata.
+  O registro de chaves de idempotência (`status_track_idempotency_keys`) só tem códigos; a linha sai junto com o evento
+  (gatilho na exclusão, inclusive na cascata da conversa apagada pela anonimização).
+- **Observações por caso** ([conversas-observacoes-caso.md](conversas-observacoes-caso.md)): texto livre, NÃO é
+  esqueleto. A anonimização as **apaga**, como as notas do lead (`privacy_anonymize_contact` recriada com a mesma
+  assinatura: só o `delete` e a conferência final a mais); um gatilho próprio recusa observação nova depois
+  (`contact_anonymized`). Retenção sem mudança (a observação não reinicia a contagem). Exclusão da oportunidade leva
+  as observações em cascata.
+- **Documentos por caso** ([conversas-documentos-caso.md](conversas-documentos-caso.md)): arquivo no Storage, como o PDF
+  de proposta. A avaliação (`privacy_retention_assess`, recriada com a mesma assinatura) bloqueia com
+  `case_document_present` enquanto houver qualquer documento de caso do contato (em qualquer estado); os documentos
+  precisam ser removidos antes, pela remoção controlada. Defesa em profundidade: um gatilho em `contacts` recusa gravar
+  `anonymized_at` com documento de caso, desfazendo a anonimização inteira. Depois da anonimização, nada novo entra.
+  A exportação leva só os metadados (sem o conteúdo dos arquivos).

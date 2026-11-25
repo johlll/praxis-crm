@@ -3,7 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
-import type { TrackActionState } from "@/modules/status-tracks/queries";
+/** Resultado comum das ações do painel (trilhas e roteiro do serviço). */
+export type PanelActionState = { ok: true; result: { replayed: boolean } } | { ok: false; error: string; conflict?: true };
 import { useOthersBusy } from "./track-busy";
 
 /**
@@ -23,7 +24,7 @@ export function useTrackAction() {
   const [conflict, setConflict] = useState(false);
   const [done, setDone] = useState<string | null>(null);
 
-  function run(call: () => Promise<TrackActionState>, onOk?: () => void) {
+  function run(call: () => Promise<PanelActionState>, onOk?: () => void) {
     setError(null);
     setConflict(false);
     setDone(null);

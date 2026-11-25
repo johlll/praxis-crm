@@ -71,7 +71,7 @@ beforeEach(() => {
 
 describe("estado da URL (busca, situação, página, caso, destaque)", () => {
   it("sem parâmetros, devolve os padrões", () => {
-    expect(parseInboxParams({})).toEqual({ q: "", status: "all", page: 1, caso: null, sel: null });
+    expect(parseInboxParams({})).toEqual({ q: "", status: "all", page: 1, caso: null, sel: null, aba: "resumo", editar: false });
   });
 
   it("limpa a busca (espaços, tamanho) e usa o primeiro valor se vier repetido", () => {
@@ -117,7 +117,7 @@ describe("estado da URL (busca, situação, página, caso, destaque)", () => {
   });
 
   it("ida e volta: o que sai de inboxHref volta igual em parseInboxParams", () => {
-    const params = { q: "usucapião & cia", status: "aguardando_cliente" as const, page: 4, caso: OPP, sel: null };
+    const params = { q: "usucapião & cia", status: "aguardando_cliente" as const, page: 4, caso: OPP, sel: null, aba: "historico" as const, editar: true };
     const href = inboxHref(CONV, params, { keepCase: true });
     const sp = Object.fromEntries(new URL(href, "http://x").searchParams.entries());
     expect(parseInboxParams(sp)).toEqual(params);
@@ -325,34 +325,26 @@ describe("mensagem sem texto (mídia sem legenda)", () => {
 });
 
 describe("caso em foco (a URL pede, o servidor valida, o vínculo persistido não muda)", () => {
-  it("o pedido válido da URL vence", () => {
-    expect(resolveFocusId({ optionIds: [OPP, OPP2], linkedId: OPP, validRequestedId: OPP2 })).toEqual({ id: OPP2, source: "url" });
+  // A regra-base (vínculo → único do lead → único do contato → nenhum) mora no banco,
+  // private.conversation_case_resolution, compartilhada com a lista (pgTAP 58). Aqui: a URL e o padrão do servidor.
+  it("o pedido válido da URL vence o padrão do servidor", () => {
+    expect(resolveFocusId({ optionIds: [OPP, OPP2], validRequestedId: OPP2, serverDefault: { id: OPP, source: "linked" } })).toEqual({ id: OPP2, source: "url" });
   });
 
-  it("sem pedido, vale o vínculo persistido da conversa", () => {
-    expect(resolveFocusId({ optionIds: [OPP, OPP2], linkedId: OPP2, validRequestedId: null })).toEqual({ id: OPP2, source: "linked" });
+  it("sem pedido, vale o padrão do servidor com a origem dele", () => {
+    expect(resolveFocusId({ optionIds: [OPP, OPP2], validRequestedId: null, serverDefault: { id: OPP2, source: "linked" } })).toEqual({ id: OPP2, source: "linked" });
+    expect(resolveFocusId({ optionIds: [OPP, OPP2], validRequestedId: null, serverDefault: { id: OPP2, source: "lead" } })).toEqual({ id: OPP2, source: "lead" });
+    expect(resolveFocusId({ optionIds: [OPP], validRequestedId: null, serverDefault: { id: OPP, source: "only" } })).toEqual({ id: OPP, source: "only" });
   });
 
-  it("sem vínculo, vale a única oportunidade do lead a que a conversa está ligada", () => {
-    expect(resolveFocusId({ optionIds: [OPP, OPP2], linkedId: null, validRequestedId: null, leadOptionIds: [OPP2] })).toEqual({ id: OPP2, source: "lead" });
-    // o lead com mais de uma oportunidade é ambíguo: nada é escolhido
-    expect(resolveFocusId({ optionIds: [OPP, OPP2], linkedId: null, validRequestedId: null, leadOptionIds: [OPP, OPP2] })).toBeNull();
-    // o vínculo persistido continua tendo prioridade sobre o lead
-    expect(resolveFocusId({ optionIds: [OPP, OPP2], linkedId: OPP, validRequestedId: null, leadOptionIds: [OPP2] })).toEqual({ id: OPP, source: "linked" });
+  it("sem padrão do servidor (vários casos e nenhum vínculo), NÃO escolhe por palpite", () => {
+    expect(resolveFocusId({ optionIds: [OPP, OPP2], validRequestedId: null, serverDefault: null })).toBeNull();
+    expect(resolveFocusId({ optionIds: [], validRequestedId: null, serverDefault: null })).toBeNull();
   });
 
-  it("sem pedido nem vínculo, só o único caso é escolhido", () => {
-    expect(resolveFocusId({ optionIds: [OPP], linkedId: null, validRequestedId: null })).toEqual({ id: OPP, source: "only" });
-  });
-
-  it("com vários casos e nenhum vínculo, NÃO escolhe por palpite", () => {
-    expect(resolveFocusId({ optionIds: [OPP, OPP2], linkedId: null, validRequestedId: null })).toBeNull();
-    expect(resolveFocusId({ optionIds: [], linkedId: null, validRequestedId: null })).toBeNull();
-  });
-
-  it("pedido que não está entre as opções é ignorado; vínculo fora das opções também", () => {
-    expect(resolveFocusId({ optionIds: [OPP], linkedId: null, validRequestedId: OPP2 })).toEqual({ id: OPP, source: "only" });
-    expect(resolveFocusId({ optionIds: [OPP, OPP2], linkedId: "0a000000-0000-4000-8000-000000000009", validRequestedId: null })).toBeNull();
+  it("pedido ou padrão fora das opções são ignorados", () => {
+    expect(resolveFocusId({ optionIds: [OPP], validRequestedId: OPP2, serverDefault: { id: OPP, source: "only" } })).toEqual({ id: OPP, source: "only" });
+    expect(resolveFocusId({ optionIds: [OPP, OPP2], validRequestedId: null, serverDefault: { id: "0a000000-0000-4000-8000-000000000009", source: "linked" } })).toBeNull();
   });
 });
 
@@ -581,7 +573,8 @@ describe("tela de Conversas — promessas que ela não faz", () => {
     expect(existsSync(join(ROOT, "src/app/(app)/conversas/loading.tsx"))).toBe(false);
     expect(existsSync(join(ROOT, "src/app/(app)/conversas/[id]/loading.tsx"))).toBe(false);
     const workspace = read("src/components/conversations/conversations-workspace.tsx");
-    expect(workspace.match(/<Suspense key=\{conversationId\}/g)).toHaveLength(2); // mensagens e contexto
+    // mensagens, painel do caso e a linha do caso no cabeçalho (esta sem esqueleto: nada inventado enquanto carrega)
+    expect(workspace.match(/<Suspense key=\{conversationId\}/g)).toHaveLength(3);
     // a existência da conversa é conferida ANTES da transmissão (404 de verdade para inexistente/fora do alcance)
     expect(workspace.indexOf("getConversation(conversationId)")).toBeLessThan(workspace.indexOf("<Suspense"));
     expect(workspace.indexOf("notFound()")).toBeGreaterThan(-1);

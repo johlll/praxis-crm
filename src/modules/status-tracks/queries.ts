@@ -175,7 +175,17 @@ export type ConversationCaseOption = {
   /** Só para oportunidade ganha ("nao_informado" quando nunca corrigido). */
   caseProgressStatus: CaseProgressStatus | null;
   createdAt: string;
+  /** Número interno do caso (etapa B); nulo = sem número (nada é inventado). */
+  caseNumber: number | null;
+  /** Roteiro ativo (só oportunidade ganha): tipo, etapa atual e contagens; nulos sem roteiro. */
+  serviceTypeName: string | null;
+  serviceStepName: string | null;
+  serviceStepPosition: number | null;
+  serviceStepsTotal: number | null;
+  serviceStepsCompleted: number | null;
 };
+
+const numOrNull = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 
 export function mapCaseOption(row: Record<string, unknown>): ConversationCaseOption {
   return {
@@ -189,7 +199,20 @@ export function mapCaseOption(row: Record<string, unknown>): ConversationCaseOpt
     isLinked: row.is_linked === true,
     caseProgressStatus: (row.case_progress_status as CaseProgressStatus | null) ?? null,
     createdAt: row.created_at as string,
+    caseNumber: numOrNull(row.case_number),
+    serviceTypeName: (row.service_type_name as string | null) ?? null,
+    serviceStepName: (row.service_step_name as string | null) ?? null,
+    serviceStepPosition: numOrNull(row.service_step_position),
+    serviceStepsTotal: numOrNull(row.service_steps_total),
+    serviceStepsCompleted: numOrNull(row.service_steps_completed),
   };
+}
+
+/** De onde veio o caso padrão (regra do banco, compartilhada com a lista): vínculo, único do lead, único do contato. */
+export type CaseDefaultSource = "linked" | "lead" | "only";
+
+export function isCaseDefaultSource(v: unknown): v is CaseDefaultSource {
+  return v === "linked" || v === "lead" || v === "only";
 }
 
 export type ConversationCaseOptions = {
@@ -198,6 +221,12 @@ export type ConversationCaseOptions = {
   contactResolved: boolean;
   linkedOpportunityId: string | null;
   items: ConversationCaseOption[];
+  /**
+   * Caso padrão pela regra única do banco (`private.conversation_case_resolution`), a mesma da lista de
+   * conversas. Nulo com vários casos e nenhuma ligação inequívoca: nada é escolhido por palpite.
+   */
+  defaultOpportunityId: string | null;
+  defaultSource: CaseDefaultSource | null;
 };
 
 export async function listConversationCaseOptions(conversationId: string): Promise<ConversationCaseOptions | null> {
@@ -211,11 +240,17 @@ export async function listConversationCaseOptions(conversationId: string): Promi
   if (!row || !Array.isArray(row.items)) {
     throw new StatusTrackLoadError(`os casos da conversa ${conversationId}`);
   }
+  const items = (row.items as Record<string, unknown>[]).map(mapCaseOption);
+  const defaultId = typeof row.default_opportunity_id === "string" ? row.default_opportunity_id : null;
+  // O padrão só vale se for uma das opções devolvidas na MESMA leitura (nunca um id solto).
+  const defaultValid = defaultId !== null && items.some((o) => o.opportunityId === defaultId);
   return {
     conversationId: row.conversation_id as string,
     contactResolved: row.contact_resolved === true,
     linkedOpportunityId: (row.linked_opportunity_id as string | null) ?? null,
-    items: (row.items as Record<string, unknown>[]).map(mapCaseOption),
+    items,
+    defaultOpportunityId: defaultValid ? defaultId : null,
+    defaultSource: defaultValid && isCaseDefaultSource(row.default_source) ? row.default_source : null,
   };
 }
 

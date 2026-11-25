@@ -41,6 +41,15 @@ export const ATTENDANCE_STATUS_CLASS: Record<AttendanceStatus, string> = {
   encerrado: "bg-neutral-bg text-neutral",
 };
 
+/**
+ * Selo do caso: a NATUREZA tem cor de base própria e sempre vem escrita ("Comercial", "Serviço",
+ * "Perdida"); no serviço, a cor acompanha o andamento registrado (CASE_PROGRESS_STATUS_CLASS).
+ */
+export const CASE_BADGE_KIND_CLASS = {
+  commercial: "bg-info-bg text-info",
+  lost: "bg-neutral-bg text-neutral",
+} as const;
+
 export const CASE_PROGRESS_STATUS_CLASS: Record<CaseProgressStatus, string> = {
   nao_informado: "border border-dashed border-border-strong bg-transparent text-text-muted",
   aguardando_documentos: "bg-warning-bg text-warning",

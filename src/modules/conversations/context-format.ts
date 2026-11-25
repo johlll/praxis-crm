@@ -6,6 +6,7 @@ import {
   type StatusTrack,
 } from "@/modules/status-tracks/schema";
 import type { StatusTrackEvent, StatusTrackEvidence } from "@/modules/status-tracks/queries";
+import { formatCaseNumber, serviceEventText, type CaseServiceEvent } from "@/modules/case-service/schema";
 import { MESSAGE_AUTHOR_LABEL, contentKindLabel } from "./inbox";
 import { messageAuthorKind } from "./message-author";
 
@@ -20,6 +21,114 @@ export const TRACK_LABEL: Record<StatusTrack, string> = {
   case_progress: "Andamento do caso",
   commercial_stage: "Etapa comercial",
 };
+
+/** Etiqueta de ORIGEM de cada evento no histórico do caso (a situação do atendimento é da conversa). */
+export const TRACK_TAG: Record<StatusTrack, string> = {
+  attendance: "Atendimento desta conversa",
+  case_progress: "Andamento do serviço",
+  commercial_stage: "Etapa comercial",
+};
+
+/**
+ * Evento do histórico do caso que não é de trilha de status: movimentação da etapa comercial
+ * (`stage_transitions`, a fonte canônica) ou marco gravado na própria oportunidade (abertura, ganho).
+ */
+export type CaseHistoryExtra = {
+  id: string;
+  occurredAt: string;
+  tag: string;
+  title: string;
+  detail: string | null;
+  /** Autor quando a fonte registra; `null` quando a fonte não guarda quem fez. */
+  actorLabel: string | null;
+};
+
+/**
+ * Monta os eventos de fonte canônica fora das trilhas: cada movimentação comercial uma vez, a abertura
+ * (`opportunities.created_at`) e o ganho (`won_at`). A perda não entra: a oportunidade não grava quando
+ * foi perdida (o motivo aparece no Resumo).
+ */
+export function caseHistoryExtras(input: {
+  opportunityId: string;
+  createdAt: string;
+  wonAt: string | null;
+  stageMoves: readonly { id: string; occurredAt: string; fromStageName: string | null; toStageName: string; actorName: string | null }[];
+  /** Etapa B: o número interno (quando foi atribuído e como) e os eventos do roteiro do serviço. */
+  caseNumber?: { number: number; assignedVia: "manual" | "win"; assignedAt: string; assignedByName: string | null } | null;
+  serviceEvents?: readonly CaseServiceEvent[];
+}): CaseHistoryExtra[] {
+  const out: CaseHistoryExtra[] = input.stageMoves.map((m) => ({
+    id: `move:${m.id}`,
+    occurredAt: m.occurredAt,
+    tag: "Etapa comercial",
+    title: "Etapa comercial alterada",
+    detail: m.fromStageName ? `De “${m.fromStageName}” para “${m.toStageName}”` : `Para “${m.toStageName}”`,
+    actorLabel: m.actorName ?? "Alguém da equipe",
+  }));
+  out.push({
+    id: `opened:${input.opportunityId}`,
+    occurredAt: input.createdAt,
+    tag: "Oportunidade",
+    title: "Oportunidade aberta",
+    detail: null,
+    actorLabel: null,
+  });
+  if (input.wonAt) {
+    out.push({
+      id: `won:${input.opportunityId}`,
+      occurredAt: input.wonAt,
+      tag: "Oportunidade",
+      title: "Oportunidade ganha",
+      detail: "A partir daqui o caso tem andamento do serviço.",
+      actorLabel: null,
+    });
+  }
+  if (input.caseNumber) {
+    out.push({
+      id: `number:${input.opportunityId}`,
+      occurredAt: input.caseNumber.assignedAt,
+      tag: "Identificação",
+      title: `Número interno ${formatCaseNumber(input.caseNumber.number)} atribuído`,
+      detail: input.caseNumber.assignedVia === "win" ? "No ganho da oportunidade." : "Por atribuição manual.",
+      actorLabel: input.caseNumber.assignedByName,
+    });
+  }
+  for (const e of input.serviceEvents ?? []) out.push(serviceEventExtra(e));
+  return out;
+}
+
+/** Um evento do roteiro como linha do Histórico (a fonte é case_service_events; o id é prefixado). */
+export function serviceEventExtra(e: CaseServiceEvent): CaseHistoryExtra {
+  return {
+    id: `service:${e.id}`,
+    occurredAt: e.occurredAt,
+    tag: "Roteiro do serviço",
+    title: serviceEventText(e),
+    // A mudança do andamento feita na mesma operação aparece também no histórico do andamento.
+    detail: e.progressFrom && e.progressTo
+      ? `Andamento: ${CASE_PROGRESS_STATUS_LABEL[e.progressFrom]} → ${CASE_PROGRESS_STATUS_LABEL[e.progressTo]}`
+      : null,
+    actorLabel: e.actorName ?? "Alguém da equipe",
+  };
+}
+
+/**
+ * Instante de um horário ISO em MICROSSEGUNDOS (o banco grava microssegundos; Date.parse corta em
+ * milissegundos). Ordena eventos do mesmo milissegundo como o banco ordena.
+ */
+export function stampMicros(iso: string): number {
+  const ms = Date.parse(iso);
+  const frac = /T\d{2}:\d{2}:\d{2}\.(\d+)/.exec(iso)?.[1] ?? "";
+  return ms * 1000 + Number(frac.padEnd(6, "0").slice(3, 6));
+}
+
+/** Do mais novo ao mais antigo; empate exato de horário pelo id, decrescente — a mesma ordem das RPCs. */
+export function compareStampDesc(a: { occurredAt: string; id: string }, b: { occurredAt: string; id: string }): number {
+  const ta = stampMicros(a.occurredAt);
+  const tb = stampMicros(b.occurredAt);
+  if (ta !== tb) return tb - ta;
+  return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+}
 
 /** Rótulo de um código de status de uma trilha; código fora do vocabulário é mostrado como veio. */
 export function statusLabel(track: StatusTrack, code: string | null): string {
@@ -103,12 +212,7 @@ export type TaggedEvent = StatusTrackEvent & { track: StatusTrack; targetId: str
 
 /** Une as linhas do tempo das trilhas, da mais recente para a mais antiga (desempate pelo id, como no servidor). */
 export function mergeTimeline(events: TaggedEvent[]): TaggedEvent[] {
-  return [...events].sort((a, b) => {
-    const ta = Date.parse(a.occurredAt);
-    const tb = Date.parse(b.occurredAt);
-    if (ta !== tb) return tb - ta;
-    return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
-  });
+  return [...events].sort(compareStampDesc);
 }
 
 /** Mensagens que a pessoa pode anexar como evidência de uma correção (referência, nunca obrigatória). */

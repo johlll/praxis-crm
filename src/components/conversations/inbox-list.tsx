@@ -4,7 +4,6 @@ import { MessageCircle, Search, SearchX } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { initialsOf } from "@/lib/initials";
 import { formatPhoneForDisplay } from "@/lib/format-phone";
-import { ATTENDANCE_STATUS_LABEL } from "@/modules/status-tracks/schema";
 import type { ConversationInboxPage } from "@/modules/conversations/queries";
 import {
   INBOX_FILTERS,
@@ -18,7 +17,8 @@ import {
 import { ConversationsPagination } from "./conversations-pagination";
 import { LinkPending } from "./link-pending";
 import { ScrollMemoryList } from "./scroll-memory-list";
-import { ATTENDANCE_STATUS_CLASS } from "./labels";
+import { caseBadge, caseChipLabel, caseCountLabel } from "@/modules/conversations/case-display";
+import { AttendanceChip, CaseSubjectChips } from "./context/case-badge";
 
 /**
  * Coluna da lista de conversas (Conversas + IA, PR 2). Server Component: busca,
@@ -26,6 +26,10 @@ import { ATTENDANCE_STATUS_CLASS } from "./labels";
  * filtrado só sobre a página carregada. As contagens das abas cobrem o
  * conjunto inteiro que o papel alcança. Sem contador de não lidas nem filtro
  * "Para humano": não há fonte confiável para eles.
+ *
+ * Cada linha mostra o caso (assunto e selo: comercial, serviço ou perdida) pela MESMA regra do painel, e a
+ * situação do atendimento à parte, com ícone de mensagem. Com vários casos e nenhum vínculo inequívoco, "N
+ * casos" — nunca um andamento escolhido por palpite para o cliente inteiro.
  */
 export function InboxList({
   inbox,
@@ -66,6 +70,8 @@ export function InboxList({
           />
           {params.status !== "all" ? <input type="hidden" name="situacao" value={params.status} /> : null}
           {openId && params.caso ? <input type="hidden" name="caso" value={params.caso} /> : null}
+          {openId && params.aba !== "resumo" ? <input type="hidden" name="aba" value={params.aba} /> : null}
+          {openId && params.editar ? <input type="hidden" name="editar" value="1" /> : null}
           {!openId && params.sel ? <input type="hidden" name="sel" value={params.sel} /> : null}
           <button
             type="submit"
@@ -172,20 +178,23 @@ export function InboxList({
                     <span className={cn("truncate text-meta text-text-tertiary", preview.isKind && "italic")}>
                       {preview.text}
                     </span>
-                    <span className="mt-1 flex flex-wrap gap-1">
-                      {c.legalArea ? (
-                        <span className="rounded-full bg-neutral-bg px-2 py-0.5 text-label font-bold text-neutral">
-                          {c.legalArea}
+                    <span className="mt-1 flex min-w-0 flex-wrap gap-1">
+                      {c.caseItem ? (
+                        <CaseSubjectChips subject={caseChipLabel(c.caseItem)} badge={caseBadge(c.caseItem)} />
+                      ) : c.caseCount > 1 ? (
+                        <span
+                          title="Vários casos e nenhum vinculado a esta conversa"
+                          className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-label font-bold text-text-secondary"
+                        >
+                          {caseCountLabel(c.caseCount)}
+                          <span className="sr-only"> — nenhum vinculado a esta conversa</span>
+                        </span>
+                      ) : c.legalArea ? (
+                        <span className="inline-flex min-w-0 max-w-full items-center rounded-full bg-neutral-bg px-2 py-0.5 text-label font-bold text-neutral">
+                          <span className="truncate">{c.legalArea}</span>
                         </span>
                       ) : null}
-                      <span
-                        className={cn(
-                          "rounded-full px-2 py-0.5 text-label font-bold",
-                          ATTENDANCE_STATUS_CLASS[c.attendanceStatus],
-                        )}
-                      >
-                        {ATTENDANCE_STATUS_LABEL[c.attendanceStatus]}
-                      </span>
+                      <AttendanceChip status={c.attendanceStatus} />
                       {c.needsLinkReview ? (
                         <span className="rounded-full bg-warning-bg px-2 py-0.5 text-label font-bold text-warning">
                           Vínculo pendente

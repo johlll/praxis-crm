@@ -32,10 +32,12 @@ const workflow = ler(MODELO);
 const operacoes = (texto: string) => [...new Set([...texto.matchAll(/s3api ([a-z0-9-]+)/g)].map((m) => m[1]))].sort();
 
 describe("formato praxis-storage-backup/v1", () => {
-  it("o formato e o único bucket aceito estão fixos na biblioteca", () => {
+  it("o formato, o bucket PADRÃO e a lista FECHADA de buckets aceitos estão fixos na biblioteca", () => {
     expect(LIB).toContain('PRAXIS_STORAGE_FORMAT="praxis-storage-backup/v1"');
     expect(LIB).toContain('PRAXIS_STORAGE_BUCKET="proposal-documents"');
-    expect(LIB).toContain('storage_bucket_ok() { [ "$1" = "$PRAXIS_STORAGE_BUCKET" ]; }');
+    // Documentos por caso: `case-documents` só por escolha explícita; nunca um bucket qualquer.
+    expect(LIB).toContain('PRAXIS_STORAGE_BUCKETS=("proposal-documents" "case-documents")');
+    expect(LIB).toContain('for b in "${PRAXIS_STORAGE_BUCKETS[@]}"; do [ "$1" = "$b" ] && return 0; done');
   });
 
   it("o manifesto tem versão, data UTC, bucket, quantidade, total de bytes, caminho/tamanho/SHA-256 e ferramentas", () => {

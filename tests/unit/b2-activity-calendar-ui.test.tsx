@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -376,6 +376,11 @@ describe("campos do Google Agenda no formulário", () => {
     await waitFor(() => expect(screen.getByText("Horário livre na sua agenda.")).toBeInTheDocument());
     const sent = actions.checkSlotAvailabilityAction.mock.calls[0]![1] as FormData;
     expect([sent.get("dueDate"), sent.get("dueTime"), sent.get("durationMinutes")]).toEqual(["2026-11-10", "14:00", "60"]);
+    expect(actions.checkSlotAvailabilityAction).toHaveBeenCalledTimes(1);
+
+    // O resultado aparece num render ANTERIOR ao fim da transição: só depois dela o botão volta a ser
+    // "Verificar disponibilidade" e fica habilitado. A segunda interação espera por isso, explicitamente.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Verificar disponibilidade" })).toBeEnabled());
 
     actions.checkSlotAvailabilityAction.mockResolvedValueOnce({
       ok: true,
@@ -383,6 +388,44 @@ describe("campos do Google Agenda no formulário", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Verificar disponibilidade" }));
     await waitFor(() => expect(screen.getByText(/Ocupado na sua agenda/)).toBeInTheDocument());
+    expect(screen.queryByText("Horário livre na sua agenda.")).not.toBeInTheDocument();
+    expect(actions.checkSlotAvailabilityAction).toHaveBeenCalledTimes(2);
+    const sent2 = actions.checkSlotAvailabilityAction.mock.calls[1]![1] as FormData;
+    expect([sent2.get("dueDate"), sent2.get("dueTime"), sent2.get("durationMinutes")]).toEqual(["2026-11-10", "14:00", "60"]);
+  });
+
+  it("o botão de verificar fica bloqueado durante a consulta e volta quando termina (promessa pendente controlada)", async () => {
+    let finish: (v: unknown) => void = () => {};
+    actions.checkSlotAvailabilityAction.mockImplementationOnce(() => new Promise((r) => (finish = r)));
+    render(
+      <form>
+        <CalendarOptionsFields idPrefix="t" getSlot={slot} />
+      </form>,
+    );
+    fireEvent.click(screen.getByLabelText("Adicionar ao Google Agenda"));
+    fireEvent.click(screen.getByRole("button", { name: "Verificar disponibilidade" }));
+
+    // Enquanto a promessa está pendente: nome de espera, desabilitado, sem resultado na tela.
+    const busy = screen.getByRole("button", { name: "Verificando…" });
+    expect(busy).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Verificar disponibilidade" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    fireEvent.click(busy); // clique no botão bloqueado não dispara outra consulta
+    expect(actions.checkSlotAvailabilityAction).toHaveBeenCalledTimes(1);
+
+    await act(async () => finish({ ok: true, busy: [] }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Verificar disponibilidade" })).toBeEnabled());
+    expect(screen.getByText("Horário livre na sua agenda.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Verificando…" })).not.toBeInTheDocument();
+
+    // Disponível de novo: a segunda consulta é uma nova chamada, com o resultado dela.
+    actions.checkSlotAvailabilityAction.mockResolvedValueOnce({
+      ok: true,
+      busy: [{ start: "2026-11-10T17:30:00.000Z", end: "2026-11-10T18:30:00.000Z" }],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verificar disponibilidade" }));
+    await waitFor(() => expect(screen.getByText(/Ocupado na sua agenda/)).toBeInTheDocument());
+    expect(actions.checkSlotAvailabilityAction).toHaveBeenCalledTimes(2);
   });
 
   it("verificar sem data e horário pede para preenchê-los (sem chamar o servidor)", async () => {

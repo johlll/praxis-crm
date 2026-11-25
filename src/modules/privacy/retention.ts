@@ -21,6 +21,7 @@ export const BLOCK_REASON_CODES = [
   "legal_hold_active",
   "merge_history_present",
   "proposal_document_present",
+  "case_document_present",
   "calendar_link_present",
   "pending_outbound_message",
   "unlinked_whatsapp_conversation",
@@ -108,6 +109,8 @@ export function describeBlockReason(code: BlockReasonCode, dueAt: string | null)
       return "Há histórico de mesclagem com outro contato; é necessária revisão humana.";
     case "proposal_document_present":
       return "Há proposta com PDF ou e-mail enviado, guardados fora do banco; é necessária revisão humana.";
+    case "case_document_present":
+      return "Há documento anexado a um caso, guardado fora do banco; remova os documentos (remoção controlada) antes de anonimizar.";
     case "calendar_link_present":
       return "Há atividade ligada à agenda externa; é necessária revisão humana.";
     case "unlinked_whatsapp_conversation":

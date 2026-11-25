@@ -2,6 +2,12 @@ import { createServerSupabaseClient } from "@/server/supabase/server";
 import { DataLoadError, isExpectedAbsence } from "@/server/data/load-error";
 import type { Database } from "@/server/types/database";
 import type { AttendanceStatus } from "@/modules/status-tracks/schema";
+import {
+  isCaseDefaultSource,
+  mapCaseOption,
+  type CaseDefaultSource,
+  type ConversationCaseOption,
+} from "@/modules/status-tracks/queries";
 import { isAttendanceStatus, mapInboxCounts, type InboxCounts, type InboxFilter } from "./inbox";
 
 export type MessageDirection = Database["public"]["Enums"]["message_direction"];
@@ -26,6 +32,14 @@ export type ConversationListItem = {
   lastMessageContentKind: string | null;
   /** Situação do atendimento ("nao_informado" = dado legado); só a caixa de entrada devolve. */
   attendanceStatus: AttendanceStatus;
+  /**
+   * Resumo do caso (só a caixa de entrada devolve; nas outras leituras fica 0/nulo). Mesma regra do painel:
+   * `caseItem` é o caso padrão (vínculo, único do lead ou único do contato); com vários casos e nenhuma
+   * ligação inequívoca ele é nulo e `caseCount` diz quantos são — a lista mostra "N casos", nunca um palpite.
+   */
+  caseCount: number;
+  caseSource: CaseDefaultSource | null;
+  caseItem: ConversationCaseOption | null;
 };
 
 function mapConversationRow(row: Record<string, unknown>): ConversationListItem {
@@ -45,6 +59,9 @@ function mapConversationRow(row: Record<string, unknown>): ConversationListItem 
     lastMessageStatus: (row.last_message_status as MessageStatus | null) ?? null,
     lastMessageContentKind: (row.last_message_content_kind as string | null | undefined) ?? null,
     attendanceStatus: isAttendanceStatus(row.attendance_status) ? row.attendance_status : "nao_informado",
+    caseCount: Math.max(0, Number(row.case_count ?? 0) || 0),
+    caseSource: isCaseDefaultSource(row.case_source) ? row.case_source : null,
+    caseItem: row.case && typeof row.case === "object" ? mapCaseOption(row.case as Record<string, unknown>) : null,
   };
 }
 

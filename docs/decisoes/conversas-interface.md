@@ -6,6 +6,10 @@ ela precisa**: não há extrator de IA, aplicador automático, escolha de proved
 ativação de integração nem envio automático de mensagem.
 
 Migration nova (aditiva): `20261118120000_conversas_interface_inbox.sql` — **não aplicada no hospedado**.
+
+> **Organização do painel substituída** pela do painel do caso (cabeçalho, lápis, abas Resumo · Tarefas ·
+> Histórico): ver [conversas-painel-caso.md](conversas-painel-caso.md). As regras de segurança, permissão, versão,
+> idempotência e isolamento entre casos descritas aqui continuam valendo.
 Sem ela, a lista de Conversas mostra o erro tratado de carregamento (ver "Ordem de publicação").
 
 ## Referência e o que foi adotado

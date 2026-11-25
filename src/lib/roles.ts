@@ -182,7 +182,25 @@ export type Permission =
   | "custom_field.manage"
   // C3a — exportar os dados de um titular (LGPD): arquivo com dados pessoais
   // completos, só owner/admin. O banco repete a faixa.
-  | "privacy.manage";
+  | "privacy.manage"
+  // Painel do caso, etapa B (docs/decisoes/conversas-painel-servico.md). Atribuir o número interno a um
+  // caso: quem edita a oportunidade (mesma faixa de opportunity.edit), com o alcance do lead. Configurar o
+  // catálogo de tipos de serviço e etapas: quem já configura o pipeline (owner/admin/manager). Aplicar,
+  // trocar e remover roteiro, concluir e reabrir etapas e definir a etapa atual seguem case.progress_edit
+  // (o roteiro é parte do andamento do serviço). O banco repete as três faixas.
+  | "case.number_assign"
+  | "service_catalog.manage"
+  // Observações por caso (docs/decisoes/conversas-observacoes-caso.md): acrescentar uma observação a um
+  // caso, na mesma faixa de lead_note.edit (owner, admin, manager, lawyer, sales). Ler segue o alcance do caso
+  // (visualizador lê). O banco repete a faixa, o escritório, o alcance e o bloqueio de contato anonimizado.
+  | "case_note.add"
+  // Documentos por caso (docs/decisoes/conversas-documentos-caso.md). Enviar arquivo ao caso: a faixa de
+  // case_note.add (owner, admin, manager, lawyer, sales). Registrar a conferência humana e remover um
+  // documento (remoção controlada, com motivo): owner, admin, manager, lawyer. Ler e abrir segue o alcance do
+  // caso (visualizador lê). O banco repete as três faixas, o escritório, o alcance e o portão de recebimento.
+  | "case_document.upload"
+  | "case_document.review"
+  | "case_document.remove";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -231,6 +249,12 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "automation.view": new Set<Role>(["owner", "admin", "manager"]),
   "custom_field.manage": new Set<Role>(["owner", "admin"]),
   "privacy.manage": new Set<Role>(["owner", "admin"]),
+  "case.number_assign": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
+  "service_catalog.manage": new Set<Role>(["owner", "admin", "manager"]),
+  "case_note.add": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
+  "case_document.upload": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
+  "case_document.review": new Set<Role>(["owner", "admin", "manager", "lawyer"]),
+  "case_document.remove": new Set<Role>(["owner", "admin", "manager", "lawyer"]),
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {

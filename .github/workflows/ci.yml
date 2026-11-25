@@ -278,6 +278,22 @@ jobs:
         # antes dos passos que recriam o banco local.
         run: bash scripts/c3b-retention-concurrency-check.sh
 
+      - name: Teste de concorrência real (painel do caso, etapa B — número interno e roteiro do serviço)
+        # Números pedidos ao mesmo tempo (distintos, sem buraco, um só por caso), a mesma etapa concluída
+        # por três sessões com a mesma versão (uma conclui, as outras recebem track_conflict), a mesma
+        # chave repetida ao mesmo tempo (um evento só) e o modelo editado durante a aplicação (a cópia é
+        # da versão nova inteira) — ver scripts/painel-servico-concurrency-check.sh. Workspace próprio;
+        # roda antes dos passos que recriam o banco local.
+        run: bash scripts/painel-servico-concurrency-check.sh
+
+      - name: Observações por caso — concorrência real
+        # Duas pessoas escrevendo no mesmo caso ao mesmo tempo (todos os registros preservados), a mesma chave
+        # repetida ao mesmo tempo (um registro, as outras como repetição), a mesma chave com textos diferentes
+        # (um registro e um idempotency_conflict) e uma observação enquanto outra sessão segura a trava do
+        # andamento (não espera, não muda versão) — ver scripts/observacoes-caso-concurrency-check.sh.
+        # Workspace próprio; roda antes dos passos que recriam o banco local.
+        run: bash scripts/observacoes-caso-concurrency-check.sh
+
       - name: Instalar cliente PostgreSQL 17 e age (backup — B6c)
         # Mesmas versões fixas do modelo de backup (docs/backup/modelo-repositorio-privado):
         # cliente PostgreSQL 17 do PGDG e age 1.3.2 conferido por SHA-256.
@@ -424,6 +440,25 @@ jobs:
         # scripts/check-upgrade-c3b-retencao.sh. Recria o banco local, por isso
         # roda por último.
         run: bash scripts/check-upgrade-c3b-retencao.sh
+
+      - name: Atualização a partir da versão anterior (painel do caso em Conversas)
+        # A lista de conversas e as opções de caso devolvem o mesmo de antes nas chaves antigas
+        # (ordem, total, contagens e valores), as chaves novas seguem a regra única do caso e nada é
+        # escrito — ver scripts/check-upgrade-conversas-painel-caso.sh. Recria o banco local, por isso
+        # roda no fim.
+        run: bash scripts/check-upgrade-conversas-painel-caso.sh
+
+      - name: Atualização a partir da versão anterior (painel do caso, etapa B — número e roteiro)
+        # Lista, opções de caso, trilha do andamento, histórico e exportação do titular devolvem o mesmo
+        # de antes nas chaves e seções antigas; a migration não numera caso nem aplica roteiro; nenhuma
+        # linha antiga muda — ver scripts/check-upgrade-conversas-painel-servico.sh. Recria o banco local.
+        run: bash scripts/check-upgrade-conversas-painel-servico.sh
+
+      - name: Atualização a partir da versão anterior (observações por caso)
+        # Nenhuma observação criada nem migrada; notas do lead intactas; exportação igual nas seções antigas e
+        # com a seção nova vazia; nenhuma linha antiga muda; a anonimização de um contato antigo segue igual e
+        # apaga também as observações — ver scripts/check-upgrade-conversas-observacoes-caso.sh. Recria o banco.
+        run: bash scripts/check-upgrade-conversas-observacoes-caso.sh
 
       - name: Atualização a partir da versão anterior (Conversas — horário de origem das mensagens)
         # Mensagens gravadas antes da migration (A7 e B3) ficam intactas e com origem DESCONHECIDA
