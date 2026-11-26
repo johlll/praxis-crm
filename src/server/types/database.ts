@@ -6576,10 +6576,12 @@ export type Database = {
       get_dashboard: {
         Args: {
           p_assigned_to?: string
+          p_end_date?: string
           p_legal_area?: string
           p_only_unassigned?: boolean
           p_period_days?: number
           p_pipeline_id?: string
+          p_start_date?: string
           p_workspace_id: string
         }
         Returns: Json
@@ -6587,11 +6589,13 @@ export type Database = {
       get_dashboard_attribution: {
         Args: {
           p_assigned_to?: string
+          p_end_date?: string
           p_legal_area?: string
           p_model?: string
           p_only_unassigned?: boolean
           p_period_days?: number
           p_source?: string
+          p_start_date?: string
           p_workspace_id: string
         }
         Returns: Json
