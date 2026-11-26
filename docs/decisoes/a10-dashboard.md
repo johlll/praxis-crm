@@ -65,7 +65,8 @@ com o mesmo nome de antes, junto com o período, o pipeline, a origem, o modelo 
 que está na tela.
 
 **Teclado.** Enter, Espaço ou seta para baixo abrem, com o foco na opção em uso e contorno visível; setas, Home, End e
-a digitação movem; Enter escolhe; Escape ou clique fora fecham sem aplicar. O foco volta ao botão.
+a digitação movem; Enter escolhe; Escape ou clique fora fecham sem aplicar. O foco volta ao botão. Com mouse ou
+toque o contorno não aparece (o navegador o desenharia, porque o foco é movido por código).
 
 **Toque.** O menu abre no toque completo, não no encostar do dedo: com o comportamento padrão da biblioteca, começar
 uma rolagem em cima do botão abria o menu. O menu respeita as bordas da tela e rola por dentro quando não couber.

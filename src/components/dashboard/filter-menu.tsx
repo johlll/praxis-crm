@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type PointerEvent, type RefObject } from "
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { Check, ChevronDown } from "lucide-react";
 
+import { cn } from "@/lib/cn";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { FILTER_TRIGGER_CLASS } from "./filter-trigger";
 
@@ -11,7 +12,7 @@ export type FilterOption = { value: string; label: string };
 
 /*
  * Sem "outline-none" nas opções: no Tailwind 4 ele também apagaria o contorno de foco do teclado.
- * O destaque do mouse e das setas é o fundo; o contorno claro aparece só no teclado (:focus-visible).
+ * O destaque do mouse e das setas é o fundo; o contorno claro é do teclado.
  */
 const optionClass =
   "flex min-h-10 shrink-0 cursor-pointer items-center justify-between gap-4 rounded-md px-3 py-2 text-body text-text-secondary select-none " +
@@ -66,6 +67,10 @@ export function FilterMenu({
   const selected = useRef<HTMLDivElement>(null);
   const openedByKeyboard = useRef(false);
   const pointer = useRef<string | null>(null);
+  // Como o foco sempre chega por código (o menu o move), o navegador o trata como "de teclado" mesmo
+  // com mouse. Enquanto a pessoa usa mouse ou toque, o contorno fica escondido; uma tecla o devolve.
+  const [byPointer, setByPointer] = useState(false);
+  const pointerOutline = byPointer && "focus-visible:outline-0";
 
   function choose(next: string) {
     if (next === chosen || !field.current) return;
@@ -82,6 +87,7 @@ export function FilterMenu({
   function onPointerDown(event: PointerEvent<HTMLButtonElement>) {
     openedByKeyboard.current = false;
     pointer.current = event.pointerType;
+    setByPointer(true);
     if (event.pointerType !== "mouse") event.preventDefault();
   }
 
@@ -114,12 +120,17 @@ export function FilterMenu({
             ref={trigger}
             type="button"
             data-filter-menu={name}
-            className={FILTER_TRIGGER_CLASS}
+            className={cn(FILTER_TRIGGER_CLASS, pointerOutline)}
             onPointerDown={onPointerDown}
             onClick={onClick}
             onKeyDown={() => {
               openedByKeyboard.current = true;
               pointer.current = null;
+              setByPointer(false);
+            }}
+            // O foco saiu para outro lugar (não para o próprio menu): na volta, pelo Tab, há contorno.
+            onBlur={(event) => {
+              if (!(event.relatedTarget as Element | null)?.closest('[role="menu"]')) setByPointer(false);
             }}
           >
             <span className="shrink-0 text-text-secondary">{label}:</span>{" "}
@@ -131,6 +142,8 @@ export function FilterMenu({
           align="start"
           sideOffset={8}
           collisionPadding={16}
+          onPointerMove={() => setByPointer(true)}
+          onKeyDown={() => setByPointer(false)}
           // O próprio botão abre e fecha. Sem isto, o segundo toque nele contaria como "fora" (fecha) e
           // como clique no botão (reabre), e o menu não fecharia.
           onInteractOutside={(event) => {
@@ -145,7 +158,7 @@ export function FilterMenu({
                 key={option.value}
                 ref={option.value === chosen ? selected : undefined}
                 value={option.value}
-                className={optionClass}
+                className={cn(optionClass, pointerOutline)}
               >
                 <span className="min-w-0 break-words">{option.label}</span>
                 <span aria-hidden className="flex size-4 shrink-0 items-center justify-center">

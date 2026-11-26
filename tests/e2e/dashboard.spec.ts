@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { SEED_PAINEL } from "./fixtures";
 import { callRpcDirect, getSupabaseAccessToken, login } from "./helpers";
@@ -26,6 +26,13 @@ const periodPanel = (page: Page) => page.getByRole("dialog", { name: "Escolher o
 const filterButton = (page: Page, label: "Responsável" | "Área jurídica") => page.getByRole("button", { name: new RegExp(`^${label}:`) });
 const filterField = (page: Page, name: "responsavel" | "area") => page.locator(`input[type="hidden"][name="${name}"]`);
 const filterOption = (page: Page, name: string) => page.getByRole("menu").getByRole("menuitemradio", { name, exact: true });
+
+/** Há contorno de foco desenhado neste elemento? */
+const outlined = (locator: Locator) =>
+  locator.evaluate((el) => {
+    const style = getComputedStyle(el);
+    return style.outlineStyle !== "none" && Number.parseFloat(style.outlineWidth) > 0;
+  });
 
 async function chooseFilter(page: Page, label: "Responsável" | "Área jurídica", option: string) {
   await filterButton(page, label).click();
@@ -381,7 +388,7 @@ test.describe.serial("A10 — Visão geral", () => {
     const checked = filterOption(page, "Família");
     await expect(checked).toBeFocused();
     await expect(checked).toHaveAttribute("aria-checked", "true");
-    expect(await checked.evaluate((el) => getComputedStyle(el).outlineStyle)).toBe("solid");
+    expect(await outlined(checked)).toBe(true);
 
     await page.keyboard.press("Escape");
     await expect(page.getByRole("menu")).toHaveCount(0);
@@ -462,5 +469,39 @@ test.describe.serial("A10 — Visão geral", () => {
     await expect(periodButton(tab)).toContainText("Últimos 7 dias");
     expect(errors).toEqual([]);
     await phone.close();
+  });
+
+  test("11. o contorno de foco é do teclado: com o mouse não aparece nas opções nem sobra no botão", async ({ page }) => {
+    await login(page, SEED_PAINEL.owner.email);
+    await page.goto("/visao-geral");
+    await page.waitForLoadState("networkidle");
+    const owner = filterButton(page, "Responsável");
+    const unassigned = filterOption(page, "Sem responsável");
+
+    await owner.click();
+    await unassigned.hover();
+    await expect(unassigned).toBeFocused();
+    expect(await outlined(unassigned)).toBe(false);
+    await unassigned.click();
+    await expect(page).toHaveURL(/responsavel=sem/);
+    await expect(owner).toBeFocused();
+    expect(await outlined(owner)).toBe(false);
+
+    // Sair e voltar pelo teclado: o contorno aparece no botão.
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Shift+Tab");
+    await expect(owner).toBeFocused();
+    expect(await outlined(owner)).toBe(true);
+
+    // Menu aberto com o mouse e continuado no teclado: o contorno aparece na opção.
+    await owner.click();
+    await expect(page.getByRole("menu")).toBeVisible();
+    await page.keyboard.press("Home");
+    const everyone = filterOption(page, "Toda a equipe");
+    await expect(everyone).toBeFocused();
+    expect(await outlined(everyone)).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(owner).toBeFocused();
+    expect(await outlined(owner)).toBe(true);
   });
 });
