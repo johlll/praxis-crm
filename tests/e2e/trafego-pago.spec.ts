@@ -128,7 +128,11 @@ test.describe("Tráfego Pago", () => {
     const context = await browser.newContext({ javaScriptEnabled: false, storageState: await page.context().storageState() });
     const plain = await context.newPage();
     await plain.goto("/trafego-pago");
-    await expect(plain.getByText("Esta página precisa de JavaScript.")).toBeVisible();
+    // Seletor por estrutura: a busca por texto do Playwright ignora o conteúdo de <noscript>.
+    const warning = plain.locator("main noscript > p");
+    await expect(warning).toBeVisible();
+    expect(await warning.evaluate((e) => e.textContent)).toContain("Esta página precisa de JavaScript.");
+    await expect(plain.getByTestId("traffic-kpi-investmentCents")).toBeHidden();
     await context.close();
   });
 
