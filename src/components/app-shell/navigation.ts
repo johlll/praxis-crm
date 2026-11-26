@@ -1,10 +1,14 @@
 import type { Route } from "next";
 
+import type { Permission } from "@/lib/roles";
+
 export type NavItem = {
   href: Route;
   label: string;
   /** Ícone do lucide-react, resolvido no componente. */
   icon: NavIconName;
+  /** Só aparece para quem tem a permissão. A página confere de novo no servidor. */
+  permission?: Permission;
 };
 
 export type NavIconName =
@@ -21,7 +25,9 @@ export type NavIconName =
   | "settings"
   | "handshake"
   | "clipboard"
-  | "megaphone";
+  | "megaphone"
+  | "wallet"
+  | "plug";
 
 /**
  * Todas as rotas internas da barra lateral. A ordem e os rótulos vêm dos
@@ -40,6 +46,7 @@ export const primaryNav: readonly NavItem[] = [
 ] as const;
 
 export const secondaryNav: readonly NavItem[] = [
+  { href: "/financeiro", label: "Financeiro", icon: "wallet", permission: "finance.view" },
   { href: "/trafego-pago", label: "Tráfego Pago", icon: "megaphone" },
   { href: "/automacoes", label: "Automações", icon: "zap" },
   { href: "/relatorios", label: "Relatórios", icon: "file-text" },
@@ -91,6 +98,7 @@ export const sidebarLayout: readonly NavEntry[] = [
       items: ["/atividades", "/agenda", "/clientes"].map((h) => findItem(h as Route)),
     },
   },
+  item("/financeiro"),
   item("/trafego-pago"),
   item("/automacoes"),
   item("/relatorios"),

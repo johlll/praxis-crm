@@ -19,17 +19,19 @@ import {
   LayoutGrid,
   Megaphone,
   MessageCircle,
+  Plug,
   Plus,
   Settings,
   Users,
   UsersRound,
+  Wallet,
   Zap,
   type LucideIcon,
 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { initialsOf } from "@/lib/initials";
-import { ROLE_LABEL, type Role } from "@/lib/roles";
+import { ROLE_LABEL, roleHasPermission, type Role } from "@/lib/roles";
 import { switchWorkspaceAction } from "@/modules/workspace/actions";
 import {
   DropdownMenu,
@@ -57,6 +59,8 @@ const icons: Record<NavIconName, LucideIcon> = {
   handshake: Handshake,
   clipboard: ClipboardList,
   megaphone: Megaphone,
+  wallet: Wallet,
+  plug: Plug,
 };
 
 const GROUPS_STORAGE_KEY = "praxis.sidebar.grupos-fechados";
@@ -241,6 +245,8 @@ export function SidebarContent({ activeWorkspace, workspaces, overdueActivitiesC
   const closedGroups = useMemo(() => parseClosedGroups(closedGroupsRaw), [closedGroupsRaw]);
 
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
+  const canSee = (i: NavItem) => !i.permission || roleHasPermission(activeWorkspace.role, i.permission);
+  const entries = sidebarLayout.filter((entry) => entry.kind === "group" || canSee(entry.item));
   const badgeFor = (href: string) => (href === "/atividades" ? overdueActivitiesCount : undefined);
 
   function toggleGroup(id: string) {
@@ -307,7 +313,7 @@ export function SidebarContent({ activeWorkspace, workspaces, overdueActivitiesC
       </DropdownMenu>
 
       <nav className="-mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1" aria-label="Navegação principal">
-        {sidebarLayout.map((entry) =>
+        {entries.map((entry) =>
           entry.kind === "item" ? (
             <NavLink
               key={entry.item.href}
