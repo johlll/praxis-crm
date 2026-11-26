@@ -50,7 +50,7 @@ vi.mock("@/components/app-shell/topbar", () => ({ Topbar: ({ title }: { title: s
 
 const { DataLoadError } = await import("@/server/data/load-error");
 const ledger = await import("@/modules/finance/ledger");
-const { buildFinanceDemo } = await import("@/modules/finance/demo-data");
+const { buildFinanceDemo, demoEntriesOfMonth } = await import("@/modules/finance/demo-data");
 const { parseAmountCents, validateNewEntry } = await import("@/modules/finance/new-entry");
 const format = await import("@/modules/finance/format");
 const civil = await import("@/lib/civil-date");
@@ -117,12 +117,10 @@ describe("cálculos da demonstração", () => {
   });
 
   it.each(["2026-11-26", "2026-12-01", "2026-12-31", "2027-01-03", "2027-02-28", "2028-02-29", "2027-03-15"])(
-    "com hoje em %s os totais do mês atual não mudam e tudo continua batendo",
+    "com hoje em %s tudo continua batendo em todos os meses",
     (today) => {
       const data = buildFinanceDemo(today);
-      const v = ledger.buildMonthView(data.entries, today.slice(0, 7), today, data.coverageStart);
-      expect(v.totals).toEqual({ receivedCents: 3_840_000, paidCents: 1_260_000, resultCents: 2_580_000 });
-      expect(v.receivable).toEqual({ totalCents: 1_420_000, upcomingCents: 1_100_000, overdueCents: 320_000 });
+      expect(new Set(data.entries.map((e) => e.id)).size).toBe(data.entries.length);
       for (const month of ledger.selectableMonths(data.entries, today)) {
         const m = ledger.buildMonthView(data.entries, month, today, data.coverageStart);
         expect(m.flow.reduce((s, d) => s + d.receivedCents, 0)).toBe(m.totals.receivedCents);
@@ -219,6 +217,105 @@ describe("cálculos da demonstração", () => {
     const asc = ledger.sortByDate(rows, "asc").map(ledger.movementDate);
     expect(asc).toEqual([...asc].sort());
     expect(ledger.sortByDate(rows, "desc").map(ledger.movementDate)).toEqual([...asc].reverse());
+  });
+});
+
+describe("lançamentos estáveis por mês", () => {
+  const DAYS = ["2026-11-26", "2026-11-27", "2026-12-01", "2026-12-15", "2027-01-10"];
+  const ofMonth = (today: string, month: string) => buildFinanceDemo(today).entries.filter((e) => e.id.startsWith(`demo-${month}-`));
+  const upTo = (today: string, month: string) => buildFinanceDemo(today).entries.filter((e) => e.id.slice(5, 12) <= month);
+
+  it.each(DAYS.slice(1))("em %s novembro (e o que veio antes) são os MESMOS lançamentos de 26/11", (today) => {
+    expect(ofMonth("2026-11-26", "2026-11")).toHaveLength(58);
+    expect(ofMonth(today, "2026-11")).toEqual(ofMonth("2026-11-26", "2026-11"));
+    expect(upTo(today, "2026-11")).toEqual(upTo("2026-11-26", "2026-11"));
+    const nov = viewOf("2026-11", today);
+    const original = viewOf("2026-11");
+    expect(nov.rows).toEqual(original.rows);
+    expect(nov.totals).toEqual({ receivedCents: 3_840_000, paidCents: 1_260_000, resultCents: 2_580_000 });
+    expect(nov.receivable).toEqual({ totalCents: 1_420_000, upcomingCents: 1_100_000, overdueCents: 320_000 });
+    // Os dias novos do realizado entram zerados; os já vistos não mudam.
+    expect(nov.flow.slice(0, original.flow.length)).toEqual(original.flow);
+    expect(nov.flow.slice(original.flow.length).every((d) => d.receivedCents === 0 && d.paidCents === 0)).toBe(true);
+  });
+
+  it("datas e identificadores de novembro são fixos no calendário", () => {
+    const november = ofMonth("2026-12-15", "2026-11");
+    expect(november).toHaveLength(58);
+    const byId = (id: string) => november.find((e) => e.id === id);
+    expect(byId("demo-2026-11-001")).toMatchObject({ party: "Caio Ferraz", amountCents: 50_000, paidDate: "2026-11-01" });
+    expect(byId("demo-2026-11-021")).toMatchObject({ party: "Helena Duarte", amountCents: 480_000, paidDate: "2026-11-25" });
+    expect(byId("demo-2026-11-040")).toMatchObject({ description: "Aluguel do escritório", amountCents: 150_000, paidDate: "2026-11-13" });
+    expect(byId("demo-2026-11-054")).toMatchObject({ party: "Família Moreira", createdDate: "2026-11-24", dueDate: "2026-11-30", paidDate: null });
+    expect(byId("demo-2026-11-058")).toMatchObject({ party: "Rafael Nogueira", createdDate: "2026-09-05", dueDate: "2026-11-20", paidDate: null });
+  });
+
+  it("depois da virada, novembro é mês fechado: só mudam o corte, a comparação e a situação de vencimento", () => {
+    const nov = viewOf("2026-11", "2026-12-01");
+    expect(nov.phase).toBe("past");
+    expect(nov.reference).toBe("2026-11-30");
+    expect(nov.comparisonWindow).toEqual({ month: "2026-10", from: "2026-10-01", to: "2026-10-31", partial: false });
+    expect(nov.comparison.received).toEqual({ kind: "change", percent: 18.5, previousCents: 3_240_000 });
+    expect(nov.comparison.result).toEqual({ kind: "change", percent: 37.7, previousCents: 1_874_000 });
+    expect(nov.comparison.receivable).toEqual({ kind: "change", percent: 12.7, previousCents: 1_260_000 });
+    const installment = nov.rows.find((e) => e.id === "demo-2026-11-054")!;
+    expect(ledger.statusOf(installment, "2026-11-30")).toBe("a_vencer");
+    expect(ledger.statusOf(installment, "2026-12-01")).toBe("em_atraso");
+  });
+
+  it("dia após dia, de novembro a fevereiro, nenhum lançamento visto some ou muda; só um pagamento pode se realizar", () => {
+    let before = buildFinanceDemo("2026-11-01").entries;
+    for (let today = "2026-11-02"; today <= "2027-02-05"; today = civil.addCivilDays(today, 1)) {
+      const now = new Map(buildFinanceDemo(today).entries.map((e) => [e.id, e]));
+      for (const seen of before) {
+        const current = now.get(seen.id);
+        const realizedNow = seen.paidDate === null && current?.paidDate != null && current.paidDate <= today;
+        expect(current, `${seen.id} em ${today}`).toEqual(realizedNow ? { ...seen, paidDate: current!.paidDate } : seen);
+      }
+      before = [...now.values()];
+    }
+  });
+
+  it("a data atual só corta: nada lançado ou movimentado depois dela, sem alterar o conjunto do mês", () => {
+    const today = "2026-11-10";
+    const data = buildFinanceDemo(today);
+    expect(data.entries.every((e) => e.createdDate <= today && (e.paidDate === null || e.paidDate <= today))).toBe(true);
+    // Lançado em outubro e recebido só em 24/11: no dia 10 ainda está em aberto, com o mesmo vencimento.
+    const pending = data.entries.find((e) => e.description === "Parcela 2 de 2 · Escritura")!;
+    expect(pending).toMatchObject({ createdDate: "2026-10-18", dueDate: "2026-11-24", paidDate: null });
+    expect(ledger.statusOf(pending, today)).toBe("a_vencer");
+    expect(demoEntriesOfMonth("2026-11").find((e) => e.id === pending.id)!.paidDate).toBe("2026-11-24");
+  });
+
+  it("meses a partir de dezembro ficam dentro do próprio mês: não mexem em novembro e também são estáveis", () => {
+    for (const month of ["2026-12", "2027-01", "2027-06"]) {
+      const entries = demoEntriesOfMonth(month);
+      expect(entries.length).toBeGreaterThan(0);
+      expect(entries.every((e) => [e.createdDate, e.dueDate, e.paidDate!].every((d) => d.startsWith(month)))).toBe(true);
+    }
+    const early = ofMonth("2026-12-05", "2026-12");
+    const later = ofMonth("2026-12-20", "2026-12");
+    expect(early.length).toBeGreaterThan(0);
+    expect(later.filter((e) => e.createdDate <= "2026-12-05")).toEqual(early);
+    expect(ofMonth("2027-01-10", "2026-12")).toEqual(demoEntriesOfMonth("2026-12"));
+    expect(viewOf("2026-12", "2027-01-10").totals).toEqual({ receivedCents: 3_240_000, paidCents: 1_366_000, resultCents: 1_874_000 });
+    expect(viewOf("2026-10", "2027-01-10")).toEqual(viewOf("2026-10"));
+    expect(buildFinanceDemo("2027-01-10").coverageStart).toBe("2026-06-01");
+  });
+
+  it("na tela, aberta em dezembro, novembro continua com os mesmos números e linhas", () => {
+    const data = buildFinanceDemo("2026-12-01");
+    render(<FinanceDashboard initialEntries={data.entries} coverageStart={data.coverageStart} today="2026-12-01" />);
+    const month = screen.getByRole("combobox", { name: "Mês e ano" });
+    expect(month).toHaveValue("2026-12");
+    fireEvent.change(month, { target: { value: "2026-11" } });
+    const values = ["received", "paid", "result", "receivable"].map((k) => plain(screen.getByTestId(`finance-card-${k}`).textContent));
+    expect(values).toEqual(["R$ 38.400", "R$ 12.600", "R$ 25.800", "R$ 14.200"]);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Buscar lançamento" }), { target: { value: "regularizacao" } });
+    const table = screen.getByRole("table", { name: /Lançamentos de novembro/ });
+    const row = within(table).getAllByRole("row")[1]!;
+    expect(row).toHaveTextContent("Helena Duarte");
+    expect(row.querySelector("time")).toHaveAttribute("datetime", "2026-11-25");
   });
 });
 

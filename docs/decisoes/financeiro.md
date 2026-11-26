@@ -64,10 +64,30 @@ situação e data de recebimento ou pagamento. Aviso fixo: **"Simulação — n�
 
 ## Demonstração
 
-Seis meses, relativos a hoje e determinísticos. No mês atual: R$ 38.400 recebidos, R$ 12.600 pagos, resultado
-R$ 25.800, R$ 14.200 a receber (R$ 11.000 a vencer e R$ 3.200 em atraso). No mês anterior: R$ 32.400 e R$ 13.660
-(até o dia 25), com R$ 12.600 a receber. Nos primeiros dias do mês, o que ficaria antes do dia 1 é somado no dia 1.
-Os nomes são fictícios e não vêm da imagem.
+**Os lançamentos são estáveis por mês.** Os de um mês saem só do próprio mês (`demoEntriesOfMonth` não recebe a data
+atual): datas, valores e identificadores não mudam de um dia para o outro nem depois que o mês vira. Os nomes são
+fictícios e não vêm da imagem. Os dados começam em 01/06/2026.
+
+| Meses | Conteúdo |
+| --- | --- |
+| junho a outubro de 2026 | histórico: um recebimento e um pagamento por dia, do dia 1 ao 25 |
+| novembro de 2026 | conjunto detalhado, com datas fixas |
+| dezembro de 2026 em diante | mesmo formato do histórico, com totais que se repetem a cada cinco meses |
+
+- Novembro, em qualquer data a partir de 26/11: R$ 38.400 recebidos, R$ 12.600 pagos, resultado R$ 25.800 e
+  R$ 14.200 a receber (R$ 11.000 a vencer e R$ 3.200 em atraso). Outubro: R$ 32.400 e R$ 13.660, com R$ 12.600 a
+  receber no fim do mês.
+- De dezembro em diante, lançamento, vencimento e dinheiro ficam dentro do próprio mês, para nunca alterar um mês
+  anterior. Esses meses não criam honorários em aberto.
+
+**A data atual só corta e classifica:**
+- o que ainda não foi lançado não aparece, e o que ainda não foi recebido ou pago fica em aberto;
+- o realizado vai até hoje, e a comparação usa o intervalo descrito acima;
+- um lançamento em aberto passa de "a vencer" para "em atraso" depois do vencimento. Os que novembro deixa em
+  aberto (30/11, 07/12 e 16/12, além da despesa de 03/12) não ganham baixa automática: continuam em aberto e passam
+  a aparecer em atraso.
+
+A página usa o relógio real; nada congela a data.
 
 ### A referência não concilia
 

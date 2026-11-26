@@ -5,7 +5,7 @@ import { login } from "./helpers";
 
 /**
  * Financeiro com sessão, papéis e banco reais (Supabase local do CI). A página não grava: o teste confere isso pelas
- * requisições. Os totais do mês atual da demonstração são fixos porque o conjunto é relativo a "hoje".
+ * requisições. Os totais de novembro de 2026 são fixos porque os lançamentos da demonstração são estáveis por mês.
  */
 
 function watch(page: Page) {
@@ -25,6 +25,11 @@ const card = (page: Page, key: string) => page.getByTestId(`finance-card-${key}`
 /** Valor exato; entre "R$" e o número o navegador usa um espaço não separável. */
 const money = (text: string) => new RegExp(`^${text.replace(/[$.]/g, "\\$&").replace(/ /g, "\\s")}$`);
 const nav = (page: Page) => page.getByRole("navigation", { name: "Navegação principal" });
+/** O número de um cartão, em reais inteiros (os valores da demonstração não têm centavos). */
+const reais = async (page: Page, key: string) => {
+  const text = await card(page, key).innerText();
+  return (text.startsWith("−") ? -1 : 1) * Number(text.replace(/\D/g, ""));
+};
 
 /**
  * Mede o layout JÁ ESTABILIZADO: logo após redimensionar, um gráfico ainda tem a largura anterior por um quadro,
@@ -53,11 +58,17 @@ test.describe("Financeiro", () => {
     await expect(link).toHaveAttribute("aria-current", "page");
     await page.reload({ waitUntil: "networkidle" });
     await expect(page.getByRole("note")).toContainText("Simulação — não grava no financeiro do escritório");
+    await page.getByRole("combobox", { name: "Mês e ano" }).selectOption("2026-11");
     await expect(card(page, "received")).toHaveText(money("R$ 38.400"));
     await expect(card(page, "paid")).toHaveText(money("R$ 12.600"));
     await expect(card(page, "result")).toHaveText(money("R$ 25.800"));
     await expect(card(page, "receivable")).toHaveText(money("R$ 14.200"));
     await expect(page.getByTestId("finance-donut-total")).toHaveText(money("R$ 14.200"));
+
+    // A simulação entra com a data de hoje: confere pela diferença no mês atual, em qualquer dia em que rodar.
+    await page.reload({ waitUntil: "networkidle" });
+    const received = await reais(page, "received");
+    const result = await reais(page, "result");
 
     seen.writes.length = 0;
     await page.getByRole("button", { name: "Novo lançamento" }).click();
@@ -68,13 +79,13 @@ test.describe("Financeiro", () => {
     await dialog.getByRole("radio", { name: "Recebido" }).check();
     await dialog.getByRole("button", { name: "Adicionar à simulação" }).click();
     await expect(dialog).toHaveCount(0);
-    await expect(card(page, "received")).toHaveText(money("R$ 39.400"));
-    await expect(card(page, "result")).toHaveText(money("R$ 26.800"));
+    await expect.poll(() => reais(page, "received")).toBe(received + 1000);
+    await expect.poll(() => reais(page, "result")).toBe(result + 1000);
     await expect(page.getByRole("button", { name: "Novo lançamento" })).toBeFocused();
     expect(seen.writes).toEqual([]);
 
     await page.reload({ waitUntil: "networkidle" });
-    await expect(card(page, "received")).toHaveText(money("R$ 38.400"));
+    await expect.poll(() => reais(page, "received")).toBe(received);
 
     for (const width of [1440, 1280, 1100, 1024, 768, 390]) {
       await page.setViewportSize({ width, height: 900 });

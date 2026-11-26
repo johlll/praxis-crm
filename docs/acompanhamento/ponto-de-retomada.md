@@ -73,6 +73,8 @@ variável, credencial ou configuração externa.
 **Continua demonstrativo**
 - Todo o Financeiro: lançamentos fictícios só no escritório demonstrativo; "Novo lançamento" é **simulação** em
   memória, que some ao recarregar. Nos demais escritórios, "Ainda não há lançamentos neste módulo".
+- Os lançamentos fictícios são **estáveis por mês**: a data atual só corta o realizado, classifica vencimentos e
+  define a comparação; não muda datas, valores nem identificadores.
 - **Não é um Financeiro completo.**
 
 **Falta implementar ou ativar** (cada item com ordem própria)
