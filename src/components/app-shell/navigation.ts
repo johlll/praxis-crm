@@ -50,6 +50,7 @@ export const secondaryNav: readonly NavItem[] = [
   { href: "/trafego-pago", label: "Tráfego Pago", icon: "megaphone" },
   { href: "/automacoes", label: "Automações", icon: "zap" },
   { href: "/relatorios", label: "Relatórios", icon: "file-text" },
+  { href: "/integracoes", label: "Integrações", icon: "plug" },
   { href: "/configuracoes", label: "Configurações", icon: "settings" },
 ] as const;
 
@@ -102,5 +103,6 @@ export const sidebarLayout: readonly NavEntry[] = [
   item("/trafego-pago"),
   item("/automacoes"),
   item("/relatorios"),
+  item("/integracoes"),
   item("/configuracoes"),
 ];

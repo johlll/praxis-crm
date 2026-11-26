@@ -9,6 +9,7 @@ import {
   ScrollText,
   SlidersHorizontal,
   ListChecks,
+  Plug,
   type LucideIcon,
 } from "lucide-react";
 
@@ -19,14 +20,6 @@ import { requireMembership, roleHasPermission } from "@/server/authz/permissions
 export const metadata: Metadata = {
   title: "Configurações — Praxis CRM Jurídico",
 };
-
-const FUTURE_SECTIONS = [
-  {
-    title: "Integrações",
-    description: "Conexão real com a WhatsApp Cloud API (hoje, só o simulador).",
-    phase: "B",
-  },
-] as const;
 
 export default async function ConfiguracoesPage() {
   const { user } = await getShellContext();
@@ -39,10 +32,8 @@ export default async function ConfiguracoesPage() {
   const canManageCustomFields = roleHasPermission(membership.role, "custom_field.manage");
   const canManageServiceCatalog = roleHasPermission(membership.role, "service_catalog.manage");
 
-  // "Pipelines" só aparece para quem tem a permissão — diferente das
-  // seções de fase futura abaixo (que todo mundo vê como "ainda não
-  // existe"), esta já existe, só não é para o papel atual: mostrá-la
-  // acinzentada seria dizer "ainda não construído", o que é falso.
+  // Cada seção só aparece para quem tem a permissão: mostrá-la apagada
+  // daria a entender que ainda não foi construída, o que é falso.
   const readySections: Array<{ href: Route; icon: LucideIcon; title: string; description: string }> = [
     {
       href: "/configuracoes/equipe",
@@ -120,6 +111,12 @@ export default async function ConfiguracoesPage() {
           },
         ]
       : []),
+    {
+      href: "/integracoes",
+      icon: Plug,
+      title: "Central de Integrações",
+      description: "Situação de cada ferramenta, inclusive WhatsApp, anúncios e assinatura.",
+    },
   ];
 
   return (
@@ -139,17 +136,6 @@ export default async function ConfiguracoesPage() {
               </span>
               <span className="text-small text-text-tertiary">{section.description}</span>
             </Link>
-          ))}
-          {FUTURE_SECTIONS.map((section) => (
-            <div
-              key={section.title}
-              className="flex flex-col gap-1 rounded-lg border border-dashed border-border bg-surface-subtle p-4 opacity-60"
-            >
-              <span className="text-body font-semibold text-text">{section.title}</span>
-              <span className="text-small text-text-tertiary">
-                {section.description} — fase {section.phase}
-              </span>
-            </div>
           ))}
         </div>
       </main>
