@@ -1,12 +1,15 @@
 import type { ReactNode } from "react";
 import { Bell, Plus } from "lucide-react";
 
+import { cn } from "@/lib/cn";
 import type { Role } from "@/lib/roles";
 import { GlobalSearch } from "./global-search";
 
 type TopbarProps = {
   title: string;
   subtitle?: string;
+  /** No celular, deixa o subtítulo quebrar linha em vez de cortar (quando ele é a explicação da tela). */
+  wrapSubtitle?: boolean;
   /** Ações próprias da tela, alinhadas à direita antes das ações globais. */
   actions?: ReactNode;
   /**
@@ -25,7 +28,7 @@ type TopbarProps = {
  * Cabeçalho das telas internas, no mesmo fundo da página (sem faixa
  * branca): título forte sem exagero, subtítulo discreto e ações à direita.
  */
-export function Topbar({ title, subtitle, actions }: TopbarProps) {
+export function Topbar({ title, subtitle, actions, wrapSubtitle = false }: TopbarProps) {
   return (
     // px-5 alinha com o p-5 do <main> das telas existentes.
     <header className="flex shrink-0 items-center gap-3 px-5 pt-4 pb-2 md:min-h-[68px] md:gap-4 md:pt-5">
@@ -33,7 +36,9 @@ export function Topbar({ title, subtitle, actions }: TopbarProps) {
         <h1 className="m-0 truncate text-[19px] leading-tight font-bold tracking-[-0.3px] text-text md:text-[22px]">
           {title}
         </h1>
-        {subtitle ? <p className="m-0 truncate text-small text-text-muted">{subtitle}</p> : null}
+        {subtitle ? (
+          <p className={cn("m-0 truncate text-small text-text-muted", wrapSubtitle && "max-md:whitespace-normal")}>{subtitle}</p>
+        ) : null}
       </div>
 
       <div className="flex shrink-0 items-center gap-2">

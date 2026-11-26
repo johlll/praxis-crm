@@ -20,7 +20,8 @@ export type NavIconName =
   | "file-text"
   | "settings"
   | "handshake"
-  | "clipboard";
+  | "clipboard"
+  | "megaphone";
 
 /**
  * Todas as rotas internas da barra lateral. A ordem e os rótulos vêm dos
@@ -39,6 +40,7 @@ export const primaryNav: readonly NavItem[] = [
 ] as const;
 
 export const secondaryNav: readonly NavItem[] = [
+  { href: "/trafego-pago", label: "Tráfego Pago", icon: "megaphone" },
   { href: "/automacoes", label: "Automações", icon: "zap" },
   { href: "/relatorios", label: "Relatórios", icon: "file-text" },
   { href: "/configuracoes", label: "Configurações", icon: "settings" },
@@ -89,6 +91,7 @@ export const sidebarLayout: readonly NavEntry[] = [
       items: ["/atividades", "/agenda", "/clientes"].map((h) => findItem(h as Route)),
     },
   },
+  item("/trafego-pago"),
   item("/automacoes"),
   item("/relatorios"),
   item("/configuracoes"),
