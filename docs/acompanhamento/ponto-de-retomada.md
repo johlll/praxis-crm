@@ -1,6 +1,6 @@
 # Praxis — ponto de retomada
 
-Atualizado em 25/11/2026 (horário de Brasília), na branch `feat/trafego-pago`.
+Atualizado em 26/11/2026 (horário de Brasília), na branch `feat/financeiro-integracoes`.
 
 Registro de onde cada frente parou. **Não é consulta em tempo real**: antes de qualquer ação externa, reconferir a
 `main`, os HEADs das PRs, o histórico de migrations do banco hospedado e as travas. Ao retomar uma frente pausada,
@@ -13,7 +13,9 @@ Este repositório é público: aqui não entram credenciais, dados de clientes n
 
 | Frente | Situação |
 | --- | --- |
-| Tráfego Pago (etapa visual) | implementada na branch `feat/trafego-pago`, em PR **sem merge** |
+| Tráfego Pago — parte visual | **publicada em Production** (#367), com dados fictícios |
+| Tráfego Pago — integrações Meta Ads e Google Ads | **não existem** |
+| Financeiro e Central de Integrações | implementados na branch `feat/financeiro-integracoes`, em PR **sem merge** |
 | IA / extrator (#366) | **PAUSADA**; PR aberta, sem merge |
 | Validação real do WhatsApp (YCloud) | **PAUSADA** |
 
@@ -26,7 +28,7 @@ Segurança, isolamento, integridade e envio indevido continuam sendo condições
 - Supabase hospedado: `rgoeppjwnltcbeqipovh`. No estado conhecido, Preview e Production usam esse mesmo banco.
 - Escritório demonstrativo: `d10a0000-0000-4000-8000-000000000001` (`is_demo = true`). O nome do escritório não
   basta para autorizar escrita: conferir UUID, projeto e escopo.
-- `main`: `f2e51aaacaf7b4d791fe409e0d89cdf38c607048` (merge da #365).
+- `main`: `5c29fdb40d30c68a767132d07363512ea9783de2` (merge da #367).
 
 ## Publicado
 
@@ -35,6 +37,7 @@ Segurança, isolamento, integridade e envio indevido continuam sendo condições
 | #364 | documentos por caso | `6c1d08e` → `32b19c1` | `20261123120000` | 124 |
 | #358 | horário de origem das mensagens | `b6caca2` → `17af640` | `20261124120000` | 125 |
 | #365 | aplicador de status | `d6a9993` → `f2e51aa` | `20261125120000` | 126 |
+| #367 | Tráfego Pago (visual, dados fictícios) | `61689ff` → `5c29fdb` | nenhuma | sem mudança |
 
 - **Documentos**: recebimento FECHADO nas duas travas (`CASE_DOCUMENTS_UPLOAD_ENABLED` ausente e portão do banco
   falso). Não liberar upload real antes de: backup ativo com recuperação testada; limpeza que não dependa do uso do
@@ -48,19 +51,45 @@ Segurança, isolamento, integridade e envio indevido continuam sendo condições
   hospedado. Não há geração nem execução automática em operação. Atendimento, andamento do serviço e etapa
   comercial são trilhas diferentes; ganho, perda, etapa comercial, conclusão de etapa e de serviço seguem manuais.
 
-## Tráfego Pago (frente atual)
+## Tráfego Pago
 
-- Rota `/trafego-pago`, item "Tráfego Pago" no menu. Decisões: `docs/decisoes/trafego-pago.md`.
-- Visual e funcional com dados **fictícios**, só no escritório demonstrativo; os demais veem "Nenhuma conta
-  conectada". Sem migration, gravação, OAuth, token, conta ou configuração externa.
-- Falta, e depende de ordem: revisar a PR, mesclar e conferir o deploy. Depois, a integração Meta Ads + Google Ads
-  **somente leitura**, que precisa de contrato próprio (lista na decisão), inclusive quem pode ver investimento e a
-  regra de lead qualificado e de contrato a partir do CRM.
+- **Publicado** em 26/11 (#367): CI da `main` verde na primeira tentativa (run `45802886535`) e verificação de
+  Production só com leitura.
+- Só a parte visual, com dados fictícios no escritório demonstrativo. **Não há** integração, OAuth, token, conta,
+  sincronização ou tabela. Antes de dado real, ver a lista em `docs/decisoes/trafego-pago.md` (inclui quem pode ver
+  investimento e a regra de lead qualificado e de contrato).
+
+## Financeiro e Central de Integrações (frente atual, sem merge)
+
+Decisões: `docs/decisoes/financeiro.md` e `docs/decisoes/central-integracoes.md`. Sem migration, escrita no banco,
+variável, credencial ou configuração externa.
+
+**Implementado**
+- `/financeiro` (proprietário, administrador e gestor, conferido no servidor): seletor de mês, quatro cartões,
+  fluxo de caixa diário, rosca de honorários a receber, lançamentos com busca e ordenação.
+- `/integracoes`: seis cartões com categoria e estado comprovável, só leitura; leva à configuração já existente do
+  Google Agenda, que não mudou.
+
+**Continua demonstrativo**
+- Todo o Financeiro: lançamentos fictícios só no escritório demonstrativo; "Novo lançamento" é **simulação** em
+  memória, que some ao recarregar. Nos demais escritórios, "Ainda não há lançamentos neste módulo".
+- Os lançamentos fictícios são **estáveis por mês**: a data atual só corta o realizado, classifica vencimentos e
+  define a comparação; não muda datas, valores nem identificadores.
+- **Não é um Financeiro completo.**
+
+**Falta implementar ou ativar** (cada item com ordem própria)
+- Financeiro real: modelo de dados, permissões de escrita, parcelas e recebimento parcial, conciliação, cobrança,
+  documentos fiscais, importação e retenção.
+- Meta Ads, Google Ads e assinatura digital: não existem (assinatura sem fornecedor definido; o ícone segue a
+  referência visual e não indica contratação).
+- Google Agenda em Production: ativação pendente. WhatsApp real: validação pausada.
+- **As integrações não estão prontas**: a central só informa a situação.
 
 ## IA — PAUSADA na #366
 
 - PR: https://github.com/johlll/praxis-crm/pull/366 · branch `feat/conversas-extrator`
 - HEAD `16a33b1e269470381aefac86bf2a527f41221858` sobre a `main` `f2e51aa`; CI run `45719807170` verde.
+- Esse CI é sobre a `main` antiga: depois da #367 (e de qualquer outro merge), reconferir base, conflitos e CI.
 - **Não mesclada.** Migrations **não aplicadas** no hospedado:
   `20261126120000_conversas_aplicador_alvo_estavel.sql` e `20261126130000_conversas_extrator_contexto.sql`.
   Não presumir histórico 127/128. Não modificar migrations já publicadas.

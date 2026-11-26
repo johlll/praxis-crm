@@ -200,7 +200,10 @@ export type Permission =
   // caso (visualizador lê). O banco repete as três faixas, o escritório, o alcance e o portão de recebimento.
   | "case_document.upload"
   | "case_document.review"
-  | "case_document.remove";
+  | "case_document.remove"
+  // Financeiro (docs/decisoes/financeiro.md). Ver a página: proprietário, administrador e gestor. Nesta etapa ela
+  // não grava nada (só demonstração em memória), então não há permissão de escrita.
+  | "finance.view";
 
 const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "workspace.view": new Set(ROLES),
@@ -255,6 +258,7 @@ const MATRIX: Record<Permission, ReadonlySet<Role>> = {
   "case_document.upload": new Set<Role>(["owner", "admin", "manager", "lawyer", "sales"]),
   "case_document.review": new Set<Role>(["owner", "admin", "manager", "lawyer"]),
   "case_document.remove": new Set<Role>(["owner", "admin", "manager", "lawyer"]),
+  "finance.view": new Set<Role>(["owner", "admin", "manager"]),
 };
 
 export function roleHasPermission(role: Role, permission: Permission): boolean {
