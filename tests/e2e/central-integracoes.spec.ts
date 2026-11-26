@@ -23,12 +23,21 @@ function watch(page: Page) {
 
 const nav = (page: Page) => page.getByRole("navigation", { name: "Navegação principal" });
 
+/**
+ * Mede o layout JÁ ESTABILIZADO: logo após redimensionar, um gráfico ainda tem a largura anterior por um quadro,
+ * até o ResizeObserver redesenhá-lo.
+ */
 async function noSidewaysScroll(page: Page, label: string) {
-  const overflow = await page.evaluate(() => {
-    const main = document.querySelector("main")!;
-    return { page: document.documentElement.scrollWidth - window.innerWidth, main: main.scrollWidth - main.clientWidth };
-  });
-  expect(overflow, label).toEqual({ page: 0, main: 0 });
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const main = document.querySelector("main")!;
+          return { page: document.documentElement.scrollWidth - window.innerWidth, main: main.scrollWidth - main.clientWidth };
+        }),
+      { message: label },
+    )
+    .toEqual({ page: 0, main: 0 });
 }
 
 test.describe("Central de Integrações", () => {
