@@ -1,6 +1,6 @@
 # Praxis — ponto de retomada
 
-Atualizado em 26/11/2026 (horário de Brasília), na branch `feat/financeiro-integracoes`.
+Atualizado em 26/11/2026 (horário de Brasília), na branch `feat/visao-geral-periodo`.
 
 Registro de onde cada frente parou. **Não é consulta em tempo real**: antes de qualquer ação externa, reconferir a
 `main`, os HEADs das PRs, o histórico de migrations do banco hospedado e as travas. Ao retomar uma frente pausada,
@@ -15,7 +15,8 @@ Este repositório é público: aqui não entram credenciais, dados de clientes n
 | --- | --- |
 | Tráfego Pago — parte visual | **publicada em Production** (#367), com dados fictícios |
 | Tráfego Pago — integrações Meta Ads e Google Ads | **não existem** |
-| Financeiro e Central de Integrações | implementados na branch `feat/financeiro-integracoes`, em PR **sem merge** |
+| Financeiro e Central de Integrações | **publicados em Production** (#368): o Financeiro como demonstração; a central só informa a situação |
+| Visão geral — período personalizado | implementado na branch `feat/visao-geral-periodo`, em PR **sem merge**; migration **não aplicada** no hospedado |
 | IA / extrator (#366) | **PAUSADA**; PR aberta, sem merge |
 | Validação real do WhatsApp (YCloud) | **PAUSADA** |
 
@@ -28,7 +29,7 @@ Segurança, isolamento, integridade e envio indevido continuam sendo condições
 - Supabase hospedado: `rgoeppjwnltcbeqipovh`. No estado conhecido, Preview e Production usam esse mesmo banco.
 - Escritório demonstrativo: `d10a0000-0000-4000-8000-000000000001` (`is_demo = true`). O nome do escritório não
   basta para autorizar escrita: conferir UUID, projeto e escopo.
-- `main`: `5c29fdb40d30c68a767132d07363512ea9783de2` (merge da #367).
+- `main`: `153286cb4982786c60641f3c6056c4a68340f400` (merge da #368).
 
 ## Publicado
 
@@ -38,6 +39,7 @@ Segurança, isolamento, integridade e envio indevido continuam sendo condições
 | #358 | horário de origem das mensagens | `b6caca2` → `17af640` | `20261124120000` | 125 |
 | #365 | aplicador de status | `d6a9993` → `f2e51aa` | `20261125120000` | 126 |
 | #367 | Tráfego Pago (visual, dados fictícios) | `61689ff` → `5c29fdb` | nenhuma | sem mudança |
+| #368 | Financeiro (demonstração) e Central de Integrações | `d25b943` → `153286c` | nenhuma | sem mudança |
 
 - **Documentos**: recebimento FECHADO nas duas travas (`CASE_DOCUMENTS_UPLOAD_ENABLED` ausente e portão do banco
   falso). Não liberar upload real antes de: backup ativo com recuperação testada; limpeza que não dependa do uso do
@@ -59,7 +61,13 @@ Segurança, isolamento, integridade e envio indevido continuam sendo condições
   sincronização ou tabela. Antes de dado real, ver a lista em `docs/decisoes/trafego-pago.md` (inclui quem pode ver
   investimento e a regra de lead qualificado e de contrato).
 
-## Financeiro e Central de Integrações (frente atual, sem merge)
+## Financeiro e Central de Integrações (publicados)
+
+- **Publicado** em 26/11 (#368, merge `153286c`, HEAD aprovado `d25b943`): CI da `main` verde na primeira tentativa
+  (run `45837370543`) e verificação de Production só com leitura (87/87), incluindo advogado, atendimento e
+  visualizador sem acesso ao Financeiro. Dos papéis com acesso, só o proprietário foi usado em Production.
+- O Financeiro está publicado como **demonstração**, não como registro financeiro. A central **não criou** as
+  integrações futuras.
 
 Decisões: `docs/decisoes/financeiro.md` e `docs/decisoes/central-integracoes.md`. Sem migration, escrita no banco,
 variável, credencial ou configuração externa.
@@ -85,6 +93,25 @@ variável, credencial ou configuração externa.
 - Google Agenda em Production: ativação pendente. WhatsApp real: validação pausada.
 - **As integrações não estão prontas**: a central só informa a situação.
 
+## Visão geral — período personalizado (frente atual, sem merge)
+
+Definições: `docs/decisoes/a10-dashboard.md`, seção "Período".
+
+**Implementado**
+- Um calendário num painel no lugar do seletor de 7/30/90, com os três atalhos; datas na URL; até 366 dias, sem
+  futuro, validadas no app e no banco; comparação com o intervalo anterior de mesma duração.
+- Migration **nova** `20261127120000_dashboard_periodo_personalizado.sql`: `get_dashboard` e
+  `get_dashboard_attribution` aceitam as duas datas. Não altera tabela, dado nem migration anterior.
+
+**Falta** (cada item com ordem própria)
+- **Aplicar a migration no hospedado**, o arquivo inteiro **numa única transação** (ele remove a assinatura antiga e
+  cria a nova). Os consumidores atuais continuam funcionando depois dela.
+- Merge e publicação. Antes da migration, o app novo mantém os atalhos e, para datas escolhidas, avisa que o período
+  personalizado não está disponível, sem mostrar números. É o caso do Preview, que usa o banco hospedado.
+- Ordem recomendada: migration primeiro, depois o merge.
+
+Não foi iniciado o Financeiro real.
+
 ## IA — PAUSADA na #366
 
 - PR: https://github.com/johlll/praxis-crm/pull/366 · branch `feat/conversas-extrator`
@@ -93,6 +120,9 @@ variável, credencial ou configuração externa.
 - **Não mesclada.** Migrations **não aplicadas** no hospedado:
   `20261126120000_conversas_aplicador_alvo_estavel.sql` e `20261126130000_conversas_extrator_contexto.sql`.
   Não presumir histórico 127/128. Não modificar migrations já publicadas.
+- **Ordem das migrations:** a do período personalizado (`20261127120000`) tem número posterior ao das duas da #366.
+  Se ela for aplicada primeiro, renumerar as da #366 para depois dela antes de aplicá-las, e rever a #366 sobre a
+  nova `main`.
 - Entrega: correção do alvo do aplicador (o caso podia mudar enquanto ele esperava a trava; reproduzido por dois
   caminhos reais locais e coberto por regressão); leitura de contexto restrita; instruções e esquema estritos;
   quatro camadas desligadas (`STATUS_EXTRACTOR_ENABLED`, portão do banco, modelo não configurado,

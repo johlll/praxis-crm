@@ -1,7 +1,9 @@
+import { dateTimeInputParts } from "@/lib/timezone";
 import { createServerSupabaseClient } from "@/server/supabase/server";
 import { DataLoadError, isExpectedAbsence } from "@/server/data/load-error";
 import type { Role } from "@/lib/roles";
 import type { ActivityType } from "@/modules/activities/queries";
+import { periodArgs, throwIfRangeProblem } from "./period-query";
 import type { DashboardFilters } from "./schema";
 
 /**
@@ -90,6 +92,13 @@ export type Dashboard = {
     previousStart: string;
     previousEnd: string;
     today: string;
+    /** Datas civis do escritório, as duas inclusivas, tiradas dos limites que o banco usou. */
+    startDate: string;
+    endDate: string;
+    previousStartDate: string;
+    previousEndDate: string;
+    /** Datas escolhidas no calendário (false nos atalhos). */
+    custom: boolean;
   };
   legalAreas: string[];
   pipelines: { id: string; name: string; isDefault: boolean }[];
@@ -151,6 +160,12 @@ const num = (value: unknown): number => Number(value ?? 0);
 const obj = (value: unknown): Raw => (value ?? {}) as Raw;
 const arr = (value: unknown): Raw[] => (Array.isArray(value) ? (value as Raw[]) : []);
 
+/** Dia civil do escritório em que está o instante. */
+const officeDay = (instant: number) => (Number.isFinite(instant) ? dateTimeInputParts(new Date(instant).toISOString(), false).date : "");
+/** Os fins são exclusivos (meia-noite): o último dia é o anterior a eles. */
+const firstDay = (start: unknown) => officeDay(Date.parse(String(start)));
+const lastDay = (end: unknown) => officeDay(Date.parse(String(end)) - 1);
+
 function periodValue(raw: unknown): PeriodValue<number> {
   const r = obj(raw);
   return { current: num(r.current), previous: num(r.previous) };
@@ -189,6 +204,11 @@ export function mapDashboard(raw: Raw): Dashboard {
       previousStart: String(period.previous_start),
       previousEnd: String(period.previous_end),
       today: String(period.today),
+      startDate: firstDay(period.current_start),
+      endDate: lastDay(period.current_end),
+      previousStartDate: firstDay(period.previous_start),
+      previousEndDate: lastDay(period.previous_end),
+      custom: period.custom === true,
     },
     legalAreas: (Array.isArray(raw.legal_areas) ? raw.legal_areas : []).map(String),
     pipelines: arr(raw.pipelines).map((p) => ({ id: String(p.id), name: String(p.name), isDefault: p.is_default === true })),
@@ -330,7 +350,7 @@ async function callDashboard(workspaceId: string, filters: DashboardFilters, pip
   const supabase = await createServerSupabaseClient();
   return supabase.rpc("get_dashboard", {
     p_workspace_id: workspaceId,
-    p_period_days: filters.periodDays,
+    ...periodArgs(filters),
     ...(filters.assignedTo ? { p_assigned_to: filters.assignedTo } : {}),
     p_only_unassigned: filters.onlyUnassigned,
     ...(filters.legalArea ? { p_legal_area: filters.legalArea } : {}),
@@ -351,9 +371,17 @@ export async function getDashboard(workspaceId: string, filters: DashboardFilter
     ({ data, error } = await callDashboard(workspaceId, filters, null));
   }
 
+  if (error) throwIfRangeProblem(error, filters);
+
   if (error || !data || typeof data !== "object") {
     throw new DashboardLoadError(`a visão geral do workspace ${workspaceId}`, error ?? "resposta vazia");
   }
 
-  return mapDashboard(data as Raw);
+  const dashboard = mapDashboard(data as Raw);
+  // Nunca mostrar os números de um período como se fossem os de outro.
+  const { range } = filters;
+  if (range && (!dashboard.period.custom || dashboard.period.startDate !== range.from || dashboard.period.endDate !== range.to)) {
+    throw new DashboardLoadError(`a visão geral do workspace ${workspaceId}`, "período devolvido diferente do pedido");
+  }
+  return dashboard;
 }

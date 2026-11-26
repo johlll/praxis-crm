@@ -201,9 +201,26 @@ export function buildOriginBreakdown(sources: { source: string | null; created: 
   return { totalCreated, rows, segments, showDonut: totalCreated > 0 && segments.length >= 2 };
 }
 
-/** Instante (timestamptz) → "18/08" no fuso do escritório. */
-export function formatDayMonth(iso: string): string {
-  return new Date(iso).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" });
+/**
+ * Textos do período. As datas são civis (já no fuso do escritório). O ano só aparece quando alguma das datas
+ * não é do ano corrente.
+ */
+export function periodTexts(period: Dashboard["period"]) {
+  const dates = [period.startDate, period.endDate, period.previousStartDate, period.previousEndDate];
+  const withYear = dates.some((d) => d.slice(0, 4) !== period.today.slice(0, 4));
+  const date = (iso: string) => {
+    const [y, m, d] = iso.split("-");
+    return withYear ? `${d}/${m}/${y}` : `${d}/${m}`;
+  };
+  const span = (from: string, to: string) => (from === to ? date(from) : `${date(from)} a ${date(to)}`);
+  const current = span(period.startDate, period.endDate);
+  const oneDay = period.startDate === period.endDate;
+  return {
+    current,
+    previous: span(period.previousStartDate, period.previousEndDate),
+    /** "nos últimos 30 dias" no atalho; "de 22/11 a 26/11" ou "em 26/11" com datas escolhidas. */
+    inPeriod: !period.custom ? `nos últimos ${period.days} dias` : oneDay ? `em ${current}` : `de ${current}`,
+  };
 }
 
 /** Dias inteiros desde um instante (para "parada há N dias"). */
@@ -262,7 +279,7 @@ export function buildInsights(d: Dashboard): Insight[] {
     insights.push({
       id: "motivo-perda",
       text: `Motivo de perda mais registrado entre as oportunidades criadas no período: "${lost.label}" (${lost.count} de ${d.insightData.cohortLostTotal}).`,
-      basis: `Oportunidades criadas nos últimos ${d.period.days} dias`,
+      basis: `Oportunidades criadas ${periodTexts(d.period).inPeriod}`,
     });
   }
 

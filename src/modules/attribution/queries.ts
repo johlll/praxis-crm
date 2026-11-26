@@ -1,5 +1,7 @@
 import { createServerSupabaseClient } from "@/server/supabase/server";
 import { DataLoadError } from "@/server/data/load-error";
+import type { DateRange } from "@/modules/dashboard/period";
+import { periodArgs, throwIfRangeProblem } from "@/modules/dashboard/period-query";
 import type { AttributionModel } from "@/modules/forms/schema";
 
 /**
@@ -149,6 +151,7 @@ export async function getDashboardAttribution(
   workspaceId: string,
   filters: {
     periodDays: number;
+    range?: DateRange | null | undefined;
     model: AttributionModel;
     source: string | null;
     assignedTo: string | null;
@@ -159,7 +162,7 @@ export async function getDashboardAttribution(
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase.rpc("get_dashboard_attribution", {
     p_workspace_id: workspaceId,
-    p_period_days: filters.periodDays,
+    ...periodArgs(filters),
     p_model: filters.model,
     ...(filters.source ? { p_source: filters.source } : {}),
     ...(filters.assignedTo ? { p_assigned_to: filters.assignedTo } : {}),
@@ -167,12 +170,18 @@ export async function getDashboardAttribution(
     ...(filters.legalArea ? { p_legal_area: filters.legalArea } : {}),
   });
 
+  if (error) throwIfRangeProblem(error, filters);
+
   if (error || !data) {
     // Nunca zero fictício: falha de consulta vira erro tratado.
     throw new DashboardAttributionLoadError(`a atribuição do workspace ${workspaceId}`, error ?? "resposta vazia");
   }
 
   const raw = data as unknown as Raw;
+  // Mesma defesa do painel: a origem de um período nunca é mostrada como a de outro.
+  if (filters.range && (raw.start_date !== filters.range.from || raw.end_date !== filters.range.to)) {
+    throw new DashboardAttributionLoadError(`a atribuição do workspace ${workspaceId}`, "período devolvido diferente do pedido");
+  }
   return {
     model: String(raw.model) as AttributionModel,
     periodDays: Number(raw.period_days ?? 0),

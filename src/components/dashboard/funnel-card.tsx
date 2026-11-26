@@ -7,7 +7,7 @@ import { Funnel } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import type { Dashboard } from "@/modules/dashboard/queries";
-import { formatBRL, formatPercent } from "@/modules/dashboard/presentation";
+import { formatBRL, formatPercent, periodTexts } from "@/modules/dashboard/presentation";
 import { PanelIcon } from "./panel-icon";
 
 type View = "periodo" | "agora";
@@ -103,7 +103,7 @@ export function FunnelCard({ dashboard, pipelineHrefs }: { dashboard: Dashboard;
             </h2>
             <p className="m-0 text-meta text-text-muted">
               {view === "periodo"
-                ? `Oportunidades criadas nos últimos ${dashboard.period.days} dias e as etapas por onde passaram`
+                ? `Oportunidades criadas ${periodTexts(dashboard.period).inPeriod} e as etapas por onde passaram`
                 : "Oportunidades abertas agora, por etapa"}
             </p>
           </div>
