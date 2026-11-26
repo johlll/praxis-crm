@@ -119,6 +119,14 @@ etapa; trocar ou remover roteiro; etapa comercial, ganho e perda.
   o aplicador é recusado (`version_stale`); a correção manual recebe `track_conflict` (a pessoa recarrega e
   decide). Nada é sobrescrito em silêncio. A pausa nunca bloqueia a correção manual.
 
+## Alvo estável até a gravação (correção posterior, `20261126120000`)
+
+Depois da publicação, a revisão confirmou com sessões reais que a conversa, o caso e a resolução do vínculo eram
+lidos antes da trava da trilha e não eram reconferidos depois de esperar: uma troca de vínculo ou um segundo caso
+criado nesse intervalo levava a aplicação ao caso antigo. A correção trava o alvo (conversa, contato, leads e
+oportunidades do contato) antes de ler e antes da trava da trilha, sem espera (`target_busy`), e enfileira
+aplicadores do mesmo contato. Detalhes e regressão em [conversas-extrator.md](conversas-extrator.md).
+
 ## Idempotência
 
 - A chave da proposta entra no **registro único compartilhado** `status_track_idempotency_keys` (fonte nova

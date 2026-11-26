@@ -6647,6 +6647,14 @@ export type Database = {
         Args: { p_opportunity_id: string; p_to_stage_id: string }
         Returns: Json
       }
+      get_status_automation_context: {
+        Args: {
+          p_conversation_id: string
+          p_limit?: number
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       get_status_track: {
         Args: {
           p_target_id: string

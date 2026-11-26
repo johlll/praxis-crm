@@ -12,6 +12,10 @@
 #      depois espera o registro único e recebe idempotency_conflict; uma única gravação com a chave.
 #   6. Recusa antes da trava (etapa comercial), mesma chave, três sessões juntas: uma linha de decisão,
 #      duas repetições.
+#   7. Alvo estável: o aplicador espera a trilha enquanto outra sessão cria um segundo caso para o contato ou
+#      revincula a conversa (caminhos reais). A mudança do alvo ESPERA o aplicador terminar (alvo travado desde
+#      antes da leitura); a aplicação vê o alvo estável até a gravação e a mudança entra depois.
+#   8. Troca de vínculo já em andamento antes do aplicador: ele desiste na hora (target_busy), sem gravar nada.
 #
 # Workspace próprio (criado aqui), usuária fictícia do seed, Postgres local do CI. O portão do aplicador é
 # aberto só durante o script, com referência de teste, e fechado no fim (também em caso de falha).
@@ -328,6 +332,95 @@ done
 [ "$(count "select count(*) || '|' || min(reason) from public.status_track_automation_decisions where idempotency_key = '$CHAVE'")" = "1|commercial_manual_only" ] \
   || bad "uma decisão só, recusada como commercial_manual_only"
 [ "$FAILS" -eq "$ANTES" ] && echo "   ok: uma recusa gravada, duas repetições"
+
+# Caso ganho próprio (contato, lead, oportunidade ganha, conversa vinculada ao lead) e a linha da trilha do andamento.
+caso_novo() { # → CT, LD, OP, CV, MO
+  local n="$1"
+  CT="$(run_ana "select (public.create_contact('$WS'::uuid, 'pf', 'Contato alvo $n', null, null, null)).id;")"
+  LD="$(run_ana "select public.create_lead('$WS'::uuid, '$CT'::uuid, 'Imobiliário', null, '{}'::text[], 'media', '$ANA'::uuid);")"
+  OP="$(run_ana "select public.create_opportunity('$LD'::uuid);")"
+  run_ana "select public.win_opportunity('$OP'::uuid, 0, 100000, 'fixed');" >/dev/null
+  local ident
+  ident="$(run_db "insert into public.whatsapp_identities (workspace_id, channel_id, provider, environment, phone_e164)
+    values ('$WS', '$CANAL', 'ycloud', 'preview', '+55419999963$n') returning id;")"
+  CV="$(run_db "insert into public.conversations (workspace_id, channel_id, identity_id, contact_id, lead_id)
+    values ('$WS', '$CANAL', '$ident', '$CT', '$LD') returning id;")"
+  MO="$(msg "$CV" escritorio "clock_timestamp() - interval '5 minutes'")"
+  run_db "insert into public.status_tracks (workspace_id, track, opportunity_id, case_progress_status, version)
+    values ('$WS', 'case_progress', '$OP', 'nao_informado', 0) on conflict do nothing;" >/dev/null
+}
+
+echo "== 7. alvo estável: o aplicador espera a trilha enquanto outra sessão muda o alvo (caminhos reais)"
+ANTES="$FAILS"
+n=50
+for variante in segundo_caso revinculo; do
+  n=$((n + 1))
+  caso_novo "$n"
+  if [ "$variante" = "segundo_caso" ]; then
+    SQL_C="select public.create_opportunity('$LD'::uuid);"
+  else
+    SQL_C="select public.resolve_conversation_link('$CV'::uuid, null, '$LD'::uuid, public.create_opportunity('$LD'::uuid));"
+  fi
+  OUT_A="$(mktemp)"; OUT_B="$(mktemp)"; OUT_C="$(mktemp)"
+  # A segura a linha da trilha com a MESMA trava de private.status_track_lock (for update), sem mudar a versão.
+  psql_as srv_alvo_a > "$OUT_A" 2>&1 <<SQL &
+begin;
+select 1 from public.status_tracks where opportunity_id = '$OP' and track = 'case_progress' for update;
+select pg_sleep($HOLD);
+commit;
+SQL
+  PID_A=$!
+  wait_sleeping srv_alvo_a
+  psql_as srv_alvo_b > "$OUT_B" 2>&1 <<SQL &
+$(as_service)
+$(apply_sql "$WS" "$CV" set_status case_progress "'$OP'::uuid" "'aguardando_documentos'" 0 "'$MO'" "$(node -e "console.log(crypto.randomUUID())")") ->> 'outcome';
+commit;
+SQL
+  PID_B=$!
+  wait_lock_waiters 1 srv_alvo_b || bad "($variante) o aplicador deveria esperar a trilha"
+  psql_as srv_alvo_c > "$OUT_C" 2>&1 <<SQL &
+$(as_ana)
+$SQL_C
+commit;
+SQL
+  PID_C=$!
+  wait_lock_waiters 1 srv_alvo_c || bad "($variante) a mudança do alvo deveria esperar o aplicador terminar (alvo travado)"
+  wait "$PID_A" || bad "($variante) A falhou: $(cat "$OUT_A")"
+  wait "$PID_B" || bad "($variante) o aplicador falhou: $(cat "$OUT_B")"
+  wait "$PID_C" || bad "($variante) a mudança do alvo falhou: $(cat "$OUT_C")"
+  grep -qx "applied" "$OUT_B" || bad "($variante) o aplicador deveria aplicar com o alvo estável: $(cat "$OUT_B")"
+  [ "$(count "select case_progress_status || '|' || version from public.status_tracks where opportunity_id = '$OP' and track = 'case_progress'")" = "aguardando_documentos|1" ] \
+    || bad "($variante) o caso alvo deveria estar aguardando_documentos, versão 1"
+  # A mudança entrou DEPOIS da aplicação: agora a conversa já não fala por um caso único.
+  [ "$(count "select (private.conversation_case_resolution('$CV', 'owner', null) ->> 'case_count')")" = "2" ] \
+    || bad "($variante) a mudança do alvo deveria ter entrado depois da aplicação"
+done
+[ "$FAILS" -eq "$ANTES" ] && echo "   ok: nas duas variantes a mudança do alvo esperou o aplicador; a aplicação viu o alvo estável até a gravação"
+
+echo "== 8. troca de vínculo em andamento ANTES do aplicador: desiste na hora (target_busy), sem gravar"
+ANTES="$FAILS"
+caso_novo 60
+OUT_C="$(mktemp)"; OUT_B="$(mktemp)"
+psql_as srv_alvo_c2 > "$OUT_C" 2>&1 <<SQL &
+$(as_ana)
+select public.resolve_conversation_link('$CV'::uuid, null, '$LD'::uuid, null);
+select pg_sleep($HOLD);
+commit;
+SQL
+PID_C=$!
+wait_sleeping srv_alvo_c2
+CHAVE="$(node -e "console.log(crypto.randomUUID())")"
+rc=0
+psql_as srv_alvo_b2 > "$OUT_B" 2>&1 <<SQL || rc=$?
+$(as_service)
+$(apply_sql "$WS" "$CV" set_status case_progress "'$OP'::uuid" "'aguardando_documentos'" 0 "'$MO'" "$CHAVE");
+commit;
+SQL
+wait "$PID_C" || bad "a troca de vínculo falhou: $(cat "$OUT_C")"
+[ "$rc" -ne 0 ] && grep -q "target_busy" "$OUT_B" || bad "o aplicador deveria desistir com target_busy: $(cat "$OUT_B")"
+[ "$(count "select count(*) from public.status_track_automation_decisions where idempotency_key = '$CHAVE'")" = "0" ] || bad "target_busy não grava decisão"
+[ "$(count "select version from public.status_tracks where opportunity_id = '$OP' and track = 'case_progress'")" = "0" ] || bad "target_busy não muda a trilha"
+[ "$FAILS" -eq "$ANTES" ] && echo "   ok: target_busy imediato, nenhuma decisão, trilha intacta"
 
 close_automation
 [ "$(count "select enabled::text from public.status_track_automation_gate")" = "false" ] || bad "o portão deveria voltar a fechar"
