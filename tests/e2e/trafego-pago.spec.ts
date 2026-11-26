@@ -74,6 +74,9 @@ test.describe("Tráfego Pago", () => {
     await expect(page).toHaveURL(new RegExp(`periodo=personalizado&de=${start}&ate=${end}$`));
     await expect(page.getByTestId("traffic-period")).toContainText("(30 dias)");
 
+    // Carregamento direto (não só navegação no cliente): nenhum erro de CSP ou de hidratação.
+    await page.reload({ waitUntil: "networkidle" });
+    await expect(page.getByTestId("traffic-period")).toContainText("(30 dias)");
     expect(errors).toEqual([]);
   });
 
@@ -120,15 +123,12 @@ test.describe("Tráfego Pago", () => {
     }
   });
 
-  test("sem JavaScript, o filtro é um formulário comum", async ({ page, browser }) => {
+  test("sem JavaScript, a tela diz que precisa dele em vez de carregar para sempre", async ({ page, browser }) => {
     await login(page, SEED_PAINEL.owner.email);
     const context = await browser.newContext({ javaScriptEnabled: false, storageState: await page.context().storageState() });
     const plain = await context.newPage();
     await plain.goto("/trafego-pago");
-    await plain.getByRole("combobox", { name: "Período" }).selectOption("7");
-    await plain.getByRole("button", { name: "Aplicar", exact: true }).click();
-    await expect(plain).toHaveURL(/periodo=7/);
-    await expect(plain.getByTestId("traffic-period")).toContainText("(7 dias)");
+    await expect(plain.getByText("Esta página precisa de JavaScript.")).toBeVisible();
     await context.close();
   });
 

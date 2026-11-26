@@ -406,11 +406,10 @@ describe("tela com dados de demonstração", () => {
     expect(screen.getByRole("combobox", { name: "Período" })).toHaveValue("90");
   });
 
-  it("o formulário funciona como GET sem JavaScript", () => {
+  it("um envio antes de a página ficar interativa cai num GET com os mesmos parâmetros", () => {
     const html = renderToStaticMarkup(<TrafficView dataset={demo} filters={filters()} today={TODAY} />);
     expect(html).toContain('action="/trafego-pago"');
     expect(html).toContain('method="get"');
-    expect(html).toContain("<noscript>");
     for (const name of ["plataforma", "periodo"]) expect(html).toContain(`name="${name}"`);
   });
 
@@ -520,10 +519,15 @@ describe("estados e isolamento", () => {
     expect(plain(html)).toContain("R$ 7.890,00");
   });
 
-  it("carregando não mostra número nenhum", () => {
+  it("carregando não mostra número nenhum, não leva componente interativo e explica a falta de JavaScript", () => {
     const { container } = render(<TrafficLoading />);
     expect(screen.getByRole("status")).toHaveTextContent("Carregando o Tráfego Pago");
     expect(container.textContent).not.toMatch(/R\$|\d/);
+    expect(container.querySelectorAll("input, button, select")).toHaveLength(0);
+    expect(renderToStaticMarkup(<TrafficLoading />)).toMatch(/<noscript>.*precisa de JavaScript.*<\/noscript>/);
+    // A busca global dentro da reserva gera um <script> sem nonce no carregamento direto (bloqueado pela CSP).
+    const source = readFileSync(resolve(__dirname, "..", "..", "src/app/(app)/trafego-pago/loading.tsx"), "utf8");
+    expect(source).not.toMatch(/^import /m);
   });
 
   it("falha tem tela própria com 'Tentar novamente'", () => {

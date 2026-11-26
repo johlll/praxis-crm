@@ -30,8 +30,9 @@ type Draft = { href: string; filters: TrafficFilters; error: PeriodError | null;
 
 /**
  * Filtros + conteúdo filtrado. Os filtros vivem na URL; enquanto a nova consulta não chega, o conteúdo antigo
- * fica marcado como "carregando" (aria-busy), nunca como se já fosse o novo. Sem JavaScript, é um formulário
- * GET comum. Os controles não são remontados ao aplicar, então o foco do teclado não se perde.
+ * fica marcado como "carregando" (aria-busy), nunca como se já fosse o novo. Um envio antes de a página ficar
+ * interativa cai no GET comum do formulário. Os controles não são remontados ao aplicar, então o foco do teclado
+ * não se perde.
  */
 export function TrafficFiltersShell({
   filters,
@@ -199,12 +200,6 @@ export function TrafficFiltersShell({
               </Button>
             </div>
           ) : null}
-
-          <noscript>
-            <button type="submit" className={controlClass}>
-              Aplicar
-            </button>
-          </noscript>
 
           <p role="status" className="m-0 flex h-9 items-center gap-1.5 text-meta text-text-secondary">
             {isPending ? (

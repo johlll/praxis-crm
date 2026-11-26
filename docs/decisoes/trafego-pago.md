@@ -34,7 +34,10 @@ pausa nem altera campanhas ou orçamento. Não há campo para preencher nem simu
 ## Filtros e datas
 
 - Na URL: `plataforma` (repetível), `periodo` (`7`, `30`, `90`, `mes`, `mes-anterior`, `personalizado`), `de`, `ate`.
-  Sem JavaScript é um formulário GET.
+- A página precisa de JavaScript: a reserva de carregamento da rota só é trocada pelo conteúdo por script. Sem
+  ele, a tela diz isso, em vez de "carregar" para sempre.
+- `loading.tsx` tem cabeçalho estático: com o `Topbar` (busca global) na reserva, o carregamento direto gera um
+  `<script>` sem nonce, bloqueado pela CSP.
 - Ao menos uma plataforma fica marcada.
 - Datas no fuso do escritório (`America/Sao_Paulo`), inclusivas. "Últimos N dias" termina hoje.
 - Personalizado recusa: data faltando ou inexistente, início depois do fim, fim no futuro, início antes de 2000,
@@ -94,8 +97,9 @@ tabulação ou quebra de linha, ganha um apóstrofo. A coluna "Origem dos dados"
 
 - `tests/unit/trafego-pago.test.tsx`: datas, comparação, consistência entre todas as visões em vários filtros,
   CPL, ordenação, CSV (inclusive fórmulas), tela, estados e isolamento.
-- `tests/e2e/trafego-pago.spec.ts`: navegação e foco reais, voltar do navegador, download, sem JavaScript,
-  larguras 1440 a 360 sem rolagem lateral, escritório comum sem dado fictício no HTML.
+- `tests/e2e/trafego-pago.spec.ts`: navegação e foco reais, voltar do navegador, download, aviso sem JavaScript,
+  larguras 1440 a 360 sem rolagem lateral, escritório comum sem dado fictício no HTML e nenhum erro de CSP no
+  carregamento direto.
 
 ## Integração futura (fora desta etapa)
 
@@ -114,3 +118,5 @@ Precisa de contrato próprio e autorização antes de qualquer dado real:
 - Logotipos oficiais das plataformas, se desejado, conforme as diretrizes de marca de cada uma.
 - Guardar a ordenação escolhida na URL.
 - Escolher colunas ou buscar campanha na tabela.
+- `/pipeline` já tem em Production o mesmo bloqueio de CSP, anterior a esta página (o `loading.tsx` dele usa o
+  `Topbar`). A busca continua funcionando, porque o arquivo é carregado de novo pela via normal.
