@@ -22,6 +22,17 @@ function watchConsole(page: Page): string[] {
 const periodButton = (page: Page) => page.getByRole("button", { name: /^Período:/ });
 const periodPanel = (page: Page) => page.getByRole("dialog", { name: "Escolher o período" });
 
+/** Os menus de Responsável e Área jurídica: botão com o valor e lista de escolha única. */
+const filterButton = (page: Page, label: "Responsável" | "Área jurídica") => page.getByRole("button", { name: new RegExp(`^${label}:`) });
+const filterField = (page: Page, name: "responsavel" | "area") => page.locator(`input[type="hidden"][name="${name}"]`);
+const filterOption = (page: Page, name: string) => page.getByRole("menu").getByRole("menuitemradio", { name, exact: true });
+
+async function chooseFilter(page: Page, label: "Responsável" | "Área jurídica", option: string) {
+  await filterButton(page, label).click();
+  await filterOption(page, option).click();
+  await expect(page.getByRole("menu")).toHaveCount(0);
+}
+
 /** Hoje no fuso do escritório, e a conta de dias em datas civis. */
 const officeToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
 const addDays = (iso: string, delta: number) => new Date(Date.parse(`${iso}T12:00:00Z`) + delta * 86_400_000).toISOString().slice(0, 10);
@@ -117,6 +128,12 @@ test.describe.serial("A10 — Visão geral", () => {
     await tab.getByLabel("Área jurídica").selectOption("Família");
     await tab.getByRole("button", { name: "Aplicar", exact: true }).click();
     await expect(tab).toHaveURL(/periodo=7.*area=Fam/);
+    await expect(tab.getByLabel("Área jurídica")).toHaveValue("Família");
+    // Voltar ao padrão também vale: a lista de reserva é a lida, no lugar do valor que estava aplicado.
+    await tab.getByLabel("Área jurídica").selectOption("");
+    await tab.getByRole("button", { name: "Aplicar", exact: true }).click();
+    await expect(tab).toHaveURL(/periodo=7.*area=&/);
+    await expect(tab.getByLabel("Área jurídica")).toHaveValue("");
     await noJs.close();
   });
 
@@ -125,8 +142,8 @@ test.describe.serial("A10 — Visão geral", () => {
     await page.goto("/visao-geral");
 
     const period = periodButton(page);
-    const owner = page.getByLabel("Responsável pelo lead");
-    const area = page.getByLabel("Área jurídica");
+    const owner = filterButton(page, "Responsável");
+    const area = filterButton(page, "Área jurídica");
     const leads = () => kpiValue(page, "Leads recebidos");
 
     /**
@@ -138,8 +155,12 @@ test.describe.serial("A10 — Visão geral", () => {
     async function selectorsMatchUrl() {
       const params = new URL(page.url()).searchParams;
       await expect(period).toContainText(`Últimos ${params.get("periodo") ?? "30"} dias`);
-      await expect(owner).toHaveValue(params.get("responsavel") ?? "");
-      await expect(area).toHaveValue(params.get("area") ?? "");
+      // O que o botão mostra e o que o formulário vai enviar, os dois iguais à URL.
+      const responsavel = params.get("responsavel") ?? "";
+      await expect(owner).toContainText(responsavel === SEED_PAINEL.lawyer.userId ? SEED_PAINEL.lawyer.fullName : "Toda a equipe");
+      await expect(filterField(page, "responsavel")).toHaveValue(responsavel);
+      await expect(area).toContainText(params.get("area") || "todas");
+      await expect(filterField(page, "area")).toHaveValue(params.get("area") ?? "");
     }
 
     await expect(period).toContainText("Últimos 30 dias");
@@ -152,13 +173,16 @@ test.describe.serial("A10 — Visão geral", () => {
     await expect(page.getByText("Últimos 7 dias", { exact: false }).first()).toBeVisible();
     await selectorsMatchUrl();
 
-    await owner.selectOption(SEED_PAINEL.lawyer.userId);
+    await chooseFilter(page, "Responsável", SEED_PAINEL.lawyer.fullName);
     await expect(page).toHaveURL(new RegExp(`responsavel=${SEED_PAINEL.lawyer.userId}`));
     await selectorsMatchUrl();
 
-    await area.selectOption("Família");
+    // Depois de aplicar, o foco continua no botão do filtro usado.
+    await expect(owner).toBeFocused();
+    await chooseFilter(page, "Área jurídica", "Família");
     await expect(page).toHaveURL(/area=Fam/);
     await selectorsMatchUrl();
+    await expect(area).toBeFocused();
     const leadsFiltrado = await leads();
 
     // Limpar filtros: URL, seletores e indicadores voltam juntos ao padrão.
@@ -283,7 +307,7 @@ test.describe.serial("A10 — Visão geral", () => {
     expect(await kpiValue(page, "Leads recebidos")).toBe(leadsCustom);
 
     // Outro filtro mantém as datas.
-    await page.getByLabel("Área jurídica").selectOption("Família");
+    await chooseFilter(page, "Área jurídica", "Família");
     await expect(page).toHaveURL(new RegExp(`de=${from}&ate=${to}.*area=Fam`));
     await expect(periodButton(page)).toContainText(label);
     await page.goBack();
@@ -322,5 +346,121 @@ test.describe.serial("A10 — Visão geral", () => {
     await problem.getByRole("link", { name: "Ver os últimos 30 dias" }).click();
     await expect(periodButton(page)).toContainText("Últimos 30 dias");
     await expect(page.getByText("Leads recebidos", { exact: true }).first()).toBeVisible();
+  });
+
+  test("9. menus dos filtros pelo teclado: foco na opção em uso e visível, Escape e Enter", async ({ page }) => {
+    const errors = watchConsole(page);
+    await login(page, SEED_PAINEL.owner.email);
+    await page.goto("/visao-geral?periodo=7&area=Fam%C3%ADlia");
+    await page.waitForLoadState("networkidle");
+
+    const owner = filterButton(page, "Responsável");
+    const area = filterButton(page, "Área jurídica");
+
+    // Os três botões fechados têm a mesma altura, linha e acabamento.
+    const looks = await Promise.all(
+      [periodButton(page), owner, area].map((button) =>
+        button.evaluate((el) => {
+          const style = getComputedStyle(el);
+          const box = el.getBoundingClientRect();
+          return [box.top, box.height, style.backgroundColor, style.borderTopColor, style.borderTopLeftRadius, style.paddingLeft, style.paddingRight, style.cursor].join("|");
+        }),
+      ),
+    );
+    expect(new Set(looks).size).toBe(1);
+
+    // "Aplicar" reenvia o que está na tela: o período e o filtro ativo continuam.
+    await page.getByRole("button", { name: "Aplicar", exact: true }).click();
+    await expect(page).toHaveURL(/periodo=7&responsavel=&area=Fam/);
+    await expect(periodButton(page)).toContainText("Últimos 7 dias");
+    await expect(area).toContainText("Família");
+
+    const applied = page.url();
+    await area.focus();
+    await page.keyboard.press("Enter");
+    const checked = filterOption(page, "Família");
+    await expect(checked).toBeFocused();
+    await expect(checked).toHaveAttribute("aria-checked", "true");
+    expect(await checked.evaluate((el) => getComputedStyle(el).outlineStyle)).toBe("solid");
+
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect(area).toBeFocused();
+    expect(page.url()).toBe(applied);
+
+    // Setas até "todas" (a primeira) e Enter: fecha, aplica e o período continua.
+    await page.keyboard.press("Enter");
+    await expect(checked).toBeFocused();
+    await page.keyboard.press("Home");
+    await expect(filterOption(page, "todas")).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect(page).not.toHaveURL(/area=Fam/);
+    await expect(page).toHaveURL(/periodo=7/);
+    await expect(area).toContainText("todas");
+    await expect(area).toBeFocused();
+
+    // Clicar fora fecha sem aplicar.
+    const before = page.url();
+    await owner.click();
+    await expect(page.getByRole("menu")).toBeVisible();
+    await page.mouse.click(5, 5);
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    expect(page.url()).toBe(before);
+    expect(errors).toEqual([]);
+  });
+
+  test("10. menus dos filtros no celular, por toque: cabem na tela e rolar sobre o botão não abre", async ({ browser, page }) => {
+    await login(page, SEED_PAINEL.owner.email);
+    const storageState = await page.context().storageState();
+    const phone = await browser.newContext({ storageState, viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+    const tab = await phone.newPage();
+    const errors = watchConsole(tab);
+    await tab.goto("/visao-geral?periodo=7");
+    await tab.waitForLoadState("networkidle");
+
+    for (const label of ["Responsável", "Área jurídica"] as const) {
+      await filterButton(tab, label).tap();
+      const menu = tab.getByRole("menu");
+      await expect(menu).toBeVisible();
+      await expect
+        .poll(async () => {
+          const box = (await menu.boundingBox())!;
+          return box.x >= 0 && box.y >= 0 && box.x + box.width <= 390 && box.y + box.height <= 844;
+        })
+        .toBe(true);
+      await expect.poll(() => tab.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBe(0);
+      // Tocar de novo no botão fecha.
+      await filterButton(tab, label).tap();
+      await expect(menu).toHaveCount(0);
+    }
+
+    // Arrastar o dedo começando em cima do botão é rolagem, não abertura.
+    const target = filterButton(tab, "Área jurídica");
+    const box = (await target.boundingBox())!;
+    const touch = await phone.newCDPSession(tab);
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
+    for (let step = 1; step <= 10; step += 1) {
+      await touch.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y: y - step * 20 }] });
+      await tab.waitForTimeout(16);
+    }
+    await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    // A página rolou de verdade (senão o teste não provaria nada) e nenhum menu abriu.
+    await expect.poll(async () => (await target.boundingBox())!.y).toBeLessThan(box.y - 50);
+    await expect(tab.getByRole("menu")).toHaveCount(0);
+
+    // Depois de um arrasto sintético o Chromium às vezes engole o clique do toque seguinte, em qualquer
+    // botão (visto também no de Período). Recarregar tira essa herança do simulador da conferência abaixo.
+    await tab.reload({ waitUntil: "networkidle" });
+    await target.tap();
+    await filterOption(tab, "Família").tap();
+    await expect(tab.getByRole("menu")).toHaveCount(0);
+    await expect(tab).toHaveURL(/periodo=7.*area=Fam/);
+    await expect(target).toContainText("Família");
+    await expect(periodButton(tab)).toContainText("Últimos 7 dias");
+    expect(errors).toEqual([]);
+    await phone.close();
   });
 });

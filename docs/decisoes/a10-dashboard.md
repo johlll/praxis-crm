@@ -14,7 +14,7 @@ devolve. Este documento é a especificação que a função implementa.
 | Período | Dias de calendário no fuso do escritório, intervalos meio-abertos `[início, fim)`. Atalho (`N` ∈ {7, 30, 90} dias terminando hoje) ou intervalo de datas escolhido no calendário. Anterior = a mesma quantidade de dias imediatamente antes, sem sobreposição. Detalhes na seção "Período". |
 | Variação | `(atual − anterior) / anterior`, arredondada. Anterior = 0 → "—" (sem base). |
 | Período × posição | Indicadores de período usam a data do próprio evento e têm comparação. Posições atuais (abertas, valor em negociação, atrasos, atenção, agenda de hoje, distribuição por etapa, previsão) não têm comparação: o banco não guarda o estado passado delas. A tela separa os dois blocos ("No período" / "Agora"). |
-| Filtros | Responsável **atual** do lead, "sem responsável", área jurídica do lead (igualdade exata). Valem para todos os blocos. O pipeline só escolhe o funil. Estado na URL (formulário GET), então cada combinação tem endereço próprio e o histórico do navegador funciona; os seletores são remontados quando a URL muda (`key`), para nunca mostrarem um filtro diferente do que os números já refletem. O formulário leva junto, em campos ocultos, o período aplicado, o pipeline, a origem e o modelo de atribuição. |
+| Filtros | Responsável **atual** do lead, "sem responsável", área jurídica do lead (igualdade exata). Valem para todos os blocos. O pipeline só escolhe o funil. Estado na URL (formulário GET), então cada combinação tem endereço próprio e o histórico do navegador funciona; os filtros acompanham a URL quando ela muda, para nunca mostrarem uma escolha diferente do que os números já refletem (ver "Filtros de Responsável e Área jurídica"). O formulário leva junto, em campos ocultos, o período aplicado, o pipeline, a origem e o modelo de atribuição. |
 | Falha | Erro da RPC ou resposta vazia → `DashboardLoadError` → `error.tsx` com "Tentar novamente". Nunca zero nem painel vazio. |
 | Volume | Tudo agregado em SQL sobre todos os registros. Listas exibidas têm limite (atenção: 20; agenda: 50) e sempre trazem o total real ao lado. |
 
@@ -54,6 +54,24 @@ modo não modal; nenhuma dependência nova.
 assinatura antiga é removida na mesma migration (`20261127120000`), para não haver chamada ambígua, e o arquivo deve
 ser aplicado numa única transação. O app só envia os parâmetros novos para datas escolhidas: num banco sem a
 migration, os atalhos funcionam e o intervalo personalizado é explicado como indisponível.
+
+## Filtros de Responsável e Área jurídica
+
+Menus do design system (`DropdownMenu` do Radix, já instalado; nenhuma dependência nova) no lugar das listas nativas.
+O botão fechado usa a mesma classe do botão de Período. Escolha única: a opção em uso aparece em verde, com ✓.
+
+**Fluxo, igual ao anterior.** Escolher uma opção fecha o menu e já envia o formulário. O valor viaja num campo oculto
+com o mesmo nome de antes, junto com o período, o pipeline, a origem, o modelo e o outro filtro. "Aplicar" reenvia o
+que está na tela.
+
+**Teclado.** Enter, Espaço ou seta para baixo abrem, com o foco na opção em uso e contorno visível; setas, Home, End e
+a digitação movem; Enter escolhe; Escape ou clique fora fecham sem aplicar. O foco volta ao botão.
+
+**Toque.** O menu abre no toque completo, não no encostar do dedo: com o comportamento padrão da biblioteca, começar
+uma rolagem em cima do botão abria o menu. O menu respeita as bordas da tela e rola por dentro quando não couber.
+
+**Sem JavaScript** o menu não abre: aparece uma lista nativa de reserva, antes do campo oculto no formulário, para
+que a escolha dela seja a lida. Nesse caso o endereço leva o parâmetro duas vezes e vale o primeiro.
 
 ## 2. Indicadores do período
 

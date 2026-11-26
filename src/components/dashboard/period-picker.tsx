@@ -26,6 +26,7 @@ import {
   type Selection,
 } from "@/modules/dashboard/period";
 import { DASHBOARD_PERIODS, dashboardHref, type DashboardFilters, type DashboardPeriod } from "@/modules/dashboard/schema";
+import { FILTER_TRIGGER_CLASS } from "./filter-trigger";
 
 const WEEKDAYS = [
   ["dom", "domingo"],
@@ -187,7 +188,7 @@ export function PeriodPicker({
           <button
             type="button"
             aria-busy={navigating || undefined}
-            className="flex h-9 items-center gap-2 rounded-md border border-border bg-surface px-3 text-body text-text transition-colors hover:border-border-strong hover:bg-surface-hover active:bg-primary-tint data-[state=open]:border-primary-border"
+            className={FILTER_TRIGGER_CLASS}
           >
             {navigating ? (
               <LoaderCircle size={14} aria-hidden className="shrink-0 animate-spin text-text-secondary" />
