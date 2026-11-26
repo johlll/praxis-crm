@@ -17,6 +17,7 @@ import {
   FileText,
   Handshake,
   LayoutGrid,
+  Megaphone,
   MessageCircle,
   Plus,
   Settings,
@@ -55,6 +56,7 @@ const icons: Record<NavIconName, LucideIcon> = {
   settings: Settings,
   handshake: Handshake,
   clipboard: ClipboardList,
+  megaphone: Megaphone,
 };
 
 const GROUPS_STORAGE_KEY = "praxis.sidebar.grupos-fechados";
