@@ -8,7 +8,7 @@ import { ChartDataTable } from "@/components/charts/chart-data-table";
 import { ChartFrame } from "@/components/charts/chart-frame";
 import { ChartTooltipCard, type ChartTooltipRow } from "@/components/charts/chart-tooltip";
 import type { Dashboard } from "@/modules/dashboard/queries";
-import { buildSeriesPoints, formatBRL, formatBRLShort, seriesIsEmpty, type SeriesPoint } from "@/modules/dashboard/presentation";
+import { buildSeriesPoints, formatBRL, formatBRLShort, periodTexts, seriesIsEmpty, type SeriesPoint } from "@/modules/dashboard/presentation";
 import { SegmentedControl } from "./funnel-card";
 import { PanelIcon } from "./panel-icon";
 
@@ -154,6 +154,11 @@ export function SeriesCard({ dashboard }: { dashboard: Dashboard }) {
   const days = dashboard.period.days;
   const unit = dashboard.series.bucketDays === 1 ? "por dia" : `a cada ${dashboard.series.bucketDays} dias`;
 
+  const texts = periodTexts(dashboard.period);
+  // Ganhos seguem as datas do período; a previsão é sempre a partir de HOJE, com a mesma quantidade de dias.
+  const wonSpan = dashboard.period.custom ? texts.current : `Últimos ${days} dias`;
+  const ahead = days === 1 ? "hoje" : `nos próximos ${days} dias`;
+
   const showForecast = serie === "previsto" && forecast;
   const kind: Kind = showForecast ? "previsto" : money ? "ganho-valor" : "ganho-quantidade";
   const points = buildSeriesPoints(showForecast ? forecast.buckets : dashboard.series.won);
@@ -176,8 +181,8 @@ export function SeriesCard({ dashboard }: { dashboard: Dashboard }) {
             </h2>
             <p className="m-0 text-meta text-text-muted">
               {showForecast
-                ? `Próximos ${days} dias, ${unit} · abertas pela data prevista (posição atual)`
-                : `Últimos ${days} dias, ${unit} · data do ganho`}
+                ? `${days === 1 ? "Hoje" : `Próximos ${days} dias`}, ${unit} · abertas pela data prevista (posição atual)`
+                : `${wonSpan}, ${unit} · data do ganho`}
             </p>
           </div>
         </div>
@@ -197,8 +202,8 @@ export function SeriesCard({ dashboard }: { dashboard: Dashboard }) {
       {empty ? (
         <p className="m-0 flex flex-1 items-center justify-center rounded-md bg-app px-3 py-10 text-center text-body text-text-secondary">
           {showForecast
-            ? `Nenhuma oportunidade aberta com data prevista nos próximos ${days} dias.`
-            : `Nenhuma oportunidade ganha nos últimos ${days} dias.`}
+            ? `Nenhuma oportunidade aberta com data prevista ${ahead}.`
+            : `Nenhuma oportunidade ganha ${texts.inPeriod}.`}
         </p>
       ) : (
         <figure className="m-0 flex min-h-0 flex-1 flex-col gap-2">

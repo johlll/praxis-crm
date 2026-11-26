@@ -12,14 +12,16 @@ import { AttentionList } from "@/components/dashboard/attention-list";
 import { AgendaToday } from "@/components/dashboard/agenda-today";
 import { InsightsSection, TeamTable } from "@/components/dashboard/team-and-insights";
 import { DashboardFilterBar } from "@/components/dashboard/filter-bar";
+import { PeriodProblem, REJECTED_PERIOD_MESSAGE, UNAVAILABLE_PERIOD_MESSAGE } from "@/components/dashboard/period-problem";
 import { OpportunityPanel } from "@/components/dashboard/opportunity-panel";
 import { getShellContext } from "@/modules/shell/queries";
 import { requireWorkspace } from "@/server/authz/permissions";
 import { roleHasPermission } from "@/lib/roles";
-import { formatDateTime } from "@/lib/timezone";
+import { dateTimeInputParts, formatDateTime } from "@/lib/timezone";
+import { PeriodRangeError } from "@/modules/dashboard/period-query";
 import { getDashboard } from "@/modules/dashboard/queries";
-import { dashboardHref, parseDashboardFilters } from "@/modules/dashboard/schema";
-import { buildInsights, daysSince, formatDayMonth, greeting } from "@/modules/dashboard/presentation";
+import { dashboardHref, parseDashboardFilters, type DashboardFilters } from "@/modules/dashboard/schema";
+import { buildInsights, daysSince, greeting, periodTexts } from "@/modules/dashboard/presentation";
 import { getOpportunity } from "@/modules/opportunities/queries";
 import { listTeamMembers } from "@/modules/team/queries";
 
@@ -33,6 +35,22 @@ function SectionLabel({ title, detail }: { title: string; detail: string }) {
       <span className="text-label font-semibold tracking-[1.3px] text-text-secondary uppercase">{title}</span>
       <span>{detail}</span>
     </p>
+  );
+}
+
+type ShellUser = Awaited<ReturnType<typeof getShellContext>>["user"];
+
+/** A página com o motivo de o período pedido não aparecer: sem indicador nenhum. */
+function ProblemPage({ user, filters, message }: { user: ShellUser; filters: DashboardFilters; message: string }) {
+  return (
+    <>
+      <Topbar title="Visão geral" subtitle="Acompanhe o desempenho comercial do escritório" user={user} />
+      <main className="flex-1 overflow-y-auto p-5">
+        <div className="mx-auto flex max-w-[1400px] flex-col gap-4">
+          <PeriodProblem filters={filters} today={dateTimeInputParts(new Date().toISOString(), false).date} message={message} />
+        </div>
+      </main>
+    </>
   );
 }
 
@@ -50,22 +68,36 @@ export default async function VisaoGeralPage({
   const { user } = await getShellContext();
   const workspaceId = await requireWorkspace();
   const filters = parseDashboardFilters(await searchParams);
+  // Datas inválidas no endereço: nem se consulta o banco.
+  if (filters.rangeError) return <ProblemPage user={user} filters={filters} message={filters.rangeError} />;
 
-  const [dashboard, attribution, members, selectedRaw] = await Promise.all([
-    getDashboard(workspaceId, filters),
-    // A11: bloco de origem. Falha de consulta vira erro tratado pelo
-    // error.tsx da rota, nunca "nenhuma origem".
-    getDashboardAttribution(workspaceId, {
-      periodDays: filters.periodDays,
-      model: filters.attributionModel,
-      source: filters.source,
-      assignedTo: filters.assignedTo,
-      onlyUnassigned: filters.onlyUnassigned,
-      legalArea: filters.legalArea,
-    }),
-    listTeamMembers(workspaceId, user.id),
-    filters.selectedOpportunityId ? getOpportunity(filters.selectedOpportunityId) : Promise.resolve(null),
-  ]);
+  const load = () =>
+    Promise.all([
+      getDashboard(workspaceId, filters),
+      // A11: bloco de origem. Falha de consulta vira erro tratado pelo
+      // error.tsx da rota, nunca "nenhuma origem".
+      getDashboardAttribution(workspaceId, {
+        periodDays: filters.periodDays,
+        range: filters.range,
+        model: filters.attributionModel,
+        source: filters.source,
+        assignedTo: filters.assignedTo,
+        onlyUnassigned: filters.onlyUnassigned,
+        legalArea: filters.legalArea,
+      }),
+      listTeamMembers(workspaceId, user.id),
+      filters.selectedOpportunityId ? getOpportunity(filters.selectedOpportunityId) : Promise.resolve(null),
+    ]);
+  let loaded: Awaited<ReturnType<typeof load>>;
+  try {
+    loaded = await load();
+  } catch (error) {
+    if (!(error instanceof PeriodRangeError)) throw error;
+    const message = error.reason === "unavailable" ? UNAVAILABLE_PERIOD_MESSAGE : REJECTED_PERIOD_MESSAGE;
+    return <ProblemPage user={user} filters={filters} message={message} />;
+  }
+  const [dashboard, attribution, members, selectedRaw] = loaded;
+  const texts = periodTexts(dashboard.period);
   // Uma oportunidade de outro escritório do mesmo usuário não aparece aqui.
   const selected = selectedRaw && selectedRaw.workspaceId === workspaceId ? selectedRaw : null;
 
@@ -96,10 +128,8 @@ export default async function VisaoGeralPage({
   );
   const clearSourceHref = dashboardHref(filters, { source: null, selectedOpportunityId: null });
 
-  // Fins de período são exclusivos (meia-noite): o último dia é o anterior a eles.
-  const lastDayOf = (end: string) => new Date(Date.parse(end) - 1).toISOString();
   const firstName = user.fullName.split(/\s+/)[0] ?? user.fullName;
-  const hasActiveFilters = Boolean(filters.assignedTo || filters.onlyUnassigned || filters.legalArea || filters.periodDays !== 30);
+  const hasActiveFilters = Boolean(filters.assignedTo || filters.onlyUnassigned || filters.legalArea || filters.range || filters.periodDays !== 30);
 
   return (
     <>
@@ -128,11 +158,12 @@ export default async function VisaoGeralPage({
               .map((m) => ({ userId: m.userId, name: m.fullName ?? m.email }))}
             legalAreas={dashboard.legalAreas}
             hasActiveFilters={hasActiveFilters}
+            today={dashboard.period.today}
           />
 
           <SectionLabel
             title="No período"
-            detail={`${formatDayMonth(dashboard.period.currentStart)} a ${formatDayMonth(lastDayOf(dashboard.period.currentEnd))} · comparado com ${formatDayMonth(dashboard.period.previousStart)} a ${formatDayMonth(lastDayOf(dashboard.period.previousEnd))} · cada indicador pela sua própria data`}
+            detail={`${texts.current} · comparado com ${texts.previous} · cada indicador pela sua própria data`}
           />
           <PeriodKpis dashboard={dashboard} />
 
@@ -177,7 +208,7 @@ export default async function VisaoGeralPage({
               pending={dashboard.positions.todayActivitiesPending}
               canEdit={roleHasPermission(user.role, "activity.edit")}
             />
-            <TeamTable rows={dashboard.team} days={dashboard.period.days} />
+            <TeamTable rows={dashboard.team} periodLabel={dashboard.period.custom ? texts.current : `últimos ${dashboard.period.days} dias`} />
           </div>
           <InsightsSection insights={buildInsights(dashboard)} />
         </div>

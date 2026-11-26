@@ -5,7 +5,7 @@ import type { TeamRow } from "@/modules/dashboard/queries";
 import type { Insight } from "@/modules/dashboard/presentation";
 import { PanelIcon } from "./panel-icon";
 
-export function TeamTable({ rows, days }: { rows: TeamRow[]; days: number }) {
+export function TeamTable({ rows, periodLabel }: { rows: TeamRow[]; periodLabel: string }) {
   return (
     <section aria-labelledby="equipe-titulo" className="flex min-w-0 flex-col gap-3 rounded-lg border border-border bg-surface p-4">
       <div className="flex min-w-0 items-start gap-2.5">
@@ -76,7 +76,7 @@ export function TeamTable({ rows, days }: { rows: TeamRow[]; days: number }) {
               })}
             </tbody>
           </table>
-          <p className="mt-2 mb-0 text-meta text-text-muted">Colunas do período: últimos {days} dias.</p>
+          <p className="mt-2 mb-0 text-meta text-text-muted">Colunas do período: {periodLabel}.</p>
         </div>
       )}
     </section>

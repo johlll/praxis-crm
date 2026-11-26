@@ -1,6 +1,8 @@
 import type { Route } from "next";
 
+import { dateTimeInputParts } from "@/lib/timezone";
 import { uuidSchema } from "@/lib/uuid";
+import { checkRange, type DateRange } from "./period";
 import {
   DEFAULT_ATTRIBUTION_MODEL,
   parseAttributionModel,
@@ -15,8 +17,16 @@ export type DashboardPeriod = (typeof DASHBOARD_PERIODS)[number];
 /** Valor do filtro de responsável que significa "leads sem responsável". */
 export const UNASSIGNED_FILTER = "sem";
 
+/** Valor de `periodo` na URL quando as datas são escolhidas no calendário. */
+export const CUSTOM_PERIOD = "personalizado";
+
 export type DashboardFilters = {
+  /** Atalho em uso. Com `range`, fica no padrão e não vale. */
   periodDays: DashboardPeriod;
+  /** Intervalo escolhido no calendário (datas civis do escritório, as duas inclusivas). */
+  range?: DateRange | null;
+  /** O endereço pediu um intervalo que não vale: a página mostra o motivo e NENHUM número. */
+  rangeError?: string | null;
   assignedTo: string | null;
   onlyUnassigned: boolean;
   legalArea: string | null;
@@ -41,9 +51,18 @@ function single(value: string | string[] | undefined): string | undefined {
 /**
  * searchParams → filtros válidos. Valor desconhecido nunca vira erro nem
  * consulta estranha: cai no padrão (30 dias, todos, todas, pipeline padrão).
+ *
+ * Exceção: quem pede um intervalo de datas (`periodo=personalizado`, `de` ou
+ * `ate`) e erra recebe `rangeError` — trocar em silêncio por outro período
+ * mostraria números que a pessoa não pediu.
  */
-export function parseDashboardFilters(params: RawParams): DashboardFilters {
-  const period = Number(single(params.periodo));
+export function parseDashboardFilters(params: RawParams, today = dateTimeInputParts(new Date().toISOString(), false).date): DashboardFilters {
+  const rawPeriod = single(params.periodo);
+  const period = Number(rawPeriod);
+  const from = single(params.de)?.trim();
+  const to = single(params.ate)?.trim();
+  const asksRange = rawPeriod === CUSTOM_PERIOD || from !== undefined || to !== undefined;
+  const checked = asksRange ? checkRange(from, to, today) : null;
   const responsavel = single(params.responsavel)?.trim() ?? "";
   const area = single(params.area)?.trim() ?? "";
   const pipeline = single(params.pipeline)?.trim() ?? "";
@@ -51,7 +70,8 @@ export function parseDashboardFilters(params: RawParams): DashboardFilters {
   const origem = single(params.origem)?.trim() ?? "";
 
   return {
-    periodDays: (DASHBOARD_PERIODS as readonly number[]).includes(period) ? (period as DashboardPeriod) : 30,
+    periodDays: !asksRange && (DASHBOARD_PERIODS as readonly number[]).includes(period) ? (period as DashboardPeriod) : 30,
+    ...(checked ? (checked.ok ? { range: checked.range } : { rangeError: checked.error }) : {}),
     assignedTo: isUuid(responsavel) ? responsavel : null,
     onlyUnassigned: responsavel === UNASSIGNED_FILTER,
     legalArea: area !== "" && area.length <= 120 ? area : null,
@@ -66,7 +86,11 @@ export function parseDashboardFilters(params: RawParams): DashboardFilters {
 export function dashboardHref(filters: DashboardFilters, overrides: Partial<DashboardFilters> = {}): Route {
   const f = { ...filters, ...overrides };
   const params = new URLSearchParams();
-  if (f.periodDays !== 30) params.set("periodo", String(f.periodDays));
+  if (f.range) {
+    params.set("periodo", CUSTOM_PERIOD);
+    params.set("de", f.range.from);
+    params.set("ate", f.range.to);
+  } else if (f.periodDays !== 30) params.set("periodo", String(f.periodDays));
   if (f.onlyUnassigned) params.set("responsavel", UNASSIGNED_FILTER);
   else if (f.assignedTo) params.set("responsavel", f.assignedTo);
   if (f.legalArea) params.set("area", f.legalArea);

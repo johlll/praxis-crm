@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
  *   1. funil: contagem por passagem registrada e taxa de avanço sobre a
  *      mesma população (nunca acima de 100%);
  *   2. equipe: responsável que saiu do escritório aparece marcado;
- *   3. filtros: os seletores acompanham a URL depois de limpar os
+ *   3. filtros: os seletores e o período acompanham a URL depois de limpar os
  *      filtros e depois de voltar/avançar no navegador (a navegação do
  *      cliente troca as props sem desmontar o formulário).
  */
@@ -129,7 +129,7 @@ describe("equipe com responsável que saiu do escritório", () => {
   ];
 
   it("mantém os números e marca a linha como fora da equipe", () => {
-    render(<TeamTable rows={rows} days={7} />);
+    render(<TeamTable rows={rows} periodLabel="últimos 7 dias" />);
     const row = screen.getByRole("row", { name: /Lucas Advogado/ });
     expect(within(row).getByText("Fora da equipe")).toBeInTheDocument();
     expect(within(row).getByRole("rowheader")).toHaveTextContent("Lucas Advogado");
@@ -147,23 +147,27 @@ describe("equipe com responsável que saiu do escritório", () => {
 describe("seletores dos filtros acompanham a URL", () => {
   const members = [{ userId: LUCAS, name: "Lucas Advogado" }];
   const bar = (filters: DashboardFilters, hasActiveFilters: boolean) => (
-    <DashboardFilterBar filters={filters} members={members} legalAreas={["Família", "Trabalhista"]} hasActiveFilters={hasActiveFilters} />
+    <DashboardFilterBar filters={filters} today="2026-11-26" members={members} legalAreas={["Família", "Trabalhista"]} hasActiveFilters={hasActiveFilters} />
   );
-  const period = () => screen.getByLabelText("Período") as HTMLSelectElement;
+  const period = () => screen.getByRole("button", { name: /^Período:/ });
+  /** O que o formulário leva junto ao trocar outro filtro. */
+  const carried = (name: string) => document.querySelector<HTMLInputElement>(`input[type="hidden"][name="${name}"]`)?.value;
   const owner = () => screen.getByLabelText("Responsável pelo lead") as HTMLSelectElement;
   const area = () => screen.getByLabelText("Área jurídica") as HTMLSelectElement;
 
   it("limpar filtros volta os três seletores ao padrão sem recarregar a página", () => {
     const filtered: DashboardFilters = { periodDays: 7, assignedTo: LUCAS, onlyUnassigned: false, legalArea: "Família", pipelineId: null, attributionModel: "first_touch", source: null, selectedOpportunityId: null };
     const { rerender } = render(bar(filtered, true));
-    expect(period().value).toBe("7");
+    expect(period()).toHaveTextContent("Últimos 7 dias");
+    expect(carried("periodo")).toBe("7");
     expect(owner().value).toBe(LUCAS);
     expect(area().value).toBe("Família");
 
     // "Limpar filtros" é um link: a navegação do cliente troca as props
     // do mesmo componente, sem desmontá-lo.
     rerender(bar({ periodDays: 30, assignedTo: null, onlyUnassigned: false, legalArea: null, pipelineId: null, attributionModel: "first_touch", source: null, selectedOpportunityId: null }, false));
-    expect(period().value).toBe("30");
+    expect(period()).toHaveTextContent("Últimos 30 dias");
+    expect(carried("periodo")).toBe("30");
     expect(owner().value).toBe("");
     expect(area().value).toBe("");
   });
@@ -174,20 +178,35 @@ describe("seletores dos filtros acompanham a URL", () => {
 
     const { rerender } = render(bar(semFiltro, false));
     rerender(bar(comFiltro, true));
-    expect(period().value).toBe("90");
+    expect(period()).toHaveTextContent("Últimos 90 dias");
     expect(owner().value).toBe("sem");
     expect(area().value).toBe("Trabalhista");
 
     // Voltar.
     rerender(bar(semFiltro, false));
-    expect(period().value).toBe("30");
+    expect(period()).toHaveTextContent("Últimos 30 dias");
     expect(owner().value).toBe("");
     expect(area().value).toBe("");
 
     // Avançar.
     rerender(bar(comFiltro, true));
-    expect(period().value).toBe("90");
+    expect(period()).toHaveTextContent("Últimos 90 dias");
     expect(owner().value).toBe("sem");
     expect(area().value).toBe("Trabalhista");
+  });
+
+  it("datas escolhidas: botão e campos acompanham a URL, e origem, modelo e pipeline não se perdem", () => {
+    const base: DashboardFilters = { periodDays: 30, assignedTo: null, onlyUnassigned: false, legalArea: null, pipelineId: PIPE, attributionModel: "last_touch", source: "Site", selectedOpportunityId: null };
+    const { rerender } = render(bar({ ...base, range: { from: "2026-11-22", to: "2026-11-26" } }, true));
+    expect(period()).toHaveTextContent("22–26 nov 2026");
+    expect(["periodo", "de", "ate", "pipeline", "origem", "modelo"].map(carried)).toEqual(["personalizado", "2026-11-22", "2026-11-26", PIPE, "Site", "last_touch"]);
+
+    rerender(bar(base, false));
+    expect(period()).toHaveTextContent("Últimos 30 dias");
+    expect(["periodo", "de", "ate"].map(carried)).toEqual(["30", undefined, undefined]);
+
+    rerender(bar({ ...base, range: { from: "2025-12-28", to: "2026-01-03" } }, true));
+    expect(period()).toHaveTextContent("28 dez 2025 – 3 jan 2026");
+    expect(["de", "ate"].map(carried)).toEqual(["2025-12-28", "2026-01-03"]);
   });
 });

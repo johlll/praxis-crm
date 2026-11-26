@@ -3,18 +3,18 @@
 import type { ChangeEvent, ReactNode } from "react";
 import Form from "next/form";
 import Link from "next/link";
-import { Calendar } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { DASHBOARD_PERIODS, UNASSIGNED_FILTER, type DashboardFilters } from "@/modules/dashboard/schema";
+import { DEFAULT_ATTRIBUTION_MODEL } from "@/modules/forms/schema";
+import { CUSTOM_PERIOD, UNASSIGNED_FILTER, type DashboardFilters } from "@/modules/dashboard/schema";
+import { PeriodPicker } from "./period-picker";
 
 const selectClass =
   "h-8 cursor-pointer appearance-none rounded-input border-0 bg-transparent pr-1 text-body font-semibold text-text focus-visible:outline-2";
 
-function Pill({ label, children, icon }: { label: string; children: ReactNode; icon?: ReactNode }) {
+function Pill({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="flex h-9 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-body text-text-secondary">
-      {icon}
       <span>{label}</span>
       {children}
     </label>
@@ -34,14 +34,22 @@ function Pill({ label, children, icon }: { label: string; children: ReactNode; i
  * anterior enquanto os indicadores já seriam os da URL nova. Trocar a
  * `key` remonta o seletor com o valor certo. Nada disso depende de
  * JavaScript: sem ele, o HTML já vem do servidor com a opção marcada.
+ *
+ * O período não é um campo digitável: o calendário navega sozinho. O
+ * formulário só carrega, em campos ocultos, o período aplicado (atalho ou
+ * datas), o pipeline, a origem e o modelo, para trocar outro filtro sem
+ * perder nenhum deles.
  */
 export function DashboardFilterBar({
   filters,
   members,
   legalAreas,
   hasActiveFilters,
+  today,
 }: {
   filters: DashboardFilters;
+  /** Hoje no fuso do escritório (vem do servidor, junto com os números). */
+  today: string;
   members: { userId: string; name: string }[];
   legalAreas: string[];
   hasActiveFilters: boolean;
@@ -52,16 +60,18 @@ export function DashboardFilterBar({
   return (
     <Form action="/visao-geral" className="flex flex-wrap items-center gap-2" aria-label="Filtros da visão geral">
       {filters.pipelineId ? <input type="hidden" name="pipeline" value={filters.pipelineId} /> : null}
+      {filters.source ? <input type="hidden" name="origem" value={filters.source} /> : null}
+      {filters.attributionModel !== DEFAULT_ATTRIBUTION_MODEL ? <input type="hidden" name="modelo" value={filters.attributionModel} /> : null}
+      {/* `value` controlado: voltar e avançar trocam o período sem desmontar o formulário. */}
+      <input type="hidden" name="periodo" value={filters.range ? CUSTOM_PERIOD : String(filters.periodDays)} readOnly />
+      {filters.range ? (
+        <>
+          <input type="hidden" name="de" value={filters.range.from} readOnly />
+          <input type="hidden" name="ate" value={filters.range.to} readOnly />
+        </>
+      ) : null}
 
-      <Pill label="Últimos" icon={<Calendar size={14} aria-hidden />}>
-        <select key={filters.periodDays} name="periodo" defaultValue={String(filters.periodDays)} onChange={submitOnChange} className={selectClass} aria-label="Período">
-          {DASHBOARD_PERIODS.map((days) => (
-            <option key={days} value={days}>
-              {days} dias
-            </option>
-          ))}
-        </select>
-      </Pill>
+      <PeriodPicker filters={filters} today={today} />
 
       <Pill label="Responsável:">
         <select key={responsavel} name="responsavel" defaultValue={responsavel} onChange={submitOnChange} className={selectClass} aria-label="Responsável pelo lead">
