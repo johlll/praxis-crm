@@ -22,7 +22,6 @@ export type ContactMatch = {
   name: string;
   /** Motivos por extenso: "mesmo telefone", "nome igual"… */
   reasons: string[];
-  leadCount: number;
   href: string;
 };
 
@@ -50,10 +49,12 @@ export type AssistantBlock =
   | { type: "text"; text: string }
   | { type: "diagnosis"; summary: string; generatedAt: string; sections: DiagnosisSection[] }
   | { type: "question"; text: string; missing: RequiredRegistrationField[] }
-  | { type: "duplicate"; requestId: string; draft: RegistrationDraft; matches: ContactMatch[] }
+  | { type: "duplicate"; requestId: string; ticket: string; draft: RegistrationDraft; matches: ContactMatch[] }
   | {
       type: "confirm";
       requestId: string;
+      /** Comprovante assinado pelo servidor: liga o cartão à pessoa e ao escritório que o abriram. */
+      ticket: string;
       draft: RegistrationDraft;
       /** null: o servidor confere duplicidade de novo ao confirmar. */
       decision: RegistrationDecision | null;
@@ -82,9 +83,11 @@ export type ConfirmResult = {
   /**
    * saved: gravado (ou já estava, numa repetição). duplicate: apareceu uma possível duplicidade a decidir.
    * invalid: algum dado precisa de correção (o cartão continua aberto). denied: o perfil não pode
-   * cadastrar. failed: o servidor recusou ou falhou; nada foi gravado.
+   * cadastrar. stale: o cartão foi aberto em outro escritório ou outra sessão; nada foi gravado e ele se
+   * encerra. failed: o servidor recusou; nada foi gravado. uncertain: não deu para saber se gravou (o
+   * cartão continua, e confirmar de novo devolve o mesmo cadastro se ele existir).
    */
-  outcome: "saved" | "duplicate" | "invalid" | "denied" | "failed";
+  outcome: "saved" | "duplicate" | "invalid" | "denied" | "stale" | "failed" | "uncertain";
   /** Blocos para colocar no lugar do cartão (vazio quando o cartão continua). */
   blocks: AssistantBlock[];
   message?: string;

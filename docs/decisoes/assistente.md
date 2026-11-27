@@ -21,6 +21,13 @@ o portão do aplicador.
   caminhos oficiais. O escritório **nunca** é parâmetro: vem da sessão. Parâmetro desconhecido é descartado.
 - A **gravação** não é proposta pelo intérprete: só acontece no clique de confirmação do cartão
   (`confirmRegistrationAction`), com permissões conferidas de novo naquele momento.
+- **Cartão ligado a quem o abriu.** Cada cartão de duplicidade ou de confirmação sai do servidor com um
+  comprovante assinado (`src/server/assistant/card-ticket.ts`, HMAC-SHA256) que amarra a chave da solicitação
+  à pessoa e ao escritório ativos naquele momento. Na confirmação, o comprovante é conferido contra a sessão
+  ATUAL, antes de qualquer consulta: se o escritório ativo mudou (inclusive por outra aba) o cartão é
+  encerrado com "O escritório ativo mudou…" e nada é gravado, nem no escritório antigo nem no novo; se o
+  comprovante é de outra pessoa, de outra chave ou foi alterado, também é recusado. A chave de assinatura é
+  derivada do segredo do cookie de escritório ativo, com rótulo próprio (sem configuração nova).
 - Um adaptador de IA real entra depois implementando a mesma interface (`AssistantInterpreter`), sem mudar quem
   valida e executa. Conexão com provedor, custos e dados reais ficam para etapa própria.
 
@@ -53,7 +60,11 @@ Três consultas que o CRM já usa, cada uma com o alcance do papel aplicado no b
   valida o rascunho de novo a cada mensagem.
 
 **Possível duplicidade antes de gravar.** `assistant_find_contact_matches` (só leitura) procura no escritório:
-mesmo telefone, mesmo e-mail, nome igual ou nome parecido. "Parecido" exige o **mesmo primeiro nome** e semelhança
+mesmo telefone, mesmo e-mail, nome igual ou nome parecido. A resposta traz só dados do contato (nome, data de
+cadastro e motivos), que todo membro do escritório já vê; **não traz contagem de leads**, porque o alcance dos
+leads muda por perfil (advogado e atendimento veem os seus e os sem responsável) e decidir qual contato usar
+não depende dela. Provado com um contato que tem leads de dois responsáveis: proprietária e advogado recebem
+exatamente a mesma resposta. "Parecido" exige o **mesmo primeiro nome** e semelhança
 de grafia (pg_trgm ≥ 0,6, o limiar da A3): só o sobrenome em comum não é aviso. Contatos mesclados e anonimizados
 ficam de fora. Havendo resultado, a pessoa escolhe: usar o contato encontrado (só o lead é criado) ou cadastrar
 pessoa nova. Sem decisão explícita, a duplicidade é conferida de novo na confirmação. A fila de duplicidades da A3
@@ -64,6 +75,10 @@ transação só, chamando `create_contact` e `create_lead` (auditoria, fila de d
 inclusos). A chave da solicitação (gerada pelo servidor no cartão) fica em `public.assistant_requests` (RLS ligada,
 nenhuma policy, sem acesso pela API):
 
+- antes de conferir duplicidade, o servidor consulta `assistant_find_registration` (só leitura): se a mesma
+  pessoa já gravou esta chave com os mesmos dados, devolve aquele cadastro. Assim, quando a resposta da
+  primeira gravação se perde, a nova tentativa mostra os mesmos links do contato e do lead, sem apontar o
+  contato recém-criado como possível duplicidade;
 - repetir a confirmação (clique duplo, reenvio, rede instável) devolve o **mesmo** cadastro, marcado como repetição;
 - duas chamadas simultâneas com a mesma chave: a segunda espera a primeira e devolve o mesmo cadastro (provado com
   duas conexões);
@@ -71,6 +86,11 @@ nenhuma policy, sem acesso pela API):
 - tentativa recusada (permissão, contato de outro escritório, dado inválido) não deixa chave reservada.
 
 Sucesso só é mostrado depois da resposta do servidor, com links para o lead e para o contato.
+
+**Resultado incerto é dito como incerto.** Recusa com código do banco ou da API significa transação desfeita:
+a mensagem diz "Nada foi gravado". Já sem resposta (rede caiu, tempo esgotado, resposta perdida no caminho), a
+mensagem diz que não foi possível confirmar se o cadastro foi gravado, mantém o cartão com a mesma chave e o
+botão vira "Confirmar de novo": se ele já existir, volta o mesmo cadastro, sem criar outro.
 
 ## Fora desta versão
 

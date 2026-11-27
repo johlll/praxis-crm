@@ -119,7 +119,7 @@ describe("rascunho", () => {
 
   it("os motivos da duplicidade vêm por extenso", () => {
     expect(mapMatches([{ contact_id: "c1", name: "Ana", signals: ["phone", "same_name"], lead_count: 2 }, { lixo: true }])).toEqual([
-      { contactId: "c1", name: "Ana", reasons: ["mesmo telefone", "nome igual"], leadCount: 2, href: "/contatos/c1" },
+      { contactId: "c1", name: "Ana", reasons: ["mesmo telefone", "nome igual"], href: "/contatos/c1" },
     ]);
     expect(mapMatches(null)).toEqual([]);
   });

@@ -8,8 +8,9 @@ import { callRpcDirect, getSupabaseAccessToken, login, switchWorkspace } from ".
 /**
  * Assistente (primeira versão), ponta a ponta com o banco local e dados fictícios. A INTERPRETAÇÃO é
  * simulada (regras fixas, sem provedor de IA); as consultas e o cadastro passam pelos caminhos reais do
- * CRM: list_activities e get_dashboard no diagnóstico; assistant_find_contact_matches e
- * assistant_register_client (que chama create_contact e create_lead) no cadastro.
+ * CRM: list_activities e get_dashboard no diagnóstico; assistant_find_contact_matches,
+ * assistant_find_registration e assistant_register_client (que chama create_contact e create_lead) no
+ * cadastro.
  */
 
 function watchConsole(page: Page): string[] {
@@ -33,11 +34,23 @@ async function send(page: Page, text: string) {
   await expect(page.getByText("Consultando o CRM…")).toHaveCount(0);
 }
 
-async function matchesFor(request: Parameters<typeof getSupabaseAccessToken>[0], name: string) {
-  const token = await getSupabaseAccessToken(request, SEED_PAINEL.owner.email);
-  const { body } = await callRpcDirect(request, token, "assistant_find_contact_matches", { p_workspace_id: SEED_PAINEL.workspaceId, p_name: name });
-  return (body as { name: string; lead_count: number }[]).filter((m) => m.name === name);
+type Api = Parameters<typeof getSupabaseAccessToken>[0];
+type Match = { contact_id: string; name: string } & Record<string, unknown>;
+
+async function matchesFor(request: Api, name: string, workspaceId: string = SEED_PAINEL.workspaceId, email: string = SEED_PAINEL.owner.email) {
+  const token = await getSupabaseAccessToken(request, email);
+  const { body } = await callRpcDirect(request, token, "assistant_find_contact_matches", { p_workspace_id: workspaceId, p_name: name });
+  return (body as Match[]).filter((m) => m.name === name);
 }
+
+/** Leads que a pessoa vê para um nome, pela listagem oficial (com o alcance do perfil dela). */
+async function visibleLeads(request: Api, name: string, email: string = SEED_PAINEL.owner.email) {
+  const token = await getSupabaseAccessToken(request, email);
+  const { body } = await callRpcDirect(request, token, "list_leads", { p_workspace_id: SEED_PAINEL.workspaceId, p_search: name });
+  return Number((body as { total_count: number }[])[0]?.total_count ?? 0);
+}
+
+const userIdOf = (token: string) => (JSON.parse(Buffer.from(token.split(".")[1]!, "base64url").toString("utf8")) as { sub: string }).sub;
 
 test.describe.serial("Assistente", () => {
   test("1. menu, tela inicial e diagnóstico com pendências, com links para os registros", async ({ page }) => {
@@ -99,7 +112,7 @@ test.describe.serial("Assistente", () => {
     await expect(page.getByText("Cadastro gravado")).toBeVisible();
     const matches = await matchesFor(request, name);
     expect(matches).toHaveLength(1);
-    expect(matches[0]!.lead_count).toBe(1);
+    expect(await visibleLeads(request, name)).toBe(1);
 
     await page.getByRole("link", { name: "Abrir o lead" }).click();
     await expect(page).toHaveURL(/\/leads\/[0-9a-f-]{36}$/);
@@ -124,6 +137,7 @@ test.describe.serial("Assistente", () => {
     await send(page, `Cadastre ${name} para um caso de inventário`);
     const duplicate = page.getByRole("region", { name: new RegExp(`Possível duplicidade para “${name}”`) });
     await expect(duplicate).toContainText("nome igual");
+    await expect(duplicate).not.toContainText(/lead/i);
     await expect(duplicate.getByRole("link", { name: new RegExp(name) })).toHaveAttribute("href", /^\/contatos\//);
     await duplicate.getByRole("button", { name: "Usar este contato" }).click();
     const caseCard = page.getByRole("region", { name: `Novo caso para ${name}` });
@@ -133,7 +147,7 @@ test.describe.serial("Assistente", () => {
 
     const matches = await matchesFor(request, name);
     expect(matches).toHaveLength(1);
-    expect(matches[0]!.lead_count).toBe(2);
+    expect(await visibleLeads(request, name)).toBe(2);
   });
 
   test("5. cancelar não grava nada", async ({ page, request }) => {
@@ -199,5 +213,126 @@ test.describe.serial("Assistente", () => {
     expect(box.x + box.width).toBeLessThanOrEqual(390);
     await expect.poll(() => tab.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBe(0);
     await phone.close();
+  });
+
+  test("9. cartão aberto num escritório e escritório trocado em outra aba: a confirmação antiga não grava em nenhum dos dois", async ({ page, request }) => {
+    // Otávio é proprietário do Painel B e, agora, de um escritório novo: pode cadastrar nos dois.
+    const token = await getSupabaseAccessToken(request, SEED_PAINEL.ownerB.email);
+    const suffix = surname().toLowerCase();
+    const otherName = `Assistente troca ${suffix}`;
+    const created = await callRpcDirect(request, token, "create_workspace_with_owner", { p_name: otherName, p_slug: `assistente-troca-${suffix}` });
+    expect(created.status).toBe(200);
+    const otherId = (created.body as { id: string }).id;
+    const painelB = { id: "10000000-0000-0000-0000-000000000011", name: "Escritório Painel B (seed)" };
+
+    await login(page, SEED_PAINEL.ownerB.email);
+    const switcher = page.getByRole("button", { name: "Trocar de workspace" });
+    await expect(switcher).toBeVisible();
+    if (!((await switcher.textContent()) ?? "").includes(painelB.name)) await switchWorkspace(page, painelB.name);
+    await expect(switcher).toContainText(painelB.name);
+    await page.goto("/assistente");
+    const name = `Helio Troca ${surname()}`;
+    await send(page, `Cadastre ${name} para um caso de rescisão`);
+    const card = page.getByRole("region", { name: "Cadastrar pessoa e caso" });
+    await expect(card).toBeVisible();
+
+    // Outra aba da mesma sessão troca o escritório ativo.
+    const otherTab = await page.context().newPage();
+    await otherTab.goto("/visao-geral");
+    await switchWorkspace(otherTab, otherName);
+
+    await card.getByRole("button", { name: "Confirmar cadastro" }).click();
+    await expect(page.getByRole("main").getByRole("alert")).toContainText("O escritório ativo mudou depois que este cartão foi aberto");
+    await expect(page.getByRole("main").getByRole("alert")).toContainText("Nada foi gravado.");
+    await expect(card).toHaveCount(0);
+
+    expect(await matchesFor(request, name, painelB.id, SEED_PAINEL.ownerB.email)).toEqual([]);
+    expect(await matchesFor(request, name, otherId, SEED_PAINEL.ownerB.email)).toEqual([]);
+    await otherTab.close();
+  });
+
+  test("10. resposta da gravação perdida: o aviso diz que não se sabe se gravou, e confirmar de novo devolve os mesmos links", async ({ page, request }) => {
+    const name = `Iara Perdida ${surname()}`;
+    await login(page, SEED_PAINEL.owner.email);
+    await page.goto("/assistente");
+    await send(page, `Cadastre ${name} para um caso de divórcio`);
+    const card = page.getByRole("region", { name: "Cadastrar pessoa e caso" });
+
+    // A primeira confirmação chega ao servidor (e grava), mas a resposta não volta ao navegador.
+    let lost = 0;
+    await page.route("**/assistente", async (route) => {
+      const req = route.request();
+      if (lost === 0 && req.method() === "POST" && (req.postData() ?? "").includes('"ticket"')) {
+        lost += 1;
+        await route.fetch();
+        await route.abort("failed");
+        return;
+      }
+      await route.continue();
+    });
+
+    await card.getByRole("button", { name: "Confirmar cadastro" }).click();
+    await expect(card.getByRole("alert")).toContainText("Não sei se o cadastro foi gravado");
+    expect(lost).toBe(1);
+    const saved = await matchesFor(request, name);
+    expect(saved).toHaveLength(1);
+
+    await card.getByRole("button", { name: "Confirmar de novo" }).click();
+    await expect(page.getByText("Este cadastro já estava gravado")).toBeVisible();
+    await expect(page.getByText(/Possível duplicidade/)).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Abrir o contato" })).toHaveAttribute("href", `/contatos/${saved[0]!.contact_id}`);
+    await expect(page.getByRole("link", { name: "Abrir o lead" })).toHaveAttribute("href", /^\/leads\/[0-9a-f-]{36}$/);
+    expect(await matchesFor(request, name)).toHaveLength(1);
+    expect(await visibleLeads(request, name)).toBe(1);
+
+    await page.getByRole("link", { name: "Abrir o lead" }).click();
+    await expect(page).toHaveURL(/\/leads\/[0-9a-f-]{36}$/);
+    await expect(page.getByText(name).first()).toBeVisible();
+  });
+
+  test("11. contato com leads de dois responsáveis: a busca de duplicidade não conta leads, para nenhum perfil", async ({ page, request }) => {
+    const owner = await getSupabaseAccessToken(request, SEED_PAINEL.owner.email);
+    const name = `Helena Dupla ${surname()}`;
+    const first = await callRpcDirect(request, owner, "assistant_register_client", {
+      p_workspace_id: SEED_PAINEL.workspaceId,
+      p_request_id: randomUUID(),
+      p_name: name,
+      p_legal_area: "Família",
+    });
+    const contactId = (first.body as { contact_id: string }).contact_id;
+    const second = await callRpcDirect(request, owner, "assistant_register_client", {
+      p_workspace_id: SEED_PAINEL.workspaceId,
+      p_request_id: randomUUID(),
+      p_name: name,
+      p_legal_area: "Cível",
+      p_existing_contact_id: contactId,
+    });
+    // Um lead fica com a proprietária, o outro com o advogado.
+    for (const [lead, assignee] of [
+      [(first.body as { lead_id: string }).lead_id, userIdOf(owner)],
+      [(second.body as { lead_id: string }).lead_id, SEED_PAINEL.lawyer.userId],
+    ] as const) {
+      const current = await callRpcDirect(request, owner, "get_lead", { p_lead_id: lead });
+      const assigned = await callRpcDirect(request, owner, "assign_lead", {
+        p_lead_id: lead,
+        p_assigned_to: assignee,
+        p_expected_updated_at: (current.body as { updated_at: string }).updated_at,
+      });
+      expect(assigned.status, JSON.stringify(assigned.body)).toBe(200);
+    }
+    expect(await visibleLeads(request, name, SEED_PAINEL.owner.email)).toBe(2);
+    expect(await visibleLeads(request, name, SEED_PAINEL.lawyer.email)).toBe(1);
+
+    const asOwner = await matchesFor(request, name, SEED_PAINEL.workspaceId, SEED_PAINEL.owner.email);
+    const asLawyer = await matchesFor(request, name, SEED_PAINEL.workspaceId, SEED_PAINEL.lawyer.email);
+    expect(asLawyer).toEqual(asOwner);
+    expect(Object.keys(asLawyer[0]!).sort()).toEqual(["contact_id", "created_at", "name", "signals"]);
+
+    await login(page, SEED_PAINEL.lawyer.email);
+    await page.goto("/assistente");
+    await send(page, `Cadastre ${name} para um caso de inventário`);
+    const duplicate = page.getByRole("region", { name: new RegExp(`Possível duplicidade para “${name}”`) });
+    await expect(duplicate).toContainText("nome igual");
+    await expect(duplicate).not.toContainText(/lead/i);
   });
 });

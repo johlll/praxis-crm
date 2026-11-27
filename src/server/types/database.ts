@@ -6041,6 +6041,19 @@ export type Database = {
         }
         Returns: Json
       }
+      assistant_find_registration: {
+        Args: {
+          p_emails?: Json
+          p_existing_contact_id?: string
+          p_legal_area: string
+          p_name: string
+          p_phones?: Json
+          p_request_id: string
+          p_summary?: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
       assistant_register_client: {
         Args: {
           p_emails?: Json

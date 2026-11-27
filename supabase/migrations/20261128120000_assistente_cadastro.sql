@@ -11,6 +11,8 @@
 --   2. `public.assistant_register_client`: as duas criações numa transação só, com uma chave de
 --      solicitação. Clique duplo, reenvio ou duas chamadas simultâneas com a mesma chave devolvem o
 --      MESMO cadastro, sem criar um segundo.
+--   3. `public.assistant_find_registration`: LEITURA do cadastro já gravado para a mesma chave e os
+--      mesmos dados, para a nova tentativa recuperar o resultado quando a resposta da primeira se perde.
 --
 -- O escritório chega do servidor do app (sessão), e as funções conferem de novo o papel de quem chama.
 -- Nenhuma tabela ou função anterior é alterada.
@@ -100,8 +102,10 @@ begin
              case when s.mesmo_telefone then 'phone' end,
              case when s.mesmo_email then 'email' end,
              case when s.nome_igual then 'same_name' when s.nome_parecido then 'similar_name' end
-           ], null)),
-           'lead_count', (select count(*) from public.leads l where l.contact_id = s.id)
+           ], null))
+           -- Sem contagem de leads: o alcance dos leads muda por perfil (advogado e atendimento só veem
+           -- os seus), e decidir qual contato usar não depende dela. Só dados do contato, que todo
+           -- membro do escritório já vê.
          ) order by (s.mesmo_telefone or s.mesmo_email) desc, s.nome_igual desc, s.created_at desc), '[]'::jsonb)
   into v_result
   from (
@@ -120,6 +124,107 @@ comment on function public.assistant_find_contact_matches(uuid, text, text, text
 
 revoke all on function public.assistant_find_contact_matches(uuid, text, text, text) from public, anon;
 grant execute on function public.assistant_find_contact_matches(uuid, text, text, text) to authenticated;
+
+-- ---------------------------------------------------------------------
+-- Impressão dos dados de uma confirmação: a mesma chave só vale para os mesmos dados.
+-- ---------------------------------------------------------------------
+create function private.assistant_payload_hash(
+  p_name text,
+  p_legal_area text,
+  p_summary text,
+  p_phones jsonb,
+  p_emails jsonb,
+  p_existing_contact_id uuid
+)
+returns text
+language sql
+immutable
+set search_path = ''
+as $body$
+  select md5(jsonb_build_object(
+    'name', btrim(coalesce(p_name, '')),
+    'legal_area', btrim(coalesce(p_legal_area, '')),
+    'summary', btrim(coalesce(p_summary, '')),
+    'phones', coalesce(p_phones, '[]'::jsonb),
+    'emails', coalesce(p_emails, '[]'::jsonb),
+    'existing_contact_id', p_existing_contact_id
+  )::text);
+$body$;
+
+revoke all on function private.assistant_payload_hash(text, text, text, jsonb, jsonb, uuid) from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- Resultado já gravado de uma confirmação (só leitura). O app consulta ANTES de conferir duplicidade:
+-- se a resposta da primeira gravação se perdeu, a nova tentativa devolve o mesmo cadastro em vez de
+-- apontar o contato recém-criado como possível duplicidade.
+-- ---------------------------------------------------------------------
+create function public.assistant_find_registration(
+  p_workspace_id uuid,
+  p_request_id uuid,
+  p_name text,
+  p_legal_area text,
+  p_summary text default null,
+  p_phones jsonb default '[]'::jsonb,
+  p_emails jsonb default '[]'::jsonb,
+  p_existing_contact_id uuid default null
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $body$
+declare
+  v_actor uuid := auth.uid();
+  v_request public.assistant_requests;
+begin
+  if v_actor is null then
+    raise exception 'authentication_required';
+  end if;
+
+  -- Mesmos papéis do cadastro: quem não pode cadastrar também não consulta confirmações.
+  if not private.has_workspace_role(
+    p_workspace_id, array['owner', 'admin', 'manager', 'lawyer', 'sales']::public.membership_role[]
+  ) then
+    raise exception 'insufficient_permission';
+  end if;
+
+  if p_request_id is null then
+    raise exception 'invalid_request';
+  end if;
+
+  select * into v_request from public.assistant_requests
+  where workspace_id = p_workspace_id and request_id = p_request_id;
+
+  if not found then
+    return null;
+  end if;
+
+  if v_request.actor_user_id <> v_actor
+     or v_request.payload_hash <> private.assistant_payload_hash(
+       p_name, p_legal_area, p_summary, p_phones, p_emails, p_existing_contact_id
+     ) then
+    raise exception 'assistant_request_conflict';
+  end if;
+
+  if v_request.lead_id is null then
+    raise exception 'assistant_request_unavailable';
+  end if;
+
+  return jsonb_build_object(
+    'contact_id', v_request.contact_id,
+    'lead_id', v_request.lead_id,
+    'contact_created', v_request.contact_created,
+    'replayed', true
+  );
+end;
+$body$;
+
+comment on function public.assistant_find_registration(uuid, uuid, text, text, text, jsonb, jsonb, uuid) is
+  'Assistente: devolve o cadastro já gravado para a mesma solicitação e os mesmos dados (null se não houver).';
+
+revoke all on function public.assistant_find_registration(uuid, uuid, text, text, text, jsonb, jsonb, uuid) from public, anon;
+grant execute on function public.assistant_find_registration(uuid, uuid, text, text, text, jsonb, jsonb, uuid) to authenticated;
 
 -- ---------------------------------------------------------------------
 -- Cadastro confirmado: contato (novo ou existente) + lead, uma vez só por solicitação.
@@ -163,14 +268,7 @@ begin
     raise exception 'invalid_request';
   end if;
 
-  v_hash := md5(jsonb_build_object(
-    'name', btrim(coalesce(p_name, '')),
-    'legal_area', btrim(coalesce(p_legal_area, '')),
-    'summary', btrim(coalesce(p_summary, '')),
-    'phones', coalesce(p_phones, '[]'::jsonb),
-    'emails', coalesce(p_emails, '[]'::jsonb),
-    'existing_contact_id', p_existing_contact_id
-  )::text);
+  v_hash := private.assistant_payload_hash(p_name, p_legal_area, p_summary, p_phones, p_emails, p_existing_contact_id);
 
   -- A chave primária serializa duas chamadas simultâneas com a mesma solicitação: a segunda espera a
   -- primeira terminar e então encontra a linha já preenchida.

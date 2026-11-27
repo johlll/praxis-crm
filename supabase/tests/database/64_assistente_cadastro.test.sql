@@ -2,17 +2,19 @@
 --
 --   A) Assinaturas: sem execução anônima; a tabela de solicitações não é acessível pela API.
 --   B) Possíveis duplicidades: telefone, e-mail, nome igual e parecido; mesclados, anonimizados e
---      outros escritórios ficam de fora; quem não é membro não consulta.
+--      outros escritórios ficam de fora; quem não é membro não consulta. Só dados do contato: nenhuma
+--      contagem de leads (o alcance dos leads muda por perfil), provado com leads de dois responsáveis.
 --   C) Cadastro: contato + lead pelo fluxo oficial (auditoria e fila de duplicidades), uma vez só por
 --      solicitação; repetição devolve o mesmo cadastro; outra pessoa ou outros dados com a mesma chave
---      são recusados.
+--      são recusados. A consulta do resultado já gravado devolve o mesmo cadastro para a mesma chave e
+--      os mesmos dados (resposta perdida), recusa outros dados ou outra pessoa e não vaza entre escritórios.
 --   D) Permissões e isolamento: visualizador e não membro recusados sem deixar rastro; contato de outro
 --      escritório recusado; advogado e atendimento cadastram.
 --
 -- As chamadas simultâneas com a mesma chave são provadas fora do pgTAP, com duas conexões.
 
 begin;
-select plan(42);
+select plan(53);
 
 \set ana    '20000000-0000-0000-0000-000000000001'
 \set lucas  '20000000-0000-0000-0000-000000000011'
@@ -44,6 +46,7 @@ insert into public.contacts (id, workspace_id, type, name, created_by, merged_in
   ('a6400000-0000-0000-0000-000000000003', :'ws'::uuid, 'pf', 'Bruno Telefone', :'otavio', null, null),
   ('a6400000-0000-0000-0000-000000000004', :'ws'::uuid, 'pf', 'Carla Email', :'otavio', null, null),
   ('a6400000-0000-0000-0000-000000000006', :'ws'::uuid, 'pf', 'Ana Ribeiro Antiga', :'otavio', null, now()),
+  ('a6400000-0000-0000-0000-000000000008', :'ws'::uuid, 'pf', 'Helena Dois Responsaveis', :'otavio', null, null),
   ('a6400000-0000-0000-0000-000000000007', :'ws_b'::uuid, 'pf', 'Ana Ribeiro', :'ana', null, null);
 insert into public.contacts (id, workspace_id, type, name, created_by, merged_into_contact_id) values
   ('a6400000-0000-0000-0000-000000000005', :'ws'::uuid, 'pf', 'Ana Ribeiro', :'otavio', 'a6400000-0000-0000-0000-000000000001');
@@ -51,6 +54,11 @@ insert into public.contact_phones (workspace_id, contact_id, value_normalized) v
   (:'ws'::uuid, 'a6400000-0000-0000-0000-000000000003', '+5511999990001');
 insert into public.contact_emails (workspace_id, contact_id, value_normalized) values
   (:'ws'::uuid, 'a6400000-0000-0000-0000-000000000004', 'carla@exemplo.com');
+-- Um contato com leads de dois responsáveis: o advogado só vê o dele (e os sem responsável).
+insert into public.leads (id, workspace_id, contact_id, legal_area, assigned_to, created_by) values
+  ('b6400000-0000-0000-0000-000000000001', :'ws'::uuid, 'a6400000-0000-0000-0000-000000000008', 'Família', :'otavio', :'otavio'),
+  ('b6400000-0000-0000-0000-000000000002', :'ws'::uuid, 'a6400000-0000-0000-0000-000000000008', 'Cível', :'otavio', :'otavio'),
+  ('b6400000-0000-0000-0000-000000000003', :'ws'::uuid, 'a6400000-0000-0000-0000-000000000008', 'Trabalhista', :'lucas', :'otavio');
 
 -- A) Assinaturas e acesso.
 select ok(not has_function_privilege('anon', 'public.assistant_find_contact_matches(uuid, text, text, text)', 'execute'),
@@ -61,7 +69,11 @@ select ok(not has_table_privilege('authenticated', 'public.assistant_requests', 
   'a tabela de solicitações não é lida pela API');
 select ok((select relrowsecurity from pg_class where oid = 'public.assistant_requests'::regclass), 'RLS ligada, sem policy: ninguém lê nem grava direto');
 select is((select count(*)::int from pg_policies where tablename = 'assistant_requests'), 0, 'nenhuma policy');
-select is((select count(*)::int from pg_proc where proname in ('assistant_find_contact_matches', 'assistant_register_client')), 2,
+select ok(not has_function_privilege('anon', 'public.assistant_find_registration(uuid, uuid, text, text, text, jsonb, jsonb, uuid)', 'execute'),
+  'anônimo não consulta confirmações');
+select ok(not has_function_privilege('authenticated', 'private.assistant_payload_hash(text, text, text, jsonb, jsonb, uuid)', 'execute'),
+  'a impressão dos dados é interna');
+select is((select count(*)::int from pg_proc where proname in ('assistant_find_contact_matches', 'assistant_register_client', 'assistant_find_registration')), 3,
   'uma assinatura de cada função');
 
 -- B) Possíveis duplicidades.
@@ -92,6 +104,17 @@ select is(public.assistant_find_contact_matches(:'ws'::uuid, 'Zé Ninguém Difer
 select is(public.assistant_find_contact_matches(:'ws'::uuid, 'Carlos Email'), '[]'::jsonb,
   'só o sobrenome em comum não é aviso (Carla Email x Carlos Email)');
 select is(public.assistant_find_contact_matches(:'ws'::uuid, '  '), '[]'::jsonb, 'sem dado: lista vazia');
+
+-- Contato com leads de dois responsáveis: a resposta só traz dados do contato, igual para todo perfil.
+select is(
+  (select array_agg(k order by k) from jsonb_array_elements(public.assistant_find_contact_matches(:'ws'::uuid, 'Helena Dois Responsaveis')) m,
+     jsonb_object_keys(m) k),
+  array['contact_id', 'created_at', 'name', 'signals'], 'sem contagem de leads na resposta (advogado com 1 dos 3 leads)');
+select public.assistant_find_contact_matches(:'ws'::uuid, 'Helena Dois Responsaveis') as helena_advogado \gset
+select pg_temp.as_user(:'otavio');
+select is(public.assistant_find_contact_matches(:'ws'::uuid, 'Helena Dois Responsaveis'), :'helena_advogado'::jsonb,
+  'proprietário (vê os 3 leads) recebe exatamente a mesma resposta que o advogado');
+select pg_temp.as_user(:'lucas');
 
 select pg_temp.as_user(:'vitor');
 select is(jsonb_array_length(public.assistant_find_contact_matches(:'ws'::uuid, 'Ana Ribeiro')), 2, 'visualizador também consulta (só leitura)');
@@ -134,6 +157,19 @@ select is((select count(*)::int from public.contacts where workspace_id = :'ws':
 select is((select count(*)::int from public.leads l join public.contacts c on c.id = l.contact_id where c.name = 'Daniela Nova'), 1, 'um lead só');
 set local role authenticated;
 
+-- Resposta perdida: a nova tentativa consulta primeiro o resultado já gravado.
+select is(public.assistant_find_registration(:'ws'::uuid, 'e6400000-0000-0000-0000-000000000001',
+  'Daniela Nova', 'Imobiliário', 'Regularização de imóvel', '[{"value_normalized": "+5511988887777", "is_primary": false}]'::jsonb, '[]'::jsonb),
+  (:'r1'::jsonb - 'replayed') || '{"replayed": true}'::jsonb, 'mesma chave e mesmos dados: devolve o cadastro já gravado');
+select is(
+  (select m ->> 'contact_id' from jsonb_array_elements(public.assistant_find_contact_matches(:'ws'::uuid, 'Daniela Nova', '+5511988887777')) m),
+  :'r1'::jsonb ->> 'contact_id', 'sem essa consulta, a busca de duplicidade apontaria o próprio contato recém-criado');
+select is(public.assistant_find_registration(:'ws'::uuid, 'e6400000-0000-0000-0000-0000000000ff', 'Daniela Nova', 'Imobiliário'),
+  null::jsonb, 'chave nunca usada: nada gravado');
+select throws_ok($$ select public.assistant_find_registration('$$ || :'ws' || $$'::uuid, 'e6400000-0000-0000-0000-000000000001',
+  'Daniela Corrigida', 'Imobiliário', 'Regularização de imóvel', '[{"value_normalized": "+5511988887777", "is_primary": false}]'::jsonb, '[]'::jsonb) $$,
+  'assistant_request_conflict', 'consulta com a mesma chave e outros dados é recusada');
+
 select throws_ok($$ select public.assistant_register_client('$$ || :'ws' || $$'::uuid, 'e6400000-0000-0000-0000-000000000001',
   'Daniela Corrigida', 'Imobiliário', 'Regularização de imóvel', '[{"value_normalized": "+5511988887777", "is_primary": false}]'::jsonb, '[]'::jsonb) $$,
   'assistant_request_conflict', 'a mesma chave com outros dados é recusada');
@@ -141,6 +177,13 @@ select pg_temp.as_user(:'sofia');
 select throws_ok($$ select public.assistant_register_client('$$ || :'ws' || $$'::uuid, 'e6400000-0000-0000-0000-000000000001',
   'Daniela Nova', 'Imobiliário', 'Regularização de imóvel', '[{"value_normalized": "+5511988887777", "is_primary": false}]'::jsonb, '[]'::jsonb) $$,
   'assistant_request_conflict', 'a mesma chave por outra pessoa é recusada');
+select throws_ok($$ select public.assistant_find_registration('$$ || :'ws' || $$'::uuid, 'e6400000-0000-0000-0000-000000000001',
+  'Daniela Nova', 'Imobiliário', 'Regularização de imóvel', '[{"value_normalized": "+5511988887777", "is_primary": false}]'::jsonb, '[]'::jsonb) $$,
+  'assistant_request_conflict', 'outra pessoa não consulta a confirmação de quem cadastrou');
+select pg_temp.as_user(:'ana');
+select is(public.assistant_find_registration(:'ws_b'::uuid, 'e6400000-0000-0000-0000-000000000001',
+  'Daniela Nova', 'Imobiliário', 'Regularização de imóvel', '[{"value_normalized": "+5511988887777", "is_primary": false}]'::jsonb, '[]'::jsonb),
+  null::jsonb, 'a mesma chave em outro escritório não acha nada');
 
 -- Contato existente: só o lead é criado.
 select pg_temp.as_user(:'lucas');
@@ -161,6 +204,8 @@ select ok((public.assistant_register_client(:'ws'::uuid, 'e6400000-0000-0000-000
 select pg_temp.as_user(:'vitor');
 select throws_ok($$ select public.assistant_register_client('$$ || :'ws' || $$'::uuid, 'e6400000-0000-0000-0000-000000000004',
   'Fabio Visualizador', 'Cível') $$, 'insufficient_permission', 'visualizador não cadastra');
+select throws_ok($$ select public.assistant_find_registration('$$ || :'ws' || $$'::uuid, 'e6400000-0000-0000-0000-000000000001',
+  'Daniela Nova', 'Imobiliário') $$, 'insufficient_permission', 'visualizador não consulta confirmações');
 
 select pg_temp.as_user(:'ana');
 select throws_ok($$ select public.assistant_register_client('$$ || :'ws' || $$'::uuid, 'e6400000-0000-0000-0000-000000000005',

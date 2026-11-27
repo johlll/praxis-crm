@@ -27,6 +27,7 @@ const replyWith = (blocks: AssistantBlock[], pending: AssistantReply["pending"] 
 });
 
 const REQ = "e0000000-0000-4000-8000-000000000001";
+const TICKET = "10000000-0000-0000-0000-000000000001.assinatura-do-servidor";
 const draft = { name: "Ana Ribeiro", legalArea: "Imobiliário", summary: "Regularização de imóvel" };
 
 beforeEach(() => {
@@ -127,7 +128,7 @@ async function renderWithCard(block: AssistantBlock) {
 }
 
 describe("cartão de confirmação", () => {
-  const confirmBlock: AssistantBlock = { type: "confirm", requestId: REQ, draft, decision: null };
+  const confirmBlock: AssistantBlock = { type: "confirm", requestId: REQ, ticket: TICKET, draft, decision: null };
 
   it("mostra o que será criado", async () => {
     await renderWithCard(confirmBlock);
@@ -148,7 +149,8 @@ describe("cartão de confirmação", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /Gravando/ })).toBeDisabled());
     fireEvent.click(screen.getByRole("button", { name: /Gravando/ }));
     expect(mocks.confirm).toHaveBeenCalledTimes(1);
-    expect(mocks.confirm).toHaveBeenCalledWith({ requestId: REQ, draft, decision: null });
+    // O comprovante do cartão vai junto, para o servidor conferir pessoa e escritório.
+    expect(mocks.confirm).toHaveBeenCalledWith({ requestId: REQ, ticket: TICKET, draft, decision: null });
     expect(screen.queryByText("Cadastro gravado")).toBeNull();
 
     await act(async () =>
@@ -177,7 +179,7 @@ describe("cartão de confirmação", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Corrigir" }));
     fireEvent.change(screen.getByLabelText("Área jurídica"), { target: { value: "Cível" } });
     fireEvent.click(screen.getByRole("button", { name: "Confirmar cadastro" }));
-    await waitFor(() => expect(mocks.confirm).toHaveBeenCalledWith({ requestId: REQ, draft: { ...draft, legalArea: "Cível" }, decision: { kind: "new" } }));
+    await waitFor(() => expect(mocks.confirm).toHaveBeenCalledWith({ requestId: REQ, ticket: TICKET, draft: { ...draft, legalArea: "Cível" }, decision: { kind: "new" } }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Recusado. Nada foi gravado.");
     // O cartão continua para tentar de novo.
     expect(screen.getByRole("button", { name: "Confirmar cadastro" })).toBeEnabled();
@@ -199,21 +201,60 @@ describe("cartão de confirmação", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Visualizador");
     expect(screen.queryByRole("button", { name: "Confirmar cadastro" })).toBeNull();
   });
+
+  it("escritório trocado depois de abrir o cartão: o cartão se encerra com a recusa", async () => {
+    mocks.confirm.mockResolvedValue({
+      outcome: "stale",
+      blocks: [{ type: "denied", text: "O escritório ativo mudou depois que este cartão foi aberto (talvez em outra aba). Nada foi gravado." }],
+    });
+    await renderWithCard(confirmBlock);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirmar cadastro" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("O escritório ativo mudou");
+    expect(screen.queryByRole("region", { name: "Cadastrar pessoa e caso" })).toBeNull();
+  });
+
+  it("resultado incerto: avisa, mantém o cartão e a nova tentativa usa a mesma chave", async () => {
+    mocks.confirm
+      .mockResolvedValueOnce({ outcome: "uncertain", blocks: [], message: "Não consegui confirmar se o cadastro foi gravado." })
+      .mockResolvedValueOnce({
+        outcome: "saved",
+        blocks: [
+          { type: "success", contactName: "Ana Ribeiro", contactHref: "/contatos/c9", leadHref: "/leads/l9", legalArea: "Imobiliário", contactCreated: true, replayed: true },
+        ],
+      });
+    await renderWithCard(confirmBlock);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirmar cadastro" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não consegui confirmar se o cadastro foi gravado.");
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar de novo" }));
+    expect(await screen.findByText("Este cadastro já estava gravado")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Abrir o lead" })).toHaveAttribute("href", "/leads/l9");
+    expect(mocks.confirm.mock.calls.map(([arg]) => (arg as { requestId: string }).requestId)).toEqual([REQ, REQ]);
+  });
+
+  it("sem resposta do servidor: diz que não sabe se gravou", async () => {
+    mocks.confirm.mockRejectedValue(new Error("rede"));
+    await renderWithCard(confirmBlock);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirmar cadastro" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não sei se o cadastro foi gravado");
+    expect(screen.getByRole("button", { name: "Confirmar de novo" })).toBeEnabled();
+  });
 });
 
 describe("cartão de duplicidade", () => {
   const duplicate: AssistantBlock = {
     type: "duplicate",
     requestId: REQ,
+    ticket: TICKET,
     draft,
-    matches: [{ contactId: "a6400000-0000-4000-8000-000000000001", name: "Ana Ribeiro", reasons: ["nome igual"], leadCount: 1, href: "/contatos/c1" }],
+    matches: [{ contactId: "a6400000-0000-4000-8000-000000000001", name: "Ana Ribeiro", reasons: ["nome igual"], href: "/contatos/c1" }],
   };
 
-  it("mostra o registro encontrado, com link e motivo", async () => {
+  it("mostra o registro encontrado, com link e motivo, sem contagem de leads", async () => {
     await renderWithCard(duplicate);
     const card = await screen.findByRole("region", { name: /Possível duplicidade/ });
     expect(within(card).getByRole("link", { name: /Ana Ribeiro/ })).toHaveAttribute("href", "/contatos/c1");
-    expect(card).toHaveTextContent("nome igual · 1 lead");
+    expect(card).toHaveTextContent("nome igual");
+    expect(card).not.toHaveTextContent(/lead/i);
   });
 
   it("usar o contato encontrado leva ao cartão de caso novo nesse contato", async () => {
@@ -224,7 +265,7 @@ describe("cartão de duplicidade", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirmar cadastro" }));
     await waitFor(() =>
       expect(mocks.confirm).toHaveBeenCalledWith(
-        expect.objectContaining({ requestId: REQ, decision: { kind: "existing", contactId: "a6400000-0000-4000-8000-000000000001", contactName: "Ana Ribeiro" } }),
+        expect.objectContaining({ requestId: REQ, ticket: TICKET, decision: { kind: "existing", contactId: "a6400000-0000-4000-8000-000000000001", contactName: "Ana Ribeiro" } }),
       ),
     );
   });

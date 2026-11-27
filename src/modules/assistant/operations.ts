@@ -58,6 +58,7 @@ export function isAssistantOperation(name: string): name is AssistantOperationNa
 /** A gravação não é proposta pelo intérprete: só acontece no clique de confirmação, com estes dados. */
 export const confirmRegistrationSchema = z.object({
   requestId: uuidSchema,
+  ticket: z.string().min(1).max(200),
   draft: registrationDraftSchema,
   decision: z
     .discriminatedUnion("kind", [

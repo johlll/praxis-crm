@@ -125,9 +125,12 @@ Frente independente do extrator de Conversas (#366). Definições: `docs/decisoe
   do escritório; consulta que falha aparece como indisponível.
 - Cadastro por conversa pelo fluxo oficial (contato + lead), com pergunta só do que falta, aviso de possível
   duplicidade, cartão para corrigir, cancelar ou confirmar, e uma gravação só por confirmação.
-- Migration **nova** `20261128120000_assistente_cadastro.sql`: `assistant_find_contact_matches` (leitura),
-  `assistant_register_client` e a tabela trancada `public.assistant_requests`. Não altera tabela, dado nem migration
-  anterior.
+- Migration **nova** `20261128120000_assistente_cadastro.sql`: `assistant_find_contact_matches` (leitura, sem
+  contagem de leads), `assistant_find_registration` (leitura do resultado já gravado), `assistant_register_client`
+  e a tabela trancada `public.assistant_requests`. Não altera tabela, dado nem migration anterior.
+- Correções da 1ª revisão (26/11): cartão ligado à pessoa e ao escritório que o abriram (troca de escritório,
+  mesmo em outra aba, encerra o cartão sem gravar); resposta perdida recupera o mesmo cadastro antes de conferir
+  duplicidade; resultado incerto dito como incerto; contagem de leads retirada da busca de duplicidade.
 
 **Simulado**: só a interpretação do texto (regras fixas, sem provedor de IA). Consultas e cadastro foram validados
 pelos caminhos reais do CRM, no banco local com dados fictícios.

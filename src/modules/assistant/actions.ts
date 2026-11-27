@@ -12,6 +12,7 @@ import { listActivities } from "@/modules/activities/queries";
 import { getDashboard } from "@/modules/dashboard/queries";
 import { parseDashboardFilters } from "@/modules/dashboard/schema";
 import { scheduleAutomationRun } from "@/modules/automations/run";
+import { issueCardTicket, verifyCardTicket } from "@/server/assistant/card-ticket";
 import { buildDiagnosis } from "./diagnosis";
 import { simulatedInterpreter, type AssistantInterpreter } from "./interpreter";
 import {
@@ -85,7 +86,7 @@ async function findMatches(workspaceId: string, draft: RegistrationDraft, phone:
 async function proposalFor(ctx: MembershipContext, draft: RegistrationDraft): Promise<AssistantReply> {
   const valid = validateRegistration(ctx.workspaceId, draft);
   if (!valid.ok) {
-    return reply([{ type: "text", text: `${valid.message} Corrija no cartão abaixo antes de confirmar.` }, confirmBlock(draft)]);
+    return reply([{ type: "text", text: `${valid.message} Corrija no cartão abaixo antes de confirmar.` }, confirmBlock(ctx, draft)]);
   }
   let matches;
   try {
@@ -99,18 +100,24 @@ async function proposalFor(ctx: MembershipContext, draft: RegistrationDraft): Pr
   if (matches.length > 0) {
     return reply([
       { type: "text", text: "Antes de cadastrar: encontrei contatos que podem ser a mesma pessoa. Escolha como seguir." },
-      { type: "duplicate", requestId: randomUUID(), draft, matches },
+      { type: "duplicate", ...newRequest(ctx), draft, matches },
     ]);
   }
   return reply([
     { type: "text", text: "Confira os dados. Nada é gravado antes de você confirmar." },
-    confirmBlock(draft),
+    confirmBlock(ctx, draft),
   ]);
 }
 
-const confirmBlock = (draft: RegistrationDraft): AssistantBlock => ({
+/** Chave da solicitação + comprovante que a liga à pessoa e ao escritório desta sessão. */
+function newRequest(ctx: MembershipContext): { requestId: string; ticket: string } {
+  const requestId = randomUUID();
+  return { requestId, ticket: issueCardTicket({ userId: ctx.userId, workspaceId: ctx.workspaceId, requestId }) };
+}
+
+const confirmBlock = (ctx: MembershipContext, draft: RegistrationDraft): AssistantBlock => ({
   type: "confirm",
-  requestId: randomUUID(),
+  ...newRequest(ctx),
   draft,
   decision: null,
 });
@@ -159,29 +166,109 @@ export async function askAssistantAction(input: unknown): Promise<AssistantReply
   }
 }
 
+
+/** Recusas do banco: a transação foi desfeita, então é certo que nada foi gravado. */
 const RPC_ERRORS: Record<string, string> = {
   assistant_request_conflict: "Esta confirmação já foi usada com outros dados. Peça o cadastro de novo para conferir.",
-  assistant_request_unavailable: "Esta confirmação ainda está sendo processada. Aguarde e confira a lista de leads.",
   contact_not_found: "O contato escolhido não está disponível neste escritório.",
   contact_already_merged: "O contato escolhido foi mesclado a outro.",
 };
 
+const STALE_WORKSPACE =
+  "O escritório ativo mudou depois que este cartão foi aberto (talvez em outra aba). Para não gravar no escritório errado, este cartão foi encerrado. Nada foi gravado. Peça o cadastro de novo no escritório em que quer cadastrar.";
+const STALE_SESSION = "Este cartão não pertence à sua sessão atual. Nada foi gravado. Peça o cadastro de novo.";
+
+const UNCERTAIN =
+  "Não consegui confirmar se o cadastro foi gravado: a resposta do servidor não chegou. Confirme de novo para conferir. Se ele já tiver sido gravado, eu mostro o mesmo cadastro, sem criar outro.";
+const UNCHECKED =
+  "Não consegui conferir se esta confirmação já tinha sido gravada, então não gravei nada agora. Confirme de novo em instantes: a repetição não cria um segundo cadastro.";
+
+type RpcError = { message: string; code?: string | null };
+
 /**
- * Grava o cadastro confirmado. Sessão e permissões conferidas de novo AGORA (não na hora da proposta), e a
- * chave da solicitação garante, no banco, um cadastro só para cliques repetidos ou reenvios.
+ * Erro com código do banco (SQLSTATE) ou do PostgREST: o servidor respondeu e a transação foi desfeita.
+ * Sem código (rede caiu, tempo esgotado, resposta perdida): não dá para saber se a gravação aconteceu.
+ */
+const answeredByServer = (error: RpcError) => typeof error.code === "string" && error.code.trim() !== "";
+
+type SavedRow = { contact_id?: string; lead_id?: string; contact_created?: boolean; replayed?: boolean };
+
+/**
+ * Grava o cadastro confirmado. Na ordem:
+ *   1. o cartão precisa ter sido aberto por esta pessoa, neste escritório (comprovante assinado);
+ *   2. sessão e permissões conferidas de novo AGORA (não na hora da proposta);
+ *   3. se esta mesma confirmação, com os mesmos dados, já foi gravada, devolve aquele cadastro (resposta
+ *      perdida, clique repetido) antes de qualquer conferência de duplicidade;
+ *   4. grava; a chave da solicitação garante, no banco, um cadastro só, mesmo com chamadas simultâneas.
  */
 export async function confirmRegistrationAction(input: unknown): Promise<ConfirmResult> {
   const parsed = confirmRegistrationSchema.safeParse(input);
   if (!parsed.success) return { outcome: "invalid", blocks: [], message: "Dados inválidos. Revise o cartão." };
-  const { requestId, draft, decision } = parsed.data;
+  const { requestId, ticket, draft, decision } = parsed.data;
 
   const s = await session();
   if ("blocks" in s) return { outcome: "denied", blocks: s.blocks };
   const { ctx } = s;
+
+  const binding = verifyCardTicket(ticket, { userId: ctx.userId, workspaceId: ctx.workspaceId, requestId });
+  if (binding !== "ok") {
+    return { outcome: "stale", blocks: [{ type: "denied", text: binding === "workspace_changed" ? STALE_WORKSPACE : STALE_SESSION }] };
+  }
+
   if (!canRegister(ctx)) return { outcome: "denied", blocks: [{ type: "denied", text: deniedText(ctx) }] };
 
   const valid = validateRegistration(ctx.workspaceId, draft);
   if (!valid.ok) return { outcome: "invalid", blocks: [], message: valid.message };
+
+  const existing = decision?.kind === "existing" ? decision : null;
+  const contactName = existing ? existing.contactName : valid.value.name;
+  const args = {
+    p_workspace_id: ctx.workspaceId,
+    p_request_id: requestId,
+    p_name: contactName,
+    p_legal_area: valid.value.legalArea,
+    ...(valid.value.summary ? { p_summary: valid.value.summary } : {}),
+    p_phones: existing ? [] : valid.value.phones,
+    p_emails: existing ? [] : valid.value.emails,
+    ...(existing ? { p_existing_contact_id: existing.contactId } : {}),
+  };
+
+  const refused = (error: RpcError): ConfirmResult => {
+    if (error.message === "insufficient_permission") return { outcome: "denied", blocks: [{ type: "denied", text: deniedText(ctx) }] };
+    return { outcome: "failed", blocks: [], message: `${RPC_ERRORS[error.message] ?? toUserMessage(error)} ${NOTHING_SAVED}` };
+  };
+
+  const success = (row: SavedRow): ConfirmResult | null => {
+    if (!row.contact_id || !row.lead_id) return null;
+    return {
+      outcome: "saved",
+      blocks: [
+        {
+          type: "success",
+          contactName,
+          contactHref: `/contatos/${row.contact_id}`,
+          leadHref: `/leads/${row.lead_id}`,
+          legalArea: valid.value.legalArea,
+          contactCreated: Boolean(row.contact_created),
+          replayed: Boolean(row.replayed),
+        },
+      ],
+    };
+  };
+
+  const supabase = await createServerSupabaseClient();
+
+  // 3. Resultado já gravado para esta solicitação e estes dados.
+  const prior = await supabase.rpc("assistant_find_registration", args);
+  if (prior.error) {
+    if (prior.error.message === "assistant_request_unavailable" || !answeredByServer(prior.error)) {
+      return { outcome: "uncertain", blocks: [], message: UNCHECKED };
+    }
+    return refused(prior.error);
+  }
+  if (prior.data) {
+    return success(prior.data as SavedRow) ?? { outcome: "uncertain", blocks: [], message: UNCERTAIN };
+  }
 
   // Sem decisão (dados corrigidos ou pessoa nova sem conferência), confere a duplicidade antes de gravar.
   if (!decision) {
@@ -196,54 +283,29 @@ export async function confirmRegistrationAction(input: unknown): Promise<Confirm
         outcome: "duplicate",
         blocks: [
           { type: "text", text: "Com esses dados, encontrei contatos que podem ser a mesma pessoa. Escolha como seguir." },
-          { type: "duplicate", requestId, draft, matches },
+          { type: "duplicate", requestId, ticket, draft, matches },
         ],
       };
     }
   }
 
-  const existing = decision?.kind === "existing" ? decision : null;
-  const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase.rpc("assistant_register_client", {
-    p_workspace_id: ctx.workspaceId,
-    p_request_id: requestId,
-    p_name: existing ? existing.contactName : valid.value.name,
-    p_legal_area: valid.value.legalArea,
-    ...(valid.value.summary ? { p_summary: valid.value.summary } : {}),
-    p_phones: existing ? [] : valid.value.phones,
-    p_emails: existing ? [] : valid.value.emails,
-    ...(existing ? { p_existing_contact_id: existing.contactId } : {}),
-  });
-
+  // 4. Gravação.
+  const { data, error } = await supabase.rpc("assistant_register_client", args);
   if (error) {
-    if (error.message === "insufficient_permission") return { outcome: "denied", blocks: [{ type: "denied", text: deniedText(ctx) }] };
-    const known = RPC_ERRORS[error.message];
-    return { outcome: "failed", blocks: [], message: `${known ?? toUserMessage(error)} ${NOTHING_SAVED}` };
+    if (error.message === "assistant_request_unavailable" || !answeredByServer(error)) {
+      return { outcome: "uncertain", blocks: [], message: UNCERTAIN };
+    }
+    return refused(error);
   }
 
-  const result = (data ?? {}) as { contact_id?: string; lead_id?: string; contact_created?: boolean; replayed?: boolean };
-  if (!result.contact_id || !result.lead_id) {
-    return { outcome: "failed", blocks: [], message: "O servidor não confirmou a gravação. Confira a lista de leads antes de tentar de novo." };
-  }
+  const row = (data ?? {}) as SavedRow;
+  const result = success(row);
+  if (!result) return { outcome: "uncertain", blocks: [], message: UNCERTAIN };
 
-  if (!result.replayed) {
+  if (!row.replayed) {
     revalidatePath("/leads");
     revalidatePath("/contatos");
     scheduleAutomationRun(ctx.workspaceId);
   }
-
-  return {
-    outcome: "saved",
-    blocks: [
-      {
-        type: "success",
-        contactName: existing ? existing.contactName : valid.value.name,
-        contactHref: `/contatos/${result.contact_id}`,
-        leadHref: `/leads/${result.lead_id}`,
-        legalArea: valid.value.legalArea,
-        contactCreated: Boolean(result.contact_created),
-        replayed: Boolean(result.replayed),
-      },
-    ],
-  };
+  return result;
 }

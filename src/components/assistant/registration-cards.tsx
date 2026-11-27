@@ -45,9 +45,7 @@ export function DuplicateCard({
                 <ArrowUpRight size={12} aria-hidden />
                 <span className="sr-only">(abre em outra aba)</span>
               </Link>
-              <span className="text-meta text-text-tertiary">
-                {match.reasons.join(" · ")} · {match.leadCount === 1 ? "1 lead" : `${match.leadCount} leads`}
-              </span>
+              <span className="text-meta text-text-tertiary">{match.reasons.join(" · ")}</span>
             </div>
             <Button
               type="button"
@@ -58,6 +56,7 @@ export function DuplicateCard({
                   {
                     type: "confirm",
                     requestId: block.requestId,
+                    ticket: block.ticket,
                     draft: { ...block.draft, name: match.name },
                     decision: { kind: "existing", contactId: match.contactId, contactName: match.name },
                   },
@@ -86,7 +85,9 @@ export function DuplicateCard({
           type="button"
           variant="secondary"
           size="sm"
-          onClick={() => onReplace([{ type: "confirm", requestId: block.requestId, draft: block.draft, decision: { kind: "new" } }])}
+          onClick={() =>
+            onReplace([{ type: "confirm", requestId: block.requestId, ticket: block.ticket, draft: block.draft, decision: { kind: "new" } }])
+          }
         >
           <UserPlus size={14} aria-hidden />
           Cadastrar como pessoa nova
@@ -114,7 +115,7 @@ export function ConfirmCard({
   const [draft, setDraft] = useState<RegistrationDraft>(block.draft);
   const [decision, setDecision] = useState(block.decision);
   const [editing, setEditing] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ text: string; uncertain: boolean } | null>(null);
   const [saving, startSaving] = useTransition();
   const titleId = useId();
   const existing = decision?.kind === "existing" ? decision : null;
@@ -130,17 +131,20 @@ export function ConfirmCard({
     setMessage(null);
     startSaving(async () => {
       try {
-        const result = await confirmRegistrationAction({ requestId: block.requestId, draft, decision });
-        if (result.outcome === "saved" || result.outcome === "duplicate" || result.outcome === "denied") {
+        const result = await confirmRegistrationAction({ requestId: block.requestId, ticket: block.ticket, draft, decision });
+        if (result.outcome === "saved" || result.outcome === "duplicate" || result.outcome === "denied" || result.outcome === "stale") {
           if (result.outcome !== "duplicate") onClosed();
           onReplace(result.blocks);
           return;
         }
-        setMessage(result.message ?? "Não foi possível gravar. Nada foi gravado.");
+        setMessage({ text: result.message ?? "Não foi possível gravar. Nada foi gravado.", uncertain: result.outcome === "uncertain" });
         if (result.outcome === "invalid") setEditing(true);
       } catch {
-        // Sem resposta do servidor não dá para saber se gravou: repetir é seguro (mesma chave).
-        setMessage("Não consegui confirmar com o servidor. Tente de novo: a repetição não cria um segundo cadastro.");
+        // Sem resposta do servidor não dá para saber se gravou: repetir é seguro (mesma chave e mesmo resultado).
+        setMessage({
+          text: "Não sei se o cadastro foi gravado: a resposta do servidor não chegou. Confirme de novo para conferir. Se ele já tiver sido gravado, eu mostro o mesmo cadastro, sem criar outro.",
+          uncertain: true,
+        });
       }
     });
   }
@@ -197,9 +201,15 @@ export function ConfirmCard({
       )}
 
       {message ? (
-        <p role="alert" className="m-0 flex items-start gap-2 rounded-md border border-danger/25 bg-danger-bg px-3 py-2 text-small text-danger">
+        <p
+          role="alert"
+          className={cn(
+            "m-0 flex items-start gap-2 rounded-md border px-3 py-2 text-small",
+            message.uncertain ? "border-warning/40 bg-warning-bg text-warning" : "border-danger/25 bg-danger-bg text-danger",
+          )}
+        >
           <CircleAlert size={14} aria-hidden className="mt-0.5 shrink-0" />
-          {message}
+          {message.text}
         </p>
       ) : null}
 
@@ -222,7 +232,7 @@ export function ConfirmCard({
         </Button>
         <Button type="button" size="sm" disabled={saving} onClick={confirm}>
           {saving ? <LoaderCircle size={14} className="animate-spin" aria-hidden /> : null}
-          {saving ? "Gravando…" : "Confirmar cadastro"}
+          {saving ? "Gravando…" : message?.uncertain ? "Confirmar de novo" : "Confirmar cadastro"}
         </Button>
       </div>
     </section>

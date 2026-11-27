@@ -63,7 +63,6 @@ export function mapMatches(raw: unknown): ContactMatch[] {
         contactId: r.contact_id,
         name: r.name,
         reasons: signals.map((s) => REASON[s] ?? s),
-        leadCount: typeof r.lead_count === "number" ? r.lead_count : 0,
         href: `/contatos/${r.contact_id}`,
       },
     ];
