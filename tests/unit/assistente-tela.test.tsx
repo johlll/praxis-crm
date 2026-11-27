@@ -50,8 +50,16 @@ describe("menu", () => {
 
 describe("tela inicial", () => {
   it("saudação, as duas sugestões, o aviso da simulação e o campo de mensagem", () => {
-    render(<AssistantChat firstName="Henrique" />);
-    expect(screen.getByRole("heading", { name: "Olá, Henrique. Como posso ajudar?" })).toBeInTheDocument();
+    const { container } = render(<AssistantChat firstName="Henrique" />);
+    expect(container.firstElementChild).toHaveAttribute("data-state", "abertura");
+    const heading = screen.getByRole("heading", { name: "Como posso ajudar, Henrique?" });
+    // Ordem de cima para baixo: saudação, campo de mensagem, sugestões.
+    const box = screen.getByRole("textbox", { name: "Mensagem" });
+    const group = screen.getByRole("group", { name: "Sugestões" });
+    expect(heading.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(box.compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // O aviso da simulação fica fora do conjunto central.
+    expect(heading.closest("section")).not.toContainElement(screen.getByRole("note"));
     const suggestions = within(screen.getByRole("group", { name: "Sugestões" })).getAllByRole("button");
     expect(suggestions.map((b) => b.textContent)).toEqual(["O que precisa da minha atenção hoje?", "Cadastre um cliente"]);
     expect(screen.getByRole("note")).toHaveTextContent("Interpretação simulada");
@@ -78,6 +86,43 @@ describe("tela inicial", () => {
     fireEvent.change(box, { target: { value: "Família" } });
     fireEvent.keyDown(box, { key: "Enter" });
     await waitFor(() => expect(mocks.ask).toHaveBeenLastCalledWith({ text: "Família", pending: { name: "Ana Ribeiro" } }));
+  });
+
+  it("primeiro envio pelo teclado: o MESMO campo vai para o rodapé, com o foco, e a conversa aparece acima", async () => {
+    mocks.ask.mockResolvedValue(replyWith([{ type: "text", text: "Resposta" }]));
+    const { container } = render(<AssistantChat firstName="Henrique" />);
+    const box = screen.getByRole("textbox", { name: "Mensagem" });
+    box.focus();
+    fireEvent.change(box, { target: { value: "bom dia" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(container.firstElementChild).toHaveAttribute("data-state", "conversa");
+    expect(screen.getByRole("textbox", { name: "Mensagem" })).toBe(box);
+    expect(box).toHaveFocus();
+    expect(box).toHaveValue("");
+    expect(await screen.findByText("Resposta")).toBeInTheDocument();
+    // Saudação e sugestões saem da apresentação e da navegação.
+    expect(screen.queryByRole("heading", { name: "Como posso ajudar, Henrique?" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Sugestões" })).toBeNull();
+    expect(box).toHaveFocus();
+  });
+
+  it("sugestão acionada pelo teclado: o foco segue no campo de mensagem", async () => {
+    mocks.ask.mockResolvedValue(replyWith([{ type: "text", text: "ok" }]));
+    render(<AssistantChat firstName="Henrique" />);
+    const suggestion = screen.getByRole("button", { name: "O que precisa da minha atenção hoje?" });
+    suggestion.focus();
+    // Clique sem ponteiro (Enter ou espaço no botão) chega com detail = 0.
+    fireEvent.click(suggestion, { detail: 0 });
+    expect(screen.getByRole("textbox", { name: "Mensagem" })).toHaveFocus();
+    await screen.findByText("ok");
+  });
+
+  it("sugestão tocada: o foco não vai ao campo (não abre o teclado do celular)", async () => {
+    mocks.ask.mockResolvedValue(replyWith([{ type: "text", text: "ok" }]));
+    render(<AssistantChat firstName="Henrique" />);
+    fireEvent.click(screen.getByRole("button", { name: "Cadastre um cliente" }), { detail: 1 });
+    expect(screen.getByRole("textbox", { name: "Mensagem" })).not.toHaveFocus();
+    await screen.findByText("ok");
   });
 
   it("falha de rede vira erro na conversa", async () => {

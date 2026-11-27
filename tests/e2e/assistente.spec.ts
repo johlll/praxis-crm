@@ -335,4 +335,46 @@ test.describe.serial("Assistente", () => {
     await expect(duplicate).toContainText("nome igual");
     await expect(duplicate).not.toContainText(/lead/i);
   });
+
+  test("12. abertura: conjunto centralizado na área do Assistente, um pouco acima do meio; no primeiro envio o mesmo campo vai ao rodapé com o foco", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await login(page, SEED_PAINEL.owner.email);
+    await page.goto("/assistente");
+    const heading = page.getByRole("heading", { name: /^Como posso ajudar, / });
+    await expect(heading).toBeVisible();
+    const area = (await page.getByRole("main").boundingBox())!;
+    const box = message(page);
+    const field = (await box.locator("xpath=..").boundingBox())!;
+    const top = (await heading.boundingBox())!.y;
+    const group = (await page.getByRole("group", { name: "Sugestões" }).boundingBox())!;
+    // Centralizado na área útil (sem barra lateral e cabeçalho), largura entre 720 e 760 px.
+    expect(Math.abs(field.x + field.width / 2 - (area.x + area.width / 2))).toBeLessThanOrEqual(2);
+    expect(field.width).toBeGreaterThanOrEqual(720);
+    expect(field.width).toBeLessThanOrEqual(760);
+    // Ordem saudação → campo → sugestões, e o conjunto um pouco acima do meio.
+    expect(top).toBeLessThan(field.y);
+    expect(field.y + field.height).toBeLessThanOrEqual(group.y);
+    const blockCenter = (top + group.y + group.height) / 2;
+    expect(blockCenter).toBeLessThan(area.y + area.height / 2);
+    expect(blockCenter).toBeGreaterThan(area.y + area.height * 0.35);
+    // O aviso da simulação continua visível, acima e fora do conjunto.
+    expect((await page.getByRole("note").boundingBox())!.y + 1).toBeLessThan(top);
+
+    await box.click();
+    await box.pressSequentially("bom dia");
+    await box.press("Enter");
+    await expect(page.locator('[data-state="conversa"]')).toBeVisible();
+    await expect(box).toBeFocused();
+    await expect(heading).toHaveCount(0);
+    await expect.poll(async () => {
+      const b = (await box.boundingBox())!;
+      return area.y + area.height - (b.y + b.height);
+    }).toBeLessThan(80);
+    await expect(page.getByText(/Por enquanto eu faço duas coisas/)).toBeVisible();
+    // Continua digitando e enviando sem sair do campo.
+    await box.pressSequentially("O que precisa da minha atenção hoje?");
+    await box.press("Enter");
+    await expect(page.getByRole("region", { name: "Agenda de hoje" })).toBeVisible();
+    await expect(box).toBeFocused();
+  });
 });

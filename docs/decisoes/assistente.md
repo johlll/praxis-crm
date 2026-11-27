@@ -8,6 +8,16 @@ o portão do aplicador.
 - Item **Assistente** no menu principal (`/assistente`), logo depois da Visão geral, para todos os papéis.
 - Conversa com área de mensagens, campo fixo no rodapé e duas sugestões: "O que precisa da minha atenção hoje?" e
   "Cadastre um cliente". Respostas em texto, links para os registros e cartões para conferir e confirmar.
+- **Abertura antes da primeira mensagem** (proporção inspirada em ChatGPT e Gemini, visual do Praxis): "Como posso
+  ajudar, [nome]?", o campo de mensagem como peça principal e as duas sugestões logo abaixo, nessa ordem,
+  centralizados na área do Assistente (sem a barra lateral e o cabeçalho), com largura máxima de 740 px e um pouco
+  acima do meio (espaços acima e abaixo na proporção 2:3). O aviso de interpretação simulada fica compacto, no
+  topo, fora do conjunto. No celular, o conjunto segue centralizado com margens e as sugestões quebram de linha;
+  se a altura não couber (teclado aberto), a área rola em vez de cortar.
+- **Primeiro envio** (digitado ou por sugestão): o MESMO campo desce para o rodapé e a conversa aparece acima, com
+  transição curta (sem animação para quem pediu menos movimento). Por ser o mesmo elemento, o foco continua no
+  campo ao enviar pelo teclado; sugestão acionada pelo teclado também deixa o foco no campo, e por toque não
+  (para não abrir o teclado do celular sem pedido).
 - A conversa vive só na tela (não é gravada). Trocar de escritório começa uma conversa nova.
 
 ## Quem interpreta e quem executa
