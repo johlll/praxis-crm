@@ -295,7 +295,7 @@ describe("menu", () => {
   it("Financeiro vem antes de Tráfego Pago e Integrações antes de Configurações, com os itens antigos", () => {
     sidebar("owner");
     expect(labels()).toEqual([
-      "Visão geral", "Contatos", "Leads", "Pipeline", "Conversas", "Atividades", "Agenda", "Clientes",
+      "Visão geral", "Assistente", "Contatos", "Leads", "Pipeline", "Conversas", "Atividades", "Agenda", "Clientes",
       "Financeiro", "Tráfego Pago", "Automações", "Relatórios", "Integrações", "Configurações",
     ]);
   });
@@ -303,7 +303,7 @@ describe("menu", () => {
   it.each(["lawyer", "viewer"] as const)("%s não vê Financeiro, mas vê o resto", (role) => {
     sidebar(role);
     expect(labels()).not.toContain("Financeiro");
-    expect(labels()).toHaveLength(13);
+    expect(labels()).toHaveLength(14);
   });
 
   it("gestor vê Financeiro", () => {

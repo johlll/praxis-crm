@@ -27,7 +27,8 @@ export type NavIconName =
   | "clipboard"
   | "megaphone"
   | "wallet"
-  | "plug";
+  | "plug"
+  | "sparkles";
 
 /**
  * Todas as rotas internas da barra lateral. A ordem e os rótulos vêm dos
@@ -36,6 +37,7 @@ export type NavIconName =
  */
 export const primaryNav: readonly NavItem[] = [
   { href: "/visao-geral", label: "Visão geral", icon: "layout-grid" },
+  { href: "/assistente", label: "Assistente", icon: "sparkles" },
   { href: "/contatos", label: "Contatos", icon: "contact" },
   { href: "/leads", label: "Leads", icon: "users" },
   { href: "/pipeline", label: "Pipeline", icon: "bar-chart" },
@@ -81,6 +83,7 @@ function findItem(href: Route): NavItem {
  */
 export const sidebarLayout: readonly NavEntry[] = [
   item("/visao-geral"),
+  item("/assistente"),
   {
     kind: "group",
     group: {
