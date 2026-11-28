@@ -42,11 +42,52 @@ export function AssistantChat({ firstName }: { firstName: string }) {
 
   const empty = messages.length === 0;
 
-  // Nova mensagem ou resposta: a conversa desce até o fim.
+  const lastPlaced = useRef<string | null>(null);
+
+  /**
+   * Onde a conversa para depois de cada mensagem nova:
+   * - pergunta enviada (e "Consultando o CRM…"): desce até o fim;
+   * - resposta nova: o INÍCIO dela fica à vista, com um pedaço da pergunta acima quando houver espaço. Resposta
+   *   curta cabe inteira (a rolagem para no fim sozinha); resposta longa, como o diagnóstico, mostra o resumo e o
+   *   começo da primeira parte, e o resto fica abaixo, para rolar.
+   * Cartões trocados no lugar (confirmar, cancelar) não mexem na rolagem.
+   */
   useEffect(() => {
     const el = scroller.current;
-    if (el && !empty) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [messages, sending, empty]);
+    const last = messages.at(-1);
+    if (!el || !last) return;
+    const behavior: ScrollBehavior = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+    if (last.role === "user") {
+      el.scrollTo({ top: el.scrollHeight, behavior });
+      return;
+    }
+    if (lastPlaced.current === last.id) return;
+    const place = () => {
+      lastPlaced.current = last.id;
+      const reply = el.querySelector<HTMLElement>(`[data-message-id="${last.id}"]`);
+      if (!reply) return;
+      const question = reply.previousElementSibling as HTMLElement | null;
+      const base = el.getBoundingClientRect().top - el.scrollTop;
+      const replyTop = reply.getBoundingClientRect().top - base;
+      const questionTop = question ? question.getBoundingClientRect().top - base : replyTop;
+      // Até 15% da área (no máximo 72 px) mostra o fim da pergunta; o resto vai para a resposta. Em área pequena
+      // (celular com teclado aberto) a resposta começa no topo, sem meia linha cortada da pergunta.
+      const lead = el.clientHeight < 320 ? 0 : Math.min(replyTop - questionTop, el.clientHeight * 0.15, 72);
+      el.scrollTo({ top: Math.max(0, replyTop - lead - 12), behavior });
+    };
+    // Primeira resposta: espera o campo terminar de descer (a área de conversa ainda está crescendo).
+    if (messages.length <= 2 && behavior === "smooth") {
+      const timer = window.setTimeout(place, 320);
+      return () => window.clearTimeout(timer);
+    }
+    place();
+  }, [messages]);
+
+  // Enquanto consulta, o aviso "Consultando o CRM…" aparece no fim.
+  useEffect(() => {
+    const el = scroller.current;
+    if (el && sending && messages.at(-1)?.role === "user") el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [sending, messages]);
 
   function send(raw: string) {
     const message = raw.trim();
@@ -127,14 +168,14 @@ export function AssistantChat({ firstName }: { firstName: string }) {
           <div className="mx-auto flex w-full max-w-[860px] flex-col gap-4">
             {messages.map((message) =>
               message.role === "user" ? (
-                <div key={message.id} className="flex justify-end">
+                <div key={message.id} data-message-id={message.id} className="flex justify-end">
                   <p className="m-0 max-w-[min(560px,85%)] rounded-[14px] rounded-br-sm bg-primary-tint px-3.5 py-2 text-body whitespace-pre-wrap text-text">
                     <span className="sr-only">Você: </span>
                     {message.text}
                   </p>
                 </div>
               ) : (
-                <div key={message.id} className="flex items-start gap-2.5">
+                <div key={message.id} data-message-id={message.id} className="flex items-start gap-2.5">
                   <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-primary-tint text-primary" aria-hidden>
                     <Sparkles size={14} />
                   </span>

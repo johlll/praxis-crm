@@ -18,6 +18,11 @@ o portão do aplicador.
   transição curta (sem animação para quem pediu menos movimento). Por ser o mesmo elemento, o foco continua no
   campo ao enviar pelo teclado; sugestão acionada pelo teclado também deixa o foco no campo, e por toque não
   (para não abrir o teclado do celular sem pedido).
+- **Onde a resposta aparece:** a pergunta enviada desce até o fim da conversa. A resposta nova fica à vista pelo
+  INÍCIO, com o fim da pergunta acima quando há espaço: resposta curta aparece inteira; resposta longa, como o
+  diagnóstico, mostra o resumo e o começo de "Atividades atrasadas", e o resto fica abaixo para rolar. Em área
+  pequena (celular com teclado aberto) a resposta começa no topo. A primeira resposta é posicionada depois que o
+  campo termina de descer. Cartões trocados no lugar não mexem na rolagem.
 - A conversa vive só na tela (não é gravada). Trocar de escritório começa uma conversa nova.
 
 ## Quem interpreta e quem executa

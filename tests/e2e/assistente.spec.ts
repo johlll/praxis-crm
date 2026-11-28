@@ -377,4 +377,68 @@ test.describe.serial("Assistente", () => {
     await expect(page.getByRole("region", { name: "Agenda de hoje" })).toBeVisible();
     await expect(box).toBeFocused();
   });
+
+  test("13. primeira resposta: diagnóstico longo aparece pelo início (resumo e começo de “Atividades atrasadas”); resposta curta aparece inteira", async ({ browser, page }) => {
+    await login(page, SEED_PAINEL.owner.email);
+    const storageState = await page.context().storageState();
+
+    /** A parte do elemento `selector` que está dentro da área de conversa visível (0 = nada, 1 = tudo). */
+    const visibleShare = (tab: Page, selector: string) =>
+      tab.evaluate((sel) => {
+        const area = document.querySelector('[data-state="conversa"] [aria-live="polite"]')!.getBoundingClientRect();
+        const r = document.querySelector(sel)!.getBoundingClientRect();
+        const shown = Math.max(0, Math.min(r.bottom, area.bottom) - Math.max(r.top, area.top));
+        return r.height ? shown / r.height : 0;
+      }, selector);
+
+    /** Espera a área de conversa ficar parada: mesma posição de rolagem em leituras seguidas. */
+    const settled = async (tab: Page) => {
+      const position = () => tab.evaluate(() => document.querySelector('[data-state="conversa"] [aria-live="polite"]')!.scrollTop);
+      await tab.waitForTimeout(600);
+      let previous = await position();
+      for (let i = 0; i < 20; i += 1) {
+        await tab.waitForTimeout(200);
+        const now = await position();
+        if (now === previous) return;
+        previous = now;
+      }
+    };
+
+    const cases = [
+      { label: "desktop", viewport: { width: 1440, height: 900 }, mobile: false, keyboardHeight: 0 },
+      { label: "celular", viewport: { width: 390, height: 844 }, mobile: true, keyboardHeight: 0 },
+      { label: "celular com teclado", viewport: { width: 390, height: 844 }, mobile: true, keyboardHeight: 508 },
+    ];
+    for (const c of cases) {
+      const ctx = await browser.newContext({ storageState, viewport: c.viewport, hasTouch: c.mobile, isMobile: c.mobile });
+      const tab = await ctx.newPage();
+      await tab.goto("/assistente");
+      const box = message(tab);
+      await box.click();
+      if (c.keyboardHeight) await tab.setViewportSize({ width: c.viewport.width, height: c.keyboardHeight });
+      await box.fill("O que precisa da minha atenção hoje?");
+      await box.press("Enter");
+      const overdue = tab.getByRole("region", { name: "Atividades atrasadas" });
+      await expect(overdue).toBeAttached();
+      await expect(box, c.label).toBeFocused();
+      // Espera a rolagem parar de vez (a primeira resposta só é posicionada depois que o campo termina de descer).
+      await settled(tab);
+      expect(await visibleShare(tab, "main [data-message-id]:last-child p"), `${c.label}: resumo`).toBe(1);
+      expect(await visibleShare(tab, "#diag-overdue"), `${c.label}: título das atrasadas`).toBe(1);
+      // O resto do diagnóstico fica abaixo, para rolar (não começou pelo fim).
+      expect(await visibleShare(tab, 'section[aria-labelledby="diag-attention"]'), c.label).toBeLessThan(1);
+      // O campo continua no rodapé, visível.
+      const field = (await box.boundingBox())!;
+      expect(field.y + field.height, c.label).toBeLessThanOrEqual((c.keyboardHeight || c.viewport.height) + 1);
+      await ctx.close();
+    }
+
+    // Resposta curta: cabe inteira.
+    await page.goto("/assistente");
+    await message(page).fill("bom dia");
+    await message(page).press("Enter");
+    await expect(page.getByText(/Por enquanto eu faço duas coisas/)).toBeVisible();
+    await settled(page);
+    expect(await visibleShare(page, "main [data-message-id]:last-child")).toBe(1);
+  });
 });
