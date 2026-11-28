@@ -134,6 +134,61 @@ export type Database = {
           },
         ]
       }
+      assistant_requests: {
+        Row: {
+          actor_user_id: string
+          contact_created: boolean
+          contact_id: string | null
+          created_at: string
+          lead_id: string | null
+          payload_hash: string
+          request_id: string
+          workspace_id: string
+        }
+        Insert: {
+          actor_user_id: string
+          contact_created?: boolean
+          contact_id?: string | null
+          created_at?: string
+          lead_id?: string | null
+          payload_hash: string
+          request_id: string
+          workspace_id: string
+        }
+        Update: {
+          actor_user_id?: string
+          contact_created?: boolean
+          contact_id?: string | null
+          created_at?: string
+          lead_id?: string | null
+          payload_hash?: string
+          request_id?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "assistant_requests_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "assistant_requests_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "assistant_requests_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       audit_logs: {
         Row: {
           action: string
@@ -5975,6 +6030,41 @@ export type Database = {
       }
       assign_opportunity_case_number: {
         Args: { p_opportunity_id: string }
+        Returns: Json
+      }
+      assistant_find_contact_matches: {
+        Args: {
+          p_email?: string
+          p_name: string
+          p_phone?: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      assistant_find_registration: {
+        Args: {
+          p_emails?: Json
+          p_existing_contact_id?: string
+          p_legal_area: string
+          p_name: string
+          p_phones?: Json
+          p_request_id: string
+          p_summary?: string
+          p_workspace_id: string
+        }
+        Returns: Json
+      }
+      assistant_register_client: {
+        Args: {
+          p_emails?: Json
+          p_existing_contact_id?: string
+          p_legal_area: string
+          p_name: string
+          p_phones?: Json
+          p_request_id: string
+          p_summary?: string
+          p_workspace_id: string
+        }
         Returns: Json
       }
       begin_calendar_channel: {

@@ -1,6 +1,6 @@
 # Praxis — ponto de retomada
 
-Atualizado em 26/11/2026 (horário de Brasília), na branch `feat/visao-geral-filtros-menus`.
+Atualizado em 26/11/2026 (horário de Brasília), na branch `feat/assistente`.
 
 Registro de onde cada frente parou. **Não é consulta em tempo real**: antes de qualquer ação externa, reconferir a
 `main`, os HEADs das PRs, o histórico de migrations do banco hospedado e as travas. Ao retomar uma frente pausada,
@@ -17,8 +17,8 @@ Este repositório é público: aqui não entram credenciais, dados de clientes n
 | Tráfego Pago — integrações Meta Ads e Google Ads | **não existem** |
 | Financeiro e Central de Integrações | **publicados em Production** (#368): o Financeiro como demonstração; a central só informa a situação |
 | Visão geral — período personalizado | **publicado em Production** (#369), com a migration aplicada no hospedado |
-| Visão geral — menus de Responsável e Área jurídica | na branch `feat/visao-geral-filtros-menus`, em PR **sem merge**, aguardando revisão visual |
-| Aba Assistente | próxima etapa; **não iniciada** |
+| Visão geral — menus de Responsável e Área jurídica | **publicado em Production** (#370) |
+| Assistente (primeira versão) | na branch `feat/assistente`, em PR **sem merge**; interpretação **simulada**; migration **não aplicada** |
 | IA / extrator (#366) | **PAUSADA**; PR aberta, sem merge |
 | Validação real do WhatsApp (YCloud) | **PAUSADA** |
 
@@ -31,7 +31,7 @@ Segurança, isolamento, integridade e envio indevido continuam sendo condições
 - Supabase hospedado: `rgoeppjwnltcbeqipovh`. No estado conhecido, Preview e Production usam esse mesmo banco.
 - Escritório demonstrativo: `d10a0000-0000-4000-8000-000000000001` (`is_demo = true`). O nome do escritório não
   basta para autorizar escrita: conferir UUID, projeto e escopo.
-- `main`: `39bcf9202a9d07b82d00520b833a1aaf720dff82` (merge da #369).
+- `main`: `09848a8ef8843da6a7822c6323624ef89512a0e9` (merge da #370).
 
 ## Publicado
 
@@ -43,6 +43,7 @@ Segurança, isolamento, integridade e envio indevido continuam sendo condições
 | #367 | Tráfego Pago (visual, dados fictícios) | `61689ff` → `5c29fdb` | nenhuma | sem mudança |
 | #368 | Financeiro (demonstração) e Central de Integrações | `d25b943` → `153286c` | nenhuma | sem mudança |
 | #369 | Visão geral: período personalizado | `fbc6bcc` → `39bcf92` | `20261127120000` | 127 |
+| #370 | Visão geral: menus de Responsável e Área jurídica | `de8e83f` → `09848a8` | nenhuma | sem mudança |
 
 - **Documentos**: recebimento FECHADO nas duas travas (`CASE_DOCUMENTS_UPLOAD_ENABLED` ausente e portão do banco
   falso). Não liberar upload real antes de: backup ativo com recuperação testada; limpeza que não dependa do uso do
@@ -107,12 +108,36 @@ variável, credencial ou configuração externa.
 - O escritório demonstrativo não tem registros depois de 17/11: períodos mais recentes aparecem zerados.
 - Definições: `docs/decisoes/a10-dashboard.md`, seção "Período". Não foi iniciado o Financeiro real.
 
-## Visão geral — menus dos filtros (frente atual, sem merge)
+## Visão geral — menus dos filtros (publicado)
 
-- Responsável e Área jurídica passam a usar menus do design system, com o mesmo botão fechado do Período. O fluxo não
-  muda: escolher já aplica, e "Aplicar" continua. Sem migration, escrita no banco ou dependência nova.
-- **Falta:** revisão visual. Merge e publicação só com ordem.
+- **Publicado** em 26/11 (#370, merge `09848a8`, HEAD aprovado `de8e83f`), depois da revisão visual aprovada.
+  CI do HEAD e da `main` verdes na primeira tentativa; verificação em Production 76/76, só como proprietário.
+- Escolher uma opção continua aplicando na hora; "Aplicar" foi mantido. Sem migration.
 - Definições: `docs/decisoes/a10-dashboard.md`, seção "Filtros de Responsável e Área jurídica".
+
+## Assistente — primeira versão (frente atual, sem merge)
+
+Frente independente do extrator de Conversas (#366). Definições: `docs/decisoes/assistente.md`.
+
+**Implementado**
+- Item Assistente no menu e chat em `/assistente`, com duas sugestões iniciais.
+- Diagnóstico "O que precisa da minha atenção hoje?" com `list_activities` e `get_dashboard`, por papel e no fuso
+  do escritório; consulta que falha aparece como indisponível.
+- Cadastro por conversa pelo fluxo oficial (contato + lead), com pergunta só do que falta, aviso de possível
+  duplicidade, cartão para corrigir, cancelar ou confirmar, e uma gravação só por confirmação.
+- Migration **nova** `20261128120000_assistente_cadastro.sql`: `assistant_find_contact_matches` (leitura, sem
+  contagem de leads), `assistant_find_registration` (leitura do resultado já gravado), `assistant_register_client`
+  e a tabela trancada `public.assistant_requests`. Não altera tabela, dado nem migration anterior.
+- Correções da 1ª revisão (26/11): cartão ligado à pessoa e ao escritório que o abriram (troca de escritório,
+  mesmo em outra aba, encerra o cartão sem gravar); resposta perdida recupera o mesmo cadastro antes de conferir
+  duplicidade; resultado incerto dito como incerto; contagem de leads retirada da busca de duplicidade.
+
+**Simulado**: só a interpretação do texto (regras fixas, sem provedor de IA). Consultas e cadastro foram validados
+pelos caminhos reais do CRM, no banco local com dados fictícios.
+
+**Falta** (cada item com ordem própria)
+- Revisão da PR. Aplicar a migration no hospedado, merge e publicação.
+- Provedor de IA real, com custo, dados enviados e retenção definidos antes.
 
 ## IA — PAUSADA na #366
 
@@ -122,8 +147,9 @@ variável, credencial ou configuração externa.
 - **Não mesclada.** Migrations **não aplicadas** no hospedado:
   `20261126120000_conversas_aplicador_alvo_estavel.sql` e `20261126130000_conversas_extrator_contexto.sql`.
   O histórico 127 já é da #369. Não modificar migrations já publicadas.
-- **Ordem das migrations:** a `20261127120000` já está aplicada. **Renumerar as duas da #366 para depois dela** antes
-  de qualquer aplicação, e rever a #366 sobre a `main` atual.
+- **Ordem das migrations:** a `20261127120000` já está aplicada e a do Assistente (`20261128120000`) está em PR.
+  **Renumerar as duas da #366 para depois da última migration existente** antes de qualquer aplicação, e rever a
+  #366 sobre a `main` atual.
 - Entrega: correção do alvo do aplicador (o caso podia mudar enquanto ele esperava a trava; reproduzido por dois
   caminhos reais locais e coberto por regressão); leitura de contexto restrita; instruções e esquema estritos;
   quatro camadas desligadas (`STATUS_EXTRACTOR_ENABLED`, portão do banco, modelo não configurado,
